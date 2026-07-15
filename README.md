@@ -1,0 +1,623 @@
+<div align="center">
+  <h1>🧹 Fusion-Desk</h1>
+  <p><strong>Local-first, zero-code desktop automation platform for macOS Apple Silicon</strong></p>
+  <p><em>Let your Mac do the work — 100% offline, AI-powered, privacy-first.</em></p>
+</div>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-brightgreen" alt="macOS">
+  <img src="https://img.shields.io/badge/Python-3.11%2B-blue" alt="Python">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
+  <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
+  <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
+  <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
+</p>
+
+---
+
+## 📋 Overview
+
+**Fusion-Desk** is one of the three flagship products in the [Fusion-MLX](https://github.com/fusion-mlx) Apple Silicon local AI ecosystem. It provides a zero-code desktop intelligent automation platform for all office users.
+
+### Ecosystem Positioning
+
+| Product | Role | Audience |
+|---------|------|----------|
+| **Fusion-Code** | Developer coding agent | Programmers |
+| **Fusion-Agent-Studio** | Advanced agent workflow orchestration | Developers / Architects |
+| **Fusion-Desk** 🎯 | Desktop automation for everyone | **All office users** |
+
+> **Studio builds workflows, Desk runs them, Code writes capabilities, KB stores knowledge, Hub manages models.**
+
+### Key Differentiators
+
+- ✅ **100% Local & Offline** — Zero file uploads, zero privacy leaks, zero telemetry
+- ✅ **macOS Native** — Deep integration with Desktop, Downloads, Documents directories
+- ✅ **MLX Hardware Acceleration** — Apple Silicon native inference via fusion-mlx
+- ✅ **AI Semantic Understanding** — Understands content, not just filenames
+- ✅ **Zero Code** — Describe your need in plain language, get an automation workflow
+- ✅ **Full Ecosystem Integration** — Seamless with Fusion-Code, Agent-Studio, Fusion-KB, Model-Hub
+
+---
+
+## 🚀 Quick Start
+
+### Installation
+
+```bash
+# Clone
+git clone https://github.com/dahai80/fusion-desk.git
+cd fusion-desk
+
+# Install with pip
+pip install -e .
+
+# Install with AI support (optional, recommended)
+pip install -e ".[web]"
+
+# Or use uv (faster)
+uv venv --python 3.11
+uv pip install -e ".[test]"
+```
+
+### Basic Usage
+
+```bash
+# List available templates
+fusion-desk template list
+
+# Show template details
+fusion-desk template show desktop_daily_cleanup
+
+# Run a template (preview mode)
+fusion-desk template run desktop_daily_cleanup --dry-run
+
+# Run a template (execute)
+fusion-desk template run desktop_daily_cleanup
+
+# Generate a workflow with AI
+fusion-desk ai generate "Organize all PDFs on my desktop by topic"
+
+# Check AI service status
+fusion-desk ai status
+
+# System information
+fusion-desk system info
+```
+
+---
+
+## 🎯 Built-in Templates (10 ready-to-use)
+
+| Template | Category | Description | Needs AI |
+|----------|----------|-------------|----------|
+| 🧹 **Desktop Daily Cleanup** | Desktop | Organize desktop files by type | ❌ |
+| 📥 **Download Organizer** | File | Archive, deduplicate, and clean Downloads | ❌ |
+| 📝 **Document Batch Summarizer** | AI | Batch summarize PDFs/Word/Markdown | ✅ |
+| 🏷️ **AI Smart File Classification** | AI | Classify files by semantic content | ✅ |
+| ✏️ **AI Batch Rename** | AI | Generate meaningful filenames from content | ✅ |
+| 💾 **Disk Space Cleaner** | System | Scan and clean caches, temp files | ❌ |
+| 📂 **Project File Collector** | File | Gather project files by type | ❌ |
+| 🔍 **Duplicate File Scanner** | System | Find and clean duplicate files | ❌ |
+| 📋 **Log Cleaner** | System | Scan and clean log files | ❌ |
+| 🖼️ **Image Batch Rename** | File | Batch rename and classify images | ❌ |
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│                     UI Layer                          │
+│   CLI (click)  │  Web UI (FastAPI)  │  macOS (.app)  │
+├─────────────────────────────────────────────────────┤
+│                 Workflow Engine Layer                  │
+│   WorkflowEngine  │  TaskScheduler  │  NodeRegistry   │
+│   (DAG, n8n-inspired) │  (APScheduler) │  (23 nodes)   │
+├─────────────────────────────────────────────────────┤
+│                   AI Capability Layer                  │
+│   FusionMLXClient  │  NLWorkflowGenerator             │
+│   (HTTP → fusion-mlx)  │  (Natural language → Wf)     │
+│   KBClient (HTTP → Fusion-KB)                        │
+├─────────────────────────────────────────────────────┤
+│                 System Capability Layer                │
+│   macOS nodes (AppleScript / osascript)               │
+│   File ops  │  Desktop mgmt  │  Disk cleanup  │ Tools  │
+└─────────────────────────────────────────────────────┘
+```
+
+### Node Types (23 nodes built-in)
+
+| Category | Count | Nodes |
+|----------|-------|-------|
+| `macos_system` | 4 | Desktop Clean, Download Organizer, Disk Cleaner, File Watcher |
+| `file_operation` | 6 | File Classifier, Batch Rename, Copy, Move, Delete, Find |
+| `ai_processing` | 3 | AI Classify, AI Summarize, AI Generate Name |
+| `tool` 🆕 | 5 | Shell Exec, Python REPL, Web Search, Fetch URL, Apply Edit |
+| `io` | 2 | File Input, File Output |
+| `logic` | 3 | Filter, Loop, Merge |
+
+### Ecosystem Integration
+
+| Component | Protocol | Purpose |
+|-----------|----------|---------|
+| **fusion-mlx** | HTTP API (port 8000) | LLM inference, text generation, embeddings |
+| **Fusion-KB** | HTTP API (port 11434) | Knowledge base semantic search, RAG |
+| **Fusion-Code** | Auto-generated scripts | Complex logic execution |
+| **Agent-Studio** | Workflow import | Advanced pre-built workflows |
+| **Model-Hub** | Model dispatch | Auto-select optimal local model |
+
+---
+
+## 🔧 Node Reference
+
+### macOS System Nodes
+
+| Node | Description |
+|------|-------------|
+| `desktop_clean` | Organize desktop files by type/date |
+| `download_organizer` | Archive, deduplicate, and clean Downloads |
+| `disk_cleaner` | Scan and clean cache, temp files, `.DS_Store` |
+| `file_watcher` | Watch directory for changes, trigger actions |
+
+### AI Processing Nodes (`→ fusion-mlx`)
+
+| Node | Function | Backend |
+|------|----------|---------|
+| `ai_classify` | Semantic file classification | `fusion-mlx /v1/chat/completions` |
+| `ai_summarize` | Document summarization & report | `fusion-mlx /v1/chat/completions` |
+| `ai_generate_name` | Intelligent file naming | `fusion-mlx /v1/chat/completions` |
+
+### Tool Nodes (from Squish built-in tools)
+
+| Node | Description |
+|------|-------------|
+| `shell_exec` | Execute shell commands, capture output |
+| `python_repl` | Execute Python code in isolated subprocess |
+| `web_search` | Search web via DuckDuckGo Lite |
+| `fetch_url` | Fetch URL content, auto-extract text |
+| `apply_edit` | Find-and-replace edits on files |
+
+### IO / Logic Nodes
+
+| Node | Description |
+|------|-------------|
+| `file_input` | Read file list or directory contents |
+| `file_output` | Write workflow results to files |
+| `filter` | Filter data by conditions (extension, size, date) |
+| `loop` | Batch process each item in a list |
+| `merge` | Merge data from multiple upstream nodes |
+
+---
+
+## 📝 Workflow Examples
+
+### Desktop Daily Cleanup (JSON)
+
+```json
+{
+  "name": "Desktop Daily Cleanup",
+  "nodes": [
+    {
+      "id": "n1",
+      "name": "file_input",
+      "config": { "params": { "path": "~/Desktop" } }
+    },
+    {
+      "id": "n2",
+      "name": "desktop_clean",
+      "config": { "params": { "organize_by_type": true } }
+    }
+  ],
+  "edges": [
+    { "source_id": "n1", "target_id": "n2" }
+  ]
+}
+```
+
+### AI-Generated Workflow
+
+```bash
+fusion-desk ai generate "Every night at 9pm, clean my Downloads folder and back it up to Documents"
+```
+
+---
+
+## 🧪 Running Tests
+
+```bash
+# Install test dependencies
+pip install -e ".[test]"
+
+# Run all tests
+pytest tests/ -v
+
+# With coverage
+pytest tests/ --cov=fusion_desk --cov-report=html
+```
+
+---
+
+## 🛣️ Roadmap
+
+### V0.1 (MVP) ✅
+- [x] Core file automation (Desktop, Downloads, Documents)
+- [x] AI batch processing (classify, summarize, rename)
+- [x] Template center (10 built-in templates)
+- [x] Natural language → workflow generation
+- [x] Ecosystem integration (fusion-mlx, Fusion-KB)
+- [x] Type coercion for LLM-generated params (from Squish)
+- [x] Lazy import architecture (from Squish)
+- [x] Tool nodes: Shell, Python REPL, Web Search, Fetch URL, Apply Edit
+
+### V0.2 (Planned)
+- [ ] Custom visual workflow editor
+- [ ] Advanced scheduling (cron UI)
+- [ ] Batch report generation
+- [ ] AI workflow optimization
+- [ ] macOS native .app packaging
+
+### V0.3 (Future)
+- [ ] Industry-specific templates
+- [ ] Multi-agent orchestration
+- [ ] Cross-device collaboration
+
+---
+
+## 🔒 Security & Privacy
+
+- **100% Local & Offline** — All operations run locally, zero file uploads
+- **No Telemetry** — No network requests, no data reporting, no analytics
+- **Preview Mode** — All operations support `--dry-run` preview
+- **Undo Support** — Deletions default to Trash (not permanent)
+- **Full Audit Trail** — Complete execution logs and review reports
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please read our [contributing guidelines](CONTRIBUTING.md) first.
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
+---
+
+## Architecture Influences
+
+Fusion-Desk builds upon patterns from the open-source ecosystem:
+
+| Pattern | Source | Integration |
+|---------|--------|-------------|
+| Tool Registry + type coercion | [Squish](https://github.com/nicepkg/squish) `tool_registry.py` | `engine/node.py` — `_coerce_int/bool/number/array` |
+| Lazy import via `__getattr__` | [Squish](https://github.com/nicepkg/squish) `__init__.py` | `fusion_desk/__init__.py` — `_LAZY_IMPORTS` |
+| Tool name alias mapping | [Squish](https://github.com/nicepkg/squish) `tool_name_map.py` | `NODE_NAME_ALIASES` + `register_alias` |
+| Built-in tool set | [Squish](https://github.com/nicepkg/squish) `builtin_tools.py` | 5 tool nodes: Shell, Python, Web Search, Fetch, Edit |
+| Workflow engine (DAG) | [n8n](https://github.com/n8n-io/n8n) | `engine/workflow.py` — topological sort, data passing |
+| MCP protocol | [LibreChat](https://github.com/danny-avila/LibreChat) | Planned for V0.2 |
+
+---
+
+<p align="center">
+  <strong>Fusion-Desk — Let your Mac do the work, locally and privately.</strong>
+</p>
+<p align="center">
+  <sub>Built with ❤️ by the Fusion-MLX Team</sub>
+</p>
+
+---
+
+<br>
+
+<div align="center">
+  <h1>🧹 Fusion-Desk</h1>
+  <p><strong>macOS 原生、纯本地离线、零代码桌面智能自动化平台</strong></p>
+  <p><em>让 Mac 自己干活，本地 AI 全自动桌面办公</em></p>
+</div>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-brightgreen" alt="macOS">
+  <img src="https://img.shields.io/badge/Python-3.11%2B-blue" alt="Python">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="许可证">
+  <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
+  <img src="https://img.shields.io/badge/离线优先-核心特性-important" alt="离线优先">
+  <img src="https://img.shields.io/badge/状态-beta-yellow" alt="Beta">
+</p>
+
+---
+
+## 📋 产品简介
+
+**Fusion-Desk** 是 Fusion-MLX 全栈 Apple Silicon 本地 AI 生态的三大旗舰核心产品之一，面向所有办公用户提供零代码桌面智能自动化能力。
+
+### 生态层级定位
+
+| 产品 | 定位 | 面向用户 |
+|------|------|----------|
+| **Fusion-Code** | 开发者编码智能体 | 程序员 |
+| **Fusion-Agent-Studio** | 高级智能体工作流编排 | 开发者 / 架构师 |
+| **Fusion-Desk** 🎯 | 大众用户成品自动化工具 | **所有办公用户** |
+
+> Studio 造流程、Desk 用流程、Code 写能力、KB 存知识、Hub 管模型
+
+### 核心差异化优势
+
+- ✅ **100% 本地离线** — 零文件上传、零隐私泄露、无埋点
+- ✅ **macOS 原生深度适配** — 桌面、下载、文稿目录专项自动化
+- ✅ **MLX 硬件加速** — Apple Silicon 原生推理，无需 GPU
+- ✅ **AI 语义理解** — 理解文件内容，不只是文件名
+- ✅ **零代码操作** — 一句话描述需求，自动生成完整流程
+- ✅ **Fusion 全生态互通** — 与 Code / Studio / KB / Hub 无缝联动
+
+---
+
+## 🚀 快速开始
+
+### 安装
+
+```bash
+# 克隆项目
+git clone https://github.com/dahai80/fusion-desk.git
+cd fusion-desk
+
+# 安装依赖
+pip install -e .
+
+# 安装 AI 支持（可选，建议）
+pip install -e ".[web]"
+
+# 或使用 uv（更快）
+uv venv --python 3.11
+uv pip install -e ".[test]"
+```
+
+### 基础使用
+
+```bash
+# 查看可用模板
+fusion-desk template list
+
+# 查看模板详情
+fusion-desk template show desktop_daily_cleanup
+
+# 运行模板（预览模式）
+fusion-desk template run desktop_daily_cleanup --dry-run
+
+# 运行模板（实际执行）
+fusion-desk template run desktop_daily_cleanup
+
+# AI 一句话生成工作流
+fusion-desk ai generate "帮我把桌面所有 PDF 按主题分类归档"
+
+# 检查 AI 服务状态
+fusion-desk ai status
+
+# 查看系统信息
+fusion-desk system info
+```
+
+---
+
+## 🎯 内置模板（10 个开箱即用）
+
+| 模板 | 分类 | 说明 | 需要 AI |
+|------|------|------|----------|
+| 🧹 **桌面每日规整** | 桌面清理 | 按类型自动规整桌面文件 | ❌ |
+| 📥 **下载文件夹自动归档** | 文件整理 | 按类型归档、去重、整理下载文件夹 | ❌ |
+| 📝 **文档批量 AI 摘要** | AI 处理 | 批量总结文档生成汇总报告 | ✅ |
+| 🏷️ **AI 智能文件分类归档** | AI 处理 | AI 根据内容语义自动分类归档 | ✅ |
+| ✏️ **AI 批量智能重命名** | AI 处理 | AI 根据内容生成规范文件名 | ✅ |
+| 💾 **磁盘空间清理** | 系统维护 | 扫描清理缓存和垃圾文件 | ❌ |
+| 📂 **项目资料一键归集** | 文件整理 | 按类型归集项目资料 | ❌ |
+| 🔍 **重复文件扫描清理** | 系统维护 | 扫描并清理重复文件 | ❌ |
+| 📋 **日志文件自动清洗** | 系统维护 | 扫描清理日志文件 | ❌ |
+| 🖼️ **图片批量重命名分类** | 文件整理 | 批量重命名图片并分类 | ❌ |
+
+---
+
+## 🏗️ 架构设计
+
+```
+┌─────────────────────────────────────────────────────┐
+│                     UI 层                              │
+│   CLI (click)  │  Web UI (FastAPI)  │  macOS (.app)   │
+├─────────────────────────────────────────────────────┤
+│                  流程引擎层                             │
+│   WorkflowEngine  │  TaskScheduler  │  NodeRegistry   │
+│   (DAG, n8n 启发)  │  (APScheduler)  │  (23 个节点)    │
+├─────────────────────────────────────────────────────┤
+│                   AI 能力层                             │
+│   FusionMLXClient  │  NLWorkflowGenerator             │
+│   (HTTP → fusion-mlx)  │  (自然语言 → 工作流)          │
+│   KBClient (HTTP → Fusion-KB)                        │
+├─────────────────────────────────────────────────────┤
+│                 系统能力层                              │
+│   macOS 节点 (AppleScript / osascript)                │
+│   文件操作  │  桌面整理  │  磁盘清理  │  通用工具       │
+└─────────────────────────────────────────────────────┘
+```
+
+### 节点类型（23 个内置节点）
+
+| 分类 | 数量 | 节点 |
+|------|------|------|
+| `macos_system` | 4 | 桌面清理、下载整理、磁盘清理、文件监听 |
+| `file_operation` | 6 | 文件分类、批量重命名、复制、移动、删除、查找 |
+| `ai_processing` | 3 | AI 分类、AI 摘要、AI 重命名 |
+| `tool` 🆕 | 5 | Shell 命令、Python REPL、Web 搜索、获取网页、文件编辑 |
+| `io` | 2 | 文件输入、文件输出 |
+| `logic` | 3 | 条件过滤、循环处理、数据合并 |
+
+### 生态互通
+
+| 组件 | 协议 | 用途 |
+|------|------|------|
+| **fusion-mlx** | HTTP API (端口 8000) | LLM 推理、文本生成、嵌入 |
+| **Fusion-KB** | HTTP API (端口 11434) | 知识库语义检索、RAG |
+| **Fusion-Code** | 自动生成脚本 | 复杂逻辑自动执行 |
+| **Agent-Studio** | 工作流导入 | 调用高级编排的工作流 |
+| **Model-Hub** | 模型调度 | 自动选择最优本地模型 |
+
+---
+
+## 🔧 节点参考
+
+### macOS 系统节点
+
+| 节点 | 功能 |
+|------|------|
+| `desktop_clean` | 桌面按类型/日期规整 |
+| `download_organizer` | 下载文件夹归档去重 |
+| `disk_cleaner` | 磁盘缓存垃圾清理 |
+| `file_watcher` | 目录变化监听 |
+
+### AI 处理节点（→ 调用 fusion-mlx）
+
+| 节点 | 功能 | 后端 |
+|------|------|------|
+| `ai_classify` | 语义文件分类 | `fusion-mlx /v1/chat/completions` |
+| `ai_summarize` | 文档摘要生成 | `fusion-mlx /v1/chat/completions` |
+| `ai_generate_name` | 智能文件命名 | `fusion-mlx /v1/chat/completions` |
+
+### 工具节点（吸纳自 Squish 内置工具集）
+
+| 节点 | 功能 |
+|------|------|
+| `shell_exec` | 执行 Shell 命令，捕获输出 |
+| `python_repl` | 在隔离子进程执行 Python 代码 |
+| `web_search` | 通过 DuckDuckGo Lite 搜索网页 |
+| `fetch_url` | 获取 URL 内容，自动提取文本 |
+| `apply_edit` | 对文件做查找替换编辑 |
+
+### IO / 逻辑节点
+
+| 节点 | 功能 |
+|------|------|
+| `file_input` | 读取文件列表或目录内容 |
+| `file_output` | 将工作流结果写入文件 |
+| `filter` | 按扩展名/大小/日期过滤 |
+| `loop` | 批量处理列表中的每个元素 |
+| `merge` | 合并多个上游数据源 |
+
+---
+
+## 📝 工作流示例
+
+### 桌面每日规整 (JSON)
+
+```json
+{
+  "name": "桌面每日规整",
+  "nodes": [
+    {
+      "id": "n1",
+      "name": "file_input",
+      "config": { "params": { "path": "~/Desktop" } }
+    },
+    {
+      "id": "n2",
+      "name": "desktop_clean",
+      "config": { "params": { "organize_by_type": true } }
+    }
+  ],
+  "edges": [
+    { "source_id": "n1", "target_id": "n2" }
+  ]
+}
+```
+
+### AI 一句话生成
+
+```bash
+fusion-desk ai generate "每天晚上9点自动清理下载文件夹并备份到文稿"
+```
+
+---
+
+## 🧪 运行测试
+
+```bash
+# 安装测试依赖
+pip install -e ".[test]"
+
+# 运行所有测试
+pytest tests/ -v
+
+# 生成覆盖率报告
+pytest tests/ --cov=fusion_desk --cov-report=html
+```
+
+---
+
+## 🛣️ 迭代路线
+
+### V0.1 (MVP) ✅
+- [x] 基础文件自动化（桌面/下载/文档整理）
+- [x] AI 批量处理（分类/摘要/重命名）
+- [x] 模板中心（10 个内置模板）
+- [x] 自然语言生成工作流
+- [x] 生态基础打通（fusion-mlx / Fusion-KB）
+- [x] 参数类型强制转换（吸纳自 Squish）
+- [x] Lazy Import 架构（吸纳自 Squish）
+- [x] 工具节点：Shell、Python REPL、Web 搜索、获取网页、文件编辑
+
+### V0.2 (规划中)
+- [ ] 自定义可视化工作流编辑器
+- [ ] 高级定时任务管理（Cron UI）
+- [ ] 批量报表生成
+- [ ] AI 流程自动优化
+- [ ] macOS 原生 .app 打包
+
+### V0.3 (远期)
+- [ ] 行业自动化模板
+- [ ] 多智能体联动
+- [ ] 跨设备协同
+
+---
+
+## 🔒 安全与隐私
+
+- **100% 本地离线** — 所有操作在本地执行，零文件上传
+- **无遥测** — 无网络请求、无数据上报、无分析
+- **预览模式** — 所有操作支持 `--dry-run` 预览
+- **可撤销** — 删除操作默认移到废纸篓
+- **完整审计** — 执行日志和复盘报告
+
+---
+
+## 🤝 参与贡献
+
+欢迎贡献！请先阅读[贡献指南](CONTRIBUTING.md)。
+
+---
+
+## 📄 开源协议
+
+本项目基于 MIT 许可证开源。详见 [LICENSE](LICENSE)。
+
+---
+
+## 架构影响来源
+
+Fusion-Desk 基于以下开源项目的模式构建：
+
+| 模式 | 来源 | 整合位置 |
+|------|------|----------|
+| 工具注册表 + 类型强制转换 | [Squish](https://github.com/nicepkg/squish) `tool_registry.py` | `engine/node.py` — `_coerce_int/bool/number/array` |
+| Lazy Import `__getattr__` | [Squish](https://github.com/nicepkg/squish) `__init__.py` | `fusion_desk/__init__.py` — `_LAZY_IMPORTS` |
+| 工具名称映射 | [Squish](https://github.com/nicepkg/squish) `tool_name_map.py` | `NODE_NAME_ALIASES` + `register_alias` |
+| 内置工具集 | [Squish](https://github.com/nicepkg/squish) `builtin_tools.py` | 5 个工具节点：Shell、Python、Web 搜索、Fetch、Edit |
+| 工作流引擎 (DAG) | [n8n](https://github.com/n8n-io/n8n) | `engine/workflow.py` — 拓扑排序、数据传递 |
+| MCP 协议 | [LibreChat](https://github.com/danny-avila/LibreChat) | 计划 V0.2 实现 |
+
+---
+
+<p align="center">
+  <strong>Fusion-Desk — 让 Mac 自己干活，本地 AI 全自动桌面办公</strong>
+</p>
+<p align="center">
+  <sub>Built with ❤️ by Fusion-MLX Team</sub>
+</p>
