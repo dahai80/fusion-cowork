@@ -3,6 +3,10 @@
 整合自 Squish 架构模式：
 - 参数类型强制转换：coerce_param, coerce_params
 - 工具名称别名：NodeRegistry.register_alias, resolve_alias
+
+V0.2 新增：
+- 增强调度器：EnhancedScheduler（日历视图、依赖编排、统计报表）
+- 工作流优化器：WorkflowOptimizer（AI 分析、瓶颈检测、自动修复）
 """
 
 from .node import (
@@ -12,6 +16,8 @@ from .node import (
 )
 from .workflow import Workflow, WorkflowEngine, WorkflowExecution, WorkflowStatus, Edge, WorkflowStep
 from .scheduler import TaskScheduler, ScheduledTask, TaskStatus
+from .enhanced_scheduler import EnhancedScheduler, TaskExecution, TaskDependency
+from .optimizer import WorkflowOptimizer, OptimizationSuggestion, WorkflowAnalysis
 
 __all__ = [
     # 节点
@@ -23,4 +29,8 @@ __all__ = [
     "Workflow", "WorkflowEngine", "WorkflowExecution", "WorkflowStatus", "Edge", "WorkflowStep",
     # 调度
     "TaskScheduler", "ScheduledTask", "TaskStatus",
+    # V0.2 增强调度
+    "EnhancedScheduler", "TaskExecution", "TaskDependency",
+    # V0.2 AI 优化
+    "WorkflowOptimizer", "OptimizationSuggestion", "WorkflowAnalysis",
 ]

@@ -1,1 +1,5 @@
-"""Fusion-Desk 本地 Web 服务器。"""
+"""Fusion-Desk 服务器模块。"""
+
+from .sync import CrossDeviceSync, Device, SyncMessage, DeviceStatus
+
+__all__ = ["CrossDeviceSync", "Device", "SyncMessage", "DeviceStatus"]

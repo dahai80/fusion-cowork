@@ -145,6 +145,26 @@ _LAZY_IMPORTS: dict[str, str] = {
     "BrowserAutomateNode": "fusion_desk.nodes.browser",
     "BrowserClient": "fusion_desk.nodes.browser",
     "BrowserManager": "fusion_desk.nodes.browser",
+    # V0.2 增强调度
+    "EnhancedScheduler": "fusion_desk.engine.enhanced_scheduler",
+    "TaskExecution": "fusion_desk.engine.enhanced_scheduler",
+    "TaskDependency": "fusion_desk.engine.enhanced_scheduler",
+    # V0.2 AI 优化
+    "WorkflowOptimizer": "fusion_desk.engine.optimizer",
+    "OptimizationSuggestion": "fusion_desk.engine.optimizer",
+    "WorkflowAnalysis": "fusion_desk.engine.optimizer",
+    # V0.2 报告生成
+    "ReportGenerator": "fusion_desk.report.report_generator",
+    "ReportConfig": "fusion_desk.report.report_generator",
+    # V0.3 多智能体
+    "AgentOrchestrator": "fusion_desk.orchestrator.orchestrator",
+    "Agent": "fusion_desk.orchestrator.orchestrator",
+    "AgentRole": "fusion_desk.orchestrator.orchestrator",
+    "AgentTask": "fusion_desk.orchestrator.orchestrator",
+    # V0.3 跨设备协同
+    "CrossDeviceSync": "fusion_desk.server.sync",
+    "Device": "fusion_desk.server.sync",
+    "SyncMessage": "fusion_desk.server.sync",
     # AI 客户端
     "FusionMLXClient": "fusion_desk.ai",
     "KBClient": "fusion_desk.ai",
