@@ -102,6 +102,21 @@ fusion-desk system info
 | 📋 **Log Cleaner** | System | Scan and clean log files | ❌ |
 | 🖼️ **Image Batch Rename** | File | Batch rename and classify images | ❌ |
 
+### Industry Templates (V0.3)
+
+| Template | Industry | Description |
+|----------|----------|-------------|
+| 🎨 **Design Asset Organizer** | Design | Auto-classify PSD/AI/Sketch files |
+| 🖼️ **Design Batch Export** | Design | Batch export design assets |
+| 💻 **Project Code Cleanup** | Dev | Clean caches, pycache, node_modules |
+| 🔍 **Log Analyzer** | Dev | AI-powered log analysis |
+| 🚀 **Project Scaffold** | Dev | Auto-create project structure |
+| 📊 **CSV Data Cleaner** | Data | Deduplicate, normalize CSV |
+| 🔄 **Format Converter** | Data | Batch CSV↔JSON↔Excel |
+| 🖥️ **System Inspector** | Ops | Collect system health report |
+| 💾 **Backup Manager** | Ops | Scheduled file backup |
+| ⚠️ **Disk Alert** | Ops | Monitor disk usage, auto-clean |
+
 ---
 
 ## 🏗️ Architecture
@@ -113,7 +128,7 @@ fusion-desk system info
 ├─────────────────────────────────────────────────────┤
 │                 Workflow Engine Layer                  │
 │   WorkflowEngine  │  TaskScheduler  │  NodeRegistry   │
-│   (DAG, n8n-inspired) │  (APScheduler) │  (23 nodes)   │
+│   (DAG, n8n-inspired) │  (APScheduler) │  (28 nodes)   │
 ├─────────────────────────────────────────────────────┤
 │                   AI Capability Layer                  │
 │   FusionMLXClient  │  NLWorkflowGenerator             │
@@ -126,16 +141,28 @@ fusion-desk system info
 └─────────────────────────────────────────────────────┘
 ```
 
-### Node Types (23 nodes built-in)
+### Node Types (28 nodes built-in)
 
 | Category | Count | Nodes |
 |----------|-------|-------|
-| `macos_system` | 4 | Desktop Clean, Download Organizer, Disk Cleaner, File Watcher |
-| `file_operation` | 6 | File Classifier, Batch Rename, Copy, Move, Delete, Find |
-| `ai_processing` | 3 | AI Classify, AI Summarize, AI Generate Name |
-| `tool` 🆕 | 5 | Shell Exec, Python REPL, Web Search, Fetch URL, Apply Edit |
+| `macos_system` | 10 | Desktop Clean, Download Organizer, Disk Cleaner, File Watcher, File Classifier, Batch Rename, Copy, Move, Delete, Find |
+| `ai_processing` | 4 | AI Classify, AI Summarize, AI Generate Name, **OCR** 🆕 |
+| `tool` | 5 | Shell Exec, Python REPL, Web Search, Fetch URL, Apply Edit |
+| `browser` | 3 | Browser Open, Browser Extract, Browser Automate |
 | `io` | 2 | File Input, File Output |
 | `logic` | 3 | Filter, Loop, Merge |
+| **Claude Cowork parity** 🆕 | **6** | **Screen Capture, Clipboard, Notification, App Lifecycle, OCR, MCP Server** |
+
+### Claude Cowork Parity (V0.2) 🆕
+
+| Capability | Status | Implementation |
+|------------|--------|---------------|
+| Screen capture & desktop view | ✅ | `ScreenCaptureNode` — full/selection/window screenshot |
+| Clipboard read/write | ✅ | `ClipboardNode` — pbpaste/pbcopy |
+| System notifications | ✅ | `NotificationNode` — macOS Notification Center |
+| macOS app lifecycle | ✅ | `AppLifecycleNode` — launch/quit/activate/list |
+| OCR / screen text recognition | ✅ | `OCRNode` — Vision + fusion-mlx |
+| MCP protocol server | ✅ | `MCPServer` — 15 tools for Claude Desktop/Code |
 
 ### Ecosystem Integration
 
@@ -159,6 +186,11 @@ fusion-desk system info
 | `download_organizer` | Archive, deduplicate, and clean Downloads |
 | `disk_cleaner` | Scan and clean cache, temp files, `.DS_Store` |
 | `file_watcher` | Watch directory for changes, trigger actions |
+| `screen_capture` 🆕 | Take desktop screenshot (full/selection/window) |
+| `clipboard` 🆕 | Read/write/clear system clipboard |
+| `notification` 🆕 | Send macOS Notification Center alerts |
+| `app_lifecycle` 🆕 | Launch/quit/activate/list macOS applications |
+| `ocr` 🆕 | Recognize text from images (Vision + MLX) |
 
 ### AI Processing Nodes (`→ fusion-mlx`)
 
@@ -250,17 +282,22 @@ pytest tests/ --cov=fusion_desk --cov-report=html
 - [x] Lazy import architecture (from Squish)
 - [x] Tool nodes: Shell, Python REPL, Web Search, Fetch URL, Apply Edit
 
-### V0.2 (Planned)
-- [ ] Custom visual workflow editor
-- [ ] Advanced scheduling (cron UI)
-- [ ] Batch report generation
-- [ ] AI workflow optimization
-- [ ] macOS native .app packaging
+### V0.2 ✅
+- [x] Enhanced scheduler (Cron UI, calendar view, task dependency, stats)
+- [x] AI workflow optimizer (bottleneck detection, auto-fix, fusion-mlx suggestions)
+- [x] Batch report generator (Markdown/HTML, multi-workflow summary)
+- [x] macOS native .app packaging script
+- [x] Screen capture (desktop screenshot with AI analysis)
+- [x] Clipboard integration (read/write/clear)
+- [x] System notifications (macOS Notification Center)
+- [x] macOS app lifecycle (launch/quit/activate/list)
+- [x] OCR text recognition (Vision + fusion-mlx)
+- [x] MCP server mode (15 tools for Claude Desktop/Code)
 
-### V0.3 (Future)
-- [ ] Industry-specific templates
-- [ ] Multi-agent orchestration
-- [ ] Cross-device collaboration
+### V0.3 ✅
+- [x] Industry-specific templates (design/dev/data/ops — 10 templates)
+- [x] Multi-agent orchestration (agent registration, task decomposition, parallel execution)
+- [x] Cross-device collaboration (WebSocket sync, device discovery, workflow sharing)
 
 ---
 
