@@ -35,6 +35,7 @@ from .nodes.ai import AIClassifyNode, AISummarizeNode, AIGenerateNameNode
 from .nodes.io import FileInputNode, FileOutputNode
 from .nodes.logic import FilterNode, LoopNode, MergeNode
 from .nodes.tools import ShellExecNode, PythonREPLNode, WebSearchNode, FetchURLNode, ApplyEditNode
+from .nodes.browser import BrowserClient, BrowserManager
 from .ai import FusionMLXClient, NLWorkflowGenerator
 from .templates import TemplateManager
 from .utils.logger import setup_logger
@@ -625,6 +626,119 @@ async def _async_system_clean(dry_run: bool):
         console.print_success("✅ 清理完成")
     else:
         console.print_info("💡 使用 --force 或 -f 执行实际清理")
+
+
+# ── 浏览器命令 ──
+
+@cli.group()
+def browser():
+    """内嵌浏览器管理：启动、打开、自动化。"""
+    pass
+
+
+@browser.command("start")
+@click.option("--build", "-b", is_flag=True, help="先构建再启动")
+def browser_start(build: bool):
+    """启动 Fusion 内嵌浏览器。"""
+    asyncio.run(_async_browser_start(build))
+
+
+async def _async_browser_start(build: bool):
+    console.print_header("🌐 Fusion 内嵌浏览器")
+
+    if build:
+        console.print_info("正在构建...")
+        if BrowserManager.build():
+            console.print_success("构建成功")
+        else:
+            console.print_error("构建失败")
+            return
+
+    if BrowserManager.launch():
+        console.print_success("✅ 浏览器已启动")
+        console.print_info("   支持 fusion:// 私有协议:")
+        console.print_info("   ├─ fusion://start/ — 起始页")
+        console.print_info("   ├─ fusion://kb/ — 知识库管理")
+        console.print_info("   ├─ fusion://model/ — 模型管理")
+        console.print_info("   └─ fusion://automation/ — 自动化工作流")
+    else:
+        console.print_error("启动失败，请先构建: fusion-desk browser build")
+
+
+@browser.command("build")
+def browser_build():
+    """构建 Fusion 内嵌浏览器。"""
+    asyncio.run(_async_browser_build())
+
+
+async def _async_browser_build():
+    console.print_header("🔨 构建 Fusion 内嵌浏览器")
+    console.print_info("正在编译 Swift 原生浏览器...")
+    if BrowserManager.build():
+        console.print_success("✅ 构建成功")
+    else:
+        console.print_error("❌ 构建失败")
+
+
+@browser.command("open")
+@click.argument("url")
+def browser_open(url: str):
+    """在浏览器中打开 URL。"""
+    asyncio.run(_async_browser_open(url))
+
+
+async def _async_browser_open(url: str):
+    client = BrowserClient()
+    try:
+        result = await client.open_url(url)
+        console.print_success(f"已打开: {url}")
+    except Exception as e:
+        console.print_error(f"打开失败: {e}")
+        console.print_info("请先启动浏览器: fusion-desk browser start")
+    finally:
+        await client.close()
+
+
+@browser.command("status")
+def browser_status():
+    """检查浏览器状态。"""
+    client = BrowserClient()
+    if client.is_running():
+        console.print_success("✅ 浏览器正在运行")
+    else:
+        console.print_warning("⚠️ 浏览器未运行")
+        console.print_info("启动: fusion-desk browser start")
+
+
+@browser.command("extract")
+@click.argument("url", required=False)
+@click.option("--to-file", "-o", default="", help="保存到文件")
+def browser_extract(url: str = "", to_file: str = ""):
+    """提取网页文本内容。"""
+    asyncio.run(_async_browser_extract(url, to_file))
+
+
+async def _async_browser_extract(url: str, to_file: str):
+    from .nodes.browser import BrowserExtractNode
+    from .engine import NodeConfig
+
+    node = BrowserExtractNode(config=NodeConfig(params={"url": url} if url else {}))
+    result = await node.execute({"url": url} if url else {})
+
+    if result.status == NodeStatus.SUCCESS:
+        text = result.data.get("text", "")
+        length = result.data.get("text_length", 0)
+        console.print_success(f"提取完成: {length} 字符")
+        if to_file:
+            Path(to_file).write_text(text, encoding="utf-8")
+            console.print_info(f"已保存到: {to_file}")
+        else:
+            click.echo()
+            click.echo(text[:2000])
+            if len(text) > 2000:
+                click.echo(f"\n... (共 {len(text)} 字符，使用 --to-file 保存完整内容)")
+    else:
+        console.print_error(f"提取失败: {result.error}")
 
 
 # ── 主入口 ──

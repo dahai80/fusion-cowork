@@ -79,6 +79,13 @@ NODE_NAME_ALIASES: dict[str, str] = {
     "下载网页": "fetch_url",
     "应用编辑": "apply_edit",
     "编辑文件": "apply_edit",
+    # 浏览器
+    "打开浏览器": "browser_open",
+    "浏览器打开": "browser_open",
+    "提取网页": "browser_extract",
+    "网页提取": "browser_extract",
+    "网页自动化": "browser_automate",
+    "浏览器自动化": "browser_automate",
 }
 
 # ── Lazy Import 注册表（吸纳自 Squish 的 __getattr__ 机制） ──
@@ -132,6 +139,12 @@ _LAZY_IMPORTS: dict[str, str] = {
     "WebSearchNode": "fusion_desk.nodes.tools",
     "FetchURLNode": "fusion_desk.nodes.tools",
     "ApplyEditNode": "fusion_desk.nodes.tools",
+    # 浏览器节点（新增）
+    "BrowserOpenNode": "fusion_desk.nodes.browser",
+    "BrowserExtractNode": "fusion_desk.nodes.browser",
+    "BrowserAutomateNode": "fusion_desk.nodes.browser",
+    "BrowserClient": "fusion_desk.nodes.browser",
+    "BrowserManager": "fusion_desk.nodes.browser",
     # AI 客户端
     "FusionMLXClient": "fusion_desk.ai",
     "KBClient": "fusion_desk.ai",

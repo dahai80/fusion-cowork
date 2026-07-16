@@ -31,3 +31,7 @@ build/
 
 # Fusion-Desk data
 .fusion-desk/
+
+# Swift build
+browser/.build/
+browser/.build.*/
