@@ -165,6 +165,14 @@ _LAZY_IMPORTS: dict[str, str] = {
     "CrossDeviceSync": "fusion_desk.server.sync",
     "Device": "fusion_desk.server.sync",
     "SyncMessage": "fusion_desk.server.sync",
+    # Claude Cowork 对标节点
+    "ScreenCaptureNode": "fusion_desk.nodes.macos",
+    "ClipboardNode": "fusion_desk.nodes.macos",
+    "NotificationNode": "fusion_desk.nodes.macos",
+    "AppLifecycleNode": "fusion_desk.nodes.macos",
+    "OCRNode": "fusion_desk.nodes.macos",
+    # MCP Server
+    "MCPServer": "fusion_desk.server.mcp_server",
     # AI 客户端
     "FusionMLXClient": "fusion_desk.ai",
     "KBClient": "fusion_desk.ai",

@@ -11,6 +11,11 @@ from .system_nodes import (
     FileMoveNode,
     FileDeleteNode,
     FileFindNode,
+    ScreenCaptureNode,
+    ClipboardNode,
+    NotificationNode,
+    AppLifecycleNode,
+    OCRNode,
 )
 
 __all__ = [
@@ -24,4 +29,9 @@ __all__ = [
     "FileMoveNode",
     "FileDeleteNode",
     "FileFindNode",
+    "ScreenCaptureNode",
+    "ClipboardNode",
+    "NotificationNode",
+    "AppLifecycleNode",
+    "OCRNode",
 ]
