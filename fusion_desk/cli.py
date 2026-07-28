@@ -31,6 +31,10 @@ from .nodes.macos import (
     FileBatchRenameNode, DiskCleanerNode, FileWatcherNode,
     FileCopyNode, FileMoveNode, FileDeleteNode, FileFindNode,
 )
+from .nodes.macos.input_nodes import (
+    MouseMoveNode, MouseClickNode, KeyboardTypeNode,
+    KeyboardShortcutNode, ComputerUseLoopNode,
+)
 from .nodes.ai import AIClassifyNode, AISummarizeNode, AIGenerateNameNode
 from .nodes.io import FileInputNode, FileOutputNode
 from .nodes.logic import FilterNode, LoopNode, MergeNode
@@ -1185,6 +1189,221 @@ def cdp_evaluate(script: str, host: str, port: int):
             click.echo(json.dumps(result.data["result"], indent=2, ensure_ascii=False)[:2000])
     else:
         console.print_error(result.summary)
+
+
+# ── Computer Use 命令 ──
+
+@cli.group("computer-use")
+def computer_use():
+    """Computer Use — 鼠标键盘控制 + AI 闭环。"""
+    pass
+
+
+@computer_use.command("move")
+@click.argument("x", type=int)
+@click.argument("y", type=int)
+@click.option("--duration", "-d", default=0, type=float, help="移动持续时间 (秒)")
+def cu_move(x: int, y: int, duration: float):
+    """移动鼠标到指定坐标。"""
+    node = MouseMoveNode(config=NodeConfig(params={"x": x, "y": y, "duration": duration}))
+    result = asyncio.run(node.execute({"x": x, "y": y}))
+    if result.status.value == "success":
+        console.print_success(result.summary)
+    else:
+        console.print_error(result.error or result.summary)
+
+
+@computer_use.command("click")
+@click.option("--x", type=int, default=None, help="X 坐标")
+@click.option("--y", type=int, default=None, help="Y 坐标")
+@click.option("--button", "-b", type=click.Choice(["left", "right", "middle"]), default="left")
+@click.option("--count", "-c", type=int, default=1, help="点击次数")
+def cu_click(x, y, button, count):
+    """鼠标点击。"""
+    params = {"button": button, "click_count": count}
+    if x is not None and y is not None:
+        params["x"] = x
+        params["y"] = y
+    node = MouseClickNode(config=NodeConfig(params=params))
+    result = asyncio.run(node.execute(params))
+    if result.status.value == "success":
+        console.print_success(result.summary)
+    else:
+        console.print_error(result.error or result.summary)
+
+
+@computer_use.command("type")
+@click.argument("text")
+@click.option("--delay", "-d", default=0, type=float, help="字符间延迟 (秒)")
+def cu_type(text: str, delay: float):
+    """键盘输入文本。"""
+    node = KeyboardTypeNode(config=NodeConfig(params={"text": text, "delay": delay}))
+    result = asyncio.run(node.execute({"text": text}))
+    if result.status.value == "success":
+        console.print_success(result.summary)
+    else:
+        console.print_error(result.error or result.summary)
+
+
+@computer_use.command("shortcut")
+@click.argument("key")
+@click.option("--modifiers", "-m", multiple=True, help="修饰键 (cmd/shift/ctrl/alt)")
+def cu_shortcut(key: str, modifiers):
+    """键盘快捷键。"""
+    node = KeyboardShortcutNode(config=NodeConfig(params={"key": key, "modifiers": list(modifiers)}))
+    result = asyncio.run(node.execute({"key": key}))
+    if result.status.value == "success":
+        console.print_success(result.summary)
+    else:
+        console.print_error(result.error or result.summary)
+
+
+@computer_use.command("run")
+@click.argument("task")
+@click.option("--max-steps", default=10, type=int, help="最大循环步数")
+@click.option("--step-delay", default=1.0, type=float, help="每步间隔 (秒)")
+@click.option("--model", default="default", help="fusion-mlx 模型名")
+def cu_run(task: str, max_steps: int, step_delay: float, model: str):
+    """执行 Computer Use 闭环任务。"""
+    node = ComputerUseLoopNode(config=NodeConfig(params={
+        "task": task, "max_steps": max_steps,
+        "step_delay": step_delay, "model": model,
+    }))
+    result = asyncio.run(node.execute({"task": task}))
+    if result.status.value == "success":
+        console.print_success(result.summary)
+        if result.data and result.data.get("actions"):
+            for a in result.data["actions"]:
+                click.echo(f"  step {a.get('step', '?')}: {a.get('action', '?')}")
+    else:
+        console.print_error(result.error or result.summary)
+
+
+# ── 远程控制命令 ──
+
+@cli.group("remote")
+def remote():
+    """远程控制 — WebSocket 接入 fusion-desk 会话。"""
+    pass
+
+
+@remote.command("serve")
+@click.option("--host", "-h", default="127.0.0.1", help="监听地址")
+@click.option("--port", "-p", default=9762, type=int, help="监听端口")
+@click.option("--token", "-t", default="", help="认证令牌 (空则无认证)")
+def remote_serve(host: str, port: int, token: str):
+    """启动远程控制服务。"""
+    from .server.remote import RemoteControlServer
+    server = RemoteControlServer(host=host, port=port, token=token or None)
+
+    async def _run():
+        await server.start()
+        console.print_success(f"远程控制服务已启动: ws://{host}:{port}/control")
+        if token:
+            console.print_info(f"认证令牌: {token}")
+        console.print_info("等待远程连接... (Ctrl+C 停止)")
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await server.stop()
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        console.print_info("远程控制服务已停止")
+
+
+@remote.command("connect")
+@click.argument("url", default="ws://127.0.0.1:9762/control")
+@click.option("--token", "-t", default="", help="认证令牌")
+def remote_connect(url: str, token: str):
+    """连接到远程 fusion-desk 实例。"""
+    from .server.remote import RemoteControlClient
+    client = RemoteControlClient(token=token or None)
+
+    async def _run():
+        await client.connect(url)
+        console.print_success(f"已连接: {url}")
+        try:
+            status = await client.get_status()
+            click.echo(json.dumps(status, indent=2, ensure_ascii=False))
+        finally:
+            await client.close()
+
+    try:
+        asyncio.run(_run())
+    except Exception as e:
+        console.print_error(f"连接失败: {e}")
+
+
+@remote.command("submit")
+@click.argument("workflow_file", type=click.Path(exists=True))
+@click.option("--url", default="ws://127.0.0.1:9762/control", help="远程服务地址")
+@click.option("--token", "-t", default="", help="认证令牌")
+def remote_submit(workflow_file: str, url: str, token: str):
+    """提交工作流到远程 fusion-desk 执行。"""
+    from .server.remote import RemoteControlClient
+    client = RemoteControlClient(token=token or None)
+
+    async def _run():
+        await client.connect(url)
+        try:
+            with open(workflow_file, "r", encoding="utf-8") as f:
+                workflow = json.load(f)
+            task_id = await client.submit_workflow(workflow)
+            console.print_success(f"已提交工作流: {task_id}")
+            click.echo(f"任务 ID: {task_id}")
+        finally:
+            await client.close()
+
+    try:
+        asyncio.run(_run())
+    except Exception as e:
+        console.print_error(f"提交失败: {e}")
+
+
+# ── Schema 结构化输出命令 ──
+
+@cli.group("schema")
+def schema():
+    """结构化输出 — JSON Schema 校验。"""
+    pass
+
+
+@schema.command("validate")
+@click.argument("data_file", type=click.Path(exists=True))
+@click.argument("schema_file", type=click.Path(exists=True))
+def schema_validate(data_file: str, schema_file: str):
+    """校验数据文件是否符合 schema。"""
+    from .engine.schema import OutputSchema
+    with open(data_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    with open(schema_file, "r", encoding="utf-8") as f:
+        schema = json.load(f)
+    valid = OutputSchema.validate(data, schema)
+    if valid:
+        console.print_success("✅ 数据符合 schema")
+    else:
+        console.print_error("❌ 数据不符合 schema")
+        errors = OutputSchema.validate_detailed(data, schema)
+        for err in errors:
+            click.echo(f"  - {err}")
+
+
+@schema.command("check")
+@click.argument("node_name")
+def schema_check(node_name: str):
+    """检查节点的输出 schema。"""
+    node_cls = NodeRegistry.get(node_name)
+    if not node_cls:
+        console.print_error(f"未知节点: {node_name}")
+        return
+    node = node_cls()
+    params_schema = node.get_params_schema()
+    click.echo(json.dumps(params_schema, indent=2, ensure_ascii=False))
 
 
 # ── Benchmark ──

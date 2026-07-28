@@ -196,6 +196,13 @@ class NodeResult:
     execution_time: float = 0.0
     output_files: List[str] = field(default_factory=list)
     summary: str = ""
+    schema: Optional[Dict[str, Any]] = None
+
+    def validate(self) -> bool:
+        if self.schema and self.data is not None:
+            from .schema import OutputSchema
+            return OutputSchema.validate(self.data, self.schema)
+        return True
 
 
 class BaseNode(ABC):

@@ -26,6 +26,7 @@ from .permission import PermissionManager, PermissionLevel, Permission
 from .hooks import HookManager, HookEvent, HookContext
 from .session import Session, SessionStore
 from .events import EventType, WorkflowEvent, EventEmitter
+from .schema import OutputSchema
 
 __all__ = [
     # 节点
@@ -49,4 +50,6 @@ __all__ = [
     "Session", "SessionStore",
     # V0.3 事件
     "EventType", "WorkflowEvent", "EventEmitter",
+    # M4 结构化输出
+    "OutputSchema",
 ]

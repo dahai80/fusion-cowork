@@ -1,4 +1,4 @@
-"""M4 里程碑测试 — DeskRPC事件/会话/权限、CLI权限命令。"""
+"""M4 里程碑测试 — DeskRPC事件/会话/权限 + Computer Use + 远程控制 + 结构化输出。"""
 import asyncio
 import json
 import os
@@ -6,12 +6,13 @@ import tempfile
 import time
 
 import pytest
+from unittest.mock import MagicMock, AsyncMock, patch
 
 from fusion_desk.engine.permission import PermissionManager, PermissionLevel
 from fusion_desk.engine.hooks import HookManager, HookEvent
 from fusion_desk.engine.session import Session, SessionStore
 from fusion_desk.engine.events import EventType, WorkflowEvent, EventEmitter
-from fusion_desk.engine.node import BaseNode, NodeConfig, NodeResult, NodeStatus
+from fusion_desk.engine.node import BaseNode, NodeConfig, NodeResult, NodeStatus, NodeRegistry
 from fusion_desk.engine.workflow import Workflow, WorkflowEngine, WorkflowStatus
 from fusion_desk.server.desk_rpc import DeskRPCServer
 
@@ -193,3 +194,258 @@ class TestCLIPermission:
         runner = CliRunner()
         result = runner.invoke(cli, ["permission", "list"])
         assert result.exit_code == 0
+
+
+# ── M4: Computer Use 输入节点 ──
+
+from fusion_desk.nodes.macos.input_nodes import (
+    MouseMoveNode, MouseClickNode, KeyboardTypeNode,
+    KeyboardShortcutNode, ComputerUseLoopNode,
+    _KEY_MAP, _MOD_MAP,
+)
+from fusion_desk.engine.schema import OutputSchema
+
+
+class TestInputNodeRegistration:
+    def test_mouse_move_registered(self):
+        assert NodeRegistry.get("mouse_move") is MouseMoveNode
+
+    def test_mouse_click_registered(self):
+        assert NodeRegistry.get("mouse_click") is MouseClickNode
+
+    def test_keyboard_type_registered(self):
+        assert NodeRegistry.get("keyboard_type") is KeyboardTypeNode
+
+    def test_keyboard_shortcut_registered(self):
+        assert NodeRegistry.get("keyboard_shortcut") is KeyboardShortcutNode
+
+    def test_computer_use_loop_registered(self):
+        assert NodeRegistry.get("computer_use_loop") is ComputerUseLoopNode
+
+
+class TestInputNodeSchemas:
+    def test_mouse_move_schema(self):
+        schema = MouseMoveNode().get_params_schema()
+        assert "x" in schema["properties"]
+        assert "y" in schema["required"]
+
+    def test_mouse_click_schema(self):
+        schema = MouseClickNode().get_params_schema()
+        assert "button" in schema["properties"]
+
+    def test_keyboard_type_schema(self):
+        schema = KeyboardTypeNode().get_params_schema()
+        assert "text" in schema["required"]
+
+    def test_keyboard_shortcut_schema(self):
+        schema = KeyboardShortcutNode().get_params_schema()
+        assert "key" in schema["required"]
+        assert "modifiers" in schema["properties"]
+
+    def test_computer_use_loop_schema(self):
+        schema = ComputerUseLoopNode().get_params_schema()
+        assert "task" in schema["required"]
+
+
+class TestMouseMoveNode:
+    @pytest.mark.asyncio
+    @patch("fusion_desk.nodes.macos.input_nodes._try_pyobjc_move", return_value=True)
+    async def test_move_success(self, mock_move):
+        node = MouseMoveNode(config=NodeConfig(params={"x": 100, "y": 200}))
+        result = await node.execute({})
+        assert result.status == NodeStatus.SUCCESS
+        assert result.data["x"] == 100
+
+    @pytest.mark.asyncio
+    @patch("fusion_desk.nodes.macos.input_nodes._try_pyobjc_move", return_value=False)
+    @patch("fusion_desk.nodes.macos.input_nodes._applescript_move", return_value=(0, ""))
+    async def test_move_applescript_fallback(self, mock_as, mock_pyobjc):
+        node = MouseMoveNode(config=NodeConfig(params={"x": 50, "y": 80}))
+        result = await node.execute({})
+        assert result.status == NodeStatus.SUCCESS
+
+
+class TestKeyboardTypeNode:
+    @pytest.mark.asyncio
+    @patch("fusion_desk.nodes.macos.input_nodes._try_pyobjc_type", return_value=True)
+    async def test_type_success(self, mock_type):
+        node = KeyboardTypeNode(config=NodeConfig(params={"text": "hello"}))
+        result = await node.execute({})
+        assert result.status == NodeStatus.SUCCESS
+        assert result.data["char_count"] == 5
+
+    @pytest.mark.asyncio
+    async def test_type_empty_text(self):
+        node = KeyboardTypeNode(config=NodeConfig(params={"text": ""}))
+        result = await node.execute({})
+        assert result.status == NodeStatus.FAILED
+
+
+class TestKeyboardShortcutNode:
+    @pytest.mark.asyncio
+    @patch("fusion_desk.nodes.macos.input_nodes._applescript_key_code", return_value=(0, ""))
+    async def test_shortcut_named_key(self, mock_kc):
+        node = KeyboardShortcutNode(config=NodeConfig(params={"key": "enter", "modifiers": ["cmd"]}))
+        result = await node.execute({})
+        assert result.status == NodeStatus.SUCCESS
+
+    @pytest.mark.asyncio
+    @patch("fusion_desk.nodes.macos.input_nodes._applescript_key_code", return_value=(1, "err"))
+    async def test_shortcut_failed(self, mock_kc):
+        node = KeyboardShortcutNode(config=NodeConfig(params={"key": "enter"}))
+        result = await node.execute({})
+        assert result.status == NodeStatus.FAILED
+
+
+class TestKeyMap:
+    def test_key_map(self):
+        assert _KEY_MAP["enter"] == 36
+        assert _KEY_MAP["space"] == 49
+
+    def test_mod_map(self):
+        assert _MOD_MAP["cmd"] == "command"
+
+
+# ── M4: 远程控制 ──
+
+from fusion_desk.server.remote import RemoteControlServer, RemoteControlClient
+
+
+class TestRemoteControlServer:
+    def test_init(self):
+        server = RemoteControlServer(host="0.0.0.0", port=9999, token="t1")
+        assert server.host == "0.0.0.0"
+        assert server.port == 9999
+        assert server.token == "t1"
+
+    def test_cancel_task(self):
+        result = RemoteControlServer()._cancel_task("abc")
+        assert result["task_id"] == "abc"
+
+    @pytest.mark.asyncio
+    async def test_auth_check(self):
+        server = RemoteControlServer(token="secret")
+        resp = await server._process_request("c1", {"method": "status", "id": 1})
+        assert "error" in resp
+
+    @pytest.mark.asyncio
+    async def test_auth_pass(self):
+        server = RemoteControlServer(token="secret")
+        resp = await server._process_request("c1", {"method": "status", "id": 1, "token": "secret"})
+        assert "result" in resp
+
+    @pytest.mark.asyncio
+    async def test_unknown_method(self):
+        server = RemoteControlServer()
+        resp = await server._process_request("c1", {"method": "nope", "id": 1})
+        assert "error" in resp
+
+
+class TestRemoteControlClient:
+    def test_init(self):
+        client = RemoteControlClient(token="tok")
+        assert client.token == "tok"
+
+    @pytest.mark.asyncio
+    async def test_request_not_connected(self):
+        client = RemoteControlClient()
+        with pytest.raises(RuntimeError, match="Not connected"):
+            await client._request("status")
+
+
+# ── M4: 结构化输出 ──
+
+class TestOutputSchema:
+    def test_validate_object_pass(self):
+        schema = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
+        assert OutputSchema.validate({"name": "test"}, schema) is True
+
+    def test_validate_object_missing_required(self):
+        schema = {"type": "object", "required": ["name"]}
+        assert OutputSchema.validate({}, schema) is False
+
+    def test_validate_wrong_type(self):
+        assert OutputSchema.validate(123, {"type": "string"}) is False
+
+    def test_validate_array(self):
+        schema = {"type": "array", "items": {"type": "integer"}}
+        assert OutputSchema.validate([1, 2], schema) is True
+        assert OutputSchema.validate([1, "x"], schema) is False
+
+    def test_validate_no_type(self):
+        assert OutputSchema.validate({"any": "data"}, {}) is True
+
+    def test_validate_nested(self):
+        schema = {"type": "object", "properties": {"u": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}}}
+        assert OutputSchema.validate({"u": {"id": 1}}, schema) is True
+        assert OutputSchema.validate({"u": {"id": "bad"}}, schema) is False
+
+    def test_validate_detailed_errors(self):
+        schema = {"type": "object", "required": ["name"]}
+        errors = OutputSchema.validate_detailed({}, schema)
+        assert len(errors) > 0
+
+
+class TestNodeResultValidate:
+    def test_no_schema(self):
+        assert NodeResult(status=NodeStatus.SUCCESS, data={"x": 1}).validate() is True
+
+    def test_schema_pass(self):
+        schema = {"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]}
+        assert NodeResult(status=NodeStatus.SUCCESS, data={"x": 1}, schema=schema).validate() is True
+
+    def test_schema_fail(self):
+        schema = {"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]}
+        assert NodeResult(status=NodeStatus.SUCCESS, data={"x": "bad"}, schema=schema).validate() is False
+
+
+# ── M4: CLI 命令 ──
+
+class TestCLICommandsM4:
+    def test_computer_use_group(self):
+        from click.testing import CliRunner
+        from fusion_desk.cli import cli
+        result = CliRunner().invoke(cli, ["computer-use", "--help"])
+        assert result.exit_code == 0
+        assert "move" in result.output
+
+    def test_remote_group(self):
+        from click.testing import CliRunner
+        from fusion_desk.cli import cli
+        result = CliRunner().invoke(cli, ["remote", "--help"])
+        assert result.exit_code == 0
+        assert "serve" in result.output
+
+    def test_schema_group(self):
+        from click.testing import CliRunner
+        from fusion_desk.cli import cli
+        result = CliRunner().invoke(cli, ["schema", "--help"])
+        assert result.exit_code == 0
+        assert "validate" in result.output
+
+    def test_schema_check_node(self):
+        from click.testing import CliRunner
+        from fusion_desk.cli import cli
+        result = CliRunner().invoke(cli, ["schema", "check", "mouse_move"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "x" in data.get("properties", {})
+
+
+class TestLazyImportsM4:
+    def test_mouse_move_lazy(self):
+        from fusion_desk import MouseMoveNode
+        assert MouseMoveNode is not None
+
+    def test_remote_server_lazy(self):
+        from fusion_desk import RemoteControlServer
+        assert RemoteControlServer is not None
+
+    def test_output_schema_lazy(self):
+        from fusion_desk import OutputSchema
+        assert OutputSchema is not None
+
+    def test_node_name_aliases_m4(self):
+        from fusion_desk import NODE_NAME_ALIASES
+        assert NODE_NAME_ALIASES.get("鼠标移动") == "mouse_move"
+        assert NODE_NAME_ALIASES.get("Computer Use") == "computer_use_loop"

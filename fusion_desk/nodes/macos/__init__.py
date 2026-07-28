@@ -17,6 +17,13 @@ from .system_nodes import (
     AppLifecycleNode,
     OCRNode,
 )
+from .input_nodes import (
+    MouseMoveNode,
+    MouseClickNode,
+    KeyboardTypeNode,
+    KeyboardShortcutNode,
+    ComputerUseLoopNode,
+)
 
 __all__ = [
     "DesktopCleanNode",
@@ -34,4 +41,9 @@ __all__ = [
     "NotificationNode",
     "AppLifecycleNode",
     "OCRNode",
+    "MouseMoveNode",
+    "MouseClickNode",
+    "KeyboardTypeNode",
+    "KeyboardShortcutNode",
+    "ComputerUseLoopNode",
 ]

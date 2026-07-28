@@ -185,18 +185,18 @@ fusion-desk cdp evaluate "document.title"
 └─────────────────────────────────────────────────────┘
 ```
 
-### Node Types (28 nodes built-in)
+### Node Types (33 nodes built-in)
 
 | Category | Count | Nodes |
 |----------|-------|-------|
-| `macos_system` | 10 | Desktop Clean, Download Organizer, Disk Cleaner, File Watcher, File Classifier, Batch Rename, Copy, Move, Delete, Find |
+| `macos_system` | 15 | Desktop Clean, Download Organizer, Disk Cleaner, File Watcher, File Classifier, Batch Rename, Copy, Move, Delete, Find, **Mouse Move, Mouse Click, Keyboard Type, Keyboard Shortcut, Computer Use Loop** 🆕 |
 | `ai_processing` | 4 | AI Classify, AI Summarize, AI Generate Name, **OCR** 🆕 |
 | `tool` | 5 | Shell Exec, Python REPL, Web Search, Fetch URL, Apply Edit |
 | `browser` | 3 | Browser Open, Browser Extract, Browser Automate |
-| `cdp` 🆕 | 10 | CDP Navigate, Snapshot, Click, Fill, Fill Form, Screenshot, Evaluate, Emulate, Network, Console |
+| `cdp` | 10 | CDP Navigate, Snapshot, Click, Fill, Fill Form, Screenshot, Evaluate, Emulate, Network, Console |
 | `io` | 2 | File Input, File Output |
 | `logic` | 3 | Filter, Loop, Merge |
-| **Claude Cowork parity** 🆕 | **6** | **Screen Capture, Clipboard, Notification, App Lifecycle, OCR, MCP Server** |
+| **Claude Cowork parity** | **6** | **Screen Capture, Clipboard, Notification, App Lifecycle, OCR, MCP Server** |
 
 ### Claude Cowork Parity (V0.2) 🆕
 
@@ -316,6 +316,64 @@ Skills are high-level shortcuts that map to existing nodes:
 
 MCP tools `skill_list` and `skill_run` are available for Claude Desktop/Code integration.
 
+### Computer Use Nodes 🆕 (M4)
+
+Mouse/keyboard control + AI loop for autonomous desktop operation:
+
+| Node | Description |
+|------|-------------|
+| `mouse_move` | Move mouse to (x, y) coordinates |
+| `mouse_click` | Click (left/right/double) at position |
+| `keyboard_type` | Type text via keyboard |
+| `keyboard_shortcut` | Press key combo (Cmd+C, etc.) |
+| `computer_use_loop` | Screenshot → AI analyze → act → repeat loop |
+
+```bash
+# Move mouse
+fusion-desk computer-use move 500 300
+
+# Click
+fusion-desk computer-use click --x 500 --y 300 --button left
+
+# Type text
+fusion-desk computer-use type "Hello World"
+
+# Keyboard shortcut
+fusion-desk computer-use shortcut c --modifiers cmd
+
+# AI-powered Computer Use loop
+fusion-desk computer-use run "打开 Safari 并搜索天气" --max-steps 10
+```
+
+### Remote Control 🆕 (M4)
+
+WebSocket-based remote control for external clients:
+
+```bash
+# Start remote server
+fusion-desk remote serve --port 9762 --token mytoken
+
+# Connect from another machine
+fusion-desk remote connect ws://host:9762/control --token mytoken
+
+# Submit workflow remotely
+fusion-desk remote submit workflow.json --url ws://host:9762/control
+```
+
+### Structured Output 🆕 (M4)
+
+JSON Schema validation for node outputs:
+
+```bash
+# Validate data against schema
+fusion-desk schema validate data.json schema.json
+
+# Check node output schema
+fusion-desk schema check mouse_move
+```
+
+NodeResult now supports `schema` field and `validate()` method for automatic output validation.
+
 ---
 
 ## 📝 Workflow Examples
@@ -411,7 +469,15 @@ pytest tests/ --cov=fusion_desk --cov-report=html
 - [x] DeskRPC event/session/permission handlers (9 new methods)
 - [x] CLI permission commands (`fusion-desk permission level/approve/deny/list`)
 
-### V0.5 (Planned)
+### V0.5 ✅
+- [x] Computer Use nodes (MouseMove, MouseClick, KeyboardType, KeyboardShortcut, ComputerUseLoop)
+- [x] pyobjc + AppleScript dual-backend for mouse/keyboard control
+- [x] AI-powered Computer Use loop (screenshot → analyze → act → repeat)
+- [x] Remote control server/client (WebSocket, auth token, workflow submission)
+- [x] Structured output schema (OutputSchema + NodeResult.validate)
+- [x] CLI commands: computer-use move/click/type/shortcut/run, remote serve/connect/submit, schema validate/check
+
+### V0.6 (Planned)
 - [ ] Visual workflow editor (Fusion-Studio GUI)
 - [ ] Plugin system (3rd-party node packages)
 - [ ] Cloud backup & restore (optional, encrypted)

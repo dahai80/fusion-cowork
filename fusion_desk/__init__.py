@@ -97,6 +97,12 @@ NODE_NAME_ALIASES: dict[str, str] = {
     "CDP设备模拟": "cdp_emulate",
     "CDP网络监控": "cdp_network",
     "CDP控制台": "cdp_console",
+    # M4 Computer Use
+    "鼠标移动": "mouse_move",
+    "鼠标点击": "mouse_click",
+    "键盘输入": "keyboard_type",
+    "键盘快捷键": "keyboard_shortcut",
+    "Computer Use": "computer_use_loop",
 }
 
 # ── Lazy Import 注册表（吸纳自 Squish 的 __getattr__ 机制） ──
@@ -210,6 +216,17 @@ _LAZY_IMPORTS: dict[str, str] = {
     "CDPEmulateNode": "fusion_desk.nodes.browser",
     "CDPNetworkNode": "fusion_desk.nodes.browser",
     "CDPConsoleNode": "fusion_desk.nodes.browser",
+    # M4 Computer Use 节点
+    "MouseMoveNode": "fusion_desk.nodes.macos",
+    "MouseClickNode": "fusion_desk.nodes.macos",
+    "KeyboardTypeNode": "fusion_desk.nodes.macos",
+    "KeyboardShortcutNode": "fusion_desk.nodes.macos",
+    "ComputerUseLoopNode": "fusion_desk.nodes.macos",
+    # M4 远程控制
+    "RemoteControlServer": "fusion_desk.server.remote",
+    "RemoteControlClient": "fusion_desk.server.remote",
+    # M4 结构化输出
+    "OutputSchema": "fusion_desk.engine.schema",
 }
 
 _lazy_cache: dict[str, object] = {}
