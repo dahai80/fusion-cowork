@@ -86,6 +86,17 @@ NODE_NAME_ALIASES: dict[str, str] = {
     "网页提取": "browser_extract",
     "网页自动化": "browser_automate",
     "浏览器自动化": "browser_automate",
+    # Chrome CDP
+    "CDP导航": "cdp_navigate",
+    "CDP快照": "cdp_snapshot",
+    "CDP点击": "cdp_click",
+    "CDP填写": "cdp_fill",
+    "CDP批量填写": "cdp_fill_form",
+    "CDP截图": "cdp_screenshot",
+    "CDP执行JS": "cdp_evaluate",
+    "CDP设备模拟": "cdp_emulate",
+    "CDP网络监控": "cdp_network",
+    "CDP控制台": "cdp_console",
 }
 
 # ── Lazy Import 注册表（吸纳自 Squish 的 __getattr__ 机制） ──
@@ -179,6 +190,26 @@ _LAZY_IMPORTS: dict[str, str] = {
     "NLWorkflowGenerator": "fusion_desk.ai",
     # 模板
     "TemplateManager": "fusion_desk.templates",
+    # M3 插件系统
+    "PluginManifest": "fusion_desk.plugins.manifest",
+    "PluginLoader": "fusion_desk.plugins.loader",
+    # M3 技能机制
+    "Skill": "fusion_desk.skills.registry",
+    "SkillRegistry": "fusion_desk.skills.registry",
+    "register_builtin_skills": "fusion_desk.skills.builtin",
+    "BUILTIN_SKILLS": "fusion_desk.skills.builtin",
+    # M3 Chrome CDP
+    "CDPClient": "fusion_desk.nodes.browser",
+    "CDPNavigateNode": "fusion_desk.nodes.browser",
+    "CDPSnapshotNode": "fusion_desk.nodes.browser",
+    "CDPClickNode": "fusion_desk.nodes.browser",
+    "CDPFillNode": "fusion_desk.nodes.browser",
+    "CDPFillFormNode": "fusion_desk.nodes.browser",
+    "CDPScreenshotNode": "fusion_desk.nodes.browser",
+    "CDPEvaluateNode": "fusion_desk.nodes.browser",
+    "CDPEmulateNode": "fusion_desk.nodes.browser",
+    "CDPNetworkNode": "fusion_desk.nodes.browser",
+    "CDPConsoleNode": "fusion_desk.nodes.browser",
 }
 
 _lazy_cache: dict[str, object] = {}

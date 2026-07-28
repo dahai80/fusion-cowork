@@ -932,6 +932,263 @@ def permission_list():
     console.print_result(json.dumps(data, indent=2, ensure_ascii=False))
 
 
+# ── 插件管理命令 ──
+
+@cli.group("plugin")
+def plugin():
+    """插件管理 — 发现/安装/加载/卸载插件。"""
+    pass
+
+
+@plugin.command("list")
+def plugin_list():
+    """列出已发现和已加载的插件。"""
+    from .plugins import PluginLoader
+    loader = PluginLoader()
+    discovered = loader.discover()
+    if not discovered:
+        console.print_info("没有发现插件")
+        console.print_info("插件目录: ~/.fusion-desk/plugins/")
+        return
+    console.print_header(f"插件列表 ({len(discovered)} 个)")
+    rows = []
+    for name, manifest in discovered.items():
+        loaded = "✅" if name in loader._loaded else "⏸️"
+        nodes = ", ".join(manifest.nodes[:3])
+        if len(manifest.nodes) > 3:
+            nodes += f" +{len(manifest.nodes) - 3}"
+        rows.append([name, manifest.version, loaded, manifest.author or "-", nodes])
+    console.print_table(["名称", "版本", "状态", "作者", "节点"], rows)
+
+
+@plugin.command("install")
+@click.argument("path", type=click.Path(exists=True))
+def plugin_install(path: str):
+    """从目录或 zip 安装插件。"""
+    from .plugins import PluginLoader
+    loader = PluginLoader()
+    try:
+        manifest = loader.install(path)
+        console.print_success(f"已安装插件: {manifest.name} v{manifest.version}")
+        console.print_info(f"节点: {', '.join(manifest.nodes)}")
+    except Exception as e:
+        console.print_error(f"安装失败: {e}")
+
+
+@plugin.command("uninstall")
+@click.argument("name")
+@click.confirmation_option(prompt="确认卸载该插件?")
+def plugin_uninstall(name: str):
+    """卸载插件。"""
+    from .plugins import PluginLoader
+    loader = PluginLoader()
+    try:
+        loader.uninstall(name)
+        console.print_success(f"已卸载插件: {name}")
+    except Exception as e:
+        console.print_error(f"卸载失败: {e}")
+
+
+@plugin.command("load")
+@click.argument("name")
+def plugin_load(name: str):
+    """加载插件（注册节点）。"""
+    from .plugins import PluginLoader
+    loader = PluginLoader()
+    try:
+        loader.load(name)
+        console.print_success(f"已加载插件: {name}")
+    except Exception as e:
+        console.print_error(f"加载失败: {e}")
+
+
+@plugin.command("unload")
+@click.argument("name")
+def plugin_unload(name: str):
+    """卸载插件（取消注册节点）。"""
+    from .plugins import PluginLoader
+    loader = PluginLoader()
+    try:
+        loader.unload(name)
+        console.print_success(f"已卸载插件节点: {name}")
+    except Exception as e:
+        console.print_error(f"卸载失败: {e}")
+
+
+# ── 技能命令 ──
+
+@cli.group("skill")
+def skill():
+    """技能管理 — 列出/搜索/执行技能。"""
+    pass
+
+
+def _get_skill_registry():
+    from .skills import SkillRegistry, register_builtin_skills
+    registry = SkillRegistry()
+    register_builtin_skills(registry)
+    return registry
+
+
+@skill.command("list")
+def skill_list():
+    """列出可用技能。"""
+    registry = _get_skill_registry()
+    skills = registry.list_skills()
+    if not skills:
+        console.print_info("没有可用技能")
+        return
+    console.print_header(f"技能列表 ({len(skills)} 个)")
+    rows = []
+    for s in skills:
+        aliases = ", ".join(s.aliases) if s.aliases else "-"
+        rows.append([s.name, s.description[:40], s.category or "-", aliases])
+    console.print_table(["名称", "描述", "分类", "别名"], rows)
+
+
+@skill.command("run")
+@click.argument("name")
+@click.option("--params", "-p", default="{}", help="参数 JSON")
+def skill_run(name: str, params: str):
+    """执行技能。"""
+    registry = _get_skill_registry()
+    try:
+        kwargs = json.loads(params) if params else {}
+    except json.JSONDecodeError as e:
+        console.print_error(f"参数 JSON 解析失败: {e}")
+        return
+    try:
+        result = asyncio.run(registry.execute(name, **kwargs))
+        console.print_success(f"技能执行成功: {name}")
+        if result:
+            click.echo(json.dumps(result, indent=2, ensure_ascii=False) if isinstance(result, (dict, list)) else str(result))
+    except Exception as e:
+        console.print_error(f"技能执行失败: {e}")
+
+
+@skill.command("search")
+@click.argument("query")
+def skill_search(query: str):
+    """搜索技能。"""
+    registry = _get_skill_registry()
+    results = registry.search(query)
+    if not results:
+        console.print_info(f"未找到匹配 '{query}' 的技能")
+        return
+    for s in results:
+        click.echo(f"  {s.name}: {s.description}")
+
+
+# ── CDP 命令 ──
+
+@cli.group("cdp")
+def cdp():
+    """Chrome DevTools Protocol — 远程控制 Chrome 浏览器。"""
+    pass
+
+
+@cdp.command("navigate")
+@click.argument("url")
+@click.option("--host", default="127.0.0.1", help="Chrome 远程调试地址")
+@click.option("--port", default=9222, type=int, help="Chrome 远程调试端口")
+def cdp_navigate(url: str, host: str, port: int):
+    """导航到指定 URL。"""
+    from .nodes.browser import CDPNavigateNode
+    from .engine import NodeConfig
+    node = CDPNavigateNode(config=NodeConfig(params={"url": url, "host": host, "port": port}))
+    result = asyncio.run(node.execute({"url": url}))
+    if result.status.value == "success":
+        console.print_success(result.summary)
+    else:
+        console.print_error(result.summary)
+
+
+@cdp.command("snapshot")
+@click.option("--host", default="127.0.0.1")
+@click.option("--port", default=9222, type=int)
+def cdp_snapshot(host: str, port: int):
+    """获取页面 a11y 快照。"""
+    from .nodes.browser import CDPSnapshotNode
+    from .engine import NodeConfig
+    node = CDPSnapshotNode(config=NodeConfig(params={"host": host, "port": port}))
+    result = asyncio.run(node.execute({}))
+    if result.status.value == "success":
+        console.print_success(result.summary)
+        if result.data.get("tree"):
+            click.echo(json.dumps(result.data["tree"], indent=2, ensure_ascii=False)[:3000])
+    else:
+        console.print_error(result.summary)
+
+
+@cdp.command("click")
+@click.argument("backend_node_id", type=int)
+@click.option("--host", default="127.0.0.1")
+@click.option("--port", default=9222, type=int)
+def cdp_click(backend_node_id: int, host: str, port: int):
+    """点击页面元素 (backendNodeId)。"""
+    from .nodes.browser import CDPClickNode
+    from .engine import NodeConfig
+    node = CDPClickNode(config=NodeConfig(params={"backend_node_id": backend_node_id, "host": host, "port": port}))
+    result = asyncio.run(node.execute({"backend_node_id": backend_node_id}))
+    if result.status.value == "success":
+        console.print_success(result.summary)
+    else:
+        console.print_error(result.summary)
+
+
+@cdp.command("fill")
+@click.option("--selector", "-s", required=True, help="CSS 选择器")
+@click.option("--value", "-v", required=True, help="填写值")
+@click.option("--host", default="127.0.0.1")
+@click.option("--port", default=9222, type=int)
+def cdp_fill(selector: str, value: str, host: str, port: int):
+    """填写表单字段。"""
+    from .nodes.browser import CDPFillNode
+    from .engine import NodeConfig
+    node = CDPFillNode(config=NodeConfig(params={"selector": selector, "value": value, "host": host, "port": port}))
+    result = asyncio.run(node.execute({"selector": selector, "value": value}))
+    if result.status.value == "success":
+        console.print_success(result.summary)
+    else:
+        console.print_error(result.summary)
+
+
+@cdp.command("screenshot")
+@click.option("--save", "-o", default="", help="保存路径")
+@click.option("--host", default="127.0.0.1")
+@click.option("--port", default=9222, type=int)
+def cdp_screenshot(save: str, host: str, port: int):
+    """截取页面截图。"""
+    from .nodes.browser import CDPScreenshotNode
+    from .engine import NodeConfig
+    node = CDPScreenshotNode(config=NodeConfig(params={"save_path": save, "host": host, "port": port}))
+    result = asyncio.run(node.execute({"save_path": save}))
+    if result.status.value == "success":
+        console.print_success(result.summary)
+    else:
+        console.print_error(result.summary)
+
+
+@cdp.command("evaluate")
+@click.argument("script")
+@click.option("--host", default="127.0.0.1")
+@click.option("--port", default=9222, type=int)
+def cdp_evaluate(script: str, host: str, port: int):
+    """在页面中执行 JavaScript。"""
+    from .nodes.browser import CDPEvaluateNode
+    from .engine import NodeConfig
+    node = CDPEvaluateNode(config=NodeConfig(params={"script": script, "host": host, "port": port}))
+    result = asyncio.run(node.execute({"script": script}))
+    if result.status.value == "success":
+        console.print_success(result.summary)
+        if result.data.get("result") is not None:
+            click.echo(json.dumps(result.data["result"], indent=2, ensure_ascii=False)[:2000])
+    else:
+        console.print_error(result.summary)
+
+
+# ── Benchmark ──
+
 @cli.group("benchmark")
 def benchmark():
     """功能对比与性能基准。"""

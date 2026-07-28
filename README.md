@@ -108,6 +108,25 @@ fusion-desk permission list
 # Benchmark — 功能对比报告
 fusion-desk benchmark report --format markdown|html|json [-o report.md]
 fusion-desk benchmark run --node file_input --node shell_exec --repeats 3
+
+# Plugin management (M3)
+fusion-desk plugin list
+fusion-desk plugin install /path/to/plugin
+fusion-desk plugin load <name>
+fusion-desk plugin uninstall <name>
+
+# Skill management (M3)
+fusion-desk skill list
+fusion-desk skill run /cleanup
+fusion-desk skill search "clean"
+
+# Chrome CDP — remote browser control (M3)
+fusion-desk cdp navigate https://example.com
+fusion-desk cdp snapshot
+fusion-desk cdp click 42
+fusion-desk cdp fill --selector "#search" --value "hello"
+fusion-desk cdp screenshot --save ~/Desktop/shot.png
+fusion-desk cdp evaluate "document.title"
 ```
 
 ---
@@ -174,6 +193,7 @@ fusion-desk benchmark run --node file_input --node shell_exec --repeats 3
 | `ai_processing` | 4 | AI Classify, AI Summarize, AI Generate Name, **OCR** 🆕 |
 | `tool` | 5 | Shell Exec, Python REPL, Web Search, Fetch URL, Apply Edit |
 | `browser` | 3 | Browser Open, Browser Extract, Browser Automate |
+| `cdp` 🆕 | 10 | CDP Navigate, Snapshot, Click, Fill, Fill Form, Screenshot, Evaluate, Emulate, Network, Console |
 | `io` | 2 | File Input, File Output |
 | `logic` | 3 | Filter, Loop, Merge |
 | **Claude Cowork parity** 🆕 | **6** | **Screen Capture, Clipboard, Notification, App Lifecycle, OCR, MCP Server** |
@@ -244,6 +264,57 @@ fusion-desk benchmark run --node file_input --node shell_exec --repeats 3
 | `filter` | Filter data by conditions (extension, size, date) |
 | `loop` | Batch process each item in a list |
 | `merge` | Merge data from multiple upstream nodes |
+
+### Chrome CDP Nodes 🆕 (M3)
+
+| Node | Description |
+|------|-------------|
+| `cdp_navigate` | Navigate Chrome to URL via CDP |
+| `cdp_snapshot` | Get page accessibility tree |
+| `cdp_click` | Click element by backendNodeId |
+| `cdp_fill` | Fill form field by CSS selector |
+| `cdp_fill_form` | Batch fill multiple form fields |
+| `cdp_screenshot` | Capture page screenshot (PNG) |
+| `cdp_evaluate` | Execute JavaScript in page |
+| `cdp_emulate` | Emulate device viewport |
+| `cdp_network` | Query network requests |
+| `cdp_console` | Query console messages |
+
+### Plugin System 🆕 (M3)
+
+Plugin system allows extending Fusion-Desk with custom nodes:
+
+```python
+# Plugin manifest (manifest.json)
+{
+    "name": "my_plugin",
+    "version": "1.0.0",
+    "description": "Custom nodes",
+    "nodes": ["my_custom_node"],
+    "entry_point": "plugin"
+}
+```
+
+```bash
+# Install from directory or zip
+fusion-desk plugin install /path/to/plugin_dir
+fusion-desk plugin install /path/to/plugin.zip
+```
+
+### Skill Mechanism 🆕 (M3)
+
+Skills are high-level shortcuts that map to existing nodes:
+
+| Skill | Alias | Node |
+|-------|-------|------|
+| `/cleanup` | 清理桌面 | `desktop_clean` |
+| `/classify` | AI分类 | `ai_classify` |
+| `/screenshot` | 截图 | `screen_capture` |
+| `/search` | 搜索 | `web_search` |
+| `/organize` | 下载整理 | `download_organizer` |
+| `/diskclean` | 磁盘清理 | `disk_cleaner` |
+
+MCP tools `skill_list` and `skill_run` are available for Claude Desktop/Code integration.
 
 ---
 

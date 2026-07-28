@@ -168,6 +168,28 @@ class MCPToolRegistry:
                     "required": ["template"],
                 },
             },
+            "skill_list": {
+                "name": "skill_list",
+                "description": "列出所有可用技能",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "category": {"type": "string", "description": "按分类筛选"},
+                    },
+                },
+            },
+            "skill_run": {
+                "name": "skill_run",
+                "description": "执行指定技能",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "技能名称"},
+                        "params": {"type": "object", "description": "技能参数"},
+                    },
+                    "required": ["name"],
+                },
+            },
         }
 
         self._node_map = {
@@ -185,6 +207,8 @@ class MCPToolRegistry:
             "summarize_documents": ("ai_summarize", lambda a: {"files": [], "source_path": a.get("path", "~/Desktop")}),
             "desktop_cleanup": ("desktop_clean", lambda a: {"dry_run": False}),
             "run_workflow": ("desktop_clean", lambda a: {"template": a.get("template", "")}),
+            "skill_list": ("__skill__", None),
+            "skill_run": ("__skill__", None),
         }
 
         logger.info(f"MCP 工具注册完成: {len(self._tools)} 个")
@@ -216,7 +240,29 @@ class MCPToolRegistry:
             }
 
     async def _execute_tool(self, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
-        """执行工具: 映射到 NodeRegistry 节点。"""
+        """执行工具: 映射到 NodeRegistry 节点 / SkillRegistry 技能。"""
+        if tool_name == "skill_list":
+            from ..skills import SkillRegistry, register_builtin_skills
+            registry = SkillRegistry()
+            register_builtin_skills(registry)
+            skills = registry.list_skills()
+            return {
+                "skills": [
+                    {"name": s.name, "description": s.description, "category": s.category}
+                    for s in skills
+                ],
+                "count": len(skills),
+            }
+
+        if tool_name == "skill_run":
+            from ..skills import SkillRegistry, register_builtin_skills
+            registry = SkillRegistry()
+            register_builtin_skills(registry)
+            skill_name = args.get("name", "")
+            skill_params = args.get("params", {})
+            result = await registry.execute(skill_name, **skill_params)
+            return {"status": "success", "result": result}
+
         mapping = self._node_map.get(tool_name)
         if not mapping:
             return {"error": f"未实现: {tool_name}"}

@@ -239,7 +239,7 @@ class TestE2EMCP:
         reg = MCPToolRegistry()
         reg.register_tools()
         tools = reg.list_tools()
-        assert len(tools) == 14
+        assert len(tools) == 16
 
     @pytest.mark.asyncio
     async def test_mcp_call_with_permission(self):
