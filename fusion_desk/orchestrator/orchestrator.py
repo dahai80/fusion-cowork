@@ -88,6 +88,86 @@ class AgentOrchestrator:
         self._agents: Dict[str, Agent] = {}
         self._plans: Dict[str, OrchestrationPlan] = {}
         self._executors: Dict[str, Callable] = {}
+        self._tasks: Dict[str, AgentTask] = {}
+
+    def register_default_agents(self) -> None:
+        """注册默认 Agent + 执行器。"""
+        from .executors import DEFAULT_EXECUTORS
+
+        default_agents = [
+            Agent(agent_id="planner", name="规划者", role=AgentRole.PLANNER,
+                  description="任务规划与分解", capabilities=["plan", "decompose"]),
+            Agent(agent_id="executor_node", name="节点执行者", role=AgentRole.EXECUTOR,
+                  description="执行 NodeRegistry 节点", capabilities=["node_exec"]),
+            Agent(agent_id="executor_workflow", name="工作流执行者", role=AgentRole.EXECUTOR,
+                  description="执行工作流模板", capabilities=["workflow_exec"]),
+            Agent(agent_id="executor_mlx", name="AI 执行者", role=AgentRole.EXECUTOR,
+                  description="调用 MLX AI 服务", capabilities=["mlx_chat", "mlx_classify", "mlx_summarize"]),
+            Agent(agent_id="executor_shell", name="命令执行者", role=AgentRole.EXECUTOR,
+                  description="执行 Shell 命令", capabilities=["shell_exec"]),
+            Agent(agent_id="analyzer", name="分析者", role=AgentRole.ANALYZER,
+                  description="结果分析与总结", capabilities=["analyze", "summarize"]),
+            Agent(agent_id="validator", name="验证者", role=AgentRole.VALIDATOR,
+                  description="结果验证与质量检查", capabilities=["validate", "check"]),
+        ]
+
+        for agent in default_agents:
+            self.register_agent(agent)
+
+        for agent_id, executor in DEFAULT_EXECUTORS.items():
+            self.register_executor(agent_id, executor)
+
+        # analyzer 和 validator 使用 MLX executor
+        self.register_executor("planner", DEFAULT_EXECUTORS["executor_mlx"])
+        self.register_executor("analyzer", DEFAULT_EXECUTORS["executor_mlx"])
+        self.register_executor("validator", DEFAULT_EXECUTORS["executor_mlx"])
+
+        logger.info(f"默认 Agent 注册完成: {len(self._agents)} 个 Agent, {len(self._executors)} 个执行器")
+
+    async def submit_task(self, description: str, input_data: Dict[str, Any] = None) -> str:
+        """提交简单任务 — 自动选择执行器。
+
+        Returns:
+            task_id
+        """
+        task_id = f"task_{uuid.uuid4().hex[:8]}"
+        task = AgentTask(
+            task_id=task_id,
+            agent_id="executor_node",
+            description=description,
+            input_data=input_data or {"prompt": description},
+            created_at=time.time(),
+        )
+        self._tasks[task_id] = task
+
+        # 后台执行
+        asyncio.create_task(self._run_submitted_task(task))
+
+        return task_id
+
+    async def _run_submitted_task(self, task: AgentTask) -> None:
+        """执行提交的任务。"""
+        task.status = "running"
+        task.started_at = time.time()
+
+        executor = self._executors.get(task.agent_id)
+        if executor:
+            try:
+                if asyncio.iscoroutinefunction(executor):
+                    result = await executor(task.input_data)
+                else:
+                    result = executor(task.input_data)
+                task.output_data = result if isinstance(result, dict) else {"result": result}
+                task.status = "completed"
+            except Exception as e:
+                task.error = str(e)
+                task.status = "failed"
+                logger.error(f"提交任务执行异常: {e}")
+        else:
+            task.output_data = {"status": "simulated", "input": task.input_data}
+            task.status = "completed"
+
+        task.completed_at = time.time()
 
     def register_agent(self, agent: Agent) -> None:
         """注册 Agent。"""
@@ -235,9 +315,21 @@ class AgentOrchestrator:
                 task.error = str(e)
                 return {"error": str(e)}
         else:
-            # 无执行器时模拟执行
+            # 无执行器时尝试默认执行器
+            from .executors import DEFAULT_EXECUTORS
+            fallback = DEFAULT_EXECUTORS.get("executor_node")
+            if fallback:
+                try:
+                    result = await fallback(task.input_data)
+                    return result if isinstance(result, dict) else {"result": result}
+                except Exception as e:
+                    task.status = "failed"
+                    task.error = str(e)
+                    return {"error": str(e)}
+            # 兜底: 标记为无执行器
+            logger.warning(f"Agent {task.agent_id} 无执行器，跳过")
             await asyncio.sleep(0.1)
-            return {"status": "simulated", "input": task.input_data}
+            return {"status": "no_executor", "input": task.input_data}
 
     # ── 编排模板 ──
 

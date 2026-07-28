@@ -22,6 +22,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Set
 
 from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus
+from .hooks import HookEvent
 
 logger = logging.getLogger(__name__)
 
@@ -338,10 +339,15 @@ class WorkflowEngine:
     - 进度回调
     """
 
-    def __init__(self):
+    def __init__(self, permission_manager=None, hook_manager=None,
+                 session_store=None, event_emitter=None):
         self._executions: Dict[str, WorkflowExecution] = {}
         self._cancel_flags: Dict[str, bool] = {}
         self._progress_callbacks: List[callable] = []
+        self._permission_manager = permission_manager
+        self._hook_manager = hook_manager
+        self._session_store = session_store
+        self._event_emitter = event_emitter
 
     def on_progress(self, callback: callable) -> None:
         """注册进度回调。"""
@@ -373,6 +379,29 @@ class WorkflowEngine:
         self._executions[exec_id] = execution
         self._cancel_flags[exec_id] = False
 
+        # Session: auto-create
+        session = None
+        if self._session_store:
+            from .session import Session
+            session = Session(
+                workflow_id=workflow.id,
+                workflow_name=workflow.name,
+                status="running",
+                initial_input=initial_input or {},
+                execution_id=exec_id,
+            )
+            self._session_store.save(session)
+            logger.debug(f"Session 自动创建: {session.id}")
+
+        # Event: WORKFLOW_START
+        if self._event_emitter:
+            from .events import EventType
+            self._event_emitter.create_event(
+                EventType.WORKFLOW_START,
+                execution_id=exec_id,
+                data={"workflow_id": workflow.id, "workflow_name": workflow.name},
+            )
+
         # 校验工作流
         errors = workflow.validate()
         if errors:
@@ -401,6 +430,18 @@ class WorkflowEngine:
             for sn in start_nodes:
                 passed_data[sn] = initial_input
 
+        # Hook: WORKFLOW_START
+        if self._hook_manager:
+            ctx = await self._hook_manager.fire(HookEvent.WORKFLOW_START, {
+                "execution_id": exec_id, "workflow_id": workflow.id,
+                "workflow_name": workflow.name,
+            })
+            if ctx and ctx.cancelled:
+                execution.status = WorkflowStatus.CANCELLED
+                execution.completed_at = time.time()
+                execution.total_time = execution.completed_at - execution.started_at
+                return execution
+
         try:
             for node_id in order:
                 # 检查取消
@@ -423,6 +464,56 @@ class WorkflowEngine:
                 if node_id in passed_data:
                     node_input.update(passed_data[node_id])
 
+                # Permission check
+                if self._permission_manager:
+                    allowed = self._permission_manager.check(node.name, node_input)
+                    if not allowed:
+                        logger.warning(f"节点 '{node.name}' 被权限系统拒绝执行")
+                        step = WorkflowStep(
+                            node_id=node_id,
+                            node_name=node.name,
+                            node_display_name=node.config.label or node.display_name,
+                            status=NodeStatus.DENIED,
+                            started_at=time.time(),
+                            input_data=node_input,
+                        )
+                        step.completed_at = time.time()
+                        step.execution_time = 0
+                        step.error = "权限拒绝: 需要手动审批"
+                        execution.steps.append(step)
+                        if not node.config.continue_on_error:
+                            execution.status = WorkflowStatus.FAILED
+                            execution.error = f"节点 '{node.name}' 权限拒绝"
+                            break
+                        continue
+
+                # Hook: PRE_NODE_EXECUTE
+                if self._hook_manager:
+                    hctx = await self._hook_manager.fire(HookEvent.PRE_NODE_EXECUTE, {
+                        "execution_id": exec_id, "node_id": node_id,
+                        "node_name": node.name, "input_data": node_input,
+                    })
+                    if hctx and hctx.cancelled:
+                        logger.info(f"节点 '{node.name}' 被Hook取消")
+                        step = WorkflowStep(
+                            node_id=node_id,
+                            node_name=node.name,
+                            node_display_name=node.config.label or node.display_name,
+                            status=NodeStatus.CANCELLED,
+                            started_at=time.time(),
+                            input_data=node_input,
+                        )
+                        step.completed_at = time.time()
+                        step.execution_time = 0
+                        step.error = "被Hook取消"
+                        execution.steps.append(step)
+                        if not node.config.continue_on_error:
+                            execution.status = WorkflowStatus.CANCELLED
+                            break
+                        continue
+                    if hctx and hctx.modified_data:
+                        node_input = hctx.modified_data.get("input_data", node_input)
+
                 # 创建步骤记录
                 step = WorkflowStep(
                     node_id=node_id,
@@ -437,6 +528,16 @@ class WorkflowEngine:
                 # 执行节点
                 try:
                     node.status = NodeStatus.RUNNING
+
+                    # Event: NODE_START
+                    if self._event_emitter:
+                        from .events import EventType
+                        self._event_emitter.create_event(
+                            EventType.NODE_START,
+                            execution_id=exec_id, node_id=node_id,
+                            node_name=node.name,
+                            data={"input_data": node_input},
+                        )
                     result = await node.execute(node_input)
                     node.status = result.status
                     node.result = result
@@ -448,6 +549,13 @@ class WorkflowEngine:
                     step.error = result.error
                     step.summary = result.summary
 
+                    # Hook: POST_NODE_EXECUTE
+                    if self._hook_manager:
+                        await self._hook_manager.fire(HookEvent.POST_NODE_EXECUTE, {
+                            "execution_id": exec_id, "node_id": node_id,
+                            "node_name": node.name, "result": result,
+                        })
+
                     # 缓存结果
                     node_results[node_id] = result
                     passed_data[node_id] = result.data or {}
@@ -455,7 +563,22 @@ class WorkflowEngine:
                     # 通知进度
                     self._notify_progress(execution, step)
 
+                    # Event: NODE_END
+                    if self._event_emitter:
+                        from .events import EventType
+                        self._event_emitter.create_event(
+                            EventType.NODE_END,
+                            execution_id=exec_id, node_id=node_id,
+                            node_name=node.name,
+                            data={"status": result.status.value},
+                        )
+
                     if result.status == NodeStatus.FAILED:
+                        if self._hook_manager:
+                            await self._hook_manager.fire(HookEvent.NODE_ERROR, {
+                                "execution_id": exec_id, "node_id": node_id,
+                                "node_name": node.name, "error": result.error,
+                            })
                         if not node.config.continue_on_error:
                             execution.status = WorkflowStatus.FAILED
                             execution.error = f"节点 '{node.config.label or node.name}' 执行失败: {result.error}"
@@ -470,6 +593,12 @@ class WorkflowEngine:
                     step.execution_time = step.completed_at - step.started_at
                     step.error = str(e)
                     logger.error(f"节点 '{node.config.label or node.name}' 执行异常: {e}")
+
+                    if self._hook_manager:
+                        await self._hook_manager.fire(HookEvent.NODE_ERROR, {
+                            "execution_id": exec_id, "node_id": node_id,
+                            "node_name": node.name, "error": str(e),
+                        })
 
                     self._notify_progress(execution, step)
 
@@ -492,6 +621,36 @@ class WorkflowEngine:
         finally:
             execution.completed_at = time.time()
             execution.total_time = execution.completed_at - execution.started_at
+
+            # Hook: WORKFLOW_END / WORKFLOW_CANCEL
+            if self._hook_manager:
+                if execution.status == WorkflowStatus.CANCELLED:
+                    await self._hook_manager.fire(HookEvent.WORKFLOW_CANCEL, {
+                        "execution_id": exec_id, "workflow_id": workflow.id,
+                    })
+                await self._hook_manager.fire(HookEvent.WORKFLOW_END, {
+                    "execution_id": exec_id, "workflow_id": workflow.id,
+                    "status": execution.status.value,
+                    "total_time": execution.total_time,
+                })
+
+            # Event: WORKFLOW_END
+            if self._event_emitter:
+                from .events import EventType
+                self._event_emitter.create_event(
+                    EventType.WORKFLOW_END,
+                    execution_id=exec_id,
+                    data={"status": execution.status.value, "total_time": execution.total_time},
+                )
+
+            # Session: auto-update
+            if session and self._session_store:
+                steps_data = [
+                    {"node_id": s.node_id, "status": s.status.value if hasattr(s.status, "value") else s.status}
+                    for s in execution.steps
+                ]
+                self._session_store.update_steps(session.id, steps_data)
+                self._session_store.update_status(session.id, execution.status.value, completed_at=time.time())
 
             # 生成摘要
             success_count = sum(1 for s in execution.steps if s.status == NodeStatus.SUCCESS)

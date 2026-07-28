@@ -160,6 +160,8 @@ class NodeStatus(Enum):
     SUCCESS = "success"
     FAILED = "failed"
     SKIPPED = "skipped"
+    DENIED = "denied"
+    CANCELLED = "cancelled"
 
 
 class NodeCategory(Enum):

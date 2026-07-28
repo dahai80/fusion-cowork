@@ -81,6 +81,10 @@ class RichConsole:
         click.echo(f"⚠️  {msg}")
 
     @staticmethod
+    def print_result(msg: str) -> None:
+        click.echo(msg)
+
+    @staticmethod
     def print_table(headers: List[str], rows: List[List[str]]) -> None:
         """打印简单表格。"""
         # 计算列宽
@@ -739,6 +743,237 @@ async def _async_browser_extract(url: str, to_file: str):
                 click.echo(f"\n... (共 {len(text)} 字符，使用 --to-file 保存完整内容)")
     else:
         console.print_error(f"提取失败: {result.error}")
+
+
+# ── MCP 服务 ──
+
+@cli.group("mcp")
+def mcp():
+    """MCP 服务管理 — 对接 Claude Desktop/Code。"""
+    pass
+
+
+@mcp.command("serve")
+@click.option("--transport", "-t", type=click.Choice(["stdio", "http"]), default="stdio", help="传输模式 (stdio/http)")
+@click.option("--host", "-h", default="127.0.0.1", help="HTTP 监听地址")
+@click.option("--port", "-p", default=9761, type=int, help="HTTP 监听端口")
+def mcp_serve(transport: str, host: str, port: int):
+    """启动 MCP 服务 — 供 Claude Code / Claude Desktop 调用。"""
+    from .server.mcp_server import MCPServer
+
+    server = MCPServer(host=host, port=port)
+    if transport == "stdio":
+        console.print_info("MCP 服务启动 (stdio 模式) — 等待 Claude Code 连接...")
+        asyncio.run(server.serve_stdio())
+    else:
+        console.print_info(f"MCP 服务启动 (HTTP 模式) — {host}:{port}")
+        asyncio.run(server.serve_http())
+
+
+# ── Desk RPC 服务 ──
+
+@cli.group("desk")
+def desk():
+    """Desk RPC 服务管理 — 对接 Fusion-Studio GUI。"""
+    pass
+
+
+@desk.command("rpc")
+@click.option("--sock", "-s", default="/tmp/fusion-desk.sock", help="UDS 路径")
+def desk_rpc(sock: str):
+    """启动 Desk RPC 服务 — 供 Fusion-Studio 调用。"""
+    from .server.desk_rpc import DeskRPCServer
+
+    rpc = DeskRPCServer(sock_path=sock)
+
+    async def _run():
+        await rpc.start()
+        console.print_success(f"Desk RPC 服务已启动: {sock}")
+        console.print_info("等待 Fusion-Studio 连接... (Ctrl+C 停止)")
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await rpc.stop()
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        console.print_info("Desk RPC 服务已停止")
+
+
+# ── Session 会话管理 ──
+
+@cli.group("session")
+def session():
+    """会话管理 — 查询/恢复/分叉工作流执行会话。"""
+    pass
+
+
+@session.command("list")
+@click.option("--status", "-s", default=None, help="按状态过滤 (created/running/completed/failed)")
+@click.option("--limit", "-n", default=20, help="返回数量")
+def session_list(status, limit):
+    """列出会话。"""
+    from fusion_desk.engine.session import SessionStore
+    store = SessionStore()
+    sessions = store.list_sessions(status=status, limit=limit)
+    if not sessions:
+        console.print_info("没有会话记录")
+        return
+    for s in sessions:
+        console.print_result(f"{s.id}  {s.status:10s}  {s.workflow_name:20s}  {s.created_at:.0f}")
+
+
+@session.command("show")
+@click.argument("session_id")
+def session_show(session_id):
+    """查看会话详情。"""
+    from fusion_desk.engine.session import SessionStore
+    store = SessionStore()
+    s = store.get(session_id)
+    if not s:
+        console.print_error(f"会话不存在: {session_id}")
+        return
+    console.print_result(json.dumps(store.to_dict(s), indent=2, ensure_ascii=False))
+
+
+@session.command("fork")
+@click.argument("session_id")
+@click.option("--from-step", "-f", default=0, type=int, help="从第几步开始分叉 (0=全部)")
+def session_fork(session_id, from_step):
+    """分叉会话。"""
+    from fusion_desk.engine.session import SessionStore
+    store = SessionStore()
+    forked = store.fork(session_id, from_step=from_step)
+    if not forked:
+        console.print_error(f"分叉失败: {session_id}")
+        return
+    console.print_result(f"已分叉: {forked.id} (from {session_id}, step={from_step})")
+
+
+@session.command("delete")
+@click.argument("session_id")
+@click.confirmation_option(prompt="确认删除该会话?")
+def session_delete(session_id):
+    """删除会话。"""
+    from fusion_desk.engine.session import SessionStore
+    store = SessionStore()
+    if store.delete(session_id):
+        console.print_result(f"已删除: {session_id}")
+    else:
+        console.print_error(f"删除失败: {session_id}")
+
+
+@session.command("cleanup")
+@click.option("--days", "-d", default=30, type=int, help="清理多少天前的过期会话")
+def session_cleanup(days):
+    """清理过期会话。"""
+    from fusion_desk.engine.session import SessionStore
+    store = SessionStore()
+    count = store.cleanup_expired(expire_days=days)
+    console.print_result(f"已清理 {count} 条过期会话")
+
+
+# ── Permission 权限管理 ──
+
+@cli.group("permission")
+def permission():
+    """权限管理 — 查看/审批/拒绝工具权限。"""
+    pass
+
+
+@permission.command("level")
+@click.argument("level", type=click.Choice(["manual", "auto", "plan", "bypass"]))
+def permission_level(level):
+    """设置权限级别。"""
+    from fusion_desk.engine.permission import PermissionManager, PermissionLevel
+    pm = PermissionManager()
+    pm.level = PermissionLevel(level)
+    pm.save()
+    console.print_result(f"权限级别已设为: {level}")
+
+
+@permission.command("approve")
+@click.argument("tool_name")
+@click.option("--scope", "-s", default="*", help="权限范围 (如 'command:git *')")
+def permission_approve(tool_name, scope):
+    """批准工具权限。"""
+    from fusion_desk.engine.permission import PermissionManager
+    pm = PermissionManager()
+    pm.load()
+    pm.approve(tool_name, scope=scope)
+    pm.save()
+    console.print_result(f"已批准: {tool_name} (scope={scope})")
+
+
+@permission.command("deny")
+@click.argument("tool_name")
+@click.option("--scope", "-s", default="*", help="权限范围")
+def permission_deny(tool_name, scope):
+    """拒绝工具权限。"""
+    from fusion_desk.engine.permission import PermissionManager
+    pm = PermissionManager()
+    pm.load()
+    pm.deny(tool_name, scope=scope)
+    pm.save()
+    console.print_result(f"已拒绝: {tool_name} (scope={scope})")
+
+
+@permission.command("list")
+def permission_list():
+    """列出权限规则。"""
+    from fusion_desk.engine.permission import PermissionManager
+    pm = PermissionManager()
+    pm.load()
+    data = pm.to_dict()
+    console.print_result(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+@cli.group("benchmark")
+def benchmark():
+    """功能对比与性能基准。"""
+    pass
+
+
+@benchmark.command("report")
+@click.option("--format", "fmt", default="markdown", type=click.Choice(["markdown", "html", "json"]))
+@click.option("--output", "-o", default="", help="输出文件路径")
+def benchmark_report(fmt, output):
+    """生成 Claude Cowork vs Fusion-Desk 对比报告。"""
+    from fusion_desk.benchmark import CapabilityMatrix, ReportRenderer
+    matrix = CapabilityMatrix()
+    renderer = ReportRenderer(matrix=matrix)
+    if fmt == "json":
+        content = matrix.to_json()
+    elif fmt == "html":
+        content = renderer.render_html()
+    else:
+        content = renderer.render_markdown()
+    if output:
+        with open(output, "w", encoding="utf-8") as f:
+            f.write(content)
+        console.print_result(f"报告已保存: {output}")
+    else:
+        click.echo(content)
+
+
+@benchmark.command("run")
+@click.option("--node", "-n", multiple=True, help="要测试的节点名 (可多次指定)")
+@click.option("--repeats", default=3, type=int, help="每个节点重复次数")
+def benchmark_run(node, repeats):
+    """运行节点性能基准。"""
+    import asyncio
+    from fusion_desk.benchmark import BenchmarkRunner
+    runner = BenchmarkRunner(repeats=repeats)
+    specs = [{"node": n, "params": {}} for n in node] if node else [
+        {"node": "file_input", "params": {"path": "~"}},
+        {"node": "shell_exec", "params": {"command": "echo hello", "timeout": 5}},
+    ]
+    asyncio.run(runner.run_nodes(specs))
+    click.echo(runner.to_json())
 
 
 # ── 主入口 ──

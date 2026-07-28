@@ -83,6 +83,31 @@ fusion-desk ai status
 
 # System information
 fusion-desk system info
+
+# Start MCP server (stdio mode for Claude Code)
+fusion-desk mcp serve
+
+# Start MCP server (HTTP mode)
+fusion-desk mcp serve --transport http --port 9761
+
+# Start Desk RPC server (for Fusion-Studio GUI)
+fusion-desk desk rpc
+
+# Session management
+fusion-desk session list
+fusion-desk session show <session_id>
+fusion-desk session fork <session_id> --from-step 2
+fusion-desk session cleanup --days 30
+
+# Permission management
+fusion-desk permission level <manual|auto|plan|bypass>
+fusion-desk permission approve <tool_name> --scope <scope>
+fusion-desk permission deny <tool_name> --scope <scope>
+fusion-desk permission list
+
+# Benchmark — 功能对比报告
+fusion-desk benchmark report --format markdown|html|json [-o report.md]
+fusion-desk benchmark run --node file_input --node shell_exec --repeats 3
 ```
 
 ---
@@ -298,6 +323,28 @@ pytest tests/ --cov=fusion_desk --cov-report=html
 - [x] Industry-specific templates (design/dev/data/ops — 10 templates)
 - [x] Multi-agent orchestration (agent registration, task decomposition, parallel execution)
 - [x] Cross-device collaboration (WebSocket sync, device discovery, workflow sharing)
+- [x] Permission model (MANUAL/AUTO/PLAN/BYPASS — 4-tier, high-risk node approval)
+- [x] Hook system (11 event types — pre/post node, workflow lifecycle, permission intercept)
+- [x] Session persistence (SQLite — save/resume/fork workflows, auto-cleanup)
+- [x] Streaming events (EventEmitter — pub/sub, SSE push, buffer replay)
+- [x] MCP stdio transport (JSON-RPC 2.0 over stdin/stdout for Claude Code)
+- [x] Desk RPC IPC (JSON-RPC 2.0 over Unix Domain Socket for Fusion-Studio)
+- [x] Agent real executors (Node/Workflow/MLX/Shell — replace simulated execution)
+
+### V0.4 ✅
+- [x] Benchmark module (CapabilityMatrix — 32 capabilities, parity scoring, category breakdown)
+- [x] BenchmarkRunner (node/workflow timing, warmup+repeats, summary stats)
+- [x] ReportRenderer (Markdown/HTML/JSON comparison reports — Cowork vs Desk)
+- [x] CLI benchmark commands (`fusion-desk benchmark report/run`)
+- [x] E2E integration tests (MCP full chain, DeskRPC full chain, Workflow+Permission+Hook+Session+Event)
+- [x] DeskRPC event/session/permission handlers (9 new methods)
+- [x] CLI permission commands (`fusion-desk permission level/approve/deny/list`)
+
+### V0.5 (Planned)
+- [ ] Visual workflow editor (Fusion-Studio GUI)
+- [ ] Plugin system (3rd-party node packages)
+- [ ] Cloud backup & restore (optional, encrypted)
+- [ ] Mobile companion app (remote trigger via WebSocket)
 
 ---
 
@@ -434,6 +481,31 @@ fusion-desk ai status
 
 # 查看系统信息
 fusion-desk system info
+
+# 启动 MCP 服务 (stdio 模式，供 Claude Code 调用)
+fusion-desk mcp serve
+
+# 启动 MCP 服务 (HTTP 模式)
+fusion-desk mcp serve --transport http --port 9761
+
+# 启动 Desk RPC 服务 (供 Fusion-Studio GUI 调用)
+fusion-desk desk rpc
+
+# 会话管理
+fusion-desk session list
+fusion-desk session show <session_id>
+fusion-desk session fork <session_id> --from-step 2
+fusion-desk session cleanup --days 30
+
+# 权限管理
+fusion-desk permission level <manual|auto|plan|bypass>
+fusion-desk permission approve <tool_name> --scope <scope>
+fusion-desk permission deny <tool_name> --scope <scope>
+fusion-desk permission list
+
+# 功能对比基准
+fusion-desk benchmark report --format markdown|html|json [-o report.md]
+fusion-desk benchmark run --node file_input --node shell_exec --repeats 3
 ```
 
 ---
@@ -608,10 +680,26 @@ pytest tests/ --cov=fusion_desk --cov-report=html
 - [ ] AI 流程自动优化
 - [ ] macOS 原生 .app 打包
 
-### V0.3 (远期)
-- [ ] 行业自动化模板
-- [ ] 多智能体联动
-- [ ] 跨设备协同
+### V0.3 ✅
+- [x] 行业自动化模板
+- [x] 多智能体联动
+- [x] 跨设备协同
+- [x] 权限模型 (MANUAL/AUTO/PLAN/BYPASS — 4级权限，高风险节点审批)
+- [x] Hook 系统 (11 种事件类型 — 节点执行前后、工作流生命周期、权限拦截)
+- [x] 会话持久化 (SQLite — 保存/恢复/分叉工作流，自动清理)
+- [x] 流式事件 (EventEmitter — 发布订阅、SSE 推送、缓冲回放)
+- [x] MCP stdio 传输 (stdin/stdout JSON-RPC 2.0，供 Claude Code 集成)
+- [x] Desk RPC IPC (Unix Domain Socket JSON-RPC 2.0，供 Fusion-Studio 集成)
+- [x] Agent 真实执行器 (Node/Workflow/MLX/Shell — 替换模拟执行)
+
+### V0.4 ✅
+- [x] 对比基准模块 (CapabilityMatrix — 32项能力、对等率、分类对比)
+- [x] BenchmarkRunner (节点/工作流计时、warmup+repeats、汇总统计)
+- [x] ReportRenderer (Markdown/HTML/JSON 对比报告 — Cowork vs Desk)
+- [x] CLI benchmark 命令 (`fusion-desk benchmark report/run`)
+- [x] 端到端集成测试 (MCP全链路、DeskRPC全链路、Workflow+Permission+Hook+Session+Event)
+- [x] DeskRPC 事件/会话/权限处理器 (9个新方法)
+- [x] CLI 权限命令 (`fusion-desk permission level/approve/deny/list`)
 
 ---
 
