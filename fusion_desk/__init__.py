@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __app_name__ = "Fusion-Desk"
 
 # ── 节点工具名称映射表（吸纳自 Squish tool_name_map.py） ──

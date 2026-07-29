@@ -1,6 +1,6 @@
 [project]
 name = "fusion-desk"
-version = "0.1.0"
+version = "0.1.1"
 description = "Fusion-Desk — macOS 原生、纯本地离线、零代码桌面智能自动化平台"
 authors = [
     { name = "Fusion-MLX Team" },
