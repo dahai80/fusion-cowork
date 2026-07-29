@@ -1,92 +1,92 @@
-# M3 实施计划：生态扩展（插件系统 + 技能机制 + Chrome CDP）
+# Fusion-Desk API → Fusion-Studio GUI 全量对齐方案
 
-## 目标
+## 现状分析
 
-PRD M3 阶段三项核心功能的完整实现，含测试和 CLI 集成。
+### fusion-desk 后端功能域 (25个功能点)
 
----
+| # | 功能域 | 后端API | CLI命令 | GUI现状 |
+|---|--------|---------|---------|---------|
+| 1 | 工作流引擎 | WorkflowEngine execute/cancel | workflow run/list | ❌ 无 |
+| 2 | 工作流DAG | Workflow构建/序列化 | 无 | ❌ 无(DAGCanvasView是通用) |
+| 3 | 节点系统 | 6类40+节点 | 间接通过workflow | ❌ 无 |
+| 4 | 模板系统 | TemplateManager list/get/run | template list/show/run | ⚠️ 模拟数据 |
+| 5 | 调度器 | TaskScheduler add/list/remove/start/stop | schedule * | ❌ 无 |
+| 6 | AI生成 | NLWorkflowGenerator generate | ai generate | ❌ 无 |
+| 7 | AI服务 | FusionMLXClient status | ai status | ⚠️ IPCClient有mlx方法 |
+| 8 | 智能体编排 | AgentOrchestrator submit/list/status | 无 | ❌ 无 |
+| 9 | 智能体运行时 | AgentRuntime start/stop/submit | 无 | ❌ 无 |
+| 10 | Hook系统 | HookManager register/unregister/fire | 无 | ❌ 无 |
+| 11 | 权限系统 | PermissionManager check/approve/deny/list | permission * | ❌ 无 |
+| 12 | 会话管理 | SessionStore list/get/fork/delete | session * | ❌ 无 |
+| 13 | MCP服务器 | MCPServer 15个工具 | mcp | ❌ 无 |
+| 14 | 嵌入浏览器 | BrowserManager build/start | browser * | ❌ 无 |
+| 15 | Computer Use | screenshot→analyze→act | computer-use * | ❌ 无 |
+| 16 | 远程控制 | CrossDeviceSync WebSocket | remote * | ❌ 无 |
+| 17 | 报告生成 | ReportGenerator generate | 无 | ❌ 无 |
+| 18 | 基准测试 | BenchmarkRunner run/report | benchmark * | ❌ 无 |
+| 19 | SDK | FusionDeskSDK | 无 | ❌ 无 |
+| 20 | DeskRPC | 25个desk.*方法 | desk | ⚠️ 后端有,IPC缺 |
+| 21 | 技能系统 | SkillManager list/execute | skill * | ❌ 无 |
+| 22 | 插件系统 | PluginManager discover/install | plugin * | ❌ 无 |
+| 23 | 结构化输出 | OutputSchema validate/check | schema * | ❌ 无 |
+| 24 | 系统工具 | SystemInfo/DiskCleaner | system * | ❌ 无 |
 
-## 1. 插件系统 (W7)
+### 关键问题
 
-### 新增文件
-- `fusion_desk/plugins/__init__.py` — 导出 PluginLoader, PluginManifest
-- `fusion_desk/plugins/loader.py` — PluginLoader 核心实现
-- `fusion_desk/plugins/manifest.py` — PluginManifest 数据结构
+1. **DeskView 完全模拟** — 0个IPC调用,硬编码6个模板,Task.sleep模拟执行
+2. **IPCClient缺desk.*方法** — 没有1个desk.*方法,无法连接后端
+3. **25个功能域0个GUI** — 仅模板有模拟界面,其余全部缺失
 
-### 核心设计
+## 实施方案
 
-PluginManifest dataclass: name, version, description, author, nodes (list[str]), dependencies (list[str]), entry_point (str, default "plugin")
+### 第1步: IPC Bridge 补齐 (IPCClient.swift)
 
-PluginLoader:
-- _plugins_dir: Path (~/.fusion-desk/plugins/)
-- _loaded: Dict[str, PluginManifest]
-- discover() -> List[PluginManifest]
-- load(name) -> List[BaseNode] — 动态导入 plugin.py，扫描 BaseNode 子类，注册到 NodeRegistry
-- load_all() -> Dict[str, List[BaseNode]]
-- unload(name) -> bool — 从 NodeRegistry 注销
-- install(path) -> bool — 从目录/zip 安装
-- uninstall(name) -> bool — 卸载并删除文件
-- list_plugins() -> List[PluginManifest]
+在IPCClient.swift添加 `// MARK: - Desk` 方法族，对齐DeskRPCServer 25个方法 + 18个新增方法。
 
-### 插件目录约定
-~/.fusion-desk/plugins/my_plugin/manifest.json + plugin.py
+### 第2步: DeskRPCServer 扩展 (desk_rpc.py)
 
-manifest.json: {name, version, description, author, nodes, dependencies}
+补充18个缺失RPC方法: schedule.* / ai.* / hook.* / template.* / skill.* / plugin.* / report.* / benchmark.* / browser.*
 
-### CLI: fusion-desk plugin install/list/load/unload/uninstall
+### 第3步: DeskView 重构为8-Tab架构
 
----
+```
+DeskView (主视图,8个Tab)
+├── Tab 1: 模板中心 (DeskTemplateCenterView) — 连接desk.template.*
+├── Tab 2: 工作流 (DeskWorkflowView) — 连接desk.workflow.* / desk.nodes.*
+├── Tab 3: 调度 (DeskScheduleView) — 连接desk.schedule.*
+├── Tab 4: 智能体 (DeskAgentView) — 连接desk.agent.* + runtime状态
+├── Tab 5: 会话 (DeskSessionView) — 连接desk.session.*
+├── Tab 6: 权限 (DeskPermissionView) — 连接desk.permission.*
+├── Tab 7: 系统 (DeskSystemView) — 连接desk.system.* / desk.mlx.* / desk.browser.*
+└── Tab 8: 工具 (DeskToolsView) — skill / plugin / benchmark / report / MCP
+```
 
-## 2. 技能机制 (W8)
+### 文件清单
 
-### 新增文件
-- `fusion_desk/skills/__init__.py`
-- `fusion_desk/skills/registry.py` — SkillRegistry + Skill
-- `fusion_desk/skills/builtin.py` — 6 个内置技能
+**fusion-studio 新建/修改:**
+| 文件 | 操作 |
+|------|------|
+| Bridge/IPCClient.swift | 修改: 添加43个desk.*方法 |
+| Modules/Desk/DeskView.swift | 重写: 8-Tab主视图 |
+| Modules/Desk/DeskModels.swift | 新建: 共享数据模型 |
+| Modules/Desk/DeskTemplateCenterView.swift | 新建: 模板中心 |
+| Modules/Desk/DeskWorkflowView.swift | 新建: 工作流管理 |
+| Modules/Desk/DeskScheduleView.swift | 新建: 调度管理 |
+| Modules/Desk/DeskAgentView.swift | 新建: 智能体管理 |
+| Modules/Desk/DeskSessionView.swift | 新建: 会话管理 |
+| Modules/Desk/DeskPermissionView.swift | 新建: 权限管理 |
+| Modules/Desk/DeskSystemView.swift | 新建: 系统面板 |
+| Modules/Desk/DeskToolsView.swift | 新建: 工具面板 |
 
-### 核心设计
+**fusion-desk 修改:**
+| 文件 | 操作 |
+|------|------|
+| fusion_desk/server/desk_rpc.py | 修改: 添加18个新RPC方法 |
 
-Skill dataclass: name, description, handler (async callable), category, aliases
+### 实施顺序
 
-SkillRegistry:
-- _skills: Dict[str, Skill]
-- register(skill)
-- execute(name, args) -> Any
-- list_skills(category) -> List[Skill]
-- search(query) -> List[Skill]
-
-### 内置技能: /cleanup, /classify, /screenshot, /search, /organize, /diskclean
-
-### CLI: fusion-desk skill list/run/search
-### MCP: MCPServer 新增 skill_list, skill_run 工具
-
----
-
-## 3. Chrome CDP (W9)
-
-### 新增文件
-- `fusion_desk/nodes/browser/cdp_client.py` — CDPClient (WebSocket)
-- `fusion_desk/nodes/browser/cdp_nodes.py` — 10 个 CDP 节点
-
-### CDPClient: connect(port=9222), disconnect(), send(method, params)
-高级 API: navigate, get_a11y_tree, click, fill, screenshot, evaluate_js, emulate_viewport, list_network_requests, list_console_messages
-
-### 10 个 CDP 节点
-cdp_navigate, cdp_snapshot, cdp_click, cdp_fill, cdp_fill_form, cdp_screenshot, cdp_evaluate, cdp_emulate, cdp_network, cdp_console
-
-### CLI: fusion-desk cdp connect/navigate/snapshot/screenshot/status
-
----
-
-## 4. 测试: tests/test_m3.py — 约 35-40 tests
-
-## 5. 文件变更
-新增 8 个文件，修改 4 个文件 (cli.py, __init__.py, mcp_server.py, README.md)
-
-## 6. 实施顺序: 插件 → 技能 → CDP → 测试 → 文档
-
-## 7. 技术决策
-- CDP 通信: websockets 库 (可选依赖)
-- 插件安装: zipfile 标准库
-- 技能 handler: async (args: str) -> Any
-- CDP 测试: mock CDPClient，不依赖真实 Chrome
+1. **P0**: IPCClient desk.*方法 + DeskRPCServer扩展 + DeskModels + DeskView主框架
+2. **P0**: 模板中心 + 工作流 + 智能体 (核心3个Tab)
+3. **P1**: 调度 + 会话 + 权限 + 系统 (管理4个Tab)
+4. **P2**: 工具面板 (补充Tab)
+5. 验证: 启动fusion-desk desk服务 → fusion-studio连接 → 各Tab功能测试

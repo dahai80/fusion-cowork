@@ -466,7 +466,7 @@ class WorkflowEngine:
 
                 # Permission check
                 if self._permission_manager:
-                    allowed = self._permission_manager.check(node.name, node_input)
+                    allowed = await self._permission_manager.check(node.name, "execute", node_input)
                     if not allowed:
                         logger.warning(f"节点 '{node.name}' 被权限系统拒绝执行")
                         step = WorkflowStep(

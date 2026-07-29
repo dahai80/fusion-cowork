@@ -89,14 +89,22 @@ class AgentOrchestrator:
         self._plans: Dict[str, OrchestrationPlan] = {}
         self._executors: Dict[str, Callable] = {}
         self._tasks: Dict[str, AgentTask] = {}
+        self._runtimes: Dict[str, Any] = {}
+        self._message_bus = None
 
     def register_default_agents(self) -> None:
         """注册默认 Agent + 执行器。"""
-        from .executors import DEFAULT_EXECUTORS
+        from .executors import DEFAULT_EXECUTORS, CoordinatorExecutor
+        from .comm import AgentMessageBus
+
+        if not self._message_bus:
+            self._message_bus = AgentMessageBus()
 
         default_agents = [
             Agent(agent_id="planner", name="规划者", role=AgentRole.PLANNER,
                   description="任务规划与分解", capabilities=["plan", "decompose"]),
+            Agent(agent_id="coordinator", name="协调者", role=AgentRole.COORDINATOR,
+                  description="协调子任务分发", capabilities=["coordinate", "dispatch"]),
             Agent(agent_id="executor_node", name="节点执行者", role=AgentRole.EXECUTOR,
                   description="执行 NodeRegistry 节点", capabilities=["node_exec"]),
             Agent(agent_id="executor_workflow", name="工作流执行者", role=AgentRole.EXECUTOR,
@@ -117,10 +125,12 @@ class AgentOrchestrator:
         for agent_id, executor in DEFAULT_EXECUTORS.items():
             self.register_executor(agent_id, executor)
 
-        # analyzer 和 validator 使用 MLX executor
         self.register_executor("planner", DEFAULT_EXECUTORS["executor_mlx"])
         self.register_executor("analyzer", DEFAULT_EXECUTORS["executor_mlx"])
         self.register_executor("validator", DEFAULT_EXECUTORS["executor_mlx"])
+
+        self._coordinator_executor = CoordinatorExecutor(self)
+        self.register_executor("coordinator", self._coordinator_executor)
 
         logger.info(f"默认 Agent 注册完成: {len(self._agents)} 个 Agent, {len(self._executors)} 个执行器")
 
@@ -382,3 +392,37 @@ class AgentOrchestrator:
             "failed": sum(1 for t in plan.tasks if t.status == "failed"),
             "running": sum(1 for t in plan.tasks if t.status == "running"),
         }
+
+    # ── AgentRuntime 生命周期 ──
+
+    async def start_runtimes(self) -> None:
+        """启动所有已注册 Agent 的 Runtime。"""
+        from .agent_runtime import AgentRuntime
+
+        if not self._message_bus:
+            from .comm import AgentMessageBus
+            self._message_bus = AgentMessageBus()
+
+        for agent_id, agent in self._agents.items():
+            executor = self._executors.get(agent_id)
+            if executor and agent_id not in self._runtimes:
+                runtime = AgentRuntime(agent, executor, self._message_bus)
+                await runtime.start()
+                self._runtimes[agent_id] = runtime
+
+        logger.info(f"AgentRuntime 启动完成: {len(self._runtimes)} 个运行时")
+
+    async def stop_runtimes(self) -> None:
+        """停止所有 Runtime。"""
+        for runtime in self._runtimes.values():
+            await runtime.stop()
+        self._runtimes.clear()
+        logger.info("所有 AgentRuntime 已停止")
+
+    def get_message_bus(self):
+        """获取消息总线。"""
+        return self._message_bus
+
+    def get_task(self, task_id: str):
+        """获取任务状态（公共 API，避免外部访问 _tasks）。"""
+        return self._tasks.get(task_id)

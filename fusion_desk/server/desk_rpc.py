@@ -48,33 +48,46 @@ class DeskRPCServer:
             "desk.nodes.list": self._handle_nodes_list,
             "desk.nodes.info": self._handle_nodes_info,
             "desk.nodes.execute": self._handle_nodes_execute,
+            "desk.nodes.categories": self._handle_nodes_categories,
             # 工作流
             "desk.workflow.list": self._handle_workflow_list,
             "desk.workflow.create": self._handle_workflow_create,
             "desk.workflow.run": self._handle_workflow_run,
             "desk.workflow.status": self._handle_workflow_status,
+            "desk.workflow.cancel": self._handle_workflow_cancel,
+            # 模板
+            "desk.template.list": self._handle_template_list,
+            "desk.template.get": self._handle_template_get,
+            "desk.template.run": self._handle_template_run,
             # 智能体
             "desk.agent.list": self._handle_agent_list,
             "desk.agent.submit": self._handle_agent_submit,
             "desk.agent.status": self._handle_agent_status,
+            "desk.agent.cancel": self._handle_agent_cancel,
             # MLX
             "desk.mlx.status": self._handle_mlx_status,
             "desk.mlx.start": self._handle_mlx_start,
             "desk.mlx.stop": self._handle_mlx_stop,
+            "desk.mlx.models": self._handle_mlx_models,
             # 系统
             "desk.system.info": self._handle_system_info,
             # 事件订阅
             "desk.events.subscribe": self._handle_events_subscribe,
             "desk.events.recent": self._handle_events_recent,
+            "desk.events.poll": self._handle_events_poll,
             # 会话
             "desk.session.list": self._handle_session_list,
             "desk.session.get": self._handle_session_get,
             "desk.session.fork": self._handle_session_fork,
+            "desk.session.create": self._handle_session_create,
+            "desk.session.update": self._handle_session_update,
+            "desk.session.delete": self._handle_session_delete,
             # 权限
             "desk.permission.check": self._handle_permission_check,
             "desk.permission.approve": self._handle_permission_approve,
             "desk.permission.deny": self._handle_permission_deny,
             "desk.permission.list": self._handle_permission_list,
+            "desk.permission.reset": self._handle_permission_reset,
         }
         logger.info(f"Desk RPC 注册 {len(self._handlers)} 个方法")
 
@@ -209,6 +222,14 @@ class DeskRPCServer:
             "error": result.error,
         }
 
+    async def _handle_nodes_categories(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        from ..engine.node import NodeRegistry
+        categories: Dict[str, int] = {}
+        for name, cls in NodeRegistry._registry.items():
+            cat = getattr(cls, "category", "unknown")
+            categories[cat] = categories.get(cat, 0) + 1
+        return {"categories": categories, "count": len(categories)}
+
     async def _handle_workflow_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..templates import TemplateManager
         mgr = TemplateManager()
@@ -239,6 +260,52 @@ class DeskRPCServer:
     async def _handle_workflow_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "idle", "running_workflows": 0}
 
+    async def _handle_workflow_cancel(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        from ..engine import WorkflowEngine
+        execution_id = params.get("execution_id", "")
+        if not execution_id:
+            return {"error": "execution_id 不能为空"}
+        engine = WorkflowEngine()
+        engine.cancel(execution_id)
+        return {"status": "cancelled", "execution_id": execution_id}
+
+    async def _handle_template_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        from ..templates import TemplateManager
+        mgr = TemplateManager()
+        category = params.get("category", "")
+        templates = mgr.list_templates()
+        if category:
+            templates = [t for t in templates if t.get("category") == category]
+        return {"templates": templates, "count": len(templates)}
+
+    async def _handle_template_get(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        from ..templates import TemplateManager
+        template_id = params.get("template_id", "")
+        mgr = TemplateManager()
+        template = mgr.get_template(template_id)
+        if not template:
+            return {"error": f"模板不存在: {template_id}"}
+        return template
+
+    async def _handle_template_run(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        from ..engine import Workflow, WorkflowEngine
+        from ..templates import TemplateManager
+        template_id = params.get("template_id", "")
+        variables = params.get("variables", {})
+        mgr = TemplateManager()
+        template = mgr.get_template(template_id)
+        if not template:
+            return {"error": f"模板不存在: {template_id}"}
+        wf_data = template.get("workflow", template)
+        wf = Workflow.from_dict(wf_data)
+        engine = WorkflowEngine()
+        result = await engine.execute(wf)
+        return {
+            "status": result.status.value,
+            "data": result.data,
+            "summary": result.summary,
+        }
+
     async def _handle_agent_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..orchestrator import AgentOrchestrator
         orch = AgentOrchestrator()
@@ -259,10 +326,19 @@ class DeskRPCServer:
         from ..orchestrator import AgentOrchestrator
         orch = AgentOrchestrator()
         task_id = params.get("task_id", "")
-        if task_id and task_id in orch._tasks:
-            t = orch._tasks[task_id]
+        t = orch.get_task(task_id)
+        if t:
             return {"task_id": task_id, "status": t.status.value, "result": t.result}
         return {"status": "idle"}
+
+    async def _handle_agent_cancel(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        from ..orchestrator import AgentOrchestrator
+        task_id = params.get("task_id", "")
+        if not task_id:
+            return {"error": "task_id 不能为空"}
+        orch = AgentOrchestrator()
+        orch.cancel_task(task_id)
+        return {"status": "cancelled", "task_id": task_id}
 
     async def _handle_mlx_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..ai import FusionMLXClient
@@ -295,6 +371,15 @@ class DeskRPCServer:
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
+    async def _handle_mlx_models(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        from ..ai import FusionMLXClient
+        client = FusionMLXClient()
+        try:
+            models = await client.list_models()
+            return {"models": models}
+        except Exception as e:
+            return {"error": str(e), "models": []}
+
     async def _handle_system_info(self, params: Dict[str, Any]) -> Dict[str, Any]:
         import platform
         import psutil
@@ -324,6 +409,17 @@ class DeskRPCServer:
             "count": len(events),
             "events": [e.to_dict() for e in events],
         }
+
+    async def _handle_events_poll(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._event_emitter:
+            return {"error": "EventEmitter 未配置"}
+        sub_id = params.get("sub_id", "")
+        events = []
+        if sub_id and sub_id in self._event_emitter._subscriptions:
+            queue = self._event_emitter._subscriptions[sub_id]
+            while not queue.empty():
+                events.append(queue.get_nowait().to_dict())
+        return {"count": len(events), "events": events}
 
     async def _handle_session_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._session_store:
@@ -355,12 +451,37 @@ class DeskRPCServer:
             return {"error": f"分叉失败: {session_id}"}
         return self._session_store.to_dict(forked)
 
+    async def _handle_session_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._session_store:
+            return {"error": "SessionStore 未配置"}
+        name = params.get("name", "")
+        description = params.get("description", "")
+        session = self._session_store.create(name=name, description=description)
+        return self._session_store.to_dict(session)
+
+    async def _handle_session_update(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._session_store:
+            return {"error": "SessionStore 未配置"}
+        session_id = params.get("session_id", "")
+        updates = params.get("updates", {})
+        session = self._session_store.update(session_id, **updates)
+        if not session:
+            return {"error": f"会话不存在: {session_id}"}
+        return self._session_store.to_dict(session)
+
+    async def _handle_session_delete(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._session_store:
+            return {"error": "SessionStore 未配置"}
+        session_id = params.get("session_id", "")
+        deleted = self._session_store.delete(session_id)
+        return {"deleted": deleted, "session_id": session_id}
+
     async def _handle_permission_check(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._permission_manager:
             return {"error": "PermissionManager 未配置"}
         tool_name = params.get("tool_name", "")
         tool_params = params.get("params", {})
-        allowed = self._permission_manager.check(tool_name, tool_params)
+        allowed = await self._permission_manager.check(tool_name, "execute", tool_params)
         return {"tool_name": tool_name, "allowed": allowed}
 
     async def _handle_permission_approve(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -383,3 +504,9 @@ class DeskRPCServer:
         if not self._permission_manager:
             return {"error": "PermissionManager 未配置"}
         return self._permission_manager.to_dict()
+
+    async def _handle_permission_reset(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._permission_manager:
+            return {"error": "PermissionManager 未配置"}
+        self._permission_manager.reset()
+        return {"status": "reset"}

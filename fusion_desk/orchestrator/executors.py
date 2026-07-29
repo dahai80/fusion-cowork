@@ -148,3 +148,44 @@ DEFAULT_EXECUTORS = {
     "executor_mlx": MLXExecutor(),
     "executor_shell": ShellExecutor(),
 }
+
+
+class CoordinatorExecutor:
+    """协调执行器 — 将大任务分解给匹配的子 Agent 执行。"""
+
+    def __init__(self, orchestrator=None):
+        self._orchestrator = orchestrator
+
+    def bind(self, orchestrator) -> None:
+        self._orchestrator = orchestrator
+
+    async def __call__(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._orchestrator:
+            return {"error": "未绑定 AgentOrchestrator"}
+
+        description = input_data.get("prompt", input_data.get("description", ""))
+        subtask_type = input_data.get("subtask_type", "node")
+
+        if not description:
+            return {"error": "缺少 prompt 或 description 参数"}
+
+        agent_map = {
+            "node": "executor_node",
+            "workflow": "executor_workflow",
+            "ai": "executor_mlx",
+            "shell": "executor_shell",
+        }
+        agent_id = agent_map.get(subtask_type, "executor_node")
+
+        task_id = await self._orchestrator.submit_task(
+            description=description,
+            input_data=input_data,
+        )
+
+        for _ in range(60):
+            await asyncio.sleep(0.5)
+            task = self._orchestrator.get_task(task_id)
+            if task and task.status in ("completed", "failed"):
+                return task.output_data if task.status == "completed" else {"error": task.error}
+
+        return {"error": "子任务超时 (30s)", "task_id": task_id}

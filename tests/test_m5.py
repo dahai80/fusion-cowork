@@ -1,10 +1,12 @@
-"""M5 里程碑测试 — Benchmark 模块 + 端到端集成。"""
+"""M5 里程碑测试 — Benchmark + 端到端 + Agent 真实执行 + Hook 集成 + SDK/Headless。"""
+
 import asyncio
 import json
 import os
 import tempfile
 
 import pytest
+from unittest.mock import MagicMock, AsyncMock
 
 from fusion_desk.benchmark.matrix import CapabilityMatrix, Capability, CapabilityLevel
 from fusion_desk.benchmark.runner import BenchmarkRunner, BenchmarkResult
@@ -17,6 +19,10 @@ from fusion_desk.engine.session import Session, SessionStore
 from fusion_desk.engine.events import EventEmitter, EventType, WorkflowEvent
 from fusion_desk.server.mcp_server import MCPToolRegistry
 from fusion_desk.server.desk_rpc import DeskRPCServer
+from fusion_desk.orchestrator.orchestrator import AgentOrchestrator, Agent, AgentRole, AgentTask
+from fusion_desk.orchestrator.executors import CoordinatorExecutor
+from fusion_desk.orchestrator.comm import AgentMessageBus, AgentMessage
+from fusion_desk.orchestrator.agent_runtime import AgentRuntime
 
 
 # ── CapabilityMatrix ──
@@ -414,3 +420,307 @@ class TestCLIBenchmark:
                 assert "Claude Cowork vs Fusion-Desk" in f.read()
         finally:
             os.unlink(path)
+
+
+# ── W13: Agent 真实执行层 ──
+
+
+class TestAgentRuntime:
+    def test_runtime_creation(self):
+        agent = Agent(agent_id="test", name="Test", role=AgentRole.EXECUTOR)
+        bus = AgentMessageBus()
+        executor = AsyncMock(return_value={"status": "ok"})
+        rt = AgentRuntime(agent, executor, bus)
+        assert rt.agent.agent_id == "test"
+        assert not rt.is_running
+
+    @pytest.mark.asyncio
+    async def test_runtime_start_stop(self):
+        agent = Agent(agent_id="rt_test", name="RT Test", role=AgentRole.EXECUTOR)
+        bus = AgentMessageBus()
+        executor = AsyncMock(return_value={"status": "ok"})
+        rt = AgentRuntime(agent, executor, bus)
+        await rt.start()
+        assert rt.is_running
+        await rt.stop()
+        assert not rt.is_running
+
+    @pytest.mark.asyncio
+    async def test_runtime_submit_and_result(self):
+        agent = Agent(agent_id="exec_test", name="Exec Test", role=AgentRole.EXECUTOR)
+        bus = AgentMessageBus()
+        executor = AsyncMock(return_value={"result": "done"})
+        rt = AgentRuntime(agent, executor, bus)
+        await rt.start()
+        await rt.submit("task_001", {"prompt": "hello"})
+        await asyncio.sleep(1.0)
+        result = rt.get_result("task_001")
+        assert result is not None
+        assert result["result"] == "done"
+        await rt.stop()
+
+    @pytest.mark.asyncio
+    async def test_runtime_error_handling(self):
+        agent = Agent(agent_id="err_test", name="Err Test", role=AgentRole.EXECUTOR)
+        bus = AgentMessageBus()
+        executor = AsyncMock(side_effect=ValueError("boom"))
+        rt = AgentRuntime(agent, executor, bus)
+        await rt.start()
+        await rt.submit("task_err", {"prompt": "fail"})
+        await asyncio.sleep(1.0)
+        result = rt.get_result("task_err")
+        assert result is not None
+        assert "error" in result
+        await rt.stop()
+
+
+class TestCoordinatorExecutor:
+    @pytest.mark.asyncio
+    async def test_coordinator_no_orchestrator(self):
+        coord = CoordinatorExecutor()
+        result = await coord({"prompt": "test"})
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_coordinator_no_prompt(self):
+        orch = MagicMock()
+        coord = CoordinatorExecutor(orch)
+        result = await coord({})
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_coordinator_dispatches_task(self):
+        orch = MagicMock()
+        task = AgentTask(
+            task_id="task_001",
+            agent_id="executor_node",
+            description="test",
+            status="completed",
+            output_data={"status": "ok"},
+        )
+        orch.submit_task = AsyncMock(return_value="task_001")
+        orch.get_task = MagicMock(return_value=task)
+        coord = CoordinatorExecutor(orch)
+        result = await coord({"prompt": "do something", "subtask_type": "node"})
+        assert result["status"] == "ok"
+
+
+class TestAgentOrchestratorEnhanced:
+    def test_register_default_agents_with_coordinator(self):
+        orch = AgentOrchestrator()
+        orch.register_default_agents()
+        assert "coordinator" in orch._agents
+        assert "coordinator" in orch._executors
+
+    @pytest.mark.asyncio
+    async def test_start_stop_runtimes(self):
+        orch = AgentOrchestrator()
+        orch.register_default_agents()
+        await orch.start_runtimes()
+        assert len(orch._runtimes) > 0
+        await orch.stop_runtimes()
+        assert len(orch._runtimes) == 0
+
+    def test_message_bus_created(self):
+        orch = AgentOrchestrator()
+        orch.register_default_agents()
+        assert orch._message_bus is not None
+
+    def test_get_message_bus(self):
+        orch = AgentOrchestrator()
+        orch.register_default_agents()
+        bus = orch.get_message_bus()
+        assert bus is not None
+
+
+# ── W14: Hook 生命周期集成 ──
+
+
+class TestHookNewEvents:
+    def test_session_start_event(self):
+        assert hasattr(HookEvent, "SESSION_START")
+        assert HookEvent.SESSION_START.value == "session_start"
+
+    def test_session_end_event(self):
+        assert hasattr(HookEvent, "SESSION_END")
+        assert HookEvent.SESSION_END.value == "session_end"
+
+    def test_pre_compact_event(self):
+        assert hasattr(HookEvent, "PRE_COMPACT")
+        assert HookEvent.PRE_COMPACT.value == "pre_compact"
+
+
+class TestHookPriority:
+    @pytest.mark.asyncio
+    async def test_register_with_priority(self):
+        mgr = HookManager()
+        calls = []
+        def h1(ctx): calls.append("h1")
+        def h2(ctx): calls.append("h2")
+        mgr.register(HookEvent.PRE_NODE_EXECUTE, h2, priority=1)
+        mgr.register(HookEvent.PRE_NODE_EXECUTE, h1, priority=10)
+        await mgr.fire(HookEvent.PRE_NODE_EXECUTE, {"test": True})
+        assert "h1" in calls
+        assert "h2" in calls
+
+    @pytest.mark.asyncio
+    async def test_hook_fires_session_events(self):
+        mgr = HookManager()
+        received = []
+        mgr.register(HookEvent.SESSION_START, lambda ctx: received.append("session_start"))
+        mgr.register(HookEvent.PRE_COMPACT, lambda ctx: received.append("pre_compact"))
+        await mgr.fire(HookEvent.SESSION_START, {"session_id": "s1"})
+        await mgr.fire(HookEvent.PRE_COMPACT, {"token_count": 5000})
+        assert "session_start" in received
+        assert "pre_compact" in received
+
+
+class TestHookWorkflowIntegration:
+    @pytest.mark.asyncio
+    async def test_workflow_fire_hooks(self):
+        from fusion_desk.nodes.macos import DesktopCleanNode
+        mgr = HookManager()
+        events = []
+        mgr.register(HookEvent.WORKFLOW_START, lambda ctx: events.append("start"))
+        mgr.register(HookEvent.WORKFLOW_END, lambda ctx: events.append("end"))
+        mgr.register(HookEvent.PRE_NODE_EXECUTE, lambda ctx: events.append("pre_node"))
+        mgr.register(HookEvent.POST_NODE_EXECUTE, lambda ctx: events.append("post_node"))
+        engine = WorkflowEngine(hook_manager=mgr)
+        wf = Workflow(name="hook_test")
+        wf.add_node(DesktopCleanNode())
+        result = await engine.execute(wf)
+        assert "start" in events
+        assert "end" in events
+
+    @pytest.mark.asyncio
+    async def test_hook_cancel_node(self):
+        from fusion_desk.nodes.macos import DesktopCleanNode
+        mgr = HookManager()
+        def cancel_hook(ctx: HookContext):
+            ctx.cancel()
+        mgr.register(HookEvent.PRE_NODE_EXECUTE, cancel_hook)
+        engine = WorkflowEngine(hook_manager=mgr)
+        wf = Workflow(name="cancel_test")
+        wf.add_node(DesktopCleanNode())
+        result = await engine.execute(wf)
+        assert result.status == WorkflowStatus.CANCELLED
+
+    @pytest.mark.asyncio
+    async def test_hook_modify_params(self):
+        from fusion_desk.nodes.macos import DesktopCleanNode
+        mgr = HookManager()
+        mod_events = []
+        def modify_hook(ctx: HookContext):
+            if ctx.event == HookEvent.PRE_NODE_EXECUTE:
+                ctx.modify("params_overridden", True)
+                mod_events.append("modified")
+        mgr.register(HookEvent.PRE_NODE_EXECUTE, modify_hook)
+        engine = WorkflowEngine(hook_manager=mgr)
+        wf = Workflow(name="modify_test")
+        wf.add_node(DesktopCleanNode())
+        result = await engine.execute(wf)
+        assert "modified" in mod_events
+
+    @pytest.mark.asyncio
+    async def test_hook_node_error(self):
+        from fusion_desk.nodes.macos import DesktopCleanNode
+        mgr = HookManager()
+        error_events = []
+        mgr.register(HookEvent.NODE_ERROR, lambda ctx: error_events.append("node_error"))
+        engine = WorkflowEngine(hook_manager=mgr)
+        wf = Workflow(name="error_test")
+        node = DesktopCleanNode(node_id="will_fail")
+        node.execute = AsyncMock(side_effect=RuntimeError("forced error"))
+        wf.add_node(node)
+        result = await engine.execute(wf)
+        assert "node_error" in error_events
+
+
+class TestHookPermissionIntegration:
+    @pytest.mark.asyncio
+    async def test_permission_hook_auto_approve(self):
+        mgr = HookManager()
+        def auto_approve(ctx: HookContext):
+            ctx.modify("approved", True)
+        mgr.register(HookEvent.PERMISSION_REQUEST, auto_approve)
+        pm = PermissionManager(level=PermissionLevel.MANUAL, hook_manager=mgr)
+        result = await pm.check("shell_exec", "execute", {"command": "ls"})
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_permission_hook_auto_deny(self):
+        mgr = HookManager()
+        def auto_deny(ctx: HookContext):
+            ctx.cancel()
+        mgr.register(HookEvent.PERMISSION_REQUEST, auto_deny)
+        pm = PermissionManager(level=PermissionLevel.AUTO, hook_manager=mgr)
+        result = await pm.check("shell_exec", "execute", {"command": "rm -rf /"})
+        assert result is False
+
+
+# ── W15: SDK/Headless ──
+
+
+class TestHeadlessRunner:
+    @pytest.mark.asyncio
+    async def test_headless_runner_run_template(self):
+        from fusion_desk.sdk.headless import HeadlessRunner
+        runner = HeadlessRunner()
+        result = await runner.run_template("desktop_clean")
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_headless_runner_run_workflow(self):
+        from fusion_desk.sdk.headless import HeadlessRunner
+        from fusion_desk.nodes.macos import DesktopCleanNode  # noqa: F401 — trigger registration
+        runner = HeadlessRunner()
+        wf_def = {
+            "name": "test_wf",
+            "nodes": [{"id": "n1", "name": "desktop_clean"}],
+            "edges": [],
+        }
+        result = await runner.run_workflow(wf_def)
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_headless_runner_cancel(self):
+        from fusion_desk.sdk.headless import HeadlessRunner
+        runner = HeadlessRunner()
+        runner._running = True
+        await runner.cancel()
+        assert not runner._running
+
+
+class TestFusionDeskSDK:
+    @pytest.mark.asyncio
+    async def test_sdk_list_nodes(self):
+        from fusion_desk.sdk import FusionDeskSDK
+        sdk = FusionDeskSDK(base_url="http://localhost:19999")
+        nodes = await sdk.list_nodes()
+        assert isinstance(nodes, list)
+        assert len(nodes) > 0
+
+    @pytest.mark.asyncio
+    async def test_sdk_list_templates(self):
+        from fusion_desk.sdk import FusionDeskSDK
+        sdk = FusionDeskSDK(base_url="http://localhost:19999")
+        templates = await sdk.list_templates()
+        assert isinstance(templates, list)
+
+
+class TestSDKModuleImport:
+    def test_sdk_import(self):
+        from fusion_desk.sdk import FusionDeskSDK
+        assert FusionDeskSDK is not None
+
+    def test_headless_import(self):
+        from fusion_desk.sdk.headless import HeadlessRunner
+        assert HeadlessRunner is not None
+
+    def test_lazy_import_agent_runtime(self):
+        from fusion_desk import AgentRuntime
+        assert AgentRuntime is not None
+
+    def test_lazy_import_coordinator_executor(self):
+        from fusion_desk import CoordinatorExecutor
+        assert CoordinatorExecutor is not None

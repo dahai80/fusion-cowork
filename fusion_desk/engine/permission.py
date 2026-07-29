@@ -67,14 +67,28 @@ class Permission:
 class PermissionManager:
     """权限管理器 — 检查工具调用是否被允许。"""
 
-    def __init__(self, level: PermissionLevel = PermissionLevel.MANUAL):
+    def __init__(self, level: PermissionLevel = PermissionLevel.MANUAL, hook_manager=None):
         self.level = level
         self.rules: List[Permission] = []
         self._pending_approvals: Dict[str, Permission] = {}
+        self._hook_manager = hook_manager
 
-    def check(self, tool_name: str, params: Dict[str, Any] = None) -> bool:
+    async def check(self, tool_name: str, action: str = "", params: Dict[str, Any] = None) -> bool:
         if self.level == PermissionLevel.BYPASS:
             return True
+
+        # Hook: PERMISSION_REQUEST
+        if self._hook_manager:
+            from .hooks import HookEvent
+            ctx = await self._hook_manager.fire(HookEvent.PERMISSION_REQUEST, {
+                "tool_name": tool_name, "action": action, "params": params or {},
+            })
+            if ctx and ctx.cancelled:
+                logger.info(f"权限被 Hook 拒绝: {tool_name}")
+                return False
+            if ctx and ctx.modified_data.get("approved"):
+                logger.info(f"权限被 Hook 批准: {tool_name}")
+                return True
 
         for rule in self.rules:
             if rule.matches(tool_name, params):

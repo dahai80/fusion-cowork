@@ -227,6 +227,12 @@ _LAZY_IMPORTS: dict[str, str] = {
     "RemoteControlClient": "fusion_desk.server.remote",
     # M4 结构化输出
     "OutputSchema": "fusion_desk.engine.schema",
+    # M5 Agent Runtime
+    "AgentRuntime": "fusion_desk.orchestrator.agent_runtime",
+    "CoordinatorExecutor": "fusion_desk.orchestrator.executors",
+    # M5 SDK/Headless
+    "FusionDeskSDK": "fusion_desk.sdk",
+    "HeadlessRunner": "fusion_desk.sdk.headless",
 }
 
 _lazy_cache: dict[str, object] = {}

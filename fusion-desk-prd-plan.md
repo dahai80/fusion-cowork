@@ -22,6 +22,7 @@
 | M2 | 安全与持久 | W4-W6 | 权限模型 + 会话持久化 + 流式输出 | desk + studio |
 | M3 | 生态扩展 | W7-W9 | 插件系统 + 技能机制 + Chrome CDP | desk + studio |
 | M4 | 闭环增强 | W10-W12 | Computer Use + 远程控制 + 结构化输出 | desk + studio |
+| M5 | 执行强骨 | W13-W15 | Agent 真实执行 + Hook 集成 + SDK/Headless | desk |
 
 ---
 
@@ -565,7 +566,178 @@ class NodeResult:
 
 ---
 
-## 七、fusion-studio 改动汇总
+## 七、M5: 执行强骨 (W13-W15)
+
+> 目标: 让已有框架从"壳"变为"真" — Agent 编排真正执行、Hook 生命周期全面集成、SDK 编程接口打通
+
+### 7.1 Agent 真实执行层 (W13)
+
+**目标**: AgentOrchestrator 的编排计划走真实执行路径，消除 simulated/no_executor 兜底
+
+**fusion-desk 改动**:
+
+```python
+# fusion_desk/orchestrator/orchestrator.py (增强)
+class AgentOrchestrator:
+    # 1. execute_plan() 中 _execute_task 使用注册的 executor
+    # 2. executor 注册完备: 每个 default agent 都有 executor
+    # 3. 任务结果通过 AgentMessageBus 通知其他 agent
+    # 4. 支持 agent 间协作: executor 可 send_message 给其他 agent
+
+# fusion_desk/orchestrator/executors.py (增强)
+class CoordinatorExecutor:
+    """协调执行器 — 调度子任务给其他 agent。"""
+    async def __call__(self, input_data):
+        # 将大任务分解为子任务，提交给匹配的 executor agent
+
+# fusion_desk/orchestrator/agent_runtime.py (新增)
+class AgentRuntime:
+    """Agent 运行时 — 单个 Agent 的独立执行环境。"""
+    agent: Agent
+    inbox: asyncio.Queue          # 接收消息
+    message_bus: AgentMessageBus  # 通信总线
+    executor: Callable            # 执行器
+
+    async def start(self) -> None: ...     # 启动消息循环
+    async def stop(self) -> None: ...      # 停止
+    async def handle_message(self, msg): ...  # 处理收到的消息
+```
+
+**验收标准**:
+- [ ] `run_standard_pipeline()` 返回真实节点执行结果，非 "simulated"
+- [ ] Agent 间可通过 MessageBus 通信协作
+- [ ] CoordinatorExecutor 可将任务分发到子 Agent
+
+### 7.2 Hook 生命周期集成 (W14)
+
+**目标**: HookManager 已有框架，集成到 WorkflowEngine/AgentOrchestrator/PermissionManager 的关键路径
+
+**fusion-desk 改动**:
+
+```python
+# fusion_desk/engine/workflow.py (增强)
+class WorkflowEngine:
+    hook_manager: Optional[HookManager] = None
+
+    async def execute(self, workflow, ...):
+        # 1. fire(WORKFLOW_START, {workflow_id, node_count})
+        # 2. 每个节点执行前: fire(PRE_NODE_EXECUTE, {node_id, params})
+        #    - ctx.cancelled → 跳过节点
+        #    - ctx.modified_data → 覆盖参数
+        # 3. 每个节点执行后: fire(POST_NODE_EXECUTE, {node_id, result})
+        # 4. 节点异常时: fire(NODE_ERROR, {node_id, error})
+        # 5. fire(WORKFLOW_END, {workflow_id, status, steps})
+
+# fusion_desk/engine/permission.py (增强)
+class PermissionManager:
+    hook_manager: Optional[HookManager] = None
+
+    async def check(self, ...):
+        # fire(PERMISSION_REQUEST, {node, action})
+        # hook 可自动批准或拒绝
+
+# fusion_desk/engine/hooks.py (增强)
+class HookEvent(Enum):
+    PRE_NODE_EXECUTE = "pre_node_execute"       # 已有
+    POST_NODE_EXECUTE = "post_node_execute"     # 已有
+    WORKFLOW_START = "workflow_start"           # 已有
+    WORKFLOW_END = "workflow_end"               # 已有
+    PERMISSION_REQUEST = "permission_request"   # 已有
+    CONFIG_CHANGE = "config_change"             # 已有
+    AGENT_START = "agent_start"                 # 已有
+    AGENT_STOP = "agent_stop"                   # 已有
+    NOTIFICATION = "notification"               # 已有
+    NODE_ERROR = "node_error"                   # 已有
+    WORKFLOW_CANCEL = "workflow_cancel"         # 已有
+    SESSION_START = "session_start"             # 新增
+    SESSION_END = "session_end"                 # 新增
+    PRE_COMPACT = "pre_compact"                 # 新增
+
+class HookManager:
+    # 增强: 支持 sync handler (不需要 async)
+    # 增强: 支持优先级排序
+    def register(self, event, handler, priority: int = 0): ...
+```
+
+**验收标准**:
+- [ ] WorkflowEngine 在节点执行前后触发 Hook
+- [ ] Hook 可取消节点执行、修改节点参数
+- [ ] PermissionManager 通过 Hook 实现自动审批
+- [ ] 所有 11+3 种 HookEvent 均有触发点
+
+### 7.3 SDK / Headless 模式 (W15)
+
+**目标**: 提供 Python SDK 编程接口，支持 Headless (无 CLI) 模式运行工作流
+
+**fusion-desk 改动**:
+
+```python
+# fusion_desk/sdk/__init__.py (新增)
+class FusionDeskSDK:
+    """SDK 入口 — 编程式访问 fusion-desk 全部能力。"""
+
+    def __init__(self, base_url: str = "http://localhost:9761"):
+        self._client = httpx.AsyncClient(base_url=base_url)
+
+    # 工作流
+    async def create_workflow(self, name: str, nodes: list, edges: list) -> str: ...
+    async def run_workflow(self, workflow_id: str, inputs: dict = None) -> dict: ...
+    async def get_workflow_status(self, workflow_id: str) -> dict: ...
+
+    # 模板
+    async def list_templates(self, category: str = "") -> list: ...
+    async def run_template(self, template_id: str, params: dict = None) -> dict: ...
+
+    # 节点
+    async def list_nodes(self, category: str = "") -> list: ...
+    async def execute_node(self, node_name: str, params: dict) -> dict: ...
+
+    # Agent
+    async def submit_task(self, description: str, input_data: dict = None) -> str: ...
+    async def get_task_status(self, task_id: str) -> dict: ...
+
+    # 流式 (SSE)
+    async def stream_workflow(self, workflow_id: str) -> AsyncIterator[dict]: ...
+
+# fusion_desk/sdk/headless.py (新增)
+class HeadlessRunner:
+    """Headless 模式 — 无 CLI/无 GUI，纯编程执行。"""
+
+    async def run_workflow(self, workflow_def: dict, inputs: dict = None) -> dict: ...
+    async def run_template(self, template_id: str, params: dict = None) -> dict: ...
+    async def run_pipeline(self, description: str, input_data: dict = None) -> dict: ...
+    async def cancel(self, execution_id: str) -> bool: ...
+
+# fusion_desk/server/mcp_http.py (增强)
+# MCP HTTP 传输层增加 SDK 端点:
+# GET  /api/workflows          — 列出工作流
+# POST /api/workflows          — 创建并执行工作流
+# GET  /api/workflows/{id}     — 获取状态
+# POST /api/workflows/{id}/run — 执行
+# GET  /api/templates          — 列出模板
+# POST /api/templates/{id}/run — 执行模板
+# GET  /api/nodes              — 列出节点
+# POST /api/nodes/{name}/exec  — 执行节点
+# GET  /api/tasks/{id}         — 任务状态
+# GET  /api/stream/{id}        — SSE 流式推送
+```
+
+**CLI 集成**:
+```bash
+fusion-desk sdk serve --port 9761     # 启动 SDK HTTP 服务
+fusion-desk run --workflow wf.json    # Headless 单次执行
+fusion-desk run --template cleanup    # Headless 模板执行
+```
+
+**验收标准**:
+- [ ] SDK 可创建/执行/查询工作流
+- [ ] HeadlessRunner 可无 CLI 执行工作流和模板
+- [ ] HTTP API 端点可用 curl 调用
+- [ ] SSE 流式推送工作流执行进度
+
+---
+
+## 八、fusion-studio 改动汇总
 
 | 阶段 | 改动 | 文件 |
 |------|------|------|
@@ -619,6 +791,13 @@ class NodeResult:
 | M4 | Computer Use | AI 循环控制鼠标完成简单任务 |
 | M4 | 远程控制 | 远程连接可提交/监控工作流 |
 | M4 | 结构化输出 | 输出 schema 校验生效 |
+| M5 | Agent 真实执行 | run_standard_pipeline() 返回真实结果 |
+| M5 | Agent 通信 | Agent 间通过 MessageBus 协作 |
+| M5 | Hook 集成 | WorkflowEngine 节点执行触发 Hook |
+| M5 | Hook 拦截 | Hook 可取消/修改节点执行 |
+| M5 | SDK | Python SDK 可编程执行工作流 |
+| M5 | Headless | HeadlessRunner 无 CLI 执行工作流 |
+| M5 | HTTP API | curl 可调用 /api/workflows 等端点 |
 
 ---
 
@@ -637,6 +816,9 @@ W9  ████████ Chrome CDP
 W10 ████████ Computer Use
 W11 ████████ 远程控制
 W12 ████████ 结构化输出 + 全面测试 + 文档
+W13 ████████ Agent 真实执行 + 通信
+W14 ████████ Hook 生命周期集成
+W15 ████████ SDK/Headless + HTTP API
 ```
 
 每个 W 结束时:

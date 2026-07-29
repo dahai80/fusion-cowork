@@ -272,7 +272,7 @@ class MCPToolRegistry:
 
         # Permission check
         if self._permission_manager:
-            allowed = self._permission_manager.check(node_name, node_params)
+            allowed = await self._permission_manager.check(node_name, "execute", node_params)
             if not allowed:
                 logger.warning(f"MCP 工具 '{tool_name}' (node={node_name}) 被权限拒绝")
                 if self._hook_manager:

@@ -26,6 +26,9 @@ class HookEvent(Enum):
     NOTIFICATION = "notification"
     NODE_ERROR = "node_error"
     WORKFLOW_CANCEL = "workflow_cancel"
+    SESSION_START = "session_start"
+    SESSION_END = "session_end"
+    PRE_COMPACT = "pre_compact"
 
 
 @dataclass
@@ -46,17 +49,18 @@ class HookManager:
     """Hook 管理器 — 注册/触发事件处理器。"""
 
     def __init__(self):
-        self._handlers: Dict[HookEvent, List[Callable]] = {}
+        self._handlers: Dict[HookEvent, List[tuple]] = {}
 
-    def register(self, event: HookEvent, handler: Callable) -> None:
+    def register(self, event: HookEvent, handler: Callable, priority: int = 0) -> None:
         if event not in self._handlers:
             self._handlers[event] = []
-        self._handlers[event].append(handler)
-        logger.info(f"Hook 注册: {event.value} → {getattr(handler, '__name__', str(handler))}")
+        self._handlers[event].append((priority, handler))
+        self._handlers[event].sort(key=lambda x: x[0], reverse=True)
+        logger.info(f"Hook 注册: {event.value} → {getattr(handler, '__name__', str(handler))} (priority={priority})")
 
     def unregister(self, event: HookEvent, handler: Callable) -> None:
         if event in self._handlers:
-            self._handlers[event] = [h for h in self._handlers[event] if h is not handler]
+            self._handlers[event] = [(p, h) for p, h in self._handlers[event] if h is not handler]
 
     async def fire(self, event: HookEvent, data: Dict[str, Any] = None) -> HookContext:
         ctx = HookContext(event=event, data=data or {})
@@ -65,7 +69,7 @@ class HookManager:
         if not handlers:
             return ctx
 
-        for handler in handlers:
+        for priority, handler in handlers:
             try:
                 if asyncio.iscoroutinefunction(handler):
                     await handler(ctx)

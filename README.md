@@ -477,7 +477,18 @@ pytest tests/ --cov=fusion_desk --cov-report=html
 - [x] Structured output schema (OutputSchema + NodeResult.validate)
 - [x] CLI commands: computer-use move/click/type/shortcut/run, remote serve/connect/submit, schema validate/check
 
-### V0.6 (Planned)
+### V0.6 ✅ (M5 — Execution Strengthening)
+- [x] AgentRuntime — independent execution environment per agent with message loop & inbox queue
+- [x] CoordinatorExecutor — dispatches subtasks to executor agents via orchestrator
+- [x] AgentMessageBus integration — pub/sub inter-agent communication
+- [x] Hook lifecycle integration — HookManager priority system, new events (SESSION_START, SESSION_END, PRE_COMPACT)
+- [x] Hook-driven permission — auto-approve/deny via PERMISSION_REQUEST hook context
+- [x] PermissionManager async check — supports hook interception before rule matching
+- [x] FusionDeskSDK — async HTTP client with local fallback for programmatic access
+- [x] HeadlessRunner — no-CLI/no-GUI workflow execution engine
+- [x] SDK lazy imports — FusionDeskSDK, HeadlessRunner accessible via fusion_desk package
+
+### V0.7 (Planned)
 - [ ] Visual workflow editor (Fusion-Studio GUI)
 - [ ] Plugin system (3rd-party node packages)
 - [ ] Cloud backup & restore (optional, encrypted)
@@ -837,6 +848,24 @@ pytest tests/ --cov=fusion_desk --cov-report=html
 - [x] 端到端集成测试 (MCP全链路、DeskRPC全链路、Workflow+Permission+Hook+Session+Event)
 - [x] DeskRPC 事件/会话/权限处理器 (9个新方法)
 - [x] CLI 权限命令 (`fusion-desk permission level/approve/deny/list`)
+
+### V0.5 ✅
+- [x] Computer Use 节点 (鼠标移动/点击、键盘输入/快捷键、Computer Use 循环)
+- [x] pyobjc + AppleScript 双后端鼠标/键盘控制
+- [x] AI 驱动 Computer Use 循环 (截图 → 分析 → 操作 → 重复)
+- [x] 远程控制服务器/客户端 (WebSocket、认证令牌、工作流提交)
+- [x] 结构化输出 (OutputSchema + NodeResult.validate)
+
+### V0.6 ✅ (M5 — 执行强骨)
+- [x] AgentRuntime — 每个智能体独立执行环境，消息循环 + 收件箱队列
+- [x] CoordinatorExecutor — 通过编排器分派子任务到执行智能体
+- [x] AgentMessageBus 集成 — 发布/订阅智能体间通信
+- [x] Hook 生命周期集成 — HookManager 优先级系统，新事件 (SESSION_START, SESSION_END, PRE_COMPACT)
+- [x] Hook 驱动权限 — 通过 PERMISSION_REQUEST hook 上下文自动批准/拒绝
+- [x] PermissionManager 异步检查 — 支持规则匹配前的 hook 拦截
+- [x] FusionDeskSDK — 异步 HTTP 客户端 + 本地回退，编程式访问
+- [x] HeadlessRunner — 无 CLI/GUI 工作流执行引擎
+- [x] SDK 懒加载导入 — FusionDeskSDK、HeadlessRunner 通过 fusion_desk 包访问
 
 ---
 

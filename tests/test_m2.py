@@ -47,35 +47,42 @@ class TestPermission:
 
 
 class TestPermissionManager:
-    def test_bypass_allows_all(self):
+    @pytest.mark.asyncio
+    async def test_bypass_allows_all(self):
         pm = PermissionManager(level=PermissionLevel.BYPASS)
-        assert pm.check("shell_exec") is True
-        assert pm.check("anything") is True
+        assert await pm.check("shell_exec") is True
+        assert await pm.check("anything") is True
 
-    def test_manual_blocks_high_risk(self):
+    @pytest.mark.asyncio
+    async def test_manual_blocks_high_risk(self):
         pm = PermissionManager(level=PermissionLevel.MANUAL)
-        assert pm.check("shell_exec") is False
-        assert pm.check("python_repl") is False
+        assert await pm.check("shell_exec") is False
+        assert await pm.check("python_repl") is False
 
-    def test_manual_allows_safe(self):
+    @pytest.mark.asyncio
+    async def test_manual_allows_safe(self):
         pm = PermissionManager(level=PermissionLevel.MANUAL)
-        assert pm.check("file_input") is False  # MANUAL blocks all by default
+        assert await pm.check("file_input") is False
 
-    def test_auto_blocks_high_risk(self):
+    @pytest.mark.asyncio
+    async def test_auto_blocks_high_risk(self):
         pm = PermissionManager(level=PermissionLevel.AUTO)
-        assert pm.check("shell_exec") is False
+        assert await pm.check("shell_exec") is False
 
-    def test_auto_allows_approved(self):
+    @pytest.mark.asyncio
+    async def test_auto_allows_approved(self):
         pm = PermissionManager(level=PermissionLevel.AUTO)
         pm.approve("shell_exec", scope="command:git *")
-        assert pm.check("shell_exec", {"command": "git status"}) is True
+        assert await pm.check("shell_exec", params={"command": "git status"}) is True
 
-    def test_deny_overrides(self):
+    @pytest.mark.asyncio
+    async def test_deny_overrides(self):
         pm = PermissionManager(level=PermissionLevel.PLAN)
         pm.deny("shell_exec")
-        assert pm.check("shell_exec") is False
+        assert await pm.check("shell_exec") is False
 
-    def test_save_load(self):
+    @pytest.mark.asyncio
+    async def test_save_load(self):
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
             path = f.name
         try:
@@ -84,7 +91,7 @@ class TestPermissionManager:
             pm.save(path=path)
             pm2 = PermissionManager(level=PermissionLevel.AUTO)
             pm2.load(path=path)
-            assert pm2.check("shell_exec", {"command": "git status"}) is True
+            assert await pm2.check("shell_exec", params={"command": "git status"}) is True
         finally:
             os.unlink(path)
 
