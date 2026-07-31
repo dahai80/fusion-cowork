@@ -127,6 +127,22 @@ fusion-cowork cdp click 42
 fusion-cowork cdp fill --selector "#search" --value "hello"
 fusion-cowork cdp screenshot --save ~/Desktop/shot.png
 fusion-cowork cdp evaluate "document.title"
+
+# Collaboration Space (M6+M7)
+fusion-cowork space create --name "Project Alpha" --owner-id user1
+fusion-cowork space list
+fusion-cowork space get <space_id>
+fusion-cowork space archive <space_id>
+fusion-cowork space member list <space_id>
+fusion-cowork space member invite <space_id> --inviter-id user1 --role member
+fusion-cowork space member join <invite_code> --user-id user2
+fusion-cowork space member remove <space_id> --user-id user3 --operator-id user1
+fusion-cowork space chat <space_id> --user user1 --agent agent1
+fusion-cowork space knowledge bind <space_id> --operator user1
+fusion-cowork space knowledge status <space_id>
+fusion-cowork space knowledge upload <space_id> doc.pdf --operator user1
+fusion-cowork space knowledge search <space_id> "query text" --top-k 5
+fusion-cowork space knowledge unbind <space_id> --operator user1
 ```
 
 ---
@@ -182,6 +198,12 @@ fusion-cowork cdp evaluate "document.title"
 │                 System Capability Layer                │
 │   macOS nodes (AppleScript / osascript)               │
 │   File ops  │  Desktop mgmt  │  Disk cleanup  │ Tools  │
+├─────────────────────────────────────────────────────┤
+│              Collaboration Space Layer 🆕              │
+│   SpaceStore (SQLite WAL)  │  SpaceService (CRUD)     │
+│   SpacePermission (4-tier)  │  SpaceMemberService     │
+│   SpaceChatService (SSE)   │  SpaceKBService (RAG)    │
+│   SharedContext (nodes)     │  SpaceAPI (REST+SSE)     │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -488,7 +510,43 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] HeadlessRunner — no-CLI/no-GUI workflow execution engine
 - [x] SDK lazy imports — FusionCoworkSDK, HeadlessRunner accessible via fusion_cowork package
 
-### V0.7 (Planned)
+### V0.7 ✅ (M6 — Collaboration Space)
+- [x] Space models & enums — Space, SpaceMember, SpaceMessage, SpaceSnapshot, SpaceConfig, SpaceRole/SpaceStatus
+- [x] SpaceStore — aiosqlite + SQLite WAL, 9 tables (spaces, members, messages, comments, agents, snapshots, invites, workflows, artifacts, sync_events)
+- [x] SpaceService — CRUD + archive/unarchive + get_or_create + permission-gated operations
+- [x] SpacePermission — 4-tier role matrix (Owner/Admin/Member/Viewer) + permission check + role query
+- [x] SpaceMemberService — invite/join/leave/update_role/remove, invite code with expiry & max-uses
+- [x] CLI space commands — `fusion-cowork space create/list/get/archive`, `fusion-cowork space member list/invite/join/remove`
+- [x] DeskRPC space handlers — 11 JSON-RPC methods (desk.space.create/list/get/update/archive/delete, desk.space.member.invite/join/list/remove/update_role)
+- [x] 58 tests covering models, store, service, permission, member service
+
+### V0.7.1 ✅ (M7 — Shared Conversation + KB Binding)
+- [x] SpaceChatService — shared context + Agent reply + streaming (SSE)
+- [x] SpaceKBService — fusion-kb binding + document management + RAG search/query
+- [x] SpaceAPI — 18 REST endpoints + SSE event stream (`/spaces/{id}/stream`)
+- [x] FusionMLXClient enhancements — port fix (11434) + retry on transient errors + stream robustness
+- [x] KBClient completion — create_kb/delete_kb/upload_file/list_documents
+- [x] SharedContext — workflow node access to space messages + KB search/query
+- [x] CLI extensions — `space chat` interactive dialog + `space knowledge bind/status/upload/search/unbind`
+- [x] DeskRPC handlers — 9 new methods (desk.space.chat.send/list/context, desk.space.knowledge.bind/status/upload/search/query/unbind)
+- [x] 52 M7-specific tests (461 total)
+
+### V0.8.0 ✅ (M8 — Agent Orchestration + Multi-Agent Relay)
+- [x] SpaceAgentRuntime — space-level Agent runtime with isolation (add/remove/list/get/call/chain/register)
+- [x] AgentStudioClient — HTTP client for Agent Studio API with retry + import-to-space
+- [x] Chat relay — SpaceChatService.relay_agents() sequential multi-Agent chain
+- [x] SpacePermission — `call_agent` action (owner/admin/member: ✅, viewer: ❌)
+- [x] SpaceAPI — 6 new agent endpoints (GET/POST /agents, GET/DELETE /agents/{id}, POST /agents/call, POST /agents/relay)
+- [x] Orchestrator bridge — register_to_orchestrator() maps space agents to Agent dataclasses
+- [x] CLI — `space agent list/add/remove/call/relay` commands
+- [x] DeskRPC — 5 new JSON-RPC methods (desk.space.agent.list/add/remove/call/relay)
+- [x] 35 M8-specific tests (490 total)
+- [x] KBClient 端口修正 (11434→11436, issue #6)
+- [x] desk.project.syncKnowledge — 接收外部知识库文件同步 (issue #7)
+- [x] desk.project.importSnapshot — 接收会话快照导入 (issue #8)
+- [x] desk.project.exportToProject — 导出空间内容到 fusion-projects (issue #9)
+
+### V0.8 (Planned)
 - [ ] Visual workflow editor (Fusion-Studio GUI)
 - [ ] Plugin system (3rd-party node packages)
 - [ ] Cloud backup & restore (optional, encrypted)
@@ -866,6 +924,42 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] FusionCoworkSDK — 异步 HTTP 客户端 + 本地回退，编程式访问
 - [x] HeadlessRunner — 无 CLI/GUI 工作流执行引擎
 - [x] SDK 懒加载导入 — FusionCoworkSDK、HeadlessRunner 通过 fusion_cowork 包访问
+
+### V0.7 ✅ (M6 — 协作空间)
+- [x] Space 模型与枚举 — Space, SpaceMember, SpaceMessage, SpaceSnapshot, SpaceConfig, SpaceRole/SpaceStatus
+- [x] SpaceStore — aiosqlite + SQLite WAL，9 张表 (spaces, members, messages, comments, agents, snapshots, invites, workflows, artifacts, sync_events)
+- [x] SpaceService — CRUD + 归档/解档 + get_or_create + 权限门控操作
+- [x] SpacePermission — 4 级角色矩阵 (Owner/Admin/Member/Viewer) + 权限校验 + 角色查询
+- [x] SpaceMemberService — invite/join/leave/update_role/remove，邀请码支持过期与次数限制
+- [x] CLI space 命令 — `fusion-cowork space create/list/get/archive`，`fusion-cowork space member list/invite/join/remove`
+- [x] DeskRPC space 处理器 — 11 个 JSON-RPC 方法 (desk.space.create/list/get/update/archive/delete, desk.space.member.invite/join/list/remove/update_role)
+- [x] 58 项测试覆盖 models/store/service/permission/member_service
+
+### V0.7.1 ✅ (M7 — 共享对话 + 知识库绑定)
+- [x] SpaceChatService — 共享上下文 + Agent 回复 + 流式推理 (SSE)
+- [x] SpaceKBService — fusion-kb 绑定 + 文档管理 + RAG 搜索/查询
+- [x] SpaceAPI — 18 个 REST 端点 + SSE 事件流 (`/spaces/{id}/stream`)
+- [x] FusionMLXClient 增强 — 端口修正 (11434) + 瞬态错误重试 + 流式健壮性
+- [x] KBClient 完善 — create_kb/delete_kb/upload_file/list_documents
+- [x] SharedContext — 工作流节点访问空间消息 + KB 搜索/查询
+- [x] CLI 扩展 — `space chat` 交互式对话 + `space knowledge bind/status/upload/search/unbind`
+- [x] DeskRPC 处理器 — 9 个新方法 (desk.space.chat.send/list/context, desk.space.knowledge.bind/status/upload/search/query/unbind)
+- [x] 52 项 M7 测试 (总计 461)
+
+### V0.8.0 ✅ (M8 — Agent 编排 + 多 Agent 接力)
+- [x] SpaceAgentRuntime — 空间级 Agent 运行时，支持隔离 (add/remove/list/get/call/chain/register)
+- [x] AgentStudioClient — Agent Studio API HTTP 客户端，支持重试 + 导入到空间
+- [x] Chat 接力 — SpaceChatService.relay_agents() 顺序多 Agent 链式执行
+- [x] SpacePermission — `call_agent` 权限 (owner/admin/member: ✅, viewer: ❌)
+- [x] SpaceAPI — 6 个新 Agent 端点 (GET/POST /agents, GET/DELETE /agents/{id}, POST /agents/call, POST /agents/relay)
+- [x] Orchestrator 桥接 — register_to_orchestrator() 将空间 Agent 映射为 Agent dataclass
+- [x] CLI — `space agent list/add/remove/call/relay` 命令
+- [x] DeskRPC — 5 个新 JSON-RPC 方法 (desk.space.agent.list/add/remove/call/relay)
+- [x] 35 项 M8 测试 (总计 490)
+- [x] KBClient 端口修正 (11434→11436, issue #6)
+- [x] desk.project.syncKnowledge — 接收外部知识库文件同步 (issue #7)
+- [x] desk.project.importSnapshot — 接收会话快照导入 (issue #8)
+- [x] desk.project.exportToProject — 导出空间内容到 fusion-projects (issue #9)
 
 ---
 

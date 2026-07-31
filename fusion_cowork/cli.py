@@ -11,34 +11,27 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
 import logging
 import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import List
 
 import click
 
 from . import __version__, __app_name__, NODE_NAME_ALIASES
 from .engine import (
+    NodeConfig,
     Workflow, WorkflowEngine, WorkflowStatus,
     NodeRegistry, TaskScheduler, TaskStatus,
-)
-from .nodes.macos import (
-    DesktopCleanNode, DownloadOrganizerNode, FileClassifierNode,
-    FileBatchRenameNode, DiskCleanerNode, FileWatcherNode,
-    FileCopyNode, FileMoveNode, FileDeleteNode, FileFindNode,
 )
 from .nodes.macos.input_nodes import (
     MouseMoveNode, MouseClickNode, KeyboardTypeNode,
     KeyboardShortcutNode, ComputerUseLoopNode,
 )
-from .nodes.ai import AIClassifyNode, AISummarizeNode, AIGenerateNameNode
-from .nodes.io import FileInputNode, FileOutputNode
-from .nodes.logic import FilterNode, LoopNode, MergeNode
-from .nodes.tools import ShellExecNode, PythonREPLNode, WebSearchNode, FetchURLNode, ApplyEditNode
 from .nodes.browser import BrowserClient, BrowserManager
 from .ai import FusionMLXClient, NLWorkflowGenerator
 from .templates import TemplateManager
@@ -46,11 +39,58 @@ from .utils.logger import setup_logger
 
 logger = logging.getLogger(__name__)
 
-# 全局实例
-_engine = WorkflowEngine()
-_scheduler = TaskScheduler()
-_template_mgr = TemplateManager()
-_mlx_client = FusionMLXClient()
+# 全局实例 — 延迟初始化避免测试污染
+_engine = None
+_scheduler = None
+_template_mgr = None
+_mlx_client = None
+
+
+def _get_engine() -> WorkflowEngine:
+    global _engine
+    if _engine is None:
+        _engine = WorkflowEngine()
+    return _engine
+
+
+def _get_scheduler() -> TaskScheduler:
+    global _scheduler
+    if _scheduler is None:
+        _scheduler = TaskScheduler()
+    return _scheduler
+
+
+def _get_template_mgr() -> TemplateManager:
+    global _template_mgr
+    if _template_mgr is None:
+        _template_mgr = TemplateManager()
+    return _template_mgr
+
+
+def _get_mlx_client() -> FusionMLXClient:
+    global _mlx_client
+    if _mlx_client is None:
+        _mlx_client = FusionMLXClient()
+    return _mlx_client
+
+
+def _cleanup_mlx_client():
+    global _mlx_client
+    if _mlx_client is None:
+        return
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(_mlx_client.close())
+        else:
+            loop.run_until_complete(_mlx_client.close())
+    except Exception as e:
+        logger.debug(f"清理 mlx_client 失败: {e}")
+    finally:
+        _mlx_client = None
+
+
+atexit.register(_cleanup_mlx_client)
 
 
 class RichConsole:
@@ -153,9 +193,9 @@ def template():
 def list_templates(category: str, tag: str, search: str):
     """列出可用模板。"""
     if search:
-        templates = _template_mgr.search_templates(search)
+        templates = _get_template_mgr().search_templates(search)
     else:
-        templates = _template_mgr.list_templates(category=category, tag=tag)
+        templates = _get_template_mgr().list_templates(category=category, tag=tag)
 
     if not templates:
         console.print_warning("没有找到匹配的模板")
@@ -192,7 +232,7 @@ def list_templates(category: str, tag: str, search: str):
 @click.argument("template_id")
 def show_template(template_id: str):
     """查看模板详情。"""
-    tpl = _template_mgr.get_template(template_id)
+    tpl = _get_template_mgr().get_template(template_id)
     if not tpl:
         console.print_error(f"模板不存在: {template_id}")
         return
@@ -237,7 +277,7 @@ async def _async_run_template(template_id: str, dry_run: bool, params_json: str)
     console.print_header(f"🚀 运行模板: {template_id}")
 
     # 加载模板
-    wf = _template_mgr.template_to_workflow(template_id)
+    wf = _get_template_mgr().template_to_workflow(template_id)
     if not wf:
         console.print_error(f"模板不存在: {template_id}")
         return
@@ -275,7 +315,7 @@ async def _async_run_template(template_id: str, dry_run: bool, params_json: str)
 
     # 执行工作流
     console.print_info("正在执行...")
-    execution = await _engine.execute(wf)
+    execution = await _get_engine().execute(wf)
 
     # 输出结果
     if execution.status == WorkflowStatus.SUCCESS:
@@ -330,14 +370,14 @@ async def _async_generate(prompt: str, model: str):
     console.print_header(f"🤖 AI 生成工作流")
 
     # 检查 fusion-mlx 是否可用
-    health = await _mlx_client.health()
+    health = await _get_mlx_client().health()
     if not health:
         console.print_warning("⚠️  fusion-mlx 未运行，将使用本地规则引擎")
         console.print_info("   启动: fusion-mlx 或 MLX 服务")
         console.print_info("   将使用模板匹配模式")
 
     # 生成工作流
-    generator = NLWorkflowGenerator(_mlx_client, model=model)
+    generator = NLWorkflowGenerator(_get_mlx_client(), model=model)
     result = await generator.generate(prompt)
 
     error = result.get("error")
@@ -373,11 +413,11 @@ async def _async_ai_status():
     console.print_header("🔌 AI 服务状态")
 
     # 检查 fusion-mlx
-    mlx_ok = await _mlx_client.health()
+    mlx_ok = await _get_mlx_client().health()
     if mlx_ok:
         console.print_success("✅ fusion-mlx: 运行中")
         try:
-            models = await _mlx_client.list_models()
+            models = await _get_mlx_client().list_models()
             if models:
                 click.echo(f"   可用模型: {', '.join(m.get('id', m.get('model', '?')) for m in models[:5])}")
         except Exception:
@@ -394,6 +434,7 @@ async def _async_ai_status():
         console.print_success("✅ Fusion-KB: 运行中")
     else:
         console.print_info("ℹ️  Fusion-KB: 未运行 (可选)")
+    await kb.close()
 
 
 # ── 工作流命令 ──
@@ -440,7 +481,7 @@ async def _async_run_workflow_file(workflow_file: str, dry_run: bool):
         return
 
     console.print_info("正在执行...")
-    execution = await _engine.execute(wf)
+    execution = await _get_engine().execute(wf)
 
     if execution.status == WorkflowStatus.SUCCESS:
         console.print_success(f"✅ 执行成功! ({execution.total_time:.2f}s)")
@@ -465,7 +506,7 @@ async def _async_run_workflow_file(workflow_file: str, dry_run: bool):
 @workflow.command("list")
 def list_workflows():
     """列出最近执行的工作流。"""
-    executions = _engine.list_executions(limit=20)
+    executions = _get_engine().list_executions(limit=20)
     if not executions:
         console.print_info("暂无工作流执行记录")
         return
@@ -498,7 +539,7 @@ def schedule():
 @schedule.command("list")
 def list_schedules():
     """列出所有定时任务。"""
-    tasks = _scheduler.list_tasks()
+    tasks = _get_scheduler().list_tasks()
     if not tasks:
         console.print_info("暂无定时任务")
         console.print_info("使用 'fusion-cowork schedule add' 添加定时任务")
@@ -526,7 +567,7 @@ def list_schedules():
 @click.option("--description", "-d", default="", help="任务描述")
 def add_schedule(name: str, cron: str, template: str, description: str):
     """添加定时任务。"""
-    task_id = _scheduler.add_cron_task(
+    task_id = _get_scheduler().add_cron_task(
         name=name,
         workflow_id=template,
         cron_expression=cron,
@@ -542,7 +583,7 @@ def add_schedule(name: str, cron: str, template: str, description: str):
 @click.argument("task_id")
 def remove_schedule(task_id: str):
     """删除定时任务。"""
-    if _scheduler.remove_task(task_id):
+    if _get_scheduler().remove_task(task_id):
         console.print_success(f"已删除任务: {task_id}")
     else:
         console.print_error(f"任务不存在: {task_id}")
@@ -551,14 +592,14 @@ def remove_schedule(task_id: str):
 @schedule.command("start")
 def start_scheduler():
     """启动调度器。"""
-    _scheduler.start()
+    _get_scheduler().start()
     console.print_success("✅ 调度器已启动")
 
 
 @schedule.command("stop")
 def stop_scheduler():
     """停止调度器。"""
-    _scheduler.shutdown()
+    _get_scheduler().shutdown()
     console.print_info("⏹️ 调度器已停止")
 
 
@@ -593,7 +634,7 @@ def system_info():
         click.echo(f"    ├─ {cat}: {count} 个")
 
     # 模板统计
-    templates = _template_mgr.list_templates()
+    templates = _get_template_mgr().list_templates()
     click.echo(f"  内置模板: {len(templates)} 个")
 
 
@@ -728,7 +769,7 @@ def browser_extract(url: str = "", to_file: str = ""):
 
 async def _async_browser_extract(url: str, to_file: str):
     from .nodes.browser import BrowserExtractNode
-    from .engine import NodeConfig
+    from .engine import NodeConfig, NodeStatus
 
     node = BrowserExtractNode(config=NodeConfig(params={"url": url} if url else {}))
     result = await node.execute({"url": url} if url else {})
@@ -1450,6 +1491,616 @@ def benchmark_run(node, repeats):
     ]
     asyncio.run(runner.run_nodes(specs))
     click.echo(runner.to_json())
+
+
+# ── Space 协作空间 ──
+
+@cli.group("space")
+def space():
+    """协作空间管理 — 创建/列表/归档/成员管理。"""
+    pass
+
+
+@space.command("create")
+@click.argument("name")
+@click.option("--owner", "-o", default="local_user", help="Owner 用户 ID")
+@click.option("--description", "-d", default="", help="空间描述")
+@click.option("--collab-mode", default="local", help="协作模式 (local/p2p)")
+def space_create(name: str, owner: str, description: str, collab_mode: str):
+    """创建协作空间。"""
+    asyncio.run(_async_space_create(name, owner, description, collab_mode))
+
+
+async def _async_space_create(name: str, owner: str, description: str, collab_mode: str):
+    from fusion_cowork.space import SpaceService, SpaceStore
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        svc = SpaceService(store)
+        space_obj = await svc.create(name=name, owner_id=owner, description=description, collab_mode=collab_mode)
+        console.print_success(f"空间已创建: {space_obj.id}")
+        console.print_result(f"  名称: {space_obj.name}")
+        console.print_result(f"  Owner: {space_obj.owner_id}")
+        console.print_result(f"  状态: {space_obj.status}")
+    finally:
+        await store.close()
+
+
+@space.command("list")
+@click.option("--status", "-s", default=None, help="按状态过滤 (active/archived)")
+@click.option("--owner", "-o", default=None, help="按 Owner 过滤")
+@click.option("--limit", "-n", default=20, help="返回数量")
+def space_list(status, owner, limit):
+    """列出协作空间。"""
+    asyncio.run(_async_space_list(status, owner, limit))
+
+
+async def _async_space_list(status, owner, limit):
+    from fusion_cowork.space import SpaceService, SpaceStore
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        svc = SpaceService(store)
+        spaces = await svc.list(status=status, owner_id=owner, limit=limit)
+        if not spaces:
+            console.print_info("没有协作空间")
+            return
+        console.print_header(f"协作空间列表 ({len(spaces)} 个)")
+        rows = []
+        for sp in spaces:
+            rows.append([sp.id, sp.name, sp.owner_id, sp.status, sp.collab_mode])
+        console.print_table(["ID", "名称", "Owner", "状态", "协作模式"], rows)
+    finally:
+        await store.close()
+
+
+@space.command("get")
+@click.argument("space_id")
+def space_get(space_id: str):
+    """查看协作空间详情。"""
+    asyncio.run(_async_space_get(space_id))
+
+
+async def _async_space_get(space_id: str):
+    from fusion_cowork.space import SpaceService, SpaceStore
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        svc = SpaceService(store)
+        sp = await svc.get(space_id)
+        if not sp:
+            console.print_error(f"空间不存在: {space_id}")
+            return
+        console.print_header(f"🚀 {sp.name}")
+        click.echo(f"  ID: {sp.id}")
+        click.echo(f"  描述: {sp.description}")
+        click.echo(f"  Owner: {sp.owner_id}")
+        click.echo(f"  状态: {sp.status}")
+        click.echo(f"  协作模式: {sp.collab_mode}")
+        click.echo(f"  KB 绑定: {sp.kb_bind_mode} ({sp.kb_id or '无'})")
+        click.echo(f"  创建: {sp.created_at}")
+        click.echo(f"  更新: {sp.updated_at}")
+        config = sp.config
+        click.echo(f"\n  配置:")
+        click.echo(f"    最大成员: {config.max_members}")
+        click.echo(f"    Web 搜索: {'✅' if config.enable_web_search else '❌'}")
+        click.echo(f"    深度研究: {'✅' if config.enable_deep_research else '❌'}")
+        click.echo(f"    Computer Use: {'✅' if config.enable_computer_use else '❌'}")
+        click.echo(f"    流式响应: {'✅' if config.stream_response else '❌'}")
+        members = await store.list_members(space_id)
+        click.echo(f"\n  成员 ({len(members)} 人):")
+        for m in members:
+            click.echo(f"    ├─ {m.display_name} ({m.user_id}) — {m.role}")
+    finally:
+        await store.close()
+
+
+@space.command("archive")
+@click.argument("space_id")
+def space_archive(space_id: str):
+    """归档协作空间。"""
+    asyncio.run(_async_space_archive(space_id))
+
+
+async def _async_space_archive(space_id: str):
+    from fusion_cowork.space import SpaceService, SpaceStore
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        svc = SpaceService(store)
+        result = await svc.archive(space_id)
+        if result:
+            console.print_success(f"空间已归档: {space_id}")
+        else:
+            console.print_error(f"归档失败: 空间不存在 {space_id}")
+    finally:
+        await store.close()
+
+
+@space.group("member")
+def space_member():
+    """协作空间成员管理。"""
+    pass
+
+
+@space_member.command("list")
+@click.argument("space_id")
+def space_member_list(space_id: str):
+    """列出空间成员。"""
+    asyncio.run(_async_space_member_list(space_id))
+
+
+async def _async_space_member_list(space_id: str):
+    from fusion_cowork.space import SpaceStore
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        members = await store.list_members(space_id)
+        if not members:
+            console.print_info("空间没有成员")
+            return
+        console.print_header(f"成员列表 ({len(members)} 人)")
+        rows = []
+        for m in members:
+            rows.append([m.user_id, m.display_name, m.role, m.joined_at[:19]])
+        console.print_table(["用户 ID", "显示名", "角色", "加入时间"], rows)
+    finally:
+        await store.close()
+
+
+@space_member.command("invite")
+@click.argument("space_id")
+@click.option("--inviter", "-i", default="local_user", help="邀请人 ID")
+@click.option("--role", "-r", default="member", help="成员角色 (member/admin/viewer)")
+@click.option("--max-uses", default=0, type=int, help="最大使用次数 (0=无限)")
+@click.option("--expires-hours", default=0, type=int, help="过期时间 (小时, 0=永不过期)")
+def space_member_invite(space_id: str, inviter: str, role: str, max_uses: int, expires_hours: int):
+    """生成邀请链接。"""
+    asyncio.run(_async_space_member_invite(space_id, inviter, role, max_uses, expires_hours))
+
+
+async def _async_space_member_invite(space_id: str, inviter: str, role: str, max_uses: int, expires_hours: int):
+    from fusion_cowork.space import SpaceMemberService, SpacePermission, SpaceStore
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        perm = SpacePermission(store)
+        svc = SpaceMemberService(store, perm)
+        code = await svc.invite(space_id, inviter, role=role, max_uses=max_uses, expires_hours=expires_hours)
+        console.print_success(f"邀请码已生成: {code}")
+        console.print_info(f"使用 'fusion-cowork space member join {code}' 加入空间")
+    except PermissionError as e:
+        console.print_error(str(e))
+    finally:
+        await store.close()
+
+
+@space_member.command("join")
+@click.argument("invite_code")
+@click.option("--user", "-u", default="local_user", help="用户 ID")
+@click.option("--display-name", "-n", default="", help="显示名")
+def space_member_join(invite_code: str, user: str, display_name: str):
+    """通过邀请码加入空间。"""
+    asyncio.run(_async_space_member_join(invite_code, user, display_name))
+
+
+async def _async_space_member_join(invite_code: str, user: str, display_name: str):
+    from fusion_cowork.space import SpaceMemberService, SpacePermission, SpaceStore
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        perm = SpacePermission(store)
+        svc = SpaceMemberService(store, perm)
+        member = await svc.join(invite_code, user_id=user, display_name=display_name)
+        console.print_success(f"已加入空间: {member.space_id} (角色: {member.role})")
+    except ValueError as e:
+        console.print_error(str(e))
+    finally:
+        await store.close()
+
+
+@space_member.command("remove")
+@click.argument("space_id")
+@click.argument("user_id")
+@click.option("--operator", "-o", default="local_user", help="操作人 ID")
+def space_member_remove(space_id: str, user_id: str, operator: str):
+    """移除空间成员。"""
+    asyncio.run(_async_space_member_remove(space_id, user_id, operator))
+
+
+async def _async_space_member_remove(space_id: str, user_id: str, operator: str):
+    from fusion_cowork.space import SpaceMemberService, SpacePermission, SpaceStore
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        perm = SpacePermission(store)
+        svc = SpaceMemberService(store, perm)
+        removed = await svc.remove(space_id, user_id, operator_id=operator)
+        if removed:
+            console.print_success(f"已移除成员: {user_id}")
+        else:
+            console.print_error(f"移除失败: 成员不存在")
+    except (PermissionError, ValueError) as e:
+        console.print_error(str(e))
+    finally:
+        await store.close()
+
+
+# ── Space Chat ──
+
+
+@space.command("chat")
+@click.argument("space_id")
+@click.option("--user", "-u", default="local_user", help="用户 ID")
+@click.option("--agent", "-a", default=None, help="Agent ID (触发 Agent 回复)")
+@click.option("--model", "-m", default=None, help="模型名称")
+def space_chat(space_id: str, user: str, agent: str, model: str):
+    """交互式共享对话。输入消息后按回车发送，Ctrl+C 退出。"""
+    asyncio.run(_async_space_chat(space_id, user, agent, model))
+
+
+async def _async_space_chat(space_id: str, user: str, agent: str, model: str):
+    from fusion_cowork.space import SpaceStore, SpaceChatService, SpacePermission
+    from fusion_cowork.ai.mlx_client import FusionMLXClient
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        sp = await store.get_space(space_id)
+        if not sp:
+            console.print_error(f"空间不存在: {space_id}")
+            return
+        perm = SpacePermission(store)
+        mlx = FusionMLXClient()
+        chat_svc = SpaceChatService(store, mlx, perm)
+
+        console.print_header(f"Chat in {sp.name} (space: {space_id})")
+        console.print_info("Type message and press Enter. Ctrl+C to exit.")
+
+        history = await chat_svc.list_messages(space_id, limit=20)
+        if history:
+            console.print_info(f"--- Recent messages ({len(history)}) ---")
+            for msg in history:
+                role = msg.role or "user"
+                prefix = "🤖" if role == "assistant" else "👤"
+                content_preview = msg.content[:200] + ("..." if len(msg.content) > 200 else "")
+                click.echo(f"  {prefix} [{msg.user_id or msg.agent_id or 'anon'}] {content_preview}")
+
+        while True:
+            try:
+                content = click.prompt("", prompt_suffix="", default="", show_default=False)
+                if not content.strip():
+                    continue
+                if agent:
+                    console.print_info("Streaming agent response...")
+                    full = []
+                    async for chunk in chat_svc.stream_message(
+                        space_id, user, content, agent, model=model or ""
+                    ):
+                        full.append(chunk)
+                        click.echo(chunk, nl=False)
+                    click.echo()
+                else:
+                    msg = await chat_svc.send_message(space_id, user, content)
+                    console.print_success(f"Sent (msg: {msg.id})")
+            except KeyboardInterrupt:
+                console.print_info("Exiting chat.")
+                break
+            except EOFError:
+                break
+            except PermissionError as e:
+                console.print_error(str(e))
+                break
+    finally:
+        await store.close()
+
+
+# ── Space Knowledge ──
+
+
+@space.group("knowledge")
+def space_knowledge():
+    """空间知识库管理。"""
+    pass
+
+
+@space_knowledge.command("bind")
+@click.argument("space_id")
+@click.option("--operator", "-o", default="local_user", help="操作人 ID")
+@click.option("--kb-id", "-k", default=None, help="绑定已有知识库 ID (不传则自动创建)")
+def space_kb_bind(space_id: str, operator: str, kb_id: str):
+    """绑定知识库到空间。"""
+    asyncio.run(_async_space_kb_bind(space_id, operator, kb_id))
+
+
+async def _async_space_kb_bind(space_id: str, operator: str, kb_id: str):
+    from fusion_cowork.space import SpaceStore, SpaceKBService, SpacePermission
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        perm = SpacePermission(store)
+        kb_svc = SpaceKBService(store, None, perm)
+        result = await kb_svc.bind_kb(space_id, operator, kb_id=kb_id)
+        console.print_success(f"知识库已绑定: {result}")
+    except PermissionError as e:
+        console.print_error(str(e))
+    finally:
+        await store.close()
+
+
+@space_knowledge.command("status")
+@click.argument("space_id")
+def space_kb_status(space_id: str):
+    """查看空间知识库状态。"""
+    asyncio.run(_async_space_kb_status(space_id))
+
+
+async def _async_space_kb_status(space_id: str):
+    from fusion_cowork.space import SpaceStore, SpaceKBService, SpacePermission
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        perm = SpacePermission(store)
+        kb_svc = SpaceKBService(store, None, perm)
+        status = await kb_svc.get_kb_status(space_id)
+        if status["bound"]:
+            console.print_header(f"知识库已绑定: {status['kb_id']}")
+            docs = status.get("document_count", 0)
+            click.echo(f"  文档数量: {docs}")
+        else:
+            console.print_info("空间未绑定知识库")
+    finally:
+        await store.close()
+
+
+@space_knowledge.command("upload")
+@click.argument("space_id")
+@click.argument("file_path")
+@click.option("--operator", "-o", default="local_user", help="操作人 ID")
+def space_kb_upload(space_id: str, file_path: str, operator: str):
+    """上传文件到空间知识库。"""
+    asyncio.run(_async_space_kb_upload(space_id, file_path, operator))
+
+
+async def _async_space_kb_upload(space_id: str, file_path: str, operator: str):
+    from fusion_cowork.space import SpaceStore, SpaceKBService, SpacePermission
+    from fusion_cowork.ai.mlx_client import KBClient
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        perm = SpacePermission(store)
+        kb_client = KBClient()
+        kb_svc = SpaceKBService(store, kb_client, perm)
+        result = await kb_svc.upload_document(space_id, operator, file_path)
+        console.print_success(f"文件已上传: {result}")
+    except PermissionError as e:
+        console.print_error(str(e))
+    except FileNotFoundError:
+        console.print_error(f"文件不存在: {file_path}")
+    finally:
+        await store.close()
+
+
+@space_knowledge.command("search")
+@click.argument("space_id")
+@click.argument("query")
+@click.option("--top-k", "-k", default=5, help="返回结果数量")
+def space_kb_search(space_id: str, query: str, top_k: int):
+    """在空间知识库中搜索。"""
+    asyncio.run(_async_space_kb_search(space_id, query, top_k))
+
+
+async def _async_space_kb_search(space_id: str, query: str, top_k: int):
+    from fusion_cowork.space import SpaceStore, SpaceKBService, SpacePermission
+    from fusion_cowork.ai.mlx_client import KBClient
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        perm = SpacePermission(store)
+        kb_client = KBClient()
+        kb_svc = SpaceKBService(store, kb_client, perm)
+        results = await kb_svc.search(space_id, query, top_k=top_k)
+        if not results:
+            console.print_info("无搜索结果")
+            return
+        console.print_header(f"搜索结果 ({len(results)} 条)")
+        for i, r in enumerate(results, 1):
+            score = r.get("score", 0)
+            content = r.get("content", "")[:150]
+            click.echo(f"  {i}. [score={score:.2f}] {content}")
+    finally:
+        await store.close()
+
+
+@space_knowledge.command("unbind")
+@click.argument("space_id")
+@click.option("--operator", "-o", default="local_user", help="操作人 ID")
+def space_kb_unbind(space_id: str, operator: str):
+    """解除空间知识库绑定。"""
+    asyncio.run(_async_space_kb_unbind(space_id, operator))
+
+
+async def _async_space_kb_unbind(space_id: str, operator: str):
+    from fusion_cowork.space import SpaceStore, SpaceKBService, SpacePermission
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        perm = SpacePermission(store)
+        kb_svc = SpaceKBService(store, None, perm)
+        await kb_svc.unbind_kb(space_id, operator)
+        console.print_success(f"知识库已解绑: {space_id}")
+    except PermissionError as e:
+        console.print_error(str(e))
+    finally:
+        await store.close()
+
+
+# ── Space Agent ──
+
+
+@space.group("agent")
+def space_agent():
+    """空间 Agent 管理。"""
+    pass
+
+
+@space_agent.command("list")
+@click.argument("space_id")
+def space_agent_list(space_id: str):
+    """列出空间 Agent。"""
+    asyncio.run(_async_space_agent_list(space_id))
+
+
+async def _async_space_agent_list(space_id: str):
+    from fusion_cowork.space import SpaceAgentRuntime, SpaceStore, SpacePermission
+    from fusion_cowork.ai.mlx_client import FusionMLXClient
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        perm = SpacePermission(store)
+        mlx = FusionMLXClient()
+        rt = SpaceAgentRuntime(store, mlx, perm)
+        agents = await rt.list_agents(space_id)
+        if not agents:
+            console.print_info("空间没有 Agent")
+            return
+        console.print_header(f"Agent 列表 ({len(agents)} 个)")
+        rows = []
+        for a in agents:
+            rows.append([a.get("id", ""), a.get("name", ""), a.get("agent_type", ""),
+                         "✅" if a.get("enable_rag") else "❌", a.get("created_by", "")])
+        console.print_table(["ID", "名称", "类型", "RAG", "创建人"], rows)
+    finally:
+        await store.close()
+
+
+@space_agent.command("add")
+@click.argument("space_id")
+@click.argument("name")
+@click.option("--type", "-t", "agent_type", default="assistant", help="Agent 类型")
+@click.option("--prompt", "-p", default="", help="系统提示词")
+@click.option("--rag/--no-rag", default=False, help="启用 RAG")
+@click.option("--operator", "-o", default="local_user", help="操作人 ID")
+def space_agent_add(space_id: str, name: str, agent_type: str, prompt: str, rag: bool, operator: str):
+    """添加 Agent 到空间。"""
+    asyncio.run(_async_space_agent_add(space_id, name, agent_type, prompt, rag, operator))
+
+
+async def _async_space_agent_add(space_id: str, name: str, agent_type: str, prompt: str, rag: bool, operator: str):
+    from fusion_cowork.space import SpaceAgentRuntime, SpaceStore, SpacePermission
+    from fusion_cowork.ai.mlx_client import FusionMLXClient
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        perm = SpacePermission(store)
+        mlx = FusionMLXClient()
+        rt = SpaceAgentRuntime(store, mlx, perm)
+        result = await rt.add_agent(
+            space_id=space_id, operator_id=operator, name=name,
+            agent_type=agent_type, system_prompt=prompt, enable_rag=rag,
+        )
+        console.print_success(f"Agent 已添加: {result['id']} ({result['name']})")
+    except PermissionError as e:
+        console.print_error(str(e))
+    finally:
+        await store.close()
+
+
+@space_agent.command("remove")
+@click.argument("space_id")
+@click.argument("agent_id")
+@click.option("--operator", "-o", default="local_user", help="操作人 ID")
+def space_agent_remove(space_id: str, agent_id: str, operator: str):
+    """移除空间 Agent。"""
+    asyncio.run(_async_space_agent_remove(space_id, agent_id, operator))
+
+
+async def _async_space_agent_remove(space_id: str, agent_id: str, operator: str):
+    from fusion_cowork.space import SpaceAgentRuntime, SpaceStore, SpacePermission
+    from fusion_cowork.ai.mlx_client import FusionMLXClient
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        perm = SpacePermission(store)
+        mlx = FusionMLXClient()
+        rt = SpaceAgentRuntime(store, mlx, perm)
+        removed = await rt.remove_agent(space_id, agent_id, operator)
+        if removed:
+            console.print_success(f"Agent 已移除: {agent_id}")
+        else:
+            console.print_error(f"Agent 不存在: {agent_id}")
+    except PermissionError as e:
+        console.print_error(str(e))
+    finally:
+        await store.close()
+
+
+@space_agent.command("call")
+@click.argument("space_id")
+@click.argument("agent_id")
+@click.argument("message")
+@click.option("--user", "-u", default="local_user", help="用户 ID")
+@click.option("--model", "-m", default="", help="模型名称")
+def space_agent_call(space_id: str, agent_id: str, message: str, user: str, model: str):
+    """调用空间 Agent。"""
+    asyncio.run(_async_space_agent_call(space_id, agent_id, message, user, model))
+
+
+async def _async_space_agent_call(space_id: str, agent_id: str, message: str, user: str, model: str):
+    from fusion_cowork.space import SpaceAgentRuntime, SpaceStore, SpacePermission
+    from fusion_cowork.ai.mlx_client import FusionMLXClient
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        perm = SpacePermission(store)
+        mlx = FusionMLXClient()
+        rt = SpaceAgentRuntime(store, mlx, perm)
+        reply = await rt.call_agent(space_id, agent_id, user, message, model=model)
+        click.echo(reply)
+    except PermissionError as e:
+        console.print_error(str(e))
+    except ValueError as e:
+        console.print_error(str(e))
+    finally:
+        await store.close()
+
+
+@space_agent.command("relay")
+@click.argument("space_id")
+@click.argument("message")
+@click.option("--agents", "-a", required=True, help="Agent ID 列表 (逗号分隔)")
+@click.option("--user", "-u", default="local_user", help="用户 ID")
+@click.option("--model", "-m", default="", help="模型名称")
+def space_agent_relay(space_id: str, message: str, agents: str, user: str, model: str):
+    """多 Agent 接力调用。"""
+    asyncio.run(_async_space_agent_relay(space_id, message, agents, user, model))
+
+
+async def _async_space_agent_relay(space_id: str, message: str, agents: str, user: str, model: str):
+    from fusion_cowork.space import SpaceAgentRuntime, SpaceStore, SpacePermission
+    from fusion_cowork.ai.mlx_client import FusionMLXClient
+    store = SpaceStore()
+    await store.initialize()
+    try:
+        perm = SpacePermission(store)
+        mlx = FusionMLXClient()
+        rt = SpaceAgentRuntime(store, mlx, perm)
+        agent_ids = [a.strip() for a in agents.split(",") if a.strip()]
+        results = await rt.chain_agents(space_id, agent_ids, user, message, model=model)
+        console.print_header(f"Agent 接力结果 ({len(results)} 步)")
+        for i, r in enumerate(results, 1):
+            aid = r.get("agent_id", "?")
+            if "error" in r:
+                click.echo(f"  Step {i} [{aid}]: ❌ {r['error']}")
+            else:
+                content = r.get("content", "")
+                preview = content[:300] + ("..." if len(content) > 300 else "")
+                click.echo(f"  Step {i} [{aid}]: {preview}")
+    except PermissionError as e:
+        console.print_error(str(e))
+    except ValueError as e:
+        console.print_error(str(e))
+    finally:
+        await store.close()
 
 
 # ── 主入口 ──

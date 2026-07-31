@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -57,17 +57,26 @@ class CDPClient:
         self._connected = False
         logger.info("CDP 已断开")
 
-    async def send(self, method: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def send(
+        self,
+        method: str,
+        params: Dict[str, Any] = None,
+        max_retries: int = 100,
+        timeout: float = 30.0,
+    ) -> Dict[str, Any]:
         if not self._connected or self._ws is None:
             raise RuntimeError("CDP 未连接")
         self._msg_id += 1
         msg = {"id": self._msg_id, "method": method, "params": params or {}}
         await self._ws.send(json.dumps(msg))
-        while True:
-            raw = await asyncio.wait_for(self._ws.recv(), timeout=30)
+        for _ in range(max_retries):
+            raw = await asyncio.wait_for(self._ws.recv(), timeout=timeout)
             data = json.loads(raw)
             if data.get("id") == self._msg_id:
                 return data
+        raise RuntimeError(
+            f"CDP send() 超过最大重试次数 ({max_retries}): method={method}"
+        )
 
     @property
     def connected(self) -> bool:

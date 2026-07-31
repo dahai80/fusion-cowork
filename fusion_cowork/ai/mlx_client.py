@@ -1,26 +1,31 @@
-"""FusionMLX HTTP 客户端 — Fusion-Cowork 与 fusion-mlx 的唯一接口。
+"""FusionMLX HTTP client - sole interface between Fusion-Cowork and fusion-mlx.
 
-所有 AI 推理请求都通过此客户端发送到 fusion-mlx 的 OpenAI 兼容 API。
-不直接导入任何 MLX 或 mlx-lm 代码，仅通过 HTTP 通信。
+All AI inference requests go through this client to fusion-mlx OpenAI-compatible API.
+No direct MLX or mlx-lm imports; HTTP only.
 
-调用地址: http://localhost:8000/v1 (fusion-mlx 默认端口)
+Default: http://localhost:11434/v1 (fusion-mlx default port)
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import json
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MLX_PORT = 11434
+DEFAULT_MLX_BASE_URL = f"http://localhost:{DEFAULT_MLX_PORT}/v1"
+MAX_RETRIES = 2
+RETRY_DELAY = 1.0
+
 
 @dataclass
 class LLMResponse:
-    """LLM 调用的结构化响应。"""
     content: str
     tool_calls: list[dict] = field(default_factory=list)
     finish_reason: str = "stop"
@@ -32,33 +37,27 @@ class LLMResponse:
 
 @dataclass
 class EmbeddingResponse:
-    """Embedding 调用的响应。"""
     vector: list[float]
     model: str = ""
     usage: dict = field(default_factory=lambda: {"prompt_tokens": 0})
 
 
 class FusionMLXClient:
-    """fusion-mlx HTTP 客户端。
-
-    通过 OpenAI 兼容 API 调用 fusion-mlx 的本地推理能力。
-    支持：
-    - 文本生成 (chat)
-    - 流式输出 (stream_chat)
-    - 模型列表
-    - 健康检查
-    - 服务统计
-    """
+    """fusion-mlx HTTP client with retry and stream robustness."""
 
     def __init__(
         self,
-        base_url: str = "http://localhost:8000/v1",
+        base_url: str = DEFAULT_MLX_BASE_URL,
         api_key: str = "local",
         timeout: float = 120.0,
+        max_retries: int = MAX_RETRIES,
+        retry_delay: float = RETRY_DELAY,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
         self._client: httpx.AsyncClient | None = None
 
     @property
@@ -72,10 +71,15 @@ class FusionMLXClient:
         return self._client
 
     async def close(self) -> None:
-        """关闭底层 HTTP 客户端。"""
         if self._client:
             await self._client.aclose()
             self._client = None
+
+    async def __aenter__(self) -> FusionMLXClient:
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        await self.close()
 
     async def chat(
         self,
@@ -87,20 +91,7 @@ class FusionMLXClient:
         stream: bool = False,
         **kwargs,
     ) -> LLMResponse:
-        """调用 fusion-mlx 的 /v1/chat/completions 端点。
-
-        Args:
-            model: 模型名称 (如 "qwen3.5-9b", "deepseek-v3-24b")
-            messages: 对话消息列表 (OpenAI 格式)
-            tools: 可选的工具定义 (function calling)
-            temperature: 采样温度
-            max_tokens: 最大生成 token 数
-            stream: 是否启用流式输出
-            **kwargs: 额外参数
-
-        Returns:
-            LLMResponse: 包含 content、tool_calls、usage
-        """
+        """Call /v1/chat/completions with retry on transient errors."""
         payload = {
             "model": model,
             "messages": messages,
@@ -111,19 +102,35 @@ class FusionMLXClient:
             payload["tools"] = tools
         payload.update(kwargs)
 
-        resp = await self.client.post("/chat/completions", json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-
-        choice = data["choices"][0]
-        message = choice.get("message", {})
-
-        return LLMResponse(
-            content=message.get("content", ""),
-            tool_calls=message.get("tool_calls", []),
-            finish_reason=choice.get("finish_reason", "stop"),
-            usage=data.get("usage", {}),
-        )
+        last_exc = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                resp = await self.client.post("/chat/completions", json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                choice = data["choices"][0]
+                message = choice.get("message", {})
+                return LLMResponse(
+                    content=message.get("content", ""),
+                    tool_calls=message.get("tool_calls", []),
+                    finish_reason=choice.get("finish_reason", "stop"),
+                    usage=data.get("usage", {}),
+                )
+            except (httpx.ConnectError, httpx.ReadTimeout, httpx.PoolTimeout) as e:
+                last_exc = e
+                if attempt < self.max_retries:
+                    logger.warning(f"chat() attempt {attempt + 1} failed: {e}, retrying in {self.retry_delay}s")
+                    await asyncio.sleep(self.retry_delay)
+                else:
+                    logger.error(f"chat() failed after {attempt + 1} attempts: {e}")
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (429, 502, 503, 504) and attempt < self.max_retries:
+                    last_exc = e
+                    logger.warning(f"chat() HTTP {e.response.status_code}, retrying in {self.retry_delay}s")
+                    await asyncio.sleep(self.retry_delay)
+                else:
+                    raise
+        raise last_exc
 
     async def stream_chat(
         self,
@@ -132,7 +139,7 @@ class FusionMLXClient:
         temperature: float = 0.7,
         max_tokens: int = 4096,
     ) -> AsyncIterator[str]:
-        """流式调用 chat completions。"""
+        """Stream chat completions with connection retry and error recovery."""
         payload = {
             "model": model,
             "messages": messages,
@@ -140,36 +147,47 @@ class FusionMLXClient:
             "max_tokens": max_tokens,
             "stream": True,
         }
-        async with self.client.stream("POST", "/chat/completions", json=payload) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if line.startswith("data: "):
-                    chunk = line[6:]
-                    if chunk.strip() == "[DONE]":
-                        break
-                    try:
-                        data = json.loads(chunk)
-                        delta = data.get("choices", [{}])[0].get("delta", {})
-                        content = delta.get("content", "")
-                        if content:
-                            yield content
-                    except json.JSONDecodeError:
-                        continue
+        last_exc = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                async with self.client.stream("POST", "/chat/completions", json=payload) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if line.startswith("data: "):
+                            chunk = line[6:]
+                            if chunk.strip() == "[DONE]":
+                                break
+                            try:
+                                data = json.loads(chunk)
+                                delta = data.get("choices", [{}])[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    yield content
+                            except json.JSONDecodeError:
+                                continue
+                    return
+            except (httpx.ConnectError, httpx.ReadTimeout, httpx.PoolTimeout) as e:
+                last_exc = e
+                if attempt < self.max_retries:
+                    logger.warning(f"stream_chat() attempt {attempt + 1} failed: {e}, retrying")
+                    await asyncio.sleep(self.retry_delay)
+                else:
+                    logger.error(f"stream_chat() failed after {attempt + 1} attempts: {e}")
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (429, 502, 503, 504) and attempt < self.max_retries:
+                    last_exc = e
+                    logger.warning(f"stream_chat() HTTP {e.response.status_code}, retrying")
+                    await asyncio.sleep(self.retry_delay)
+                else:
+                    raise
+        raise last_exc
 
     async def embed(
         self,
         text: str,
         model: str = "BGE-M3",
     ) -> EmbeddingResponse:
-        """调用 fusion-mlx 的 /v1/embeddings 端点生成文本向量。
-
-        Args:
-            text: 输入文本
-            model: 嵌入模型名称
-
-        Returns:
-            EmbeddingResponse: 包含向量和模型信息
-        """
+        """Call /v1/embeddings."""
         payload = {
             "model": model,
             "input": text,
@@ -186,14 +204,14 @@ class FusionMLXClient:
         )
 
     async def list_models(self) -> list[dict[str, Any]]:
-        """列出 fusion-mlx 中可用的模型。"""
+        """List available models from fusion-mlx."""
         resp = await self.client.get("/models")
         resp.raise_for_status()
         data = resp.json()
         return data.get("data", [])
 
     async def health(self) -> bool:
-        """检查 fusion-mlx 是否健康可访问。"""
+        """Check if fusion-mlx is reachable."""
         try:
             resp = await self.client.get("/models", timeout=2.0)
             return resp.status_code == 200
@@ -201,7 +219,7 @@ class FusionMLXClient:
             return False
 
     async def get_server_stats(self) -> dict[str, Any]:
-        """获取 fusion-mlx 服务统计信息。"""
+        """Get fusion-mlx server stats."""
         try:
             resp = await self.client.get("/stats", timeout=5.0)
             resp.raise_for_status()
@@ -211,15 +229,14 @@ class FusionMLXClient:
 
 
 class KBClient:
-    """Fusion-KB HTTP 客户端 — 知识库语义检索。
+    """Fusion-KB HTTP client for knowledge base operations.
 
-    通过 HTTP 调用 fusion-kb 的 FastAPI 服务。
-    调用地址: http://localhost:11434 (fusion-kb 默认端口)
+    Default: http://localhost:11436 (fusion-kb default port)
     """
 
     def __init__(
         self,
-        base_url: str = "http://localhost:11434",
+        base_url: str = "http://localhost:11436",
         timeout: float = 30.0,
     ):
         self.base_url = base_url.rstrip("/")
@@ -240,8 +257,13 @@ class KBClient:
             await self._client.aclose()
             self._client = None
 
+    async def __aenter__(self) -> KBClient:
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        await self.close()
+
     async def list_bases(self) -> list[dict[str, Any]]:
-        """列出所有知识库。"""
         resp = await self.client.get("/kb/bases")
         resp.raise_for_status()
         return resp.json()
@@ -252,16 +274,6 @@ class KBClient:
         query: str,
         top_k: int = 5,
     ) -> list[dict[str, Any]]:
-        """在知识库中语义搜索。
-
-        Args:
-            kb_id: 知识库 ID
-            query: 搜索查询
-            top_k: 返回结果数量
-
-        Returns:
-            搜索结果列表，每项包含 content、score、metadata
-        """
         payload = {"query": query, "top_k": top_k}
         resp = await self.client.post(f"/kb/bases/{kb_id}/search", json=payload)
         resp.raise_for_status()
@@ -273,24 +285,49 @@ class KBClient:
         question: str,
         top_k: int = 5,
     ) -> str:
-        """RAG 查询 — 基于知识库内容回答问题。
-
-        Args:
-            kb_id: 知识库 ID
-            question: 用户问题
-            top_k: 检索相关文档数
-
-        Returns:
-            str: 回答内容
-        """
         payload = {"question": question, "top_k": top_k}
         resp = await self.client.post(f"/kb/bases/{kb_id}/query", json=payload)
         resp.raise_for_status()
         data = resp.json()
         return data.get("answer", "")
 
+    async def create_kb(self, name: str, description: str = "") -> str:
+        resp = await self.client.post("/kb/bases", json={"name": name, "description": description})
+        resp.raise_for_status()
+        data = resp.json()
+        kb_id = data.get("id") or data.get("kb_id") or data.get("name", name)
+        return kb_id
+
+    async def delete_kb(self, kb_id: str) -> bool:
+        resp = await self.client.delete(f"/kb/bases/{kb_id}")
+        if resp.status_code == 404:
+            return False
+        resp.raise_for_status()
+        return True
+
+    async def upload_file(
+        self,
+        kb_id: str,
+        file_path: str,
+        file_name: str | None = None,
+    ) -> dict[str, Any]:
+        import os as _os
+        name = file_name or _os.path.basename(file_path)
+        with open(file_path, "rb") as f:
+            resp = await self.client.post(
+                f"/kb/bases/{kb_id}/documents",
+                files={"file": (name, f)},
+                data={"name": name},
+            )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def list_documents(self, kb_id: str) -> list[dict[str, Any]]:
+        resp = await self.client.get(f"/kb/bases/{kb_id}/documents")
+        resp.raise_for_status()
+        return resp.json()
+
     async def health(self) -> bool:
-        """检查 fusion-kb 是否健康。"""
         try:
             resp = await self.client.get("/kb/bases", timeout=2.0)
             return resp.status_code == 200

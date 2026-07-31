@@ -1,6 +1,6 @@
 [project]
 name = "fusion-cowork"
-version = "0.1.1"
+version = "0.1.2"
 description = "Fusion-Cowork — macOS 原生、纯本地离线、零代码桌面智能自动化平台"
 authors = [
     { name = "Fusion-MLX Team" },
@@ -14,6 +14,7 @@ dependencies = [
     "watchdog>=3.0.0",
     "apscheduler>=3.10.0",
     "httpx>=0.27.0",
+    "aiosqlite>=0.20.0",
     "pyyaml>=6.0",
     "jinja2>=3.1.0",
 ]
@@ -59,6 +60,22 @@ exclude_lines = [
 
 [tool.setuptools.packages.find]
 include = ["fusion_cowork*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["fusion_cowork", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501", "RUF001", "RUF003"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["fusion_cowork"]
+
+[tool.black]
+target-version = ["py311"]
+line-length = 120
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]

@@ -10,7 +10,10 @@ import asyncio
 import json
 import logging
 import sys
-from typing import Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict
+
+if TYPE_CHECKING:
+    from .mcp_server import MCPToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +25,7 @@ SERVER_VERSION = "0.1.0"
 class StdioTransport:
     """MCP stdio 传输 — 从 stdin 读取 JSON-RPC，向 stdout 写入响应。"""
 
-    def __init__(self, tool_registry: "MCPToolRegistry"):
+    def __init__(self, tool_registry: MCPToolRegistry):
         self._registry = tool_registry
         self._running = False
         self._initialized = False

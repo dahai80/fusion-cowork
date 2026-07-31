@@ -10,34 +10,19 @@ import asyncio
 import logging
 import os
 import shutil
-import stat
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict
 
 from ...engine.node import (
-    BaseNode, NodeConfig, NodeResult, NodeStatus,
+    coerce_params,
+    BaseNode, NodeResult, NodeStatus,
     NodeCategory, register_node,
 )
 
 logger = logging.getLogger(__name__)
 
-
-def _run_applescript(script: str) -> Tuple[int, str]:
-    """通过 osascript 运行 AppleScript。
-
-    Args:
-        script: AppleScript 代码
-
-    Returns:
-        (return_code, stdout) 元组
-    """
-    import subprocess
-    proc = subprocess.run(
-        ["osascript", "-e", script],
-        capture_output=True, text=True, timeout=30,
-    )
-    return proc.returncode, proc.stdout.strip()
+from . import run_osascript as _run_applescript
 
 
 def _get_desktop_path() -> str:
@@ -905,9 +890,9 @@ class FileWatcherNode(BaseNode):
                 await asyncio.wait_for(stop_event.wait(), timeout=timeout)
             except asyncio.TimeoutError:
                 pass
-
-            observer.stop()
-            observer.join()
+            finally:
+                observer.stop()
+                observer.join()
 
             # 过滤文件模式
             if file_patterns:

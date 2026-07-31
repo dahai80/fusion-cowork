@@ -6,10 +6,9 @@ MCPServer 作为高层门面，支持 stdio/HTTP 两种传输。
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 

@@ -233,6 +233,28 @@ _LAZY_IMPORTS: dict[str, str] = {
     # M5 SDK/Headless
     "FusionCoworkSDK": "fusion_cowork.sdk",
     "HeadlessRunner": "fusion_cowork.sdk.headless",
+    # M6 Space 协作空间
+    "Space": "fusion_cowork.space",
+    "SpaceConfig": "fusion_cowork.space",
+    "SpaceMember": "fusion_cowork.space",
+    "SpaceMessage": "fusion_cowork.space",
+    "SpaceSnapshot": "fusion_cowork.space",
+    "PeerInfo": "fusion_cowork.space",
+    "SpaceRole": "fusion_cowork.space",
+    "SpaceStatus": "fusion_cowork.space",
+    "SpaceStore": "fusion_cowork.space",
+    "SpaceService": "fusion_cowork.space",
+    "SpaceMemberService": "fusion_cowork.space",
+    "SpacePermission": "fusion_cowork.space",
+    # M7 共享对话 + 知识库绑定
+    "SpaceChatService": "fusion_cowork.space",
+    "SpaceKBService": "fusion_cowork.space",
+    "create_space_api": "fusion_cowork.space",
+    "SharedContext": "fusion_cowork.space",
+    "inject_shared_context": "fusion_cowork.space",
+    "extract_shared_context": "fusion_cowork.space",
+    "SpaceAgentRuntime": "fusion_cowork.space",
+    "AgentStudioClient": "fusion_cowork.space",
 }
 
 _lazy_cache: dict[str, object] = {}

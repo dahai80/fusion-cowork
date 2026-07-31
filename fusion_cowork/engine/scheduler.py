@@ -10,17 +10,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from apscheduler.triggers.date import DateTrigger
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ class TaskScheduler:
             trigger_config={"cron": cron_expression},
             description=description,
             tags=tags or [],
-            created_at=__import__("time").time(),
+            created_at=time.time(),
         )
         self._tasks[task_id] = task
         self._executors[task_id] = executor
@@ -157,7 +157,7 @@ class TaskScheduler:
             trigger_type="interval",
             trigger_config={"minutes": minutes, "hours": hours, "days": days},
             description=description,
-            created_at=__import__("time").time(),
+            created_at=time.time(),
         )
         self._tasks[task_id] = task
         if executor:
@@ -197,10 +197,10 @@ class TaskScheduler:
 
         logger.info(f"开始执行定时任务: {task.name}")
         task.run_count += 1
-        task.last_run = __import__("time").time()
+        task.last_run = time.time()
 
         try:
-            if __import__("asyncio").iscoroutinefunction(executor):
+            if asyncio.iscoroutinefunction(executor):
                 await executor()
             else:
                 executor()

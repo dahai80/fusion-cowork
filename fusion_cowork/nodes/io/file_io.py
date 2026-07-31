@@ -6,10 +6,10 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from ...engine.node import (
-    BaseNode, NodeConfig, NodeResult, NodeStatus,
+    BaseNode, NodeResult, NodeStatus,
     NodeCategory, register_node,
 )
 

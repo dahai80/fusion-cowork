@@ -15,7 +15,7 @@ import time
 from typing import Any, Callable, Dict, Optional
 
 from .comm import AgentMessageBus, AgentMessage
-from .orchestrator import Agent, AgentTask
+from .orchestrator import Agent
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +109,6 @@ class AgentRuntime:
             if len(self._results) > self._MAX_RESULTS:
                 oldest = next(iter(self._results))
                 del self._results[oldest]
-            self.agent.status = "idle"
-            self.agent.current_task = ""
 
             await self.message_bus.publish(
                 topic=f"task_result:{task_id}",
@@ -124,21 +122,27 @@ class AgentRuntime:
             )
             logger.info(f"Agent {self.agent.agent_id} 完成: {task_id}")
         except Exception as e:
-            self.agent.status = "error"
-            self.agent.current_task = ""
             self._results[task_id] = {"error": str(e)}
 
-            await self.message_bus.publish(
-                topic=f"task_result:{task_id}",
-                sender=self.agent.agent_id,
-                payload={
-                    "task_id": task_id,
-                    "status": "failed",
-                    "error": str(e),
-                    "elapsed": time.time() - start_time,
-                },
-            )
+            try:
+                await self.message_bus.publish(
+                    topic=f"task_result:{task_id}",
+                    sender=self.agent.agent_id,
+                    payload={
+                        "task_id": task_id,
+                        "status": "failed",
+                        "error": str(e),
+                        "elapsed": time.time() - start_time,
+                    },
+                )
+            except Exception as pub_err:
+                logger.error(f"Agent {self.agent.agent_id} 发布失败消息异常: {pub_err}")
+
             logger.error(f"Agent {self.agent.agent_id} 执行失败: {task_id} → {e}")
+        finally:
+            self.agent.status = "idle"
+            self.agent.current_task = ""
+            self._current_task_id = ""
 
     async def submit(self, task_id: str, input_data: Dict[str, Any]) -> None:
         await self.message_bus.send(

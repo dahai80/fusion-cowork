@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from ...engine.node import (
-    BaseNode, NodeConfig, NodeResult, NodeStatus,
+    BaseNode, NodeResult, NodeStatus,
     NodeCategory, register_node, coerce_params,
 )
 from .cdp_client import CDPClient

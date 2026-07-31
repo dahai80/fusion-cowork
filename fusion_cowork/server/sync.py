@@ -16,7 +16,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +61,21 @@ class CrossDeviceSync:
     - 文件传输
     """
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 9760):
+    def __init__(
+        self,
+        host: str = "0.0.0.0",
+        port: int = 9760,
+        token: Optional[str] = None,
+        ssl_cert: Optional[str] = None,
+        ssl_key: Optional[str] = None,
+        ssl_verify: bool = True,
+    ):
         self.host = host
         self.port = port
+        self.token = token
+        self.ssl_cert = ssl_cert
+        self.ssl_key = ssl_key
+        self.ssl_verify = ssl_verify
         self.device_id = f"device_{uuid.uuid4().hex[:8]}"
         self._devices: Dict[str, Device] = {}
         self._message_handlers: Dict[str, List[Callable]] = {}
@@ -115,8 +127,22 @@ class CrossDeviceSync:
     async def _send_to_device(self, device: Device, msg: SyncMessage) -> bool:
         """发送消息到指定设备。"""
         try:
+            ssl_ctx = None
+            if self.ssl_cert and self.ssl_key:
+                import ssl
+                ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                ssl_ctx.load_cert_chain(self.ssl_cert, self.ssl_key)
+                if self.ssl_verify:
+                    ssl_ctx.check_hostname = True
+                    ssl_ctx.verify_mode = ssl.CERT_REQUIRED
+                else:
+                    # 仅用于自签名证书的开发环境
+                    logger.warning("SSL 验证已禁用 — 仅用于开发环境自签名证书")
+                    ssl_ctx.check_hostname = False
+                    ssl_ctx.verify_mode = ssl.CERT_NONE
+
             reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(device.host, device.port),
+                asyncio.open_connection(device.host, device.port, ssl=ssl_ctx),
                 timeout=5.0,
             )
             data = json.dumps({
@@ -125,6 +151,7 @@ class CrossDeviceSync:
                 "sender": msg.sender,
                 "payload": msg.payload,
                 "timestamp": msg.timestamp,
+                "token": self.token or "",
             })
             writer.write(data.encode("utf-8"))
             await writer.drain()
@@ -137,6 +164,11 @@ class CrossDeviceSync:
 
     async def _handle_message(self, data: dict) -> None:
         """处理接收到的消息。"""
+        if self.token:
+            incoming_token = data.get("token", "")
+            if incoming_token != self.token:
+                logger.warning(f"消息认证失败: token 不匹配")
+                return
         msg_type = data.get("msg_type", "")
         handlers = self._message_handlers.get(msg_type, [])
         for handler in handlers:

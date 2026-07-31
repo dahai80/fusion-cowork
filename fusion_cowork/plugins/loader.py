@@ -6,7 +6,7 @@ import logging
 import shutil
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 
 from ..engine.node import BaseNode, NodeRegistry
 from .manifest import PluginManifest

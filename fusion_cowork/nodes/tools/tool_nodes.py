@@ -11,16 +11,58 @@ import logging
 import shlex
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from ...engine.node import (
-    BaseNode, NodeConfig, NodeResult, NodeStatus,
+    BaseNode, NodeResult, NodeStatus,
     NodeCategory, register_node, coerce_params,
 )
 
 logger = logging.getLogger(__name__)
+
+# 命令沙箱 — 黑名单/白名单
+_SHELL_BLACKLIST = frozenset({
+    "rm -rf /", "mkfs", "dd if=", ":(){ :|:& };:",
+    "shutdown", "reboot", "halt", "poweroff",
+    "launchctl unload", "csrutil disable",
+})
+
+_SHELL_BLACKLIST_PREFIXES = frozenset({
+    "rm -rf /", "rm -r /", "rm -f /",
+})
+
+_PYTHON_BLACKLIST_IMPORTS = frozenset({
+    "ctypes", "multiprocessing", "subprocess",
+    "socketserver", "http.server", "xmlrpc",
+    "asyncio.subprocess", "os.system", "os.popen",
+})
+
+
+def _check_shell_command(command: str) -> Optional[str]:
+    cmd_lower = command.strip().lower()
+    for blocked in _SHELL_BLACKLIST:
+        if blocked in cmd_lower:
+            return f"命令被沙箱阻止: 含有禁止模式 '{blocked}'"
+    for prefix in _SHELL_BLACKLIST_PREFIXES:
+        if cmd_lower.startswith(prefix):
+            return f"命令被沙箱阻止: 匹配禁止前缀 '{prefix}'"
+    return None
+
+
+def _check_python_code(code: str) -> Optional[str]:
+    import re
+    for mod in _PYTHON_BLACKLIST_IMPORTS:
+        pattern = rf"\bimport\s+{re.escape(mod)}\b|\bfrom\s+{re.escape(mod)}\b"
+        if re.search(pattern, code):
+            return f"代码被沙箱阻止: 禁止导入 '{mod}'"
+    if re.search(r"\bos\.system\s*\(", code):
+        return "代码被沙箱阻止: 禁止调用 os.system()"
+    if re.search(r"\bos\.popen\s*\(", code):
+        return "代码被沙箱阻止: 禁止调用 os.popen()"
+    if re.search(r"\bsubprocess\.", code):
+        return "代码被沙箱阻止: 禁止使用 subprocess"
+    return None
 
 
 @register_node
@@ -90,6 +132,15 @@ class ShellExecNode(BaseNode):
                 status=NodeStatus.FAILED,
                 error="未指定命令",
                 summary="未指定命令",
+            )
+
+        sandbox_error = _check_shell_command(command)
+        if sandbox_error:
+            logger.warning(f"ShellExec 沙箱拦截: {command[:60]}")
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=sandbox_error,
+                summary="沙箱拦截",
             )
 
         timeout = params.get("timeout", 30)
@@ -204,6 +255,15 @@ class PythonREPLNode(BaseNode):
                 status=NodeStatus.FAILED,
                 error="未指定 Python 代码",
                 summary="未指定代码",
+            )
+
+        sandbox_error = _check_python_code(code)
+        if sandbox_error:
+            logger.warning(f"PythonREPL 沙箱拦截: {code[:60]}")
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=sandbox_error,
+                summary="沙箱拦截",
             )
 
         timeout = params.get("timeout", 15)

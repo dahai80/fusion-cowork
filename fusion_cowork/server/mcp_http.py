@@ -9,7 +9,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict
+
+if TYPE_CHECKING:
+    from .mcp_server import MCPToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +21,7 @@ SERVER_NAME = "fusion-cowork"
 SERVER_VERSION = "0.1.0"
 
 
-def create_http_app(tool_registry: "MCPToolRegistry", event_emitter=None):
+def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
     """创建 FastAPI 应用 (MCP HTTP+SSE)。
 
     Args:

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from .matrix import CapabilityMatrix, CapabilityLevel
-from .runner import BenchmarkRunner, BenchmarkResult
+from .runner import BenchmarkRunner
 
 logger = logging.getLogger(__name__)
 

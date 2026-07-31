@@ -9,9 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-import subprocess
-import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from ...engine.node import (
     BaseNode, NodeConfig, NodeResult, NodeStatus,
@@ -20,13 +18,7 @@ from ...engine.node import (
 
 logger = logging.getLogger(__name__)
 
-
-def _run_osascript(script: str, timeout: int = 10) -> Tuple[int, str]:
-    proc = subprocess.run(
-        ["osascript", "-e", script],
-        capture_output=True, text=True, timeout=timeout,
-    )
-    return proc.returncode, proc.stdout.strip()
+from . import run_osascript as _run_osascript
 
 
 def _try_pyobjc_click(x: int, y: int, button: str = "left", click_count: int = 1) -> bool:
@@ -86,7 +78,7 @@ def _try_pyobjc_type(text: str) -> bool:
             CGEventCreateKeyboardEvent, CGEventPost,
             kCGHIDEventTap, CGEventSourceCreate,
             kCGEventSourceStateHIDSystemState,
-            kCGEventKeyDown, kCGEventKeyUp,
+            kCGEventKeyDown, kCGEventKeyUp,  # noqa: F401
         )
         source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState)
         for ch in text:

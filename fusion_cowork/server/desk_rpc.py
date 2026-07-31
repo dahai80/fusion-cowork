@@ -15,7 +15,6 @@ import asyncio
 import json
 import logging
 import os
-from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -28,7 +27,8 @@ class DeskRPCServer:
 
     def __init__(self, sock_path: str = DEFAULT_SOCK_PATH,
                  event_emitter=None, session_store=None,
-                 permission_manager=None, hook_manager=None):
+                 permission_manager=None, hook_manager=None,
+                 space_store=None):
         self._sock_path = sock_path
         self._server: Optional[asyncio.AbstractServer] = None
         self._running = False
@@ -37,6 +37,7 @@ class DeskRPCServer:
         self._session_store = session_store
         self._permission_manager = permission_manager
         self._hook_manager = hook_manager
+        self._space_store = space_store
         self._register_handlers()
 
     def _register_handlers(self) -> None:
@@ -88,6 +89,39 @@ class DeskRPCServer:
             "desk.permission.deny": self._handle_permission_deny,
             "desk.permission.list": self._handle_permission_list,
             "desk.permission.reset": self._handle_permission_reset,
+            # 协作空间
+            "desk.space.create": self._handle_space_create,
+            "desk.space.list": self._handle_space_list,
+            "desk.space.get": self._handle_space_get,
+            "desk.space.update": self._handle_space_update,
+            "desk.space.archive": self._handle_space_archive,
+            "desk.space.delete": self._handle_space_delete,
+            "desk.space.member.invite": self._handle_space_member_invite,
+            "desk.space.member.join": self._handle_space_member_join,
+            "desk.space.member.list": self._handle_space_member_list,
+            "desk.space.member.remove": self._handle_space_member_remove,
+            "desk.space.member.update_role": self._handle_space_member_update_role,
+            # 协作空间 - 对话
+            "desk.space.chat.send": self._handle_space_chat_send,
+            "desk.space.chat.list": self._handle_space_chat_list,
+            "desk.space.chat.context": self._handle_space_chat_context,
+            # 协作空间 - 知识库
+            "desk.space.knowledge.bind": self._handle_space_kb_bind,
+            "desk.space.knowledge.status": self._handle_space_kb_status,
+            "desk.space.knowledge.upload": self._handle_space_kb_upload,
+            "desk.space.knowledge.search": self._handle_space_kb_search,
+            "desk.space.knowledge.query": self._handle_space_kb_query,
+            "desk.space.knowledge.unbind": self._handle_space_kb_unbind,
+            # 协作空间 - Agent
+            "desk.space.agent.list": self._handle_space_agent_list,
+            "desk.space.agent.add": self._handle_space_agent_add,
+            "desk.space.agent.remove": self._handle_space_agent_remove,
+            "desk.space.agent.call": self._handle_space_agent_call,
+            "desk.space.agent.relay": self._handle_space_agent_relay,
+            # 跨产品集成 — fusion-projects
+            "desk.project.syncKnowledge": self._handle_project_sync_knowledge,
+            "desk.project.importSnapshot": self._handle_project_import_snapshot,
+            "desk.project.exportToProject": self._handle_project_export_to_project,
         }
         logger.info(f"Desk RPC 注册 {len(self._handlers)} 个方法")
 
@@ -395,14 +429,12 @@ class DeskRPCServer:
     async def _handle_events_subscribe(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._event_emitter:
             return {"error": "EventEmitter 未配置"}
-        import time as _time
         sub_id, queue = self._event_emitter.subscribe()
         return {"sub_id": sub_id, "message": "已订阅事件流，通过 desk.events.poll 获取"}
 
     async def _handle_events_recent(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._event_emitter:
             return {"error": "EventEmitter 未配置"}
-        import time as _time
         since = params.get("since", 0.0)
         events = self._event_emitter.get_buffered(since=since)
         return {
@@ -510,3 +542,510 @@ class DeskRPCServer:
             return {"error": "PermissionManager 未配置"}
         self._permission_manager.reset()
         return {"status": "reset"}
+
+    # ── 协作空间 ──
+
+    async def _handle_space_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceService
+        svc = SpaceService(self._space_store)
+        name = params.get("name", "")
+        owner_id = params.get("owner_id", "local_user")
+        description = params.get("description", "")
+        collab_mode = params.get("collab_mode", "local")
+        try:
+            sp = await svc.create(name=name, owner_id=owner_id,
+                                  description=description, collab_mode=collab_mode)
+            return sp.to_dict()
+        except Exception as e:
+            logger.error(f"space.create 失败: {e}")
+            return {"error": str(e)}
+
+    async def _handle_space_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceService
+        svc = SpaceService(self._space_store)
+        status = params.get("status")
+        owner_id = params.get("owner_id")
+        limit = params.get("limit", 20)
+        spaces = await svc.list(status=status, owner_id=owner_id, limit=limit)
+        return {"spaces": [s.to_dict() for s in spaces], "count": len(spaces)}
+
+    async def _handle_space_get(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceService
+        svc = SpaceService(self._space_store)
+        space_id = params.get("space_id", "")
+        sp = await svc.get(space_id)
+        if not sp:
+            return {"error": f"空间不存在: {space_id}"}
+        return sp.to_dict()
+
+    async def _handle_space_update(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceService
+        svc = SpaceService(self._space_store)
+        space_id = params.get("space_id", "")
+        updates = params.get("updates", {})
+        sp = await svc.update(space_id, **updates)
+        if not sp:
+            return {"error": f"空间不存在: {space_id}"}
+        return sp.to_dict()
+
+    async def _handle_space_archive(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceService
+        svc = SpaceService(self._space_store)
+        space_id = params.get("space_id", "")
+        result = await svc.archive(space_id)
+        return {"space_id": space_id, "archived": result}
+
+    async def _handle_space_delete(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceService
+        svc = SpaceService(self._space_store)
+        space_id = params.get("space_id", "")
+        await svc.delete(space_id)
+        return {"space_id": space_id, "deleted": True}
+
+    async def _handle_space_member_invite(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceMemberService, SpacePermission
+        perm = SpacePermission(self._space_store)
+        svc = SpaceMemberService(self._space_store, perm)
+        space_id = params.get("space_id", "")
+        inviter_id = params.get("inviter_id", "local_user")
+        role = params.get("role", "member")
+        max_uses = params.get("max_uses", 0)
+        expires_hours = params.get("expires_hours", 0)
+        try:
+            code = await svc.invite(space_id, inviter_id, role=role,
+                                    max_uses=max_uses, expires_hours=expires_hours)
+            return {"invite_code": code, "space_id": space_id}
+        except (PermissionError, ValueError) as e:
+            return {"error": str(e)}
+
+    async def _handle_space_member_join(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceMemberService, SpacePermission
+        perm = SpacePermission(self._space_store)
+        svc = SpaceMemberService(self._space_store, perm)
+        invite_code = params.get("invite_code", "")
+        user_id = params.get("user_id", "")
+        display_name = params.get("display_name", "")
+        try:
+            member = await svc.join(invite_code, user_id=user_id, display_name=display_name)
+            return member.to_dict()
+        except ValueError as e:
+            return {"error": str(e)}
+
+    async def _handle_space_member_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        space_id = params.get("space_id", "")
+        members = await self._space_store.list_members(space_id)
+        return {"members": [m.to_dict() for m in members], "count": len(members)}
+
+    async def _handle_space_member_remove(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceMemberService, SpacePermission
+        perm = SpacePermission(self._space_store)
+        svc = SpaceMemberService(self._space_store, perm)
+        space_id = params.get("space_id", "")
+        user_id = params.get("user_id", "")
+        operator_id = params.get("operator_id", "local_user")
+        try:
+            removed = await svc.remove(space_id, user_id, operator_id=operator_id)
+            return {"space_id": space_id, "user_id": user_id, "removed": removed}
+        except (PermissionError, ValueError) as e:
+            return {"error": str(e)}
+
+    async def _handle_space_member_update_role(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceMemberService, SpacePermission
+        perm = SpacePermission(self._space_store)
+        svc = SpaceMemberService(self._space_store, perm)
+        space_id = params.get("space_id", "")
+        user_id = params.get("user_id", "")
+        new_role = params.get("new_role", "member")
+        operator_id = params.get("operator_id", "local_user")
+        try:
+            member = await svc.update_role(space_id, user_id, new_role, operator_id=operator_id)
+            return member.to_dict()
+        except (PermissionError, ValueError) as e:
+            return {"error": str(e)}
+
+    async def _handle_space_chat_send(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceChatService, SpacePermission
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
+        perm = SpacePermission(self._space_store)
+        mlx = FusionMLXClient()
+        chat_svc = SpaceChatService(self._space_store, mlx, perm)
+        space_id = params.get("space_id", "")
+        user_id = params.get("user_id", "local_user")
+        content = params.get("content", "")
+        agent_id = params.get("agent_id")
+        try:
+            msg = await chat_svc.send_message(space_id, user_id, content, agent_id=agent_id)
+            return msg.to_dict()
+        except PermissionError as e:
+            return {"error": str(e)}
+
+    async def _handle_space_chat_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceChatService, SpacePermission
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
+        perm = SpacePermission(self._space_store)
+        mlx = FusionMLXClient()
+        chat_svc = SpaceChatService(self._space_store, mlx, perm)
+        space_id = params.get("space_id", "")
+        limit = params.get("limit", 50)
+        offset = params.get("offset", 0)
+        try:
+            msgs = await chat_svc.list_messages(space_id, limit=limit, offset=offset)
+            return {"messages": [m.to_dict() for m in msgs]}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _handle_space_chat_context(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceChatService, SpacePermission
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
+        perm = SpacePermission(self._space_store)
+        mlx = FusionMLXClient()
+        chat_svc = SpaceChatService(self._space_store, mlx, perm)
+        space_id = params.get("space_id", "")
+        limit = params.get("limit", 100)
+        try:
+            msgs = await chat_svc.get_context(space_id, limit=limit)
+            return {"messages": [m.to_dict() for m in msgs]}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _handle_space_kb_bind(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceKBService, SpacePermission
+        perm = SpacePermission(self._space_store)
+        kb_svc = SpaceKBService(self._space_store, None, perm)
+        space_id = params.get("space_id", "")
+        operator_id = params.get("operator_id", "local_user")
+        kb_id = params.get("kb_id")
+        try:
+            result = await kb_svc.bind_kb(space_id, operator_id, kb_id=kb_id)
+            return {"kb_id": result}
+        except PermissionError as e:
+            return {"error": str(e)}
+
+    async def _handle_space_kb_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceKBService, SpacePermission
+        perm = SpacePermission(self._space_store)
+        kb_svc = SpaceKBService(self._space_store, None, perm)
+        space_id = params.get("space_id", "")
+        try:
+            return await kb_svc.get_kb_status(space_id)
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _handle_space_kb_upload(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceKBService, SpacePermission
+        from fusion_cowork.ai.mlx_client import KBClient
+        perm = SpacePermission(self._space_store)
+        kb_client = KBClient()
+        kb_svc = SpaceKBService(self._space_store, kb_client, perm)
+        space_id = params.get("space_id", "")
+        operator_id = params.get("operator_id", "local_user")
+        file_path = params.get("file_path", "")
+        try:
+            result = await kb_svc.upload_document(space_id, operator_id, file_path)
+            return {"result": result}
+        except (PermissionError, FileNotFoundError) as e:
+            return {"error": str(e)}
+
+    async def _handle_space_kb_search(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceKBService, SpacePermission
+        from fusion_cowork.ai.mlx_client import KBClient
+        perm = SpacePermission(self._space_store)
+        kb_client = KBClient()
+        kb_svc = SpaceKBService(self._space_store, kb_client, perm)
+        space_id = params.get("space_id", "")
+        query = params.get("query", "")
+        top_k = params.get("top_k", 5)
+        try:
+            results = await kb_svc.search(space_id, query, top_k=top_k)
+            return {"results": results}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _handle_space_kb_query(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceKBService, SpacePermission
+        from fusion_cowork.ai.mlx_client import KBClient
+        perm = SpacePermission(self._space_store)
+        kb_client = KBClient()
+        kb_svc = SpaceKBService(self._space_store, kb_client, perm)
+        space_id = params.get("space_id", "")
+        question = params.get("question", "")
+        top_k = params.get("top_k", 5)
+        try:
+            answer = await kb_svc.query(space_id, question, top_k=top_k)
+            return {"answer": answer}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _handle_space_kb_unbind(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceKBService, SpacePermission
+        perm = SpacePermission(self._space_store)
+        kb_svc = SpaceKBService(self._space_store, None, perm)
+        space_id = params.get("space_id", "")
+        operator_id = params.get("operator_id", "local_user")
+        try:
+            await kb_svc.unbind_kb(space_id, operator_id)
+            return {"status": "unbound"}
+        except PermissionError as e:
+            return {"error": str(e)}
+
+    async def _handle_space_agent_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceAgentRuntime, SpacePermission
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
+        perm = SpacePermission(self._space_store)
+        mlx = FusionMLXClient()
+        rt = SpaceAgentRuntime(self._space_store, mlx, perm)
+        space_id = params.get("space_id", "")
+        try:
+            agents = await rt.list_agents(space_id)
+            return {"agents": agents, "count": len(agents)}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _handle_space_agent_add(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceAgentRuntime, SpacePermission
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
+        perm = SpacePermission(self._space_store)
+        mlx = FusionMLXClient()
+        rt = SpaceAgentRuntime(self._space_store, mlx, perm)
+        space_id = params.get("space_id", "")
+        operator_id = params.get("operator_id", "local_user")
+        name = params.get("name", "")
+        agent_type = params.get("agent_type", "assistant")
+        system_prompt = params.get("system_prompt", "")
+        enable_rag = params.get("enable_rag", False)
+        config = params.get("config", {})
+        try:
+            result = await rt.add_agent(
+                space_id=space_id, operator_id=operator_id, name=name,
+                agent_type=agent_type, system_prompt=system_prompt,
+                enable_rag=enable_rag, config=config,
+            )
+            return result
+        except PermissionError as e:
+            return {"error": str(e)}
+
+    async def _handle_space_agent_remove(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceAgentRuntime, SpacePermission
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
+        perm = SpacePermission(self._space_store)
+        mlx = FusionMLXClient()
+        rt = SpaceAgentRuntime(self._space_store, mlx, perm)
+        space_id = params.get("space_id", "")
+        agent_id = params.get("agent_id", "")
+        operator_id = params.get("operator_id", "local_user")
+        try:
+            removed = await rt.remove_agent(space_id, agent_id, operator_id)
+            return {"agent_id": agent_id, "removed": removed}
+        except PermissionError as e:
+            return {"error": str(e)}
+
+    async def _handle_space_agent_call(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceAgentRuntime, SpacePermission
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
+        perm = SpacePermission(self._space_store)
+        mlx = FusionMLXClient()
+        rt = SpaceAgentRuntime(self._space_store, mlx, perm)
+        space_id = params.get("space_id", "")
+        agent_id = params.get("agent_id", "")
+        user_id = params.get("user_id", "local_user")
+        message = params.get("message", "")
+        model = params.get("model", "")
+        try:
+            reply = await rt.call_agent(space_id, agent_id, user_id, message, model=model)
+            return {"content": reply}
+        except (PermissionError, ValueError) as e:
+            return {"error": str(e)}
+
+    async def _handle_space_agent_relay(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceChatService, SpacePermission
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
+        perm = SpacePermission(self._space_store)
+        mlx = FusionMLXClient()
+        chat_svc = SpaceChatService(self._space_store, mlx, perm)
+        space_id = params.get("space_id", "")
+        user_id = params.get("user_id", "local_user")
+        agent_ids = params.get("agent_ids", [])
+        message = params.get("message", "")
+        model = params.get("model", "")
+        try:
+            results = await chat_svc.relay_agents(
+                space_id, user_id, agent_ids, message, model=model,
+            )
+            return {"results": results}
+        except (PermissionError, ValueError) as e:
+            return {"error": str(e)}
+
+    # ── 跨产品集成：fusion-projects ──
+
+    async def _handle_project_sync_knowledge(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """接收外部项目知识库文件同步到协同空间。
+
+        params:
+            space_id: 目标空间 ID
+            files: [{"name": "x.pdf", "content": "<base64>", "folder": "需求文档"}, ...]
+            operator_id: 操作者 (default: "project_sync")
+        """
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space import SpaceKBService, SpacePermission
+        from fusion_cowork.ai.mlx_client import KBClient
+        space_id = params.get("space_id", "")
+        files = params.get("files", [])
+        operator_id = params.get("operator_id", "project_sync")
+        if not space_id:
+            return {"error": "space_id 必填"}
+        if not files:
+            return {"error": "files 不能为空"}
+        perm = SpacePermission(self._space_store)
+        kb_client = KBClient()
+        kb_svc = SpaceKBService(self._space_store, kb_client, perm)
+        synced = []
+        errors = []
+        for f in files:
+            name = f.get("name", "")
+            content_b64 = f.get("content", "")
+            folder = f.get("folder", "")
+            if not name or not content_b64:
+                errors.append({"name": name, "error": "name/content 缺失"})
+                continue
+            try:
+                import base64
+                content_bytes = base64.b64decode(content_b64)
+                result = await kb_svc.upload_document(
+                    space_id, operator_id, name, content_bytes, folder=folder,
+                )
+                synced.append({"name": name, "result": result})
+            except Exception as e:
+                logger.error(f"syncKnowledge: {name} failed: {e}")
+                errors.append({"name": name, "error": str(e)})
+        logger.info(f"desk.project.syncKnowledge space={space_id} synced={len(synced)} errors={len(errors)}")
+        return {"synced": synced, "errors": errors}
+
+    async def _handle_project_import_snapshot(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """接收会话快照导入到协同空间。
+
+        params:
+            space_id: 目标空间 ID
+            snapshot: {"title": "...", "messages": [...], "instructionSnapshot": "...", "agentId": "..."}
+            operator_id: 操作者 (default: "project_import")
+        """
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space.models import SpaceMessage
+        import uuid
+        space_id = params.get("space_id", "")
+        snapshot = params.get("snapshot", {})
+        operator_id = params.get("operator_id", "project_import")
+        if not space_id:
+            return {"error": "space_id 必填"}
+        if not snapshot:
+            return {"error": "snapshot 不能为空"}
+        space = await self._space_store.get_space(space_id)
+        if not space:
+            return {"error": f"空间 {space_id} 不存在"}
+        messages_data = snapshot.get("messages", [])
+        imported = 0
+        errors = []
+        for msg in messages_data:
+            try:
+                m = SpaceMessage(
+                    id=msg.get("id", f"msg_{uuid.uuid4().hex[:8]}"),
+                    space_id=space_id,
+                    user_id=msg.get("user_id", operator_id),
+                    content=msg.get("content", ""),
+                    content_type=msg.get("content_type", "text"),
+                    agent_id=msg.get("agent_id", snapshot.get("agentId", "")),
+                    parent_msg_id=msg.get("parent_msg_id"),
+                    created_at=msg.get("created_at", ""),
+                )
+                await self._space_store.add_message(m)
+                imported += 1
+            except Exception as e:
+                logger.error(f"importSnapshot: message failed: {e}")
+                errors.append({"id": msg.get("id", "?"), "error": str(e)})
+        logger.info(f"desk.project.importSnapshot space={space_id} imported={imported} errors={len(errors)}")
+        return {"imported": imported, "errors": errors}
+
+    async def _handle_project_export_to_project(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """导出协同空间内容到 fusion-projects。
+
+        params:
+            space_id: 源空间 ID
+            items: {"files": true, "chatHistory": true, "artifacts": false}
+            target_project_id: 目标项目 ID (记录用)
+        """
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        space_id = params.get("space_id", "")
+        items = params.get("items", {})
+        target_project_id = params.get("target_project_id", "")
+        if not space_id:
+            return {"error": "space_id 必填"}
+        space = await self._space_store.get_space(space_id)
+        if not space:
+            return {"error": f"空间 {space_id} 不存在"}
+        export_data: Dict[str, Any] = {"space_id": space_id, "space_name": space.name}
+        if items.get("chatHistory", True):
+            messages = await self._space_store.get_messages(space_id, limit=1000)
+            export_data["messages"] = [
+                {"id": m.id, "user_id": m.user_id, "content": m.content,
+                 "content_type": m.content_type, "agent_id": m.agent_id or "",
+                 "created_at": m.created_at}
+                for m in messages
+            ]
+        if items.get("files", True):
+            agents = await self._space_store.list_agents(space_id)
+            export_data["agents"] = agents
+        export_data["target_project_id"] = target_project_id
+        logger.info(f"desk.project.exportToProject space={space_id} target={target_project_id}")
+        return {"export_data": export_data}
