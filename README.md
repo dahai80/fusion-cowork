@@ -546,6 +546,16 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] desk.project.importSnapshot — 接收会话快照导入 (issue #8)
 - [x] desk.project.exportToProject — 导出空间内容到 fusion-projects (issue #9)
 
+### V0.8.1 ✅ (Issue #3/#4 — Artifact Permissions + FSB Integration)
+- [x] SpaceArtifactService — Artifact CRUD + ownership tracking + permission checks (issue #3)
+- [x] Permission matrix — 15 actions (4 new: view/edit/share/transfer_artifact)
+- [x] DeskRPC — 7 new desk.space.artifact.* handlers (create/get/update/share/transfer/list/delete)
+- [x] ModuleRegistry — sidebar module registration (register/list/enable/disable) (issue #4)
+- [x] NotificationService — approval task notification push (SSE + desk.notification.push) (issue #4)
+- [x] DeskRPC — 4 desk.module.* + 3 desk.notification.* handlers
+- [x] Store migration — space_artifacts columns + 2 new tables (sidebar_modules, space_notifications)
+- [x] 29 new tests (18 artifact + 11 FSB, 519 total)
+
 ### V0.8 (Planned)
 - [ ] Visual workflow editor (Fusion-Studio GUI)
 - [ ] Plugin system (3rd-party node packages)
@@ -960,6 +970,16 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] desk.project.syncKnowledge — 接收外部知识库文件同步 (issue #7)
 - [x] desk.project.importSnapshot — 接收会话快照导入 (issue #8)
 - [x] desk.project.exportToProject — 导出空间内容到 fusion-projects (issue #9)
+
+### V0.8.1 ✅ (Issue #3/#4 — Artifact 权限 + FSB 集成)
+- [x] SpaceArtifactService — Artifact CRUD + 所有权追踪 + 权限校验 (issue #3)
+- [x] 权限矩阵 — 15 个动作 (新增: view/edit/share/transfer_artifact)
+- [x] DeskRPC — 7 个 desk.space.artifact.* 处理器
+- [x] ModuleRegistry — 侧边栏模块注册 (register/list/enable/disable) (issue #4)
+- [x] NotificationService — 审批任务通知推送 (SSE + desk.notification.push) (issue #4)
+- [x] DeskRPC — 4 个 desk.module.* + 3 个 desk.notification.* 处理器
+- [x] Store 迁移 — space_artifacts 扩展列 + 2 张新表 (sidebar_modules, space_notifications)
+- [x] 29 项新测试 (18 artifact + 11 FSB, 总计 519)
 
 ---
 

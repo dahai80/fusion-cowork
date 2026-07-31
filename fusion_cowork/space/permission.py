@@ -13,6 +13,10 @@
 - manage_snapshots: 管理快照
 - manage_kb: 绑定/解绑知识库
 - upload_document: 上传文档到知识库
+- view_artifact: 查看 Artifact 渲染
+- edit_artifact: 编辑 Artifact（创建者/被授权者）
+- share_artifact: 分享 Artifact（创建者/Owner/Admin）
+- transfer_artifact: 转交 Artifact 所有权（Owner/Admin）
 """
 
 from __future__ import annotations
@@ -38,6 +42,10 @@ _PERMISSION_MATRIX: Dict[str, Dict[str, bool]] = {
         "manage_snapshots": True,
         "manage_kb": True,
         "upload_document": True,
+        "view_artifact": True,
+        "edit_artifact": True,
+        "share_artifact": True,
+        "transfer_artifact": True,
     },
     SpaceRole.ADMIN.value: {
         "manage_space": True,
@@ -51,6 +59,10 @@ _PERMISSION_MATRIX: Dict[str, Dict[str, bool]] = {
         "manage_snapshots": True,
         "manage_kb": True,
         "upload_document": True,
+        "view_artifact": True,
+        "edit_artifact": True,
+        "share_artifact": True,
+        "transfer_artifact": True,
     },
     SpaceRole.MEMBER.value: {
         "manage_space": False,
@@ -64,6 +76,10 @@ _PERMISSION_MATRIX: Dict[str, Dict[str, bool]] = {
         "manage_snapshots": False,
         "manage_kb": False,
         "upload_document": True,
+        "view_artifact": True,
+        "edit_artifact": False,
+        "share_artifact": False,
+        "transfer_artifact": False,
     },
     SpaceRole.VIEWER.value: {
         "manage_space": False,
@@ -77,6 +93,10 @@ _PERMISSION_MATRIX: Dict[str, Dict[str, bool]] = {
         "manage_snapshots": False,
         "manage_kb": False,
         "upload_document": False,
+        "view_artifact": True,
+        "edit_artifact": False,
+        "share_artifact": False,
+        "transfer_artifact": False,
     },
 }
 

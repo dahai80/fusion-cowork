@@ -122,6 +122,23 @@ class DeskRPCServer:
             "desk.project.syncKnowledge": self._handle_project_sync_knowledge,
             "desk.project.importSnapshot": self._handle_project_import_snapshot,
             "desk.project.exportToProject": self._handle_project_export_to_project,
+            # 协作空间 - Artifact 权限
+            "desk.space.artifact.create": self._handle_space_artifact_create,
+            "desk.space.artifact.get": self._handle_space_artifact_get,
+            "desk.space.artifact.update": self._handle_space_artifact_update,
+            "desk.space.artifact.share": self._handle_space_artifact_share,
+            "desk.space.artifact.transfer": self._handle_space_artifact_transfer,
+            "desk.space.artifact.list": self._handle_space_artifact_list,
+            "desk.space.artifact.delete": self._handle_space_artifact_delete,
+            # 侧边栏模块
+            "desk.module.register": self._handle_module_register,
+            "desk.module.list": self._handle_module_list,
+            "desk.module.enable": self._handle_module_enable,
+            "desk.module.disable": self._handle_module_disable,
+            # 通知推送
+            "desk.notification.push": self._handle_notification_push,
+            "desk.notification.list": self._handle_notification_list,
+            "desk.notification.markRead": self._handle_notification_mark_read,
         }
         logger.info(f"Desk RPC 注册 {len(self._handlers)} 个方法")
 
@@ -1049,3 +1066,230 @@ class DeskRPCServer:
         export_data["target_project_id"] = target_project_id
         logger.info(f"desk.project.exportToProject space={space_id} target={target_project_id}")
         return {"export_data": export_data}
+
+    # ── Artifact 权限 Handlers ──
+
+    def _get_artifact_svc(self):
+        from ..space.artifact import SpaceArtifactService
+        from ..space.permission import SpacePermission
+        if not self._space_store:
+            return None, "space_store 未初始化"
+        perm = SpacePermission(self._space_store)
+        return SpaceArtifactService(self._space_store, perm), None
+
+    async def _handle_space_artifact_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        svc, err = self._get_artifact_svc()
+        if err:
+            return {"error": err}
+        space_id = params.get("space_id", "")
+        user_id = params.get("user_id", "")
+        if not space_id or not user_id:
+            return {"error": "space_id 和 user_id 必填"}
+        try:
+            result = await svc.create_artifact(
+                space_id=space_id,
+                owner_user_id=user_id,
+                name=params.get("name", ""),
+                artifact_type=params.get("artifact_type", "document"),
+                content=params.get("content", ""),
+                metadata=params.get("metadata"),
+            )
+            return {"artifact": result}
+        except PermissionError as e:
+            return {"error": str(e)}
+
+    async def _handle_space_artifact_get(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        svc, err = self._get_artifact_svc()
+        if err:
+            return {"error": err}
+        space_id = params.get("space_id", "")
+        artifact_id = params.get("artifact_id", "")
+        user_id = params.get("user_id", "")
+        if not all([space_id, artifact_id, user_id]):
+            return {"error": "space_id, artifact_id, user_id 必填"}
+        try:
+            art = await svc.get_artifact(space_id, artifact_id, user_id)
+            if not art:
+                return {"error": f"Artifact {artifact_id} 不存在"}
+            return {"artifact": art}
+        except PermissionError as e:
+            return {"error": str(e)}
+
+    async def _handle_space_artifact_update(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        svc, err = self._get_artifact_svc()
+        if err:
+            return {"error": err}
+        space_id = params.get("space_id", "")
+        artifact_id = params.get("artifact_id", "")
+        user_id = params.get("user_id", "")
+        if not all([space_id, artifact_id, user_id]):
+            return {"error": "space_id, artifact_id, user_id 必填"}
+        try:
+            result = await svc.update_artifact(
+                space_id=space_id, artifact_id=artifact_id, user_id=user_id,
+                content=params.get("content", ""),
+                name=params.get("name", ""),
+                metadata=params.get("metadata"),
+            )
+            return {"artifact": result}
+        except (PermissionError, ValueError) as e:
+            return {"error": str(e)}
+
+    async def _handle_space_artifact_share(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        svc, err = self._get_artifact_svc()
+        if err:
+            return {"error": err}
+        space_id = params.get("space_id", "")
+        artifact_id = params.get("artifact_id", "")
+        user_id = params.get("user_id", "")
+        if not all([space_id, artifact_id, user_id]):
+            return {"error": "space_id, artifact_id, user_id 必填"}
+        try:
+            result = await svc.share_artifact(space_id, artifact_id, user_id)
+            return result
+        except (PermissionError, ValueError) as e:
+            return {"error": str(e)}
+
+    async def _handle_space_artifact_transfer(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        svc, err = self._get_artifact_svc()
+        if err:
+            return {"error": err}
+        space_id = params.get("space_id", "")
+        artifact_id = params.get("artifact_id", "")
+        from_user = params.get("from_user_id", "")
+        to_user = params.get("to_user_id", "")
+        if not all([space_id, artifact_id, from_user, to_user]):
+            return {"error": "space_id, artifact_id, from_user_id, to_user_id 必填"}
+        try:
+            result = await svc.transfer_ownership(space_id, artifact_id, from_user, to_user)
+            return result
+        except (PermissionError, ValueError) as e:
+            return {"error": str(e)}
+
+    async def _handle_space_artifact_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        svc, err = self._get_artifact_svc()
+        if err:
+            return {"error": err}
+        space_id = params.get("space_id", "")
+        user_id = params.get("user_id", "")
+        if not all([space_id, user_id]):
+            return {"error": "space_id 和 user_id 必填"}
+        try:
+            artifacts = await svc.list_artifacts(
+                space_id, user_id, params.get("artifact_type", ""),
+            )
+            return {"artifacts": artifacts}
+        except PermissionError as e:
+            return {"error": str(e)}
+
+    async def _handle_space_artifact_delete(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        svc, err = self._get_artifact_svc()
+        if err:
+            return {"error": err}
+        space_id = params.get("space_id", "")
+        artifact_id = params.get("artifact_id", "")
+        user_id = params.get("user_id", "")
+        if not all([space_id, artifact_id, user_id]):
+            return {"error": "space_id, artifact_id, user_id 必填"}
+        removed = await svc.delete_artifact(space_id, artifact_id, user_id)
+        return {"deleted": removed}
+
+    # ── 侧边栏模块 Handlers ──
+
+    def _get_module_registry(self):
+        from ..space.fsb import ModuleRegistry
+        if not self._space_store:
+            return None, "space_store 未初始化"
+        return ModuleRegistry(self._space_store), None
+
+    async def _handle_module_register(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        reg, err = self._get_module_registry()
+        if err:
+            return {"error": err}
+        module_id = params.get("id", "")
+        name = params.get("name", "")
+        if not module_id or not name:
+            return {"error": "id 和 name 必填"}
+        result = await reg.register_module(
+            module_id=module_id, name=name,
+            icon=params.get("icon", ""),
+            route_path=params.get("route_path", ""),
+            enabled=params.get("enabled", True),
+            metadata=params.get("metadata"),
+        )
+        return {"module": result}
+
+    async def _handle_module_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        reg, err = self._get_module_registry()
+        if err:
+            return {"error": err}
+        modules = await reg.list_modules(enabled_only=params.get("enabled_only", False))
+        return {"modules": modules}
+
+    async def _handle_module_enable(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        reg, err = self._get_module_registry()
+        if err:
+            return {"error": err}
+        module_id = params.get("id", "")
+        if not module_id:
+            return {"error": "id 必填"}
+        await reg.enable_module(module_id)
+        return {"enabled": True}
+
+    async def _handle_module_disable(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        reg, err = self._get_module_registry()
+        if err:
+            return {"error": err}
+        module_id = params.get("id", "")
+        if not module_id:
+            return {"error": "id 必填"}
+        await reg.disable_module(module_id)
+        return {"disabled": True}
+
+    # ── 通知推送 Handlers ──
+
+    def _get_notification_svc(self):
+        from ..space.fsb import NotificationService
+        if not self._space_store:
+            return None, "space_store 未初始化"
+        return NotificationService(self._space_store), None
+
+    async def _handle_notification_push(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        svc, err = self._get_notification_svc()
+        if err:
+            return {"error": err}
+        space_id = params.get("space_id", "")
+        user_id = params.get("user_id", "")
+        title = params.get("title", "")
+        if not all([space_id, user_id, title]):
+            return {"error": "space_id, user_id, title 必填"}
+        result = await svc.push_notification(
+            space_id=space_id, user_id=user_id,
+            notification_type=params.get("type", "approval"),
+            title=title,
+            content=params.get("content", ""),
+            metadata=params.get("metadata"),
+        )
+        return {"notification": result}
+
+    async def _handle_notification_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        svc, err = self._get_notification_svc()
+        if err:
+            return {"error": err}
+        user_id = params.get("user_id", "")
+        if not user_id:
+            return {"error": "user_id 必填"}
+        notifications = await svc.list_notifications(
+            user_id, unread_only=params.get("unread_only", False),
+        )
+        return {"notifications": notifications}
+
+    async def _handle_notification_mark_read(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        svc, err = self._get_notification_svc()
+        if err:
+            return {"error": err}
+        notif_id = params.get("id", "")
+        if not notif_id:
+            return {"error": "id 必填"}
+        await svc.mark_read(notif_id)
+        return {"read": True}

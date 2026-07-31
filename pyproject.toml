@@ -1,6 +1,6 @@
 [project]
 name = "fusion-cowork"
-version = "0.1.2"
+version = "0.1.3"
 description = "Fusion-Cowork — macOS 原生、纯本地离线、零代码桌面智能自动化平台"
 authors = [
     { name = "Fusion-MLX Team" },

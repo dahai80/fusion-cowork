@@ -33,6 +33,8 @@ from .api import create_space_api
 from .shared_context import SharedContext, inject_shared_context, extract_shared_context
 from .agent_runtime import SpaceAgentRuntime
 from .agent_studio_client import AgentStudioClient
+from .artifact import SpaceArtifactService
+from .fsb import ModuleRegistry, NotificationService
 
 __all__ = [
     "Space",
@@ -55,4 +57,7 @@ __all__ = [
     "extract_shared_context",
     "SpaceAgentRuntime",
     "AgentStudioClient",
+    "SpaceArtifactService",
+    "ModuleRegistry",
+    "NotificationService",
 ]

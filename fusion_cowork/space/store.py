@@ -137,8 +137,12 @@ CREATE TABLE IF NOT EXISTS space_artifacts (
     name TEXT NOT NULL DEFAULT '',
     artifact_type TEXT NOT NULL DEFAULT 'file',
     content TEXT NOT NULL DEFAULT '',
+    owner_user_id TEXT NOT NULL DEFAULT '',
+    metadata TEXT NOT NULL DEFAULT '{}',
+    version INTEGER NOT NULL DEFAULT 1,
     created_by TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sync_events (
@@ -161,6 +165,22 @@ CREATE INDEX IF NOT EXISTS idx_space_artifacts_space ON space_artifacts(space_id
 CREATE INDEX IF NOT EXISTS idx_sync_events_space ON sync_events(space_id);
 """
 
+_MIGRATION_SQL = [
+    "ALTER TABLE space_artifacts ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE space_artifacts ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'",
+    "ALTER TABLE space_artifacts ADD COLUMN version INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE space_artifacts ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+    ("CREATE TABLE IF NOT EXISTS sidebar_modules ("
+     "id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '', "
+     "route_path TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, "
+     "metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"),
+    ("CREATE TABLE IF NOT EXISTS space_notifications ("
+     "id TEXT PRIMARY KEY, space_id TEXT NOT NULL, user_id TEXT NOT NULL, "
+     "notification_type TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', "
+     "content TEXT NOT NULL DEFAULT '', metadata TEXT NOT NULL DEFAULT '{}', "
+     "read INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)"),
+]
+
 
 class SpaceStore:
     """协作空间存储 — aiosqlite 异步 CRUD。"""
@@ -177,6 +197,11 @@ class SpaceStore:
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA foreign_keys=ON")
         await self._db.executescript(_SCHEMA_SQL)
+        for sql in _MIGRATION_SQL:
+            try:
+                await self._db.execute(sql)
+            except aiosqlite.OperationalError:
+                pass
         await self._db.commit()
         logger.info(f"SpaceStore 初始化完成: {self._db_path}")
 

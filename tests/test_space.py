@@ -1604,3 +1604,327 @@ class TestCallAgentPermission:
     async def test_viewer_cannot_call_agent(self, perm_setup):
         perm = perm_setup
         assert await perm.check("perm_sp", "viewer_user", "call_agent") is False
+
+
+# ── M8.9: Artifact 权限测试 ──
+
+
+class TestSpaceArtifactService:
+    """SpaceArtifactService CRUD + 权限检查。"""
+
+    @pytest.fixture
+    async def artifact_setup(self):
+        from fusion_cowork.space.store import SpaceStore
+        from fusion_cowork.space.permission import SpacePermission
+        from fusion_cowork.space.artifact import SpaceArtifactService
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceStatus, SpaceMember, SpaceRole
+        import tempfile, shutil
+        d = tempfile.mkdtemp()
+        store = SpaceStore(data_dir=d)
+        await store.initialize()
+        perm = SpacePermission(store)
+        svc = SpaceArtifactService(store, perm)
+        sp = Space(id="art_sp", name="artifact test", owner_id="owner_u",
+                   config=SpaceConfig(), created_at="2026-01-01T00:00:00",
+                   updated_at="2026-01-01T00:00:00")
+        await store.create_space(sp)
+        for uid, role in [("owner_u", "owner"), ("admin_u", "admin"),
+                          ("member_u", "member"), ("viewer_u", "viewer")]:
+            m = SpaceMember(space_id="art_sp", user_id=uid, role=SpaceRole(role),
+                            display_name=uid, joined_at="2026-01-01T00:00:00",
+                            last_active="2026-01-01T00:00:00")
+            await store.add_member(m)
+        yield svc, store
+        await store.close()
+        shutil.rmtree(d, ignore_errors=True)
+
+    @pytest.mark.asyncio
+    async def test_create_artifact_owner(self, artifact_setup):
+        svc, _ = artifact_setup
+        result = await svc.create_artifact("art_sp", "owner_u", name="doc1")
+        assert result["name"] == "doc1"
+        assert result["version"] == 1
+        assert result["owner_user_id"] == "owner_u"
+
+    @pytest.mark.asyncio
+    async def test_create_artifact_member_denied(self, artifact_setup):
+        svc, _ = artifact_setup
+        with pytest.raises(PermissionError):
+            await svc.create_artifact("art_sp", "member_u", name="doc2")
+
+    @pytest.mark.asyncio
+    async def test_create_artifact_viewer_denied(self, artifact_setup):
+        svc, _ = artifact_setup
+        with pytest.raises(PermissionError):
+            await svc.create_artifact("art_sp", "viewer_u", name="doc3")
+
+    @pytest.mark.asyncio
+    async def test_get_artifact(self, artifact_setup):
+        svc, _ = artifact_setup
+        created = await svc.create_artifact("art_sp", "owner_u", name="doc")
+        art = await svc.get_artifact("art_sp", created["id"], "member_u")
+        assert art is not None
+        assert art["name"] == "doc"
+
+    @pytest.mark.asyncio
+    async def test_update_artifact_by_owner(self, artifact_setup):
+        svc, _ = artifact_setup
+        created = await svc.create_artifact("art_sp", "owner_u", name="doc")
+        result = await svc.update_artifact("art_sp", created["id"], "owner_u",
+                                           content="updated", name="doc_v2")
+        assert result["version"] == 2
+
+    @pytest.mark.asyncio
+    async def test_update_artifact_by_member_denied(self, artifact_setup):
+        svc, _ = artifact_setup
+        created = await svc.create_artifact("art_sp", "owner_u", name="doc")
+        with pytest.raises(PermissionError):
+            await svc.update_artifact("art_sp", created["id"], "member_u", content="hack")
+
+    @pytest.mark.asyncio
+    async def test_update_artifact_by_admin_allowed(self, artifact_setup):
+        svc, _ = artifact_setup
+        created = await svc.create_artifact("art_sp", "owner_u", name="doc")
+        result = await svc.update_artifact("art_sp", created["id"], "admin_u", content="admin_edit")
+        assert result["version"] == 2
+
+    @pytest.mark.asyncio
+    async def test_share_artifact_owner(self, artifact_setup):
+        svc, _ = artifact_setup
+        created = await svc.create_artifact("art_sp", "owner_u", name="doc")
+        result = await svc.share_artifact("art_sp", created["id"], "owner_u")
+        assert "share_code" in result
+
+    @pytest.mark.asyncio
+    async def test_share_artifact_member_denied(self, artifact_setup):
+        svc, _ = artifact_setup
+        created = await svc.create_artifact("art_sp", "owner_u", name="doc")
+        with pytest.raises(PermissionError):
+            await svc.share_artifact("art_sp", created["id"], "member_u")
+
+    @pytest.mark.asyncio
+    async def test_transfer_ownership(self, artifact_setup):
+        svc, _ = artifact_setup
+        created = await svc.create_artifact("art_sp", "owner_u", name="doc")
+        result = await svc.transfer_ownership("art_sp", created["id"],
+                                              "owner_u", "member_u")
+        assert result["new_owner"] == "member_u"
+
+    @pytest.mark.asyncio
+    async def test_transfer_by_member_denied(self, artifact_setup):
+        svc, _ = artifact_setup
+        created = await svc.create_artifact("art_sp", "owner_u", name="doc")
+        with pytest.raises(PermissionError):
+            await svc.transfer_ownership("art_sp", created["id"],
+                                         "member_u", "viewer_u")
+
+    @pytest.mark.asyncio
+    async def test_list_artifacts(self, artifact_setup):
+        svc, _ = artifact_setup
+        await svc.create_artifact("art_sp", "owner_u", name="a1")
+        await svc.create_artifact("art_sp", "owner_u", name="a2")
+        arts = await svc.list_artifacts("art_sp", "member_u")
+        assert len(arts) >= 2
+
+    @pytest.mark.asyncio
+    async def test_delete_artifact_owner(self, artifact_setup):
+        svc, _ = artifact_setup
+        created = await svc.create_artifact("art_sp", "owner_u", name="doc")
+        removed = await svc.delete_artifact("art_sp", created["id"], "owner_u")
+        assert removed is True
+
+    @pytest.mark.asyncio
+    async def test_delete_artifact_member_denied(self, artifact_setup):
+        svc, _ = artifact_setup
+        created = await svc.create_artifact("art_sp", "owner_u", name="doc")
+        removed = await svc.delete_artifact("art_sp", created["id"], "member_u")
+        assert removed is False
+
+
+class TestArtifactPermissionActions:
+    """15-action 权限矩阵中 artifact 4 动作验证。"""
+
+    @pytest.fixture
+    async def perm_setup(self):
+        from fusion_cowork.space.store import SpaceStore
+        from fusion_cowork.space.permission import SpacePermission
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
+        import tempfile, shutil
+        d = tempfile.mkdtemp()
+        store = SpaceStore(data_dir=d)
+        await store.initialize()
+        perm = SpacePermission(store)
+        sp = Space(id="perm2_sp", name="perm2", owner_id="owner_u",
+                   config=SpaceConfig(), created_at="2026-01-01T00:00:00",
+                   updated_at="2026-01-01T00:00:00")
+        await store.create_space(sp)
+        for uid, role in [("owner_u", "owner"), ("admin_u", "admin"),
+                          ("member_u", "member"), ("viewer_u", "viewer")]:
+            m = SpaceMember(space_id="perm2_sp", user_id=uid, role=SpaceRole(role),
+                            display_name=uid, joined_at="2026-01-01T00:00:00",
+                            last_active="2026-01-01T00:00:00")
+            await store.add_member(m)
+        yield perm
+        await store.close()
+        shutil.rmtree(d, ignore_errors=True)
+
+    @pytest.mark.asyncio
+    async def test_view_artifact_all_roles(self, perm_setup):
+        perm = perm_setup
+        assert await perm.check("perm2_sp", "owner_u", "view_artifact") is True
+        assert await perm.check("perm2_sp", "member_u", "view_artifact") is True
+        assert await perm.check("perm2_sp", "viewer_u", "view_artifact") is True
+
+    @pytest.mark.asyncio
+    async def test_edit_artifact_owner_admin_only(self, perm_setup):
+        perm = perm_setup
+        assert await perm.check("perm2_sp", "owner_u", "edit_artifact") is True
+        assert await perm.check("perm2_sp", "admin_u", "edit_artifact") is True
+        assert await perm.check("perm2_sp", "member_u", "edit_artifact") is False
+        assert await perm.check("perm2_sp", "viewer_u", "edit_artifact") is False
+
+    @pytest.mark.asyncio
+    async def test_share_artifact_owner_admin_only(self, perm_setup):
+        perm = perm_setup
+        assert await perm.check("perm2_sp", "owner_u", "share_artifact") is True
+        assert await perm.check("perm2_sp", "member_u", "share_artifact") is False
+
+    @pytest.mark.asyncio
+    async def test_transfer_artifact_owner_admin_only(self, perm_setup):
+        perm = perm_setup
+        assert await perm.check("perm2_sp", "owner_u", "transfer_artifact") is True
+        assert await perm.check("perm2_sp", "viewer_u", "transfer_artifact") is False
+
+
+# ── M8.10: FSB 模块集成测试 ──
+
+
+class TestModuleRegistry:
+    """ModuleRegistry — 侧边栏模块注册/启用/禁用。"""
+
+    @pytest.fixture
+    async def module_setup(self):
+        from fusion_cowork.space.store import SpaceStore
+        from fusion_cowork.space.fsb import ModuleRegistry
+        import tempfile, shutil
+        d = tempfile.mkdtemp()
+        store = SpaceStore(data_dir=d)
+        await store.initialize()
+        reg = ModuleRegistry(store)
+        yield reg, store
+        await store.close()
+        shutil.rmtree(d, ignore_errors=True)
+
+    @pytest.mark.asyncio
+    async def test_register_module(self, module_setup):
+        reg, _ = module_setup
+        result = await reg.register_module("fsb", "Fusion Small Business",
+                                           icon="🏪", route_path="/fsb")
+        assert result["id"] == "fsb"
+        assert result["name"] == "Fusion Small Business"
+        assert result["enabled"] is True
+
+    @pytest.mark.asyncio
+    async def test_list_modules(self, module_setup):
+        reg, _ = module_setup
+        await reg.register_module("fsb", "FSB", icon="🏪", route_path="/fsb")
+        await reg.register_module("chat", "Chat", icon="💬", route_path="/chat")
+        modules = await reg.list_modules()
+        assert len(modules) >= 2
+
+    @pytest.mark.asyncio
+    async def test_list_enabled_only(self, module_setup):
+        reg, _ = module_setup
+        await reg.register_module("fsb", "FSB", enabled=True)
+        await reg.register_module("disabled_mod", "Disabled", enabled=False)
+        enabled = await reg.list_modules(enabled_only=True)
+        ids = [m["id"] for m in enabled]
+        assert "fsb" in ids
+        assert "disabled_mod" not in ids
+
+    @pytest.mark.asyncio
+    async def test_enable_disable_module(self, module_setup):
+        reg, _ = module_setup
+        await reg.register_module("fsb", "FSB", enabled=True)
+        await reg.disable_module("fsb")
+        mod = await reg.get_module("fsb")
+        assert mod["enabled"] == 0
+        await reg.enable_module("fsb")
+        mod = await reg.get_module("fsb")
+        assert mod["enabled"] == 1
+
+    @pytest.mark.asyncio
+    async def test_get_module(self, module_setup):
+        reg, _ = module_setup
+        await reg.register_module("fsb", "FSB", icon="🏪")
+        mod = await reg.get_module("fsb")
+        assert mod is not None
+        assert mod["icon"] == "🏪"
+
+    @pytest.mark.asyncio
+    async def test_get_module_not_found(self, module_setup):
+        reg, _ = module_setup
+        mod = await reg.get_module("nonexistent")
+        assert mod is None
+
+
+class TestNotificationService:
+    """NotificationService — 通知推送与订阅。"""
+
+    @pytest.fixture
+    async def notif_setup(self):
+        from fusion_cowork.space.store import SpaceStore
+        from fusion_cowork.space.fsb import NotificationService
+        import tempfile, shutil
+        d = tempfile.mkdtemp()
+        store = SpaceStore(data_dir=d)
+        await store.initialize()
+        svc = NotificationService(store)
+        yield svc, store
+        await store.close()
+        shutil.rmtree(d, ignore_errors=True)
+
+    @pytest.mark.asyncio
+    async def test_push_notification(self, notif_setup):
+        svc, _ = notif_setup
+        result = await svc.push_notification(
+            space_id="sp1", user_id="user1",
+            notification_type="approval", title="待审批任务",
+        )
+        assert result["type"] == "approval"
+        assert result["title"] == "待审批任务"
+
+    @pytest.mark.asyncio
+    async def test_list_notifications(self, notif_setup):
+        svc, _ = notif_setup
+        await svc.push_notification("sp1", "user1", "approval", "Task 1")
+        await svc.push_notification("sp1", "user1", "approval", "Task 2")
+        notifs = await svc.list_notifications("user1")
+        assert len(notifs) >= 2
+
+    @pytest.mark.asyncio
+    async def test_list_unread_only(self, notif_setup):
+        svc, _ = notif_setup
+        n = await svc.push_notification("sp1", "user1", "approval", "Unread")
+        await svc.mark_read(n["id"])
+        await svc.push_notification("sp1", "user1", "approval", "Still unread")
+        unread = await svc.list_notifications("user1", unread_only=True)
+        assert len(unread) == 1
+        assert unread[0]["title"] == "Still unread"
+
+    @pytest.mark.asyncio
+    async def test_mark_read(self, notif_setup):
+        svc, _ = notif_setup
+        n = await svc.push_notification("sp1", "user1", "approval", "Test")
+        await svc.mark_read(n["id"])
+        notifs = await svc.list_notifications("user1")
+        assert notifs[0]["read"] == 1
+
+    @pytest.mark.asyncio
+    async def test_subscribe_receive(self, notif_setup):
+        svc, _ = notif_setup
+        queue = svc.subscribe("user1")
+        await svc.push_notification("sp1", "user1", "approval", "Push test")
+        assert len(queue) == 1
+        assert queue[0]["title"] == "Push test"
+        svc.unsubscribe("user1", queue)
