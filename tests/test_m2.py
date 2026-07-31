@@ -7,16 +7,16 @@ import time
 
 import pytest
 
-from fusion_desk.engine.permission import (
+from fusion_cowork.engine.permission import (
     PermissionManager, PermissionLevel, Permission, HIGH_RISK_NODES,
 )
-from fusion_desk.engine.hooks import HookManager, HookEvent, HookContext
-from fusion_desk.engine.session import Session, SessionStore
-from fusion_desk.engine.events import EventType, WorkflowEvent, EventEmitter
-from fusion_desk.engine.node import (
+from fusion_cowork.engine.hooks import HookManager, HookEvent, HookContext
+from fusion_cowork.engine.session import Session, SessionStore
+from fusion_cowork.engine.events import EventType, WorkflowEvent, EventEmitter
+from fusion_cowork.engine.node import (
     BaseNode, NodeConfig, NodeResult, NodeStatus, NodeRegistry, register_node,
 )
-from fusion_desk.engine.workflow import (
+from fusion_cowork.engine.workflow import (
     Workflow, WorkflowEngine, WorkflowExecution, WorkflowStatus, Edge, WorkflowStep,
 )
 

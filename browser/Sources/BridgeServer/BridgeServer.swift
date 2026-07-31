@@ -3,7 +3,7 @@ import Network
 
 /// 桥接服务器 — 与 Python 后端通信的 HTTP 服务
 ///
-/// 监听本地端口，接收来自 Fusion-Desk Python 后端的命令：
+/// 监听本地端口，接收来自 Fusion-Cowork Python 后端的命令：
 /// - 打开 URL
 /// - 执行自动化任务
 /// - 查询浏览器状态

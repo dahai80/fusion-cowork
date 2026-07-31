@@ -29,8 +29,8 @@ dist/
 build/
 *.whl
 
-# Fusion-Desk data
-.fusion-desk/
+# Fusion-Cowork data
+.fusion-cowork/
 
 # Swift build
 browser/.build/

@@ -1,4 +1,4 @@
-"""Fusion-Desk 核心引擎单元测试。"""
+"""Fusion-Cowork 核心引擎单元测试。"""
 
 from __future__ import annotations
 
@@ -11,18 +11,18 @@ from pathlib import Path
 import pytest
 
 # 导入所有节点模块确保它们被注册
-import fusion_desk.nodes.macos  # noqa: F401
-import fusion_desk.nodes.ai  # noqa: F401
-import fusion_desk.nodes.io  # noqa: F401
-import fusion_desk.nodes.logic  # noqa: F401
-import fusion_desk.nodes.tools  # noqa: F401
+import fusion_cowork.nodes.macos  # noqa: F401
+import fusion_cowork.nodes.ai  # noqa: F401
+import fusion_cowork.nodes.io  # noqa: F401
+import fusion_cowork.nodes.logic  # noqa: F401
+import fusion_cowork.nodes.tools  # noqa: F401
 
-from fusion_desk.engine.node import (
+from fusion_cowork.engine.node import (
     BaseNode, NodeConfig, NodeResult, NodeStatus,
     NodeCategory, NodeRegistry, register_node,
     coerce_param, coerce_params, _coerce_int, _coerce_number, _coerce_bool, _coerce_array,
 )
-from fusion_desk.engine.workflow import Workflow, WorkflowEngine, WorkflowStatus, Edge
+from fusion_cowork.engine.workflow import Workflow, WorkflowEngine, WorkflowStatus, Edge
 
 
 # ── 测试用 Mock 节点 ──
@@ -554,26 +554,26 @@ class TestLogicNodes:
 
 class TestTemplateManager:
     def test_list_templates(self):
-        from fusion_desk.templates import TemplateManager
+        from fusion_cowork.templates import TemplateManager
         mgr = TemplateManager()
         templates = mgr.list_templates()
         assert len(templates) > 0
         assert any(t["id"] == "desktop_daily_cleanup" for t in templates)
 
     def test_get_template(self):
-        from fusion_desk.templates import TemplateManager
+        from fusion_cowork.templates import TemplateManager
         mgr = TemplateManager()
         tpl = mgr.get_template("desktop_daily_cleanup")
         assert tpl is not None
         assert tpl["name"] == "桌面每日规整"
 
     def test_template_not_found(self):
-        from fusion_desk.templates import TemplateManager
+        from fusion_cowork.templates import TemplateManager
         mgr = TemplateManager()
         assert mgr.get_template("non_existent") is None
 
     def test_template_to_workflow(self):
-        from fusion_desk.templates import TemplateManager
+        from fusion_cowork.templates import TemplateManager
         mgr = TemplateManager()
         wf = mgr.template_to_workflow("desktop_daily_cleanup")
         assert wf is not None
@@ -581,13 +581,13 @@ class TestTemplateManager:
         assert wf.id.startswith("tpl_")
 
     def test_get_categories(self):
-        from fusion_desk.templates import TemplateManager
+        from fusion_cowork.templates import TemplateManager
         mgr = TemplateManager()
         categories = mgr.get_categories()
         assert len(categories) > 0
 
     def test_search_templates(self):
-        from fusion_desk.templates import TemplateManager
+        from fusion_cowork.templates import TemplateManager
         mgr = TemplateManager()
         results = mgr.search_templates("桌面")
         assert len(results) > 0
@@ -714,7 +714,7 @@ class TestMacOSNodes:
 class TestAIClient:
     @pytest.mark.asyncio
     async def test_mlx_client_health_check(self):
-        from fusion_desk.ai import FusionMLXClient
+        from fusion_cowork.ai import FusionMLXClient
         client = FusionMLXClient(base_url="http://localhost:18000/v1")  # 使用非标准端口避免冲突
         try:
             health = await client.health()
@@ -724,7 +724,7 @@ class TestAIClient:
             await client.close()
 
     def test_llm_response_dataclass(self):
-        from fusion_desk.ai import LLMResponse
+        from fusion_cowork.ai import LLMResponse
         resp = LLMResponse(content="Hello", tool_calls=[], finish_reason="stop")
         assert resp.content == "Hello"
         assert resp.finish_reason == "stop"
@@ -934,38 +934,38 @@ class TestNodeAliases:
 
 class TestLazyImport:
     def test_lazy_import_workflow(self):
-        import fusion_desk
-        wf = fusion_desk.Workflow(name="延迟导入测试")
+        import fusion_cowork
+        wf = fusion_cowork.Workflow(name="延迟导入测试")
         assert wf.name == "延迟导入测试"
 
     def test_lazy_import_node(self):
-        import fusion_desk
-        node = fusion_desk.DesktopCleanNode()
+        import fusion_cowork
+        node = fusion_cowork.DesktopCleanNode()
         assert node.name == "desktop_clean"
 
     def test_lazy_import_ai(self):
-        import fusion_desk
-        client = fusion_desk.FusionMLXClient()
+        import fusion_cowork
+        client = fusion_cowork.FusionMLXClient()
         assert client is not None
 
     def test_lazy_import_tool_node(self):
-        import fusion_desk
-        node = fusion_desk.ShellExecNode()
+        import fusion_cowork
+        node = fusion_cowork.ShellExecNode()
         assert node.name == "shell_exec"
 
     def test_lazy_import_template(self):
-        import fusion_desk
-        mgr = fusion_desk.TemplateManager()
+        import fusion_cowork
+        mgr = fusion_cowork.TemplateManager()
         assert mgr is not None
 
     def test_lazy_import_nonexistent(self):
-        import fusion_desk
+        import fusion_cowork
         with pytest.raises(AttributeError):
-            _ = fusion_desk.NonExistentName
+            _ = fusion_cowork.NonExistentName
 
     def test_lazy_import_cached(self):
-        import fusion_desk
+        import fusion_cowork
         # 第二次访问应使用缓存
-        wf1 = fusion_desk.Workflow
-        wf2 = fusion_desk.Workflow
+        wf1 = fusion_cowork.Workflow
+        wf2 = fusion_cowork.Workflow
         assert wf1 is wf2  # 同一对象

@@ -1,4 +1,4 @@
-# Fusion-Desk Handoff Document
+# Fusion-Cowork Handoff Document
 
 ## 项目状态
 
@@ -11,17 +11,17 @@
 ## 已完成里程碑
 
 ### M1 — MCP stdio + Desk↔Studio IPC + Agent 真实执行
-- `fusion_desk/server/mcp_transport.py` — StdioTransport (JSON-RPC 2.0 over stdin/stdout)
-- `fusion_desk/server/desk_rpc.py` — DeskRPCServer (JSON-RPC 2.0 over UDS, 15→24个方法)
-- `fusion_desk/server/mcp_http.py` — HTTP SSE 传输 (FastAPI)
+- `fusion_cowork/server/mcp_transport.py` — StdioTransport (JSON-RPC 2.0 over stdin/stdout)
+- `fusion_cowork/server/desk_rpc.py` — DeskRPCServer (JSON-RPC 2.0 over UDS, 15→24个方法)
+- `fusion_cowork/server/mcp_http.py` — HTTP SSE 传输 (FastAPI)
 - Agent 执行器: NodeExecutor/WorkflowExecutor/MLXExecutor/ShellExecutor
 - AgentMessageBus — 发布/订阅 + 点对点通信
 
 ### M2 — 权限模型 + Hook系统 + 会话持久化 + 流式输出
-- `fusion_desk/engine/permission.py` — PermissionManager (4级: MANUAL/AUTO/PLAN/BYPASS)
-- `fusion_desk/engine/hooks.py` — HookManager (11事件类型, HookContext.cancel/modify)
-- `fusion_desk/engine/session.py` — SessionStore (SQLite, save/get/list/fork/delete/cleanup)
-- `fusion_desk/engine/events.py` — EventEmitter (pub/sub, asyncio.Queue, SSE格式, buffer replay)
+- `fusion_cowork/engine/permission.py` — PermissionManager (4级: MANUAL/AUTO/PLAN/BYPASS)
+- `fusion_cowork/engine/hooks.py` — HookManager (11事件类型, HookContext.cancel/modify)
+- `fusion_cowork/engine/session.py` — SessionStore (SQLite, save/get/list/fork/delete/cleanup)
+- `fusion_cowork/engine/events.py` — EventEmitter (pub/sub, asyncio.Queue, SSE格式, buffer replay)
 - WorkflowEngine 集成: permission检查、hook拦截、session自动保存、event推送
 - HIGH_RISK_NODES: shell_exec, python_repl, file_delete, apply_edit, browser_automate
 
@@ -36,9 +36,9 @@
 - RichConsole.print_result() 方法补全
 
 ### M5 — 功能对比矩阵 + Benchmark报告 + E2E测试
-- `fusion_desk/benchmark/matrix.py` — CapabilityMatrix (32能力, 9分类, 对等率1.78, Desk独有14项)
-- `fusion_desk/benchmark/runner.py` — BenchmarkRunner (节点/工作流计时, warmup+repeats)
-- `fusion_desk/benchmark/report.py` — ReportRenderer (Markdown/HTML/JSON)
+- `fusion_cowork/benchmark/matrix.py` — CapabilityMatrix (32能力, 9分类, 对等率1.78, Desk独有14项)
+- `fusion_cowork/benchmark/runner.py` — BenchmarkRunner (节点/工作流计时, warmup+repeats)
+- `fusion_cowork/benchmark/report.py` — ReportRenderer (Markdown/HTML/JSON)
 - CLI benchmark group: report/run
 - E2E测试: MCP全链路、DeskRPC全链路、Workflow+Permission+Hook+Session+Event
 
@@ -47,17 +47,17 @@
 ## 文件清单 (新增/修改)
 
 ### 新增文件
-- `fusion_desk/engine/permission.py`
-- `fusion_desk/engine/hooks.py`
-- `fusion_desk/engine/session.py`
-- `fusion_desk/engine/events.py`
-- `fusion_desk/server/mcp_transport.py`
-- `fusion_desk/server/mcp_http.py`
-- `fusion_desk/server/desk_rpc.py`
-- `fusion_desk/benchmark/__init__.py`
-- `fusion_desk/benchmark/matrix.py`
-- `fusion_desk/benchmark/runner.py`
-- `fusion_desk/benchmark/report.py`
+- `fusion_cowork/engine/permission.py`
+- `fusion_cowork/engine/hooks.py`
+- `fusion_cowork/engine/session.py`
+- `fusion_cowork/engine/events.py`
+- `fusion_cowork/server/mcp_transport.py`
+- `fusion_cowork/server/mcp_http.py`
+- `fusion_cowork/server/desk_rpc.py`
+- `fusion_cowork/benchmark/__init__.py`
+- `fusion_cowork/benchmark/matrix.py`
+- `fusion_cowork/benchmark/runner.py`
+- `fusion_cowork/benchmark/report.py`
 - `tests/test_m1.py` (26 tests)
 - `tests/test_m2.py` (37 tests)
 - `tests/test_m3.py` (14 tests)
@@ -65,11 +65,11 @@
 - `tests/test_m5.py` (44 tests)
 
 ### 修改文件
-- `fusion_desk/engine/__init__.py` — 新增 M2/M3 导出
-- `fusion_desk/engine/node.py` — NodeStatus.DENIED/CANCELLED
-- `fusion_desk/engine/workflow.py` — WorkflowEngine 接受 permission/hook/session/event
-- `fusion_desk/server/mcp_server.py` — MCPToolRegistry 权限/hook, MCPServer event_emitter
-- `fusion_desk/cli.py` — session/permission/benchmark 命令组, RichConsole.print_result
+- `fusion_cowork/engine/__init__.py` — 新增 M2/M3 导出
+- `fusion_cowork/engine/node.py` — NodeStatus.DENIED/CANCELLED
+- `fusion_cowork/engine/workflow.py` — WorkflowEngine 接受 permission/hook/session/event
+- `fusion_cowork/server/mcp_server.py` — MCPToolRegistry 权限/hook, MCPServer event_emitter
+- `fusion_cowork/cli.py` — session/permission/benchmark 命令组, RichConsole.print_result
 - `README.md` — V0.3/V0.4 roadmap, CLI命令文档
 
 ---
@@ -81,7 +81,7 @@
 engine = WorkflowEngine(
     permission_manager=PermissionManager(level=PermissionLevel.BYPASS),
     hook_manager=HookManager(),
-    session_store=SessionStore(db_path="~/.fusion-desk/sessions.db"),
+    session_store=SessionStore(db_path="~/.fusion-cowork/sessions.db"),
     event_emitter=EventEmitter(),
 )
 result = await engine.execute(workflow)  # WorkflowStatus.SUCCESS/FAILED/CANCELLED
@@ -110,14 +110,14 @@ desk.permission.check/approve/deny/list
 
 ### CLI 命令
 ```
-fusion-desk benchmark report --format markdown|html|json [-o file]
-fusion-desk benchmark run --node file_input --repeats 3
-fusion-desk permission level <manual|auto|plan|bypass>
-fusion-desk permission approve/deny <tool_name> --scope <scope>
-fusion-desk permission list
-fusion-desk session list/show/fork/delete/cleanup
-fusion-desk mcp serve [--transport stdio|http] [--port 9761]
-fusion-desk desk rpc
+fusion-cowork benchmark report --format markdown|html|json [-o file]
+fusion-cowork benchmark run --node file_input --repeats 3
+fusion-cowork permission level <manual|auto|plan|bypass>
+fusion-cowork permission approve/deny <tool_name> --scope <scope>
+fusion-cowork permission list
+fusion-cowork session list/show/fork/delete/cleanup
+fusion-cowork mcp serve [--transport stdio|http] [--port 9761]
+fusion-cowork desk rpc
 ```
 
 ---
@@ -152,7 +152,7 @@ fusion-desk desk rpc
 ## 用户约束 (verbatim)
 
 - ~/claude-home/fusion-mlx 为底座，其他 ~/fusion 目录下 fusion-xx 各自有自己的特性
-- GUI 放在 fusion-studio 项目，只改 fusion-desk 和 fusion-studio
+- GUI 放在 fusion-studio 项目，只改 fusion-cowork 和 fusion-studio
 - 其他项目有问题和需求给它们提 issue 和 pr
 - 遇到上游问题，先提 issue，再提 pr，跟着提交落地 code
 - source .venv/bin/activate 后再工作

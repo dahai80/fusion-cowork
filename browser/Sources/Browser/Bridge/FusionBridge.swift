@@ -322,7 +322,7 @@ class FusionBridge: NSObject, WKScriptMessageHandler {
     private func handleRunAutomation(callId: Int, params: [String: Any]) async {
         let template = params["template"] as? String ?? ""
 
-        // 调用本地 Fusion-Desk 自动化服务
+        // 调用本地 Fusion-Cowork 自动化服务
         guard let url = URL(string: "http://localhost:9000/api/tasks/run") else { return }
 
         var request = URLRequest(url: url)

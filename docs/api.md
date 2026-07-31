@@ -1,10 +1,10 @@
-# Fusion-Desk API Reference
+# Fusion-Cowork API Reference
 
 ## Engine
 
 ### `Workflow`
 ```python
-from fusion_desk import Workflow
+from fusion_cowork import Workflow
 
 wf = Workflow(name="my_workflow", description="Automate desktop")
 wf.add_node(my_node)
@@ -21,7 +21,7 @@ print(execution.status, execution.total_time)
 
 ### `EnhancedScheduler` (V0.2)
 ```python
-from fusion_desk import EnhancedScheduler
+from fusion_cowork import EnhancedScheduler
 scheduler = EnhancedScheduler(task_scheduler)
 stats = scheduler.get_stats(days=7)
 calendar = scheduler.get_calendar_data(2026, 7)
@@ -29,7 +29,7 @@ calendar = scheduler.get_calendar_data(2026, 7)
 
 ### `WorkflowOptimizer` (V0.2)
 ```python
-from fusion_desk import WorkflowOptimizer
+from fusion_cowork import WorkflowOptimizer
 optimizer = WorkflowOptimizer()
 analysis = optimizer.analyze_workflow(history)
 print(analysis.score, analysis.bottleneck_nodes)
@@ -66,7 +66,7 @@ print(analysis.score, analysis.bottleneck_nodes)
 
 ## Orchestrator (V0.3)
 ```python
-from fusion_desk import AgentOrchestrator, Agent, AgentRole
+from fusion_cowork import AgentOrchestrator, Agent, AgentRole
 orc = AgentOrchestrator()
 orc.register_agent(Agent("agent1", "Planner", AgentRole.PLANNER))
 plan = await orc.create_plan("analysis", "Analyze files")
@@ -78,7 +78,7 @@ result = await orc.execute_plan(plan.plan_id)
 
 ### MCP Server (V0.2)
 ```python
-from fusion_desk import MCPServer
+from fusion_cowork import MCPServer
 server = MCPServer(port=9761)
 await server.start()  # 15 tools exposed
 tools = server.get_tools_list()
@@ -86,7 +86,7 @@ tools = server.get_tools_list()
 
 ### CrossDeviceSync (V0.3)
 ```python
-from fusion_desk import CrossDeviceSync
+from fusion_cowork import CrossDeviceSync
 sync = CrossDeviceSync(port=9760)
 await sync.start()
 await sync.sync_workflow(workflow_data)
@@ -94,7 +94,7 @@ await sync.sync_workflow(workflow_data)
 
 ## Report Generator (V0.2)
 ```python
-from fusion_desk import ReportGenerator
+from fusion_cowork import ReportGenerator
 gen = ReportGenerator()
 report = gen.generate_workflow_report(execution, format="html")
 gen.save_report(report, "~/Desktop/reports")
@@ -102,13 +102,13 @@ gen.save_report(report, "~/Desktop/reports")
 
 ## CLI Reference
 ```bash
-fusion-desk template list/run/show
-fusion-desk ai generate/status
-fusion-desk workflow run/list
-fusion-desk schedule list/add/remove
-fusion-desk system info/clean
-fusion-desk browser start/open/extract
-fusion-desk mcp start               # V0.2
-fusion-desk report generate          # V0.2
-fusion-desk orchestrator run         # V0.3
+fusion-cowork template list/run/show
+fusion-cowork ai generate/status
+fusion-cowork workflow run/list
+fusion-cowork schedule list/add/remove
+fusion-cowork system info/clean
+fusion-cowork browser start/open/extract
+fusion-cowork mcp start               # V0.2
+fusion-cowork report generate          # V0.2
+fusion-cowork orchestrator run         # V0.3
 ```

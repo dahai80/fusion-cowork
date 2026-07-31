@@ -1,7 +1,7 @@
 [project]
-name = "fusion-desk"
+name = "fusion-cowork"
 version = "0.1.1"
-description = "Fusion-Desk — macOS 原生、纯本地离线、零代码桌面智能自动化平台"
+description = "Fusion-Cowork — macOS 原生、纯本地离线、零代码桌面智能自动化平台"
 authors = [
     { name = "Fusion-MLX Team" },
 ]
@@ -31,18 +31,18 @@ test = [
     "pytest-mock>=3.14.0",
 ]
 dev = [
-    "fusion-desk[test,web]",
+    "fusion-cowork[test,web]",
 ]
 
 [project.scripts]
-fusion-desk = "fusion_desk.cli:main"
+fusion-cowork = "fusion_cowork.cli:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.coverage.run]
-source = ["fusion_desk"]
+source = ["fusion_cowork"]
 branch = true
 relative_files = true
 
@@ -58,7 +58,7 @@ exclude_lines = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["fusion_desk*"]
+include = ["fusion_cowork*"]
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]

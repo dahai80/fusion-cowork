@@ -1,11 +1,11 @@
 #!/bin/bash
-# Fusion-Desk macOS .app 打包脚本
-# 将 Fusion-Desk CLI + 内嵌浏览器打包为 macOS 原生 .app
+# Fusion-Cowork macOS .app 打包脚本
+# 将 Fusion-Cowork CLI + 内嵌浏览器打包为 macOS 原生 .app
 # V0.2 特性：macOS 原生应用打包
 
 set -e
 
-APP_NAME="Fusion-Desk"
+APP_NAME="Fusion-Cowork"
 APP_VERSION="0.2.0"
 APP_IDENTITY="com.fusion.desk"
 BUILD_DIR="build"
@@ -14,7 +14,7 @@ CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 
-echo "🔨 构建 Fusion-Desk ${APP_VERSION} macOS .app"
+echo "🔨 构建 Fusion-Cowork ${APP_VERSION} macOS .app"
 
 # 1. 清理旧构建
 rm -rf "${BUILD_DIR}"
@@ -27,9 +27,9 @@ source "${RESOURCES_DIR}/venv/bin/activate"
 pip install --quiet -e ".[web]" 2>/dev/null
 deactivate
 
-# 3. 复制 Fusion-Desk 源码
+# 3. 复制 Fusion-Cowork 源码
 echo "  📂 复制程序文件..."
-cp -r fusion_desk "${RESOURCES_DIR}/"
+cp -r fusion_cowork "${RESOURCES_DIR}/"
 cp -r browser "${RESOURCES_DIR}/" 2>/dev/null || true
 cp pyproject.toml "${RESOURCES_DIR}/"
 cp README.md "${RESOURCES_DIR}/"
@@ -43,9 +43,9 @@ RESOURCES="${DIR}/../Resources"
 export PATH="${RESOURCES}/venv/bin:/usr/local/bin:/usr/bin:/bin"
 export PYTHONPATH="${RESOURCES}:${PYTHONPATH}"
 
-# 启动 Fusion-Desk CLI
+# 启动 Fusion-Cowork CLI
 cd "${RESOURCES}"
-exec "${RESOURCES}/venv/bin/fusion-desk" "$@"
+exec "${RESOURCES}/venv/bin/fusion-cowork" "$@"
 SCRIPT
 chmod +x "${MACOS_DIR}/${APP_NAME}"
 
@@ -91,7 +91,7 @@ cat > "${RESOURCES_DIR}/AppIcon.svg" << 'SVG'
   </defs>
   <rect width="512" height="512" rx="100" fill="url(#bg)"/>
   <text x="256" y="280" font-family="Arial" font-size="200" font-weight="bold" fill="white" text-anchor="middle">FD</text>
-  <text x="256" y="380" font-family="Arial" font-size="40" fill="rgba(255,255,255,0.6)" text-anchor="middle">Fusion-Desk</text>
+  <text x="256" y="380" font-family="Arial" font-size="40" fill="rgba(255,255,255,0.6)" text-anchor="middle">Fusion-Cowork</text>
 </svg>
 SVG
 
@@ -114,10 +114,10 @@ fi
 
 # 8. 创建启动桌面快捷方式
 echo "  🚀 创建快捷方式..."
-LAUNCHER_SCRIPT="${BUILD_DIR}/start_fusion_desk.sh"
+LAUNCHER_SCRIPT="${BUILD_DIR}/start_fusion_cowork.sh"
 cat > "${LAUNCHER_SCRIPT}" << 'SCRIPT'
 #!/bin/bash
-open "$(dirname "$0")/Fusion-Desk.app"
+open "$(dirname "$0")/Fusion-Cowork.app"
 SCRIPT
 chmod +x "${LAUNCHER_SCRIPT}"
 
@@ -127,4 +127,4 @@ echo "   📍 ${APP_DIR}"
 echo "   📏 大小: $(du -sh "${APP_DIR}" | cut -f1)"
 echo ""
 echo "   🚀 启动: open ${APP_DIR}"
-echo "   💻 CLI: ${APP_DIR}/Contents/MacOS/Fusion-Desk"
+echo "   💻 CLI: ${APP_DIR}/Contents/MacOS/Fusion-Cowork"

@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>🧹 Fusion-Desk</h1>
+  <h1>🧹 Fusion-Cowork</h1>
   <p><strong>Local-first, zero-code desktop automation platform for macOS Apple Silicon</strong></p>
   <p><em>Let your Mac do the work — 100% offline, AI-powered, privacy-first.</em></p>
 </div>
@@ -17,7 +17,7 @@
 
 ## 📋 Overview
 
-**Fusion-Desk** is one of the three flagship products in the [Fusion-MLX](https://github.com/fusion-mlx) Apple Silicon local AI ecosystem. It provides a zero-code desktop intelligent automation platform for all office users.
+**Fusion-Cowork** is one of the three flagship products in the [Fusion-MLX](https://github.com/fusion-mlx) Apple Silicon local AI ecosystem. It provides a zero-code desktop intelligent automation platform for all office users.
 
 ### Ecosystem Positioning
 
@@ -25,7 +25,7 @@
 |---------|------|----------|
 | **Fusion-Code** | Developer coding agent | Programmers |
 | **Fusion-Agent-Studio** | Advanced agent workflow orchestration | Developers / Architects |
-| **Fusion-Desk** 🎯 | Desktop automation for everyone | **All office users** |
+| **Fusion-Cowork** 🎯 | Desktop automation for everyone | **All office users** |
 
 > **Studio builds workflows, Desk runs them, Code writes capabilities, KB stores knowledge, Hub manages models.**
 
@@ -46,8 +46,8 @@
 
 ```bash
 # Clone
-git clone https://github.com/dahai80/fusion-desk.git
-cd fusion-desk
+git clone https://github.com/dahai80/fusion-cowork.git
+cd fusion-cowork
 
 # Install with pip
 pip install -e .
@@ -64,69 +64,69 @@ uv pip install -e ".[test]"
 
 ```bash
 # List available templates
-fusion-desk template list
+fusion-cowork template list
 
 # Show template details
-fusion-desk template show desktop_daily_cleanup
+fusion-cowork template show desktop_daily_cleanup
 
 # Run a template (preview mode)
-fusion-desk template run desktop_daily_cleanup --dry-run
+fusion-cowork template run desktop_daily_cleanup --dry-run
 
 # Run a template (execute)
-fusion-desk template run desktop_daily_cleanup
+fusion-cowork template run desktop_daily_cleanup
 
 # Generate a workflow with AI
-fusion-desk ai generate "Organize all PDFs on my desktop by topic"
+fusion-cowork ai generate "Organize all PDFs on my desktop by topic"
 
 # Check AI service status
-fusion-desk ai status
+fusion-cowork ai status
 
 # System information
-fusion-desk system info
+fusion-cowork system info
 
 # Start MCP server (stdio mode for Claude Code)
-fusion-desk mcp serve
+fusion-cowork mcp serve
 
 # Start MCP server (HTTP mode)
-fusion-desk mcp serve --transport http --port 9761
+fusion-cowork mcp serve --transport http --port 9761
 
 # Start Desk RPC server (for Fusion-Studio GUI)
-fusion-desk desk rpc
+fusion-cowork desk rpc
 
 # Session management
-fusion-desk session list
-fusion-desk session show <session_id>
-fusion-desk session fork <session_id> --from-step 2
-fusion-desk session cleanup --days 30
+fusion-cowork session list
+fusion-cowork session show <session_id>
+fusion-cowork session fork <session_id> --from-step 2
+fusion-cowork session cleanup --days 30
 
 # Permission management
-fusion-desk permission level <manual|auto|plan|bypass>
-fusion-desk permission approve <tool_name> --scope <scope>
-fusion-desk permission deny <tool_name> --scope <scope>
-fusion-desk permission list
+fusion-cowork permission level <manual|auto|plan|bypass>
+fusion-cowork permission approve <tool_name> --scope <scope>
+fusion-cowork permission deny <tool_name> --scope <scope>
+fusion-cowork permission list
 
 # Benchmark — 功能对比报告
-fusion-desk benchmark report --format markdown|html|json [-o report.md]
-fusion-desk benchmark run --node file_input --node shell_exec --repeats 3
+fusion-cowork benchmark report --format markdown|html|json [-o report.md]
+fusion-cowork benchmark run --node file_input --node shell_exec --repeats 3
 
 # Plugin management (M3)
-fusion-desk plugin list
-fusion-desk plugin install /path/to/plugin
-fusion-desk plugin load <name>
-fusion-desk plugin uninstall <name>
+fusion-cowork plugin list
+fusion-cowork plugin install /path/to/plugin
+fusion-cowork plugin load <name>
+fusion-cowork plugin uninstall <name>
 
 # Skill management (M3)
-fusion-desk skill list
-fusion-desk skill run /cleanup
-fusion-desk skill search "clean"
+fusion-cowork skill list
+fusion-cowork skill run /cleanup
+fusion-cowork skill search "clean"
 
 # Chrome CDP — remote browser control (M3)
-fusion-desk cdp navigate https://example.com
-fusion-desk cdp snapshot
-fusion-desk cdp click 42
-fusion-desk cdp fill --selector "#search" --value "hello"
-fusion-desk cdp screenshot --save ~/Desktop/shot.png
-fusion-desk cdp evaluate "document.title"
+fusion-cowork cdp navigate https://example.com
+fusion-cowork cdp snapshot
+fusion-cowork cdp click 42
+fusion-cowork cdp fill --selector "#search" --value "hello"
+fusion-cowork cdp screenshot --save ~/Desktop/shot.png
+fusion-cowork cdp evaluate "document.title"
 ```
 
 ---
@@ -282,7 +282,7 @@ fusion-desk cdp evaluate "document.title"
 
 ### Plugin System 🆕 (M3)
 
-Plugin system allows extending Fusion-Desk with custom nodes:
+Plugin system allows extending Fusion-Cowork with custom nodes:
 
 ```python
 # Plugin manifest (manifest.json)
@@ -297,8 +297,8 @@ Plugin system allows extending Fusion-Desk with custom nodes:
 
 ```bash
 # Install from directory or zip
-fusion-desk plugin install /path/to/plugin_dir
-fusion-desk plugin install /path/to/plugin.zip
+fusion-cowork plugin install /path/to/plugin_dir
+fusion-cowork plugin install /path/to/plugin.zip
 ```
 
 ### Skill Mechanism 🆕 (M3)
@@ -330,19 +330,19 @@ Mouse/keyboard control + AI loop for autonomous desktop operation:
 
 ```bash
 # Move mouse
-fusion-desk computer-use move 500 300
+fusion-cowork computer-use move 500 300
 
 # Click
-fusion-desk computer-use click --x 500 --y 300 --button left
+fusion-cowork computer-use click --x 500 --y 300 --button left
 
 # Type text
-fusion-desk computer-use type "Hello World"
+fusion-cowork computer-use type "Hello World"
 
 # Keyboard shortcut
-fusion-desk computer-use shortcut c --modifiers cmd
+fusion-cowork computer-use shortcut c --modifiers cmd
 
 # AI-powered Computer Use loop
-fusion-desk computer-use run "打开 Safari 并搜索天气" --max-steps 10
+fusion-cowork computer-use run "打开 Safari 并搜索天气" --max-steps 10
 ```
 
 ### Remote Control 🆕 (M4)
@@ -351,13 +351,13 @@ WebSocket-based remote control for external clients:
 
 ```bash
 # Start remote server
-fusion-desk remote serve --port 9762 --token mytoken
+fusion-cowork remote serve --port 9762 --token mytoken
 
 # Connect from another machine
-fusion-desk remote connect ws://host:9762/control --token mytoken
+fusion-cowork remote connect ws://host:9762/control --token mytoken
 
 # Submit workflow remotely
-fusion-desk remote submit workflow.json --url ws://host:9762/control
+fusion-cowork remote submit workflow.json --url ws://host:9762/control
 ```
 
 ### Structured Output 🆕 (M4)
@@ -366,10 +366,10 @@ JSON Schema validation for node outputs:
 
 ```bash
 # Validate data against schema
-fusion-desk schema validate data.json schema.json
+fusion-cowork schema validate data.json schema.json
 
 # Check node output schema
-fusion-desk schema check mouse_move
+fusion-cowork schema check mouse_move
 ```
 
 NodeResult now supports `schema` field and `validate()` method for automatic output validation.
@@ -404,7 +404,7 @@ NodeResult now supports `schema` field and `validate()` method for automatic out
 ### AI-Generated Workflow
 
 ```bash
-fusion-desk ai generate "Every night at 9pm, clean my Downloads folder and back it up to Documents"
+fusion-cowork ai generate "Every night at 9pm, clean my Downloads folder and back it up to Documents"
 ```
 
 ---
@@ -419,7 +419,7 @@ pip install -e ".[test]"
 pytest tests/ -v
 
 # With coverage
-pytest tests/ --cov=fusion_desk --cov-report=html
+pytest tests/ --cov=fusion_cowork --cov-report=html
 ```
 
 ---
@@ -464,10 +464,10 @@ pytest tests/ --cov=fusion_desk --cov-report=html
 - [x] Benchmark module (CapabilityMatrix — 32 capabilities, parity scoring, category breakdown)
 - [x] BenchmarkRunner (node/workflow timing, warmup+repeats, summary stats)
 - [x] ReportRenderer (Markdown/HTML/JSON comparison reports — Cowork vs Desk)
-- [x] CLI benchmark commands (`fusion-desk benchmark report/run`)
+- [x] CLI benchmark commands (`fusion-cowork benchmark report/run`)
 - [x] E2E integration tests (MCP full chain, DeskRPC full chain, Workflow+Permission+Hook+Session+Event)
 - [x] DeskRPC event/session/permission handlers (9 new methods)
-- [x] CLI permission commands (`fusion-desk permission level/approve/deny/list`)
+- [x] CLI permission commands (`fusion-cowork permission level/approve/deny/list`)
 
 ### V0.5 ✅
 - [x] Computer Use nodes (MouseMove, MouseClick, KeyboardType, KeyboardShortcut, ComputerUseLoop)
@@ -484,9 +484,9 @@ pytest tests/ --cov=fusion_desk --cov-report=html
 - [x] Hook lifecycle integration — HookManager priority system, new events (SESSION_START, SESSION_END, PRE_COMPACT)
 - [x] Hook-driven permission — auto-approve/deny via PERMISSION_REQUEST hook context
 - [x] PermissionManager async check — supports hook interception before rule matching
-- [x] FusionDeskSDK — async HTTP client with local fallback for programmatic access
+- [x] FusionCoworkSDK — async HTTP client with local fallback for programmatic access
 - [x] HeadlessRunner — no-CLI/no-GUI workflow execution engine
-- [x] SDK lazy imports — FusionDeskSDK, HeadlessRunner accessible via fusion_desk package
+- [x] SDK lazy imports — FusionCoworkSDK, HeadlessRunner accessible via fusion_cowork package
 
 ### V0.7 (Planned)
 - [ ] Visual workflow editor (Fusion-Studio GUI)
@@ -520,12 +520,12 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for detai
 
 ## Architecture Influences
 
-Fusion-Desk builds upon patterns from the open-source ecosystem:
+Fusion-Cowork builds upon patterns from the open-source ecosystem:
 
 | Pattern | Source | Integration |
 |---------|--------|-------------|
 | Tool Registry + type coercion | [Squish](https://github.com/nicepkg/squish) `tool_registry.py` | `engine/node.py` — `_coerce_int/bool/number/array` |
-| Lazy import via `__getattr__` | [Squish](https://github.com/nicepkg/squish) `__init__.py` | `fusion_desk/__init__.py` — `_LAZY_IMPORTS` |
+| Lazy import via `__getattr__` | [Squish](https://github.com/nicepkg/squish) `__init__.py` | `fusion_cowork/__init__.py` — `_LAZY_IMPORTS` |
 | Tool name alias mapping | [Squish](https://github.com/nicepkg/squish) `tool_name_map.py` | `NODE_NAME_ALIASES` + `register_alias` |
 | Built-in tool set | [Squish](https://github.com/nicepkg/squish) `builtin_tools.py` | 5 tool nodes: Shell, Python, Web Search, Fetch, Edit |
 | Workflow engine (DAG) | [n8n](https://github.com/n8n-io/n8n) | `engine/workflow.py` — topological sort, data passing |
@@ -534,7 +534,7 @@ Fusion-Desk builds upon patterns from the open-source ecosystem:
 ---
 
 <p align="center">
-  <strong>Fusion-Desk — Let your Mac do the work, locally and privately.</strong>
+  <strong>Fusion-Cowork — Let your Mac do the work, locally and privately.</strong>
 </p>
 <p align="center">
   <sub>Built with ❤️ by the Fusion-MLX Team</sub>
@@ -545,7 +545,7 @@ Fusion-Desk builds upon patterns from the open-source ecosystem:
 <br>
 
 <div align="center">
-  <h1>🧹 Fusion-Desk</h1>
+  <h1>🧹 Fusion-Cowork</h1>
   <p><strong>macOS 原生、纯本地离线、零代码桌面智能自动化平台</strong></p>
   <p><em>让 Mac 自己干活，本地 AI 全自动桌面办公</em></p>
 </div>
@@ -563,7 +563,7 @@ Fusion-Desk builds upon patterns from the open-source ecosystem:
 
 ## 📋 产品简介
 
-**Fusion-Desk** 是 Fusion-MLX 全栈 Apple Silicon 本地 AI 生态的三大旗舰核心产品之一，面向所有办公用户提供零代码桌面智能自动化能力。
+**Fusion-Cowork** 是 Fusion-MLX 全栈 Apple Silicon 本地 AI 生态的三大旗舰核心产品之一，面向所有办公用户提供零代码桌面智能自动化能力。
 
 ### 生态层级定位
 
@@ -571,7 +571,7 @@ Fusion-Desk builds upon patterns from the open-source ecosystem:
 |------|------|----------|
 | **Fusion-Code** | 开发者编码智能体 | 程序员 |
 | **Fusion-Agent-Studio** | 高级智能体工作流编排 | 开发者 / 架构师 |
-| **Fusion-Desk** 🎯 | 大众用户成品自动化工具 | **所有办公用户** |
+| **Fusion-Cowork** 🎯 | 大众用户成品自动化工具 | **所有办公用户** |
 
 > Studio 造流程、Desk 用流程、Code 写能力、KB 存知识、Hub 管模型
 
@@ -592,8 +592,8 @@ Fusion-Desk builds upon patterns from the open-source ecosystem:
 
 ```bash
 # 克隆项目
-git clone https://github.com/dahai80/fusion-desk.git
-cd fusion-desk
+git clone https://github.com/dahai80/fusion-cowork.git
+cd fusion-cowork
 
 # 安装依赖
 pip install -e .
@@ -610,50 +610,50 @@ uv pip install -e ".[test]"
 
 ```bash
 # 查看可用模板
-fusion-desk template list
+fusion-cowork template list
 
 # 查看模板详情
-fusion-desk template show desktop_daily_cleanup
+fusion-cowork template show desktop_daily_cleanup
 
 # 运行模板（预览模式）
-fusion-desk template run desktop_daily_cleanup --dry-run
+fusion-cowork template run desktop_daily_cleanup --dry-run
 
 # 运行模板（实际执行）
-fusion-desk template run desktop_daily_cleanup
+fusion-cowork template run desktop_daily_cleanup
 
 # AI 一句话生成工作流
-fusion-desk ai generate "帮我把桌面所有 PDF 按主题分类归档"
+fusion-cowork ai generate "帮我把桌面所有 PDF 按主题分类归档"
 
 # 检查 AI 服务状态
-fusion-desk ai status
+fusion-cowork ai status
 
 # 查看系统信息
-fusion-desk system info
+fusion-cowork system info
 
 # 启动 MCP 服务 (stdio 模式，供 Claude Code 调用)
-fusion-desk mcp serve
+fusion-cowork mcp serve
 
 # 启动 MCP 服务 (HTTP 模式)
-fusion-desk mcp serve --transport http --port 9761
+fusion-cowork mcp serve --transport http --port 9761
 
 # 启动 Desk RPC 服务 (供 Fusion-Studio GUI 调用)
-fusion-desk desk rpc
+fusion-cowork desk rpc
 
 # 会话管理
-fusion-desk session list
-fusion-desk session show <session_id>
-fusion-desk session fork <session_id> --from-step 2
-fusion-desk session cleanup --days 30
+fusion-cowork session list
+fusion-cowork session show <session_id>
+fusion-cowork session fork <session_id> --from-step 2
+fusion-cowork session cleanup --days 30
 
 # 权限管理
-fusion-desk permission level <manual|auto|plan|bypass>
-fusion-desk permission approve <tool_name> --scope <scope>
-fusion-desk permission deny <tool_name> --scope <scope>
-fusion-desk permission list
+fusion-cowork permission level <manual|auto|plan|bypass>
+fusion-cowork permission approve <tool_name> --scope <scope>
+fusion-cowork permission deny <tool_name> --scope <scope>
+fusion-cowork permission list
 
 # 功能对比基准
-fusion-desk benchmark report --format markdown|html|json [-o report.md]
-fusion-desk benchmark run --node file_input --node shell_exec --repeats 3
+fusion-cowork benchmark report --format markdown|html|json [-o report.md]
+fusion-cowork benchmark run --node file_input --node shell_exec --repeats 3
 ```
 
 ---
@@ -789,7 +789,7 @@ fusion-desk benchmark run --node file_input --node shell_exec --repeats 3
 ### AI 一句话生成
 
 ```bash
-fusion-desk ai generate "每天晚上9点自动清理下载文件夹并备份到文稿"
+fusion-cowork ai generate "每天晚上9点自动清理下载文件夹并备份到文稿"
 ```
 
 ---
@@ -804,7 +804,7 @@ pip install -e ".[test]"
 pytest tests/ -v
 
 # 生成覆盖率报告
-pytest tests/ --cov=fusion_desk --cov-report=html
+pytest tests/ --cov=fusion_cowork --cov-report=html
 ```
 
 ---
@@ -844,10 +844,10 @@ pytest tests/ --cov=fusion_desk --cov-report=html
 - [x] 对比基准模块 (CapabilityMatrix — 32项能力、对等率、分类对比)
 - [x] BenchmarkRunner (节点/工作流计时、warmup+repeats、汇总统计)
 - [x] ReportRenderer (Markdown/HTML/JSON 对比报告 — Cowork vs Desk)
-- [x] CLI benchmark 命令 (`fusion-desk benchmark report/run`)
+- [x] CLI benchmark 命令 (`fusion-cowork benchmark report/run`)
 - [x] 端到端集成测试 (MCP全链路、DeskRPC全链路、Workflow+Permission+Hook+Session+Event)
 - [x] DeskRPC 事件/会话/权限处理器 (9个新方法)
-- [x] CLI 权限命令 (`fusion-desk permission level/approve/deny/list`)
+- [x] CLI 权限命令 (`fusion-cowork permission level/approve/deny/list`)
 
 ### V0.5 ✅
 - [x] Computer Use 节点 (鼠标移动/点击、键盘输入/快捷键、Computer Use 循环)
@@ -863,9 +863,9 @@ pytest tests/ --cov=fusion_desk --cov-report=html
 - [x] Hook 生命周期集成 — HookManager 优先级系统，新事件 (SESSION_START, SESSION_END, PRE_COMPACT)
 - [x] Hook 驱动权限 — 通过 PERMISSION_REQUEST hook 上下文自动批准/拒绝
 - [x] PermissionManager 异步检查 — 支持规则匹配前的 hook 拦截
-- [x] FusionDeskSDK — 异步 HTTP 客户端 + 本地回退，编程式访问
+- [x] FusionCoworkSDK — 异步 HTTP 客户端 + 本地回退，编程式访问
 - [x] HeadlessRunner — 无 CLI/GUI 工作流执行引擎
-- [x] SDK 懒加载导入 — FusionDeskSDK、HeadlessRunner 通过 fusion_desk 包访问
+- [x] SDK 懒加载导入 — FusionCoworkSDK、HeadlessRunner 通过 fusion_cowork 包访问
 
 ---
 
@@ -893,12 +893,12 @@ pytest tests/ --cov=fusion_desk --cov-report=html
 
 ## 架构影响来源
 
-Fusion-Desk 基于以下开源项目的模式构建：
+Fusion-Cowork 基于以下开源项目的模式构建：
 
 | 模式 | 来源 | 整合位置 |
 |------|------|----------|
 | 工具注册表 + 类型强制转换 | [Squish](https://github.com/nicepkg/squish) `tool_registry.py` | `engine/node.py` — `_coerce_int/bool/number/array` |
-| Lazy Import `__getattr__` | [Squish](https://github.com/nicepkg/squish) `__init__.py` | `fusion_desk/__init__.py` — `_LAZY_IMPORTS` |
+| Lazy Import `__getattr__` | [Squish](https://github.com/nicepkg/squish) `__init__.py` | `fusion_cowork/__init__.py` — `_LAZY_IMPORTS` |
 | 工具名称映射 | [Squish](https://github.com/nicepkg/squish) `tool_name_map.py` | `NODE_NAME_ALIASES` + `register_alias` |
 | 内置工具集 | [Squish](https://github.com/nicepkg/squish) `builtin_tools.py` | 5 个工具节点：Shell、Python、Web 搜索、Fetch、Edit |
 | 工作流引擎 (DAG) | [n8n](https://github.com/n8n-io/n8n) | `engine/workflow.py` — 拓扑排序、数据传递 |
@@ -907,7 +907,7 @@ Fusion-Desk 基于以下开源项目的模式构建：
 ---
 
 <p align="center">
-  <strong>Fusion-Desk — 让 Mac 自己干活，本地 AI 全自动桌面办公</strong>
+  <strong>Fusion-Cowork — 让 Mac 自己干活，本地 AI 全自动桌面办公</strong>
 </p>
 <p align="center">
   <sub>Built with ❤️ by Fusion-MLX Team</sub>

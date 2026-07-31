@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Fusion-Desk is a local-first, zero-code desktop automation platform for macOS Apple Silicon. Part of the Fusion-MLX ecosystem (alongside Fusion-Code, Agent-Studio, Fusion-KB, Model-Hub). Python 3.11+, async-first architecture.
+Fusion-Cowork is a local-first, zero-code desktop automation platform for macOS Apple Silicon. Part of the Fusion-MLX ecosystem (alongside Fusion-Code, Agent-Studio, Fusion-KB, Model-Hub). Python 3.11+, async-first architecture.
 
 ## Common Commands
 
@@ -18,21 +18,21 @@ pip install -e ".[web]"        # with FastAPI/uvicorn
 pytest tests/ -v                                    # all tests
 pytest tests/test_engine.py::TestWorkflowEngine -v   # single class
 pytest tests/test_engine.py::TestTypeCoercion -v     # single test class
-pytest tests/ --cov=fusion_desk --cov-report=html    # with coverage
+pytest tests/ --cov=fusion_cowork --cov-report=html    # with coverage
 
 # CLI
-fusion-desk template list
-fusion-desk template run <id> --dry-run
-fusion-desk ai generate "prompt"
-fusion-desk ai status
-fusion-desk system info
+fusion-cowork template list
+fusion-cowork template run <id> --dry-run
+fusion-cowork ai generate "prompt"
+fusion-cowork ai status
+fusion-cowork system info
 
 # AI service (fusion-mlx)
 ~/claude-home/fusion-mlx/start.sh start|stop
 
 # Embedded browser (Swift WKWebView)
-fusion-desk browser build   # compile Swift
-fusion-desk browser start   # launch .app
+fusion-cowork browser build   # compile Swift
+fusion-cowork browser start   # launch .app
 ```
 
 ## Architecture
@@ -44,7 +44,7 @@ fusion-desk browser start   # launch .app
 3. **AI Capability** — `FusionMLXClient` (HTTP → fusion-mlx port 8000), `NLWorkflowGenerator` (NL → workflow), `KBClient` (HTTP → Fusion-KB port 11434)
 4. **System Capability** — macOS nodes via AppleScript/osascript + Python pathlib/shutil
 
-### Core Engine (`fusion_desk/engine/`)
+### Core Engine (`fusion_cowork/engine/`)
 
 - **`node.py`** — `BaseNode` (abstract), `NodeRegistry` (class-level registry), `@register_node` decorator, type coercion (`_coerce_int/bool/number/array`) for LLM-generated string params
 - **`workflow.py`** — `Workflow` (DAG container with cycle detection + topological sort), `WorkflowEngine` (async executor with progress callbacks, cancel, retry)
@@ -52,7 +52,7 @@ fusion-desk browser start   # launch .app
 - **`enhanced_scheduler.py`** — V0.2: calendar view, task dependency, stats
 - **`optimizer.py`** — V0.2: AI workflow analysis, bottleneck detection
 
-### Node System (`fusion_desk/nodes/`)
+### Node System (`fusion_cowork/nodes/`)
 
 All nodes subclass `BaseNode`, use `@register_node`, and live in category subpackages:
 
@@ -67,20 +67,20 @@ All nodes subclass `BaseNode`, use `@register_node`, and live in category subpac
 
 ### Key Patterns
 
-- **Lazy Import** (`fusion_desk/__init__.py`): `__getattr__`-based lazy loading via `_LAZY_IMPORTS` dict. Keeps `import fusion_desk` fast; modules load on first attribute access.
+- **Lazy Import** (`fusion_cowork/__init__.py`): `__getattr__`-based lazy loading via `_LAZY_IMPORTS` dict. Keeps `import fusion_cowork` fast; modules load on first attribute access.
 - **Node Name Aliases** (`NODE_NAME_ALIASES`): Chinese user-friendly names → backend node names. Registered via `NodeRegistry.register_alias()`. Used by NL workflow generator.
 - **Type Coercion**: `_coerce_*` functions convert LLM string outputs ("10", "true") to declared JSON Schema types. Applied automatically in `NodeRegistry.create()`.
 - **Workflow Serialization**: `Workflow.to_dict()/from_dict()` supports both dict and list node formats. Edges define data flow between nodes.
 
 ### Other Modules
 
-- **`fusion_desk/ai/`** — `FusionMLXClient` (httpx async), `KBClient`, `NLWorkflowGenerator`
-- **`fusion_desk/templates/`** — `TemplateManager` (10 built-in + 10 industry templates), `industry_templates.py`
-- **`fusion_desk/report/`** — `ReportGenerator` (Markdown/HTML batch reports)
-- **`fusion_desk/orchestrator/`** — V0.3: `AgentOrchestrator` multi-agent orchestration
-- **`fusion_desk/server/`** — `MCPServer` (15 tools for Claude Desktop/Code), `CrossDeviceSync` (WebSocket)
-- **`fusion_desk/cli.py`** — Click CLI, instantiates engine/scheduler/template-mgr/AI-client as module globals
-- **`fusion_desk/utils/logger.py`** — `setup_logger()` used by CLI
+- **`fusion_cowork/ai/`** — `FusionMLXClient` (httpx async), `KBClient`, `NLWorkflowGenerator`
+- **`fusion_cowork/templates/`** — `TemplateManager` (10 built-in + 10 industry templates), `industry_templates.py`
+- **`fusion_cowork/report/`** — `ReportGenerator` (Markdown/HTML batch reports)
+- **`fusion_cowork/orchestrator/`** — V0.3: `AgentOrchestrator` multi-agent orchestration
+- **`fusion_cowork/server/`** — `MCPServer` (15 tools for Claude Desktop/Code), `CrossDeviceSync` (WebSocket)
+- **`fusion_cowork/cli.py`** — Click CLI, instantiates engine/scheduler/template-mgr/AI-client as module globals
+- **`fusion_cowork/utils/logger.py`** — `setup_logger()` used by CLI
 
 ### Embedded Browser (`browser/`)
 

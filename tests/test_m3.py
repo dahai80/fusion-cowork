@@ -10,13 +10,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from fusion_desk.engine.permission import PermissionManager, PermissionLevel
-from fusion_desk.engine.hooks import HookManager, HookEvent
-from fusion_desk.engine.session import Session, SessionStore
-from fusion_desk.engine.events import EventType, WorkflowEvent, EventEmitter
-from fusion_desk.engine.node import BaseNode, NodeConfig, NodeResult, NodeStatus, NodeRegistry
-from fusion_desk.engine.workflow import Workflow, WorkflowEngine, WorkflowStatus
-from fusion_desk.server.mcp_server import MCPToolRegistry, MCPServer
+from fusion_cowork.engine.permission import PermissionManager, PermissionLevel
+from fusion_cowork.engine.hooks import HookManager, HookEvent
+from fusion_cowork.engine.session import Session, SessionStore
+from fusion_cowork.engine.events import EventType, WorkflowEvent, EventEmitter
+from fusion_cowork.engine.node import BaseNode, NodeConfig, NodeResult, NodeStatus, NodeRegistry
+from fusion_cowork.engine.workflow import Workflow, WorkflowEngine, WorkflowStatus
+from fusion_cowork.server.mcp_server import MCPToolRegistry, MCPServer
 
 
 class _OkNode(BaseNode):
@@ -270,7 +270,7 @@ class TestMCPServerM3:
 
 class TestPluginManifest:
     def test_create_manifest(self):
-        from fusion_desk.plugins.manifest import PluginManifest
+        from fusion_cowork.plugins.manifest import PluginManifest
         m = PluginManifest(
             name="test_plugin", version="1.0.0",
             description="A test plugin", author="test",
@@ -281,7 +281,7 @@ class TestPluginManifest:
         assert m.nodes == ["test_node"]
 
     def test_manifest_to_dict(self):
-        from fusion_desk.plugins.manifest import PluginManifest
+        from fusion_cowork.plugins.manifest import PluginManifest
         m = PluginManifest(name="p1", version="0.1.0", description="d", nodes=["n1"])
         d = m.to_dict()
         assert d["name"] == "p1"
@@ -289,14 +289,14 @@ class TestPluginManifest:
         assert "nodes" in d
 
     def test_manifest_from_dict(self):
-        from fusion_desk.plugins.manifest import PluginManifest
+        from fusion_cowork.plugins.manifest import PluginManifest
         data = {"name": "p2", "version": "2.0", "description": "x", "nodes": ["a", "b"]}
         m = PluginManifest.from_dict(data)
         assert m.name == "p2"
         assert len(m.nodes) == 2
 
     def test_manifest_from_json_file(self):
-        from fusion_desk.plugins.manifest import PluginManifest
+        from fusion_cowork.plugins.manifest import PluginManifest
         with tempfile.TemporaryDirectory() as tmp:
             manifest_path = Path(tmp) / "manifest.json"
             manifest_path.write_text(json.dumps({
@@ -309,7 +309,7 @@ class TestPluginManifest:
 
 class TestPluginLoader:
     def test_discover_empty(self):
-        from fusion_desk.plugins.loader import PluginLoader
+        from fusion_cowork.plugins.loader import PluginLoader
         loader = PluginLoader()
         with tempfile.TemporaryDirectory() as tmp:
             loader._plugins_dir = Path(tmp)
@@ -317,8 +317,8 @@ class TestPluginLoader:
             assert result == []
 
     def test_discover_with_plugin(self):
-        from fusion_desk.plugins.loader import PluginLoader
-        from fusion_desk.plugins.manifest import PluginManifest
+        from fusion_cowork.plugins.loader import PluginLoader
+        from fusion_cowork.plugins.manifest import PluginManifest
         loader = PluginLoader()
         with tempfile.TemporaryDirectory() as tmp:
             plugin_dir = Path(tmp) / "my_plugin"
@@ -332,8 +332,8 @@ class TestPluginLoader:
             assert result[0].version == "1.0"
 
     def test_install_from_dir(self):
-        from fusion_desk.plugins.loader import PluginLoader
-        from fusion_desk.plugins.manifest import PluginManifest
+        from fusion_cowork.plugins.loader import PluginLoader
+        from fusion_cowork.plugins.manifest import PluginManifest
         loader = PluginLoader()
         with tempfile.TemporaryDirectory() as tmp_plugins, tempfile.TemporaryDirectory() as tmp_src:
             loader._plugins_dir = Path(tmp_plugins)
@@ -347,8 +347,8 @@ class TestPluginLoader:
             assert (Path(tmp_plugins) / "src_plugin").exists()
 
     def test_install_from_zip(self):
-        from fusion_desk.plugins.loader import PluginLoader
-        from fusion_desk.plugins.manifest import PluginManifest
+        from fusion_cowork.plugins.loader import PluginLoader
+        from fusion_cowork.plugins.manifest import PluginManifest
         loader = PluginLoader()
         with tempfile.TemporaryDirectory() as tmp_plugins, tempfile.TemporaryDirectory() as tmp_src:
             loader._plugins_dir = Path(tmp_plugins)
@@ -366,8 +366,8 @@ class TestPluginLoader:
             assert (Path(tmp_plugins) / "zip_plugin").exists()
 
     def test_uninstall(self):
-        from fusion_desk.plugins.loader import PluginLoader
-        from fusion_desk.plugins.manifest import PluginManifest
+        from fusion_cowork.plugins.loader import PluginLoader
+        from fusion_cowork.plugins.manifest import PluginManifest
         loader = PluginLoader()
         with tempfile.TemporaryDirectory() as tmp:
             loader._plugins_dir = Path(tmp)
@@ -386,12 +386,12 @@ class TestPluginLoader:
 class TestSkillRegistry:
     @pytest.fixture(autouse=True)
     def _cleanup_skills(self):
-        from fusion_desk.skills.registry import SkillRegistry
+        from fusion_cowork.skills.registry import SkillRegistry
         yield
         SkillRegistry()._skills.clear()
 
     def test_register_and_get(self):
-        from fusion_desk.skills.registry import Skill, SkillRegistry
+        from fusion_cowork.skills.registry import Skill, SkillRegistry
         registry = SkillRegistry()
         handler = MagicMock()
         registry.register(Skill(name="test_skill_m3", description="test", handler=handler))
@@ -400,7 +400,7 @@ class TestSkillRegistry:
         assert s.name == "test_skill_m3"
 
     def test_register_with_aliases(self):
-        from fusion_desk.skills.registry import Skill, SkillRegistry
+        from fusion_cowork.skills.registry import Skill, SkillRegistry
         registry = SkillRegistry()
         handler = MagicMock()
         registry.register(Skill(name="cleanup_m3", description="clean", handler=handler, aliases=["/clean_m3"]))
@@ -409,7 +409,7 @@ class TestSkillRegistry:
         assert s.name == "cleanup_m3"
 
     def test_unregister(self):
-        from fusion_desk.skills.registry import Skill, SkillRegistry
+        from fusion_cowork.skills.registry import Skill, SkillRegistry
         registry = SkillRegistry()
         handler = MagicMock()
         registry.register(Skill(name="rm_me_m3", description="x", handler=handler))
@@ -417,7 +417,7 @@ class TestSkillRegistry:
         assert registry.get("rm_me_m3") is None
 
     def test_list_skills(self):
-        from fusion_desk.skills.registry import Skill, SkillRegistry
+        from fusion_cowork.skills.registry import Skill, SkillRegistry
         registry = SkillRegistry()
         handler = MagicMock()
         registry.register(Skill(name="list_a_m3", description="a", handler=handler))
@@ -428,7 +428,7 @@ class TestSkillRegistry:
         assert "list_b_m3" in names
 
     def test_search(self):
-        from fusion_desk.skills.registry import Skill, SkillRegistry
+        from fusion_cowork.skills.registry import Skill, SkillRegistry
         registry = SkillRegistry()
         handler = MagicMock()
         registry.register(Skill(name="screenshot_m3", description="take screenshot", handler=handler, category="visual"))
@@ -436,7 +436,7 @@ class TestSkillRegistry:
         assert len(results) >= 1
 
     def test_execute(self):
-        from fusion_desk.skills.registry import Skill, SkillRegistry
+        from fusion_cowork.skills.registry import Skill, SkillRegistry
         called = []
         async def handler(args=""):
             called.append(True)
@@ -448,13 +448,13 @@ class TestSkillRegistry:
         assert result == {"ok": True}
 
     def test_execute_not_found(self):
-        from fusion_desk.skills.registry import SkillRegistry
+        from fusion_cowork.skills.registry import SkillRegistry
         registry = SkillRegistry()
         result = asyncio.run(registry.execute("nonexistent_m3"))
         assert "error" in result
 
     def test_clear(self):
-        from fusion_desk.skills.registry import Skill, SkillRegistry
+        from fusion_cowork.skills.registry import Skill, SkillRegistry
         registry = SkillRegistry()
         handler = MagicMock()
         registry.register(Skill(name="clear_x_m3", description="x", handler=handler))
@@ -465,13 +465,13 @@ class TestSkillRegistry:
 class TestBuiltinSkills:
     @pytest.fixture(autouse=True)
     def _cleanup_skills(self):
-        from fusion_desk.skills.registry import SkillRegistry
+        from fusion_cowork.skills.registry import SkillRegistry
         yield
         SkillRegistry()._skills.clear()
 
     def test_register_builtin_skills(self):
-        from fusion_desk.skills.registry import SkillRegistry
-        from fusion_desk.skills.builtin import register_builtin_skills
+        from fusion_cowork.skills.registry import SkillRegistry
+        from fusion_cowork.skills.builtin import register_builtin_skills
         SkillRegistry()._skills.clear()
         registry = SkillRegistry()
         register_builtin_skills(registry)
@@ -479,8 +479,8 @@ class TestBuiltinSkills:
         assert len(skills) >= 6
 
     def test_builtin_skill_names(self):
-        from fusion_desk.skills.registry import SkillRegistry
-        from fusion_desk.skills.builtin import register_builtin_skills, BUILTIN_SKILLS
+        from fusion_cowork.skills.registry import SkillRegistry
+        from fusion_cowork.skills.builtin import register_builtin_skills, BUILTIN_SKILLS
         SkillRegistry()._skills.clear()
         registry = SkillRegistry()
         register_builtin_skills(registry)
@@ -494,13 +494,13 @@ class TestBuiltinSkills:
 
 class TestCDPClient:
     def test_init(self):
-        from fusion_desk.nodes.browser.cdp_client import CDPClient
+        from fusion_cowork.nodes.browser.cdp_client import CDPClient
         client = CDPClient(host="127.0.0.1", port=9222)
         assert client.host == "127.0.0.1"
         assert client.port == 9222
 
     def test_missing_deps_graceful(self):
-        from fusion_desk.nodes.browser.cdp_client import CDPClient
+        from fusion_cowork.nodes.browser.cdp_client import CDPClient
         client = CDPClient()
         assert client is not None
 
@@ -508,7 +508,7 @@ class TestCDPClient:
 class TestCDPNodes:
     @pytest.fixture(autouse=True)
     def _register(self):
-        import fusion_desk.nodes.browser.cdp_nodes  # noqa: F401
+        import fusion_cowork.nodes.browser.cdp_nodes  # noqa: F401
 
     def test_cdp_navigate_registered(self):
         node = NodeRegistry.get("cdp_navigate")
@@ -601,7 +601,7 @@ class TestCDPNodes:
 
 class TestMCPSkillTools:
     def test_skill_list_registered(self):
-        from fusion_desk.server.mcp_server import MCPToolRegistry
+        from fusion_cowork.server.mcp_server import MCPToolRegistry
         reg = MCPToolRegistry()
         reg.register_tools()
         tools = reg.list_tools()
@@ -610,7 +610,7 @@ class TestMCPSkillTools:
         assert "skill_run" in names
 
     def test_skill_list_execution(self):
-        from fusion_desk.server.mcp_server import MCPToolRegistry
+        from fusion_cowork.server.mcp_server import MCPToolRegistry
         reg = MCPToolRegistry()
         reg.register_tools()
         result = asyncio.run(reg.call_tool("skill_list", {}))
@@ -626,7 +626,7 @@ class TestMCPSkillTools:
 class TestCLICommandsM3:
     def test_plugin_group_exists(self):
         from click.testing import CliRunner
-        from fusion_desk.cli import cli
+        from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["plugin", "--help"])
         assert result.exit_code == 0
@@ -634,7 +634,7 @@ class TestCLICommandsM3:
 
     def test_skill_group_exists(self):
         from click.testing import CliRunner
-        from fusion_desk.cli import cli
+        from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["skill", "--help"])
         assert result.exit_code == 0
@@ -642,7 +642,7 @@ class TestCLICommandsM3:
 
     def test_cdp_group_exists(self):
         from click.testing import CliRunner
-        from fusion_desk.cli import cli
+        from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["cdp", "--help"])
         assert result.exit_code == 0
@@ -650,7 +650,7 @@ class TestCLICommandsM3:
 
     def test_plugin_list_command(self):
         from click.testing import CliRunner
-        from fusion_desk.cli import cli
+        from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["plugin", "list"])
         # May show "没有发现插件" which is fine
@@ -658,14 +658,14 @@ class TestCLICommandsM3:
 
     def test_skill_list_command(self):
         from click.testing import CliRunner
-        from fusion_desk.cli import cli
+        from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["skill", "list"])
         assert result.exit_code == 0
 
     def test_skill_search_command(self):
         from click.testing import CliRunner
-        from fusion_desk.cli import cli
+        from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["skill", "search", "clean"])
         assert result.exit_code == 0

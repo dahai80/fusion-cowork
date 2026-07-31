@@ -1,12 +1,12 @@
-# Claude Cowork × Fusion-Desk 深度对标报告
+# Claude Cowork × Fusion-Cowork 深度对标报告
 
-> 生成日期: 2026-07-28 | 基线版本: fusion-desk V0.3 | 对标: Claude Code CLI v2.1.220 CHANGELOG 全量特性
+> 生成日期: 2026-07-28 | 基线版本: fusion-cowork V0.3 | 对标: Claude Code CLI v2.1.220 CHANGELOG 全量特性
 
 ---
 
 ## 一、对标维度总览
 
-| 维度 | Claude Cowork | Fusion-Desk 现状 | 差距评级 |
+| 维度 | Claude Cowork | Fusion-Cowork 现状 | 差距评级 |
 |------|---------------|-------------------|----------|
 | 屏幕感知 | Chrome CDP + 屏幕截图 + Computer Use | ScreenCaptureNode (screencapture CLI) | 🟡 中 |
 | 浏览器自动化 | Chrome DevTools Protocol (--chrome) | BrowserClient → FusionBrowser.app HTTP桥 | 🔴 大 |
@@ -53,7 +53,7 @@
 - Computer Use：鼠标移动/点击/拖拽、键盘输入、截图分析循环
 - 屏幕快照→多模态推理→动作决策，闭环
 
-**Fusion-Desk 现状**:
+**Fusion-Cowork 现状**:
 - `ScreenCaptureNode`: 使用 macOS `screencapture` CLI 截全屏/选区/窗口 ✅
 - `_analyze_screenshot()`: 调用 fusion-mlx vision 模型分析 ✅
 - **缺失**: 无实时屏幕流、无 a11y tree 提取、无鼠标/键盘控制、无截图→操作闭环
@@ -68,7 +68,7 @@
 - 网络请求拦截、console 监听
 - `--chrome` 全量 Chrome 集成
 
-**Fusion-Desk 现状**:
+**Fusion-Cowork 现状**:
 - `BrowserClient`: HTTP 客户端连接 `localhost:9234` (FusionBrowser.app)
 - `BrowserOpenNode`: 打开 URL
 - `BrowserExtractNode`: 提取文本/HTML
@@ -86,7 +86,7 @@
 - 工具发现、调用、校验完整闭环
 - MCP 作为核心扩展机制
 
-**Fusion-Desk 现状**:
+**Fusion-Cowork 现状**:
 - `MCPServer` 类: 注册 14 个工具 (read_file, write_file, clipboard_read 等)
 - `handle_tool_call()`: 工具调用→NodeRegistry.create()→node.execute()
 - **致命缺陷**: 无 HTTP 服务器、无 stdio 传输、无 SSE 支持
@@ -109,9 +109,9 @@
 - **Console 监控**: `list_console_messages`, `get_console_message`
 - **交互辅助**: `wait_for` (等待文本出现), `handle_dialog` (弹窗处理)
 
-**Fusion-Desk 现状**: 3 个 BrowserNode (open/extract/automate)，依赖自建 FusionBrowser.app
+**Fusion-Cowork 现状**: 3 个 BrowserNode (open/extract/automate)，依赖自建 FusionBrowser.app
 
-**差距**: 大。Claude CDP 有 25+ 子工具覆盖全生命周期，Fusion-Desk 仅覆盖基础打开/提取。
+**差距**: 大。Claude CDP 有 25+ 子工具覆盖全生命周期，Fusion-Cowork 仅覆盖基础打开/提取。
 
 ### 2.5 Hook 生命周期 (补充)
 
@@ -125,7 +125,7 @@
 - `PermissionRequest` — 权限请求时
 - `MessageDisplay` — 消息展示时
 
-**Fusion-Desk 现状**: 完全无 Hook 机制。工作流引擎有 progress callback，但不可扩展。
+**Fusion-Cowork 现状**: 完全无 Hook 机制。工作流引擎有 progress callback，但不可扩展。
 
 **差距**: 大。Hook 是插件/安全/自定义逻辑的基石。
 
@@ -138,7 +138,7 @@
 - `--agent` 指定角色、`--agents` JSON 自定义
 - 权限隔离、模型选择、MCP 继承
 
-**Fusion-Desk 现状**:
+**Fusion-Cowork 现状**:
 - `AgentOrchestrator`: 注册/发现/编排框架
 - `OrchestrationPlan`: DAG 任务编排 + 拓扑排序执行
 - `run_standard_pipeline()`: Planner→Executor→Analyzer→Validator 流水线
@@ -154,7 +154,7 @@
 - `--remote-control-session-name-prefix` — 会话名前缀
 - 外部可连接控制正在运行的 Claude 会话
 
-**Fusion-Desk 现状**: 完全缺失。
+**Fusion-Cowork 现状**: 完全缺失。
 
 **差距**: 大。
 
@@ -166,7 +166,7 @@
 - 沙箱限制: 文件访问、命令白名单
 - 用户确认/跳过机制
 
-**Fusion-Desk 现状**: 完全缺失。ShellExecNode 可执行任意命令，无审批流。
+**Fusion-Cowork 现状**: 完全缺失。ShellExecNode 可执行任意命令，无审批流。
 
 **差距**: 大。安全基础设施缺失。
 
@@ -178,7 +178,7 @@
 - `--fork-session` 分叉会话
 - 会话存储在磁盘，跨进程恢复
 
-**Fusion-Desk 现状**: 无会话概念。工作流执行一次即丢。
+**Fusion-Cowork 现状**: 无会话概念。工作流执行一次即丢。
 
 **差距**: 大。
 
@@ -191,7 +191,7 @@
 - hooks 生命周期拦截
 - workflows 多步编排脚本
 
-**Fusion-Desk 现状**: 无插件系统、无技能机制。工作流模板是唯一的"扩展"方式。
+**Fusion-Cowork 现状**: 无插件系统、无技能机制。工作流模板是唯一的"扩展"方式。
 
 **差距**: 大。
 
@@ -202,9 +202,9 @@
 - Chrome DevTools MCP 工具: take_snapshot, click, fill, navigate
 - 截图、Lighthouse 审计、性能追踪
 
-**Fusion-Desk 现状**:
+**Fusion-Cowork 现状**:
 - fusion-studio DeskView.swift: 独立 SwiftUI 模板运行器
-- **致命缺陷**: DeskView 无 IPCClient 调用，与 fusion-desk Python 后端完全断开
+- **致命缺陷**: DeskView 无 IPCClient 调用，与 fusion-cowork Python 后端完全断开
 - fusion-studio IPCClient 仅连接 fusion-mlx 端 (mlx.start/stop/status, env.*)
 - AgentBridge.swift 有 IPC 集成但 Desk 模块未使用
 
@@ -212,7 +212,7 @@
 
 ---
 
-## 三、Fusion-Desk 现有实现质量评估
+## 三、Fusion-Cowork 现有实现质量评估
 
 ### 实现完整度矩阵
 
@@ -242,7 +242,7 @@
 
 ---
 
-## 四、Fusion-Desk 独特优势 (Cowork 没有)
+## 四、Fusion-Cowork 独特优势 (Cowork 没有)
 
 | 能力 | 说明 |
 |------|------|
@@ -262,7 +262,7 @@
 ### P0 — 必须补齐 (影响核心可用性)
 
 1. **MCP 传输层**: 无传输 = 无法被外部调用 = 生态断链
-2. **GUI↔后端 IPC**: DeskView 不连接 fusion-desk = GUI 是摆设
+2. **GUI↔后端 IPC**: DeskView 不连接 fusion-cowork = GUI 是摆设
 3. **Agent 真实执行**: 模拟执行 = 多 Agent 功能不可用
 
 ### P1 — 严重缺失 (影响竞争力)
@@ -287,8 +287,8 @@
 
 ## 六、对标结论
 
-Fusion-Desk 在**工作流引擎**和**macOS 原生节点**两个维度已达到甚至超越 Claude Cowork 的能力（DAG 编排比 Cowork 内部的 Workflow 更显式，macOS 文件管理节点更贴合桌面场景）。但在**生态连接**（MCP/Chrome/IPC）、**安全基础**（权限/沙箱）、**Agent 执行**三个维度存在结构性缺失。
+Fusion-Cowork 在**工作流引擎**和**macOS 原生节点**两个维度已达到甚至超越 Claude Cowork 的能力（DAG 编排比 Cowork 内部的 Workflow 更显式，macOS 文件管理节点更贴合桌面场景）。但在**生态连接**（MCP/Chrome/IPC）、**安全基础**（权限/沙箱）、**Agent 执行**三个维度存在结构性缺失。
 
-核心结论: **Fusion-Desk 有骨无脉** — 引擎/节点体系扎实，但缺少把能力送达用户和外部系统的"血管"。
+核心结论: **Fusion-Cowork 有骨无脉** — 引擎/节点体系扎实，但缺少把能力送达用户和外部系统的"血管"。
 
 整改策略应聚焦: **先通脉（MCP+IPC+Agent），再强骨（权限+会话+流式），最后长肉（插件+CDP+Computer Use）**。

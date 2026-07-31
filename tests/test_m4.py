@@ -8,13 +8,13 @@ import time
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
-from fusion_desk.engine.permission import PermissionManager, PermissionLevel
-from fusion_desk.engine.hooks import HookManager, HookEvent
-from fusion_desk.engine.session import Session, SessionStore
-from fusion_desk.engine.events import EventType, WorkflowEvent, EventEmitter
-from fusion_desk.engine.node import BaseNode, NodeConfig, NodeResult, NodeStatus, NodeRegistry
-from fusion_desk.engine.workflow import Workflow, WorkflowEngine, WorkflowStatus
-from fusion_desk.server.desk_rpc import DeskRPCServer
+from fusion_cowork.engine.permission import PermissionManager, PermissionLevel
+from fusion_cowork.engine.hooks import HookManager, HookEvent
+from fusion_cowork.engine.session import Session, SessionStore
+from fusion_cowork.engine.events import EventType, WorkflowEvent, EventEmitter
+from fusion_cowork.engine.node import BaseNode, NodeConfig, NodeResult, NodeStatus, NodeRegistry
+from fusion_cowork.engine.workflow import Workflow, WorkflowEngine, WorkflowStatus
+from fusion_cowork.server.desk_rpc import DeskRPCServer
 
 
 class _OkNode(BaseNode):
@@ -182,7 +182,7 @@ class TestDeskRPCConstructor:
 class TestCLIPermission:
     def test_permission_level_command(self):
         from click.testing import CliRunner
-        from fusion_desk.cli import cli
+        from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["permission", "level", "auto"])
         assert result.exit_code == 0
@@ -190,7 +190,7 @@ class TestCLIPermission:
 
     def test_permission_list_command(self):
         from click.testing import CliRunner
-        from fusion_desk.cli import cli
+        from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["permission", "list"])
         assert result.exit_code == 0
@@ -198,12 +198,12 @@ class TestCLIPermission:
 
 # ── M4: Computer Use 输入节点 ──
 
-from fusion_desk.nodes.macos.input_nodes import (
+from fusion_cowork.nodes.macos.input_nodes import (
     MouseMoveNode, MouseClickNode, KeyboardTypeNode,
     KeyboardShortcutNode, ComputerUseLoopNode,
     _KEY_MAP, _MOD_MAP,
 )
-from fusion_desk.engine.schema import OutputSchema
+from fusion_cowork.engine.schema import OutputSchema
 
 
 class TestInputNodeRegistration:
@@ -249,7 +249,7 @@ class TestInputNodeSchemas:
 
 class TestMouseMoveNode:
     @pytest.mark.asyncio
-    @patch("fusion_desk.nodes.macos.input_nodes._try_pyobjc_move", return_value=True)
+    @patch("fusion_cowork.nodes.macos.input_nodes._try_pyobjc_move", return_value=True)
     async def test_move_success(self, mock_move):
         node = MouseMoveNode(config=NodeConfig(params={"x": 100, "y": 200}))
         result = await node.execute({})
@@ -257,8 +257,8 @@ class TestMouseMoveNode:
         assert result.data["x"] == 100
 
     @pytest.mark.asyncio
-    @patch("fusion_desk.nodes.macos.input_nodes._try_pyobjc_move", return_value=False)
-    @patch("fusion_desk.nodes.macos.input_nodes._applescript_move", return_value=(0, ""))
+    @patch("fusion_cowork.nodes.macos.input_nodes._try_pyobjc_move", return_value=False)
+    @patch("fusion_cowork.nodes.macos.input_nodes._applescript_move", return_value=(0, ""))
     async def test_move_applescript_fallback(self, mock_as, mock_pyobjc):
         node = MouseMoveNode(config=NodeConfig(params={"x": 50, "y": 80}))
         result = await node.execute({})
@@ -267,7 +267,7 @@ class TestMouseMoveNode:
 
 class TestKeyboardTypeNode:
     @pytest.mark.asyncio
-    @patch("fusion_desk.nodes.macos.input_nodes._try_pyobjc_type", return_value=True)
+    @patch("fusion_cowork.nodes.macos.input_nodes._try_pyobjc_type", return_value=True)
     async def test_type_success(self, mock_type):
         node = KeyboardTypeNode(config=NodeConfig(params={"text": "hello"}))
         result = await node.execute({})
@@ -283,14 +283,14 @@ class TestKeyboardTypeNode:
 
 class TestKeyboardShortcutNode:
     @pytest.mark.asyncio
-    @patch("fusion_desk.nodes.macos.input_nodes._applescript_key_code", return_value=(0, ""))
+    @patch("fusion_cowork.nodes.macos.input_nodes._applescript_key_code", return_value=(0, ""))
     async def test_shortcut_named_key(self, mock_kc):
         node = KeyboardShortcutNode(config=NodeConfig(params={"key": "enter", "modifiers": ["cmd"]}))
         result = await node.execute({})
         assert result.status == NodeStatus.SUCCESS
 
     @pytest.mark.asyncio
-    @patch("fusion_desk.nodes.macos.input_nodes._applescript_key_code", return_value=(1, "err"))
+    @patch("fusion_cowork.nodes.macos.input_nodes._applescript_key_code", return_value=(1, "err"))
     async def test_shortcut_failed(self, mock_kc):
         node = KeyboardShortcutNode(config=NodeConfig(params={"key": "enter"}))
         result = await node.execute({})
@@ -308,7 +308,7 @@ class TestKeyMap:
 
 # ── M4: 远程控制 ──
 
-from fusion_desk.server.remote import RemoteControlServer, RemoteControlClient
+from fusion_cowork.server.remote import RemoteControlServer, RemoteControlClient
 
 
 class TestRemoteControlServer:
@@ -404,28 +404,28 @@ class TestNodeResultValidate:
 class TestCLICommandsM4:
     def test_computer_use_group(self):
         from click.testing import CliRunner
-        from fusion_desk.cli import cli
+        from fusion_cowork.cli import cli
         result = CliRunner().invoke(cli, ["computer-use", "--help"])
         assert result.exit_code == 0
         assert "move" in result.output
 
     def test_remote_group(self):
         from click.testing import CliRunner
-        from fusion_desk.cli import cli
+        from fusion_cowork.cli import cli
         result = CliRunner().invoke(cli, ["remote", "--help"])
         assert result.exit_code == 0
         assert "serve" in result.output
 
     def test_schema_group(self):
         from click.testing import CliRunner
-        from fusion_desk.cli import cli
+        from fusion_cowork.cli import cli
         result = CliRunner().invoke(cli, ["schema", "--help"])
         assert result.exit_code == 0
         assert "validate" in result.output
 
     def test_schema_check_node(self):
         from click.testing import CliRunner
-        from fusion_desk.cli import cli
+        from fusion_cowork.cli import cli
         result = CliRunner().invoke(cli, ["schema", "check", "mouse_move"])
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -434,18 +434,18 @@ class TestCLICommandsM4:
 
 class TestLazyImportsM4:
     def test_mouse_move_lazy(self):
-        from fusion_desk import MouseMoveNode
+        from fusion_cowork import MouseMoveNode
         assert MouseMoveNode is not None
 
     def test_remote_server_lazy(self):
-        from fusion_desk import RemoteControlServer
+        from fusion_cowork import RemoteControlServer
         assert RemoteControlServer is not None
 
     def test_output_schema_lazy(self):
-        from fusion_desk import OutputSchema
+        from fusion_cowork import OutputSchema
         assert OutputSchema is not None
 
     def test_node_name_aliases_m4(self):
-        from fusion_desk import NODE_NAME_ALIASES
+        from fusion_cowork import NODE_NAME_ALIASES
         assert NODE_NAME_ALIASES.get("鼠标移动") == "mouse_move"
         assert NODE_NAME_ALIASES.get("Computer Use") == "computer_use_loop"

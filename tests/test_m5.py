@@ -8,21 +8,21 @@ import tempfile
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
-from fusion_desk.benchmark.matrix import CapabilityMatrix, Capability, CapabilityLevel
-from fusion_desk.benchmark.runner import BenchmarkRunner, BenchmarkResult
-from fusion_desk.benchmark.report import ReportRenderer
-from fusion_desk.engine.node import BaseNode, NodeConfig, NodeResult, NodeStatus, NodeRegistry
-from fusion_desk.engine.workflow import Workflow, WorkflowEngine, WorkflowStatus
-from fusion_desk.engine.permission import PermissionManager, PermissionLevel
-from fusion_desk.engine.hooks import HookManager, HookEvent, HookContext
-from fusion_desk.engine.session import Session, SessionStore
-from fusion_desk.engine.events import EventEmitter, EventType, WorkflowEvent
-from fusion_desk.server.mcp_server import MCPToolRegistry
-from fusion_desk.server.desk_rpc import DeskRPCServer
-from fusion_desk.orchestrator.orchestrator import AgentOrchestrator, Agent, AgentRole, AgentTask
-from fusion_desk.orchestrator.executors import CoordinatorExecutor
-from fusion_desk.orchestrator.comm import AgentMessageBus, AgentMessage
-from fusion_desk.orchestrator.agent_runtime import AgentRuntime
+from fusion_cowork.benchmark.matrix import CapabilityMatrix, Capability, CapabilityLevel
+from fusion_cowork.benchmark.runner import BenchmarkRunner, BenchmarkResult
+from fusion_cowork.benchmark.report import ReportRenderer
+from fusion_cowork.engine.node import BaseNode, NodeConfig, NodeResult, NodeStatus, NodeRegistry
+from fusion_cowork.engine.workflow import Workflow, WorkflowEngine, WorkflowStatus
+from fusion_cowork.engine.permission import PermissionManager, PermissionLevel
+from fusion_cowork.engine.hooks import HookManager, HookEvent, HookContext
+from fusion_cowork.engine.session import Session, SessionStore
+from fusion_cowork.engine.events import EventEmitter, EventType, WorkflowEvent
+from fusion_cowork.server.mcp_server import MCPToolRegistry
+from fusion_cowork.server.desk_rpc import DeskRPCServer
+from fusion_cowork.orchestrator.orchestrator import AgentOrchestrator, Agent, AgentRole, AgentTask
+from fusion_cowork.orchestrator.executors import CoordinatorExecutor
+from fusion_cowork.orchestrator.comm import AgentMessageBus, AgentMessage
+from fusion_cowork.orchestrator.agent_runtime import AgentRuntime
 
 
 # ── CapabilityMatrix ──
@@ -131,7 +131,7 @@ class TestCapability:
 class TestBenchmarkRunner:
     @pytest.mark.asyncio
     async def test_run_node(self):
-        import fusion_desk.nodes.io
+        import fusion_cowork.nodes.io
         runner = BenchmarkRunner(warmup=0, repeats=1)
         result = await runner.run_node("file_input", {"path": "~"})
         assert result.status == "success"
@@ -146,7 +146,7 @@ class TestBenchmarkRunner:
 
     @pytest.mark.asyncio
     async def test_run_nodes_batch(self):
-        import fusion_desk.nodes.io
+        import fusion_cowork.nodes.io
         runner = BenchmarkRunner(warmup=0, repeats=2)
         results = await runner.run_nodes([
             {"node": "file_input", "params": {"path": "~"}},
@@ -155,7 +155,7 @@ class TestBenchmarkRunner:
 
     @pytest.mark.asyncio
     async def test_summary(self):
-        import fusion_desk.nodes.io
+        import fusion_cowork.nodes.io
         runner = BenchmarkRunner(warmup=0, repeats=2)
         await runner.run_node("file_input", {"path": "~"})
         await runner.run_node("file_input", {"path": "~"})
@@ -171,7 +171,7 @@ class TestBenchmarkRunner:
 
     @pytest.mark.asyncio
     async def test_to_json(self):
-        import fusion_desk.nodes.io
+        import fusion_cowork.nodes.io
         runner = BenchmarkRunner(warmup=0, repeats=1)
         await runner.run_node("file_input", {"path": "~"})
         j = runner.to_json()
@@ -186,7 +186,7 @@ class TestReportRenderer:
     def test_markdown_has_title(self):
         r = ReportRenderer(CapabilityMatrix())
         md = r.render_markdown()
-        assert "Claude Cowork vs Fusion-Desk" in md
+        assert "Claude Cowork vs Fusion-Cowork" in md
         assert "总览" in md
 
     def test_markdown_has_categories(self):
@@ -198,7 +198,7 @@ class TestReportRenderer:
     def test_markdown_has_desk_unique(self):
         r = ReportRenderer(CapabilityMatrix())
         md = r.render_markdown()
-        assert "Fusion-Desk 独有优势" in md
+        assert "Fusion-Cowork 独有优势" in md
 
     def test_markdown_with_benchmark(self):
         runner = BenchmarkRunner(warmup=0, repeats=1)
@@ -221,7 +221,7 @@ class TestReportRenderer:
         try:
             r.save(path, fmt="markdown")
             with open(path) as f:
-                assert "Claude Cowork vs Fusion-Desk" in f.read()
+                assert "Claude Cowork vs Fusion-Cowork" in f.read()
         finally:
             os.unlink(path)
 
@@ -290,7 +290,7 @@ class TestE2EDeskRPC:
 
     @pytest.mark.asyncio
     async def test_nodes_list(self):
-        import fusion_desk.nodes.io
+        import fusion_cowork.nodes.io
         r = await self.rpc._dispatch({"jsonrpc": "2.0", "id": 2, "method": "desk.nodes.list", "params": {}})
         assert r["result"]["count"] > 0
 
@@ -341,8 +341,8 @@ class TestE2EWorkflowFull:
 
     @pytest.mark.asyncio
     async def test_workflow_with_all_middleware(self):
-        import fusion_desk.nodes.io
-        from fusion_desk.engine.node import NodeRegistry, NodeConfig
+        import fusion_cowork.nodes.io
+        from fusion_cowork.engine.node import NodeRegistry, NodeConfig
         node = NodeRegistry.create("file_input", config=NodeConfig(params={"path": "~"}))
         wf = Workflow(workflow_id="e2e_wf", name="e2e_test")
         wf.add_node(node)
@@ -360,8 +360,8 @@ class TestE2EWorkflowFull:
 
     @pytest.mark.asyncio
     async def test_workflow_permission_denied(self):
-        import fusion_desk.nodes.tools
-        from fusion_desk.engine.node import NodeRegistry, NodeConfig
+        import fusion_cowork.nodes.tools
+        from fusion_cowork.engine.node import NodeRegistry, NodeConfig
         pm_deny = PermissionManager(level=PermissionLevel.MANUAL)
         node = NodeRegistry.create("shell_exec", config=NodeConfig(params={"command": "echo hi"}))
         wf = Workflow(workflow_id="e2e_deny", name="deny_test")
@@ -372,8 +372,8 @@ class TestE2EWorkflowFull:
 
     @pytest.mark.asyncio
     async def test_workflow_hook_cancel(self):
-        import fusion_desk.nodes.io
-        from fusion_desk.engine.node import NodeRegistry, NodeConfig
+        import fusion_cowork.nodes.io
+        from fusion_cowork.engine.node import NodeRegistry, NodeConfig
         async def cancel_hook(ctx: HookContext):
             ctx.cancel()
 
@@ -391,15 +391,15 @@ class TestE2EWorkflowFull:
 class TestCLIBenchmark:
     def test_benchmark_report_markdown(self):
         from click.testing import CliRunner
-        from fusion_desk.cli import cli
+        from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["benchmark", "report", "--format", "markdown"])
         assert result.exit_code == 0
-        assert "Claude Cowork vs Fusion-Desk" in result.output
+        assert "Claude Cowork vs Fusion-Cowork" in result.output
 
     def test_benchmark_report_json(self):
         from click.testing import CliRunner
-        from fusion_desk.cli import cli
+        from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["benchmark", "report", "--format", "json"])
         assert result.exit_code == 0
@@ -409,7 +409,7 @@ class TestCLIBenchmark:
 
     def test_benchmark_report_save(self):
         from click.testing import CliRunner
-        from fusion_desk.cli import cli
+        from fusion_cowork.cli import cli
         runner = CliRunner()
         with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
             path = f.name
@@ -417,7 +417,7 @@ class TestCLIBenchmark:
             result = runner.invoke(cli, ["benchmark", "report", "--format", "markdown", "-o", path])
             assert result.exit_code == 0
             with open(path) as f:
-                assert "Claude Cowork vs Fusion-Desk" in f.read()
+                assert "Claude Cowork vs Fusion-Cowork" in f.read()
         finally:
             os.unlink(path)
 
@@ -578,7 +578,7 @@ class TestHookPriority:
 class TestHookWorkflowIntegration:
     @pytest.mark.asyncio
     async def test_workflow_fire_hooks(self):
-        from fusion_desk.nodes.macos import DesktopCleanNode
+        from fusion_cowork.nodes.macos import DesktopCleanNode
         mgr = HookManager()
         events = []
         mgr.register(HookEvent.WORKFLOW_START, lambda ctx: events.append("start"))
@@ -594,7 +594,7 @@ class TestHookWorkflowIntegration:
 
     @pytest.mark.asyncio
     async def test_hook_cancel_node(self):
-        from fusion_desk.nodes.macos import DesktopCleanNode
+        from fusion_cowork.nodes.macos import DesktopCleanNode
         mgr = HookManager()
         def cancel_hook(ctx: HookContext):
             ctx.cancel()
@@ -607,7 +607,7 @@ class TestHookWorkflowIntegration:
 
     @pytest.mark.asyncio
     async def test_hook_modify_params(self):
-        from fusion_desk.nodes.macos import DesktopCleanNode
+        from fusion_cowork.nodes.macos import DesktopCleanNode
         mgr = HookManager()
         mod_events = []
         def modify_hook(ctx: HookContext):
@@ -623,7 +623,7 @@ class TestHookWorkflowIntegration:
 
     @pytest.mark.asyncio
     async def test_hook_node_error(self):
-        from fusion_desk.nodes.macos import DesktopCleanNode
+        from fusion_cowork.nodes.macos import DesktopCleanNode
         mgr = HookManager()
         error_events = []
         mgr.register(HookEvent.NODE_ERROR, lambda ctx: error_events.append("node_error"))
@@ -664,15 +664,15 @@ class TestHookPermissionIntegration:
 class TestHeadlessRunner:
     @pytest.mark.asyncio
     async def test_headless_runner_run_template(self):
-        from fusion_desk.sdk.headless import HeadlessRunner
+        from fusion_cowork.sdk.headless import HeadlessRunner
         runner = HeadlessRunner()
         result = await runner.run_template("desktop_clean")
         assert result is not None
 
     @pytest.mark.asyncio
     async def test_headless_runner_run_workflow(self):
-        from fusion_desk.sdk.headless import HeadlessRunner
-        from fusion_desk.nodes.macos import DesktopCleanNode  # noqa: F401 — trigger registration
+        from fusion_cowork.sdk.headless import HeadlessRunner
+        from fusion_cowork.nodes.macos import DesktopCleanNode  # noqa: F401 — trigger registration
         runner = HeadlessRunner()
         wf_def = {
             "name": "test_wf",
@@ -684,43 +684,43 @@ class TestHeadlessRunner:
 
     @pytest.mark.asyncio
     async def test_headless_runner_cancel(self):
-        from fusion_desk.sdk.headless import HeadlessRunner
+        from fusion_cowork.sdk.headless import HeadlessRunner
         runner = HeadlessRunner()
         runner._running = True
         await runner.cancel()
         assert not runner._running
 
 
-class TestFusionDeskSDK:
+class TestFusionCoworkSDK:
     @pytest.mark.asyncio
     async def test_sdk_list_nodes(self):
-        from fusion_desk.sdk import FusionDeskSDK
-        sdk = FusionDeskSDK(base_url="http://localhost:19999")
+        from fusion_cowork.sdk import FusionCoworkSDK
+        sdk = FusionCoworkSDK(base_url="http://localhost:19999")
         nodes = await sdk.list_nodes()
         assert isinstance(nodes, list)
         assert len(nodes) > 0
 
     @pytest.mark.asyncio
     async def test_sdk_list_templates(self):
-        from fusion_desk.sdk import FusionDeskSDK
-        sdk = FusionDeskSDK(base_url="http://localhost:19999")
+        from fusion_cowork.sdk import FusionCoworkSDK
+        sdk = FusionCoworkSDK(base_url="http://localhost:19999")
         templates = await sdk.list_templates()
         assert isinstance(templates, list)
 
 
 class TestSDKModuleImport:
     def test_sdk_import(self):
-        from fusion_desk.sdk import FusionDeskSDK
-        assert FusionDeskSDK is not None
+        from fusion_cowork.sdk import FusionCoworkSDK
+        assert FusionCoworkSDK is not None
 
     def test_headless_import(self):
-        from fusion_desk.sdk.headless import HeadlessRunner
+        from fusion_cowork.sdk.headless import HeadlessRunner
         assert HeadlessRunner is not None
 
     def test_lazy_import_agent_runtime(self):
-        from fusion_desk import AgentRuntime
+        from fusion_cowork import AgentRuntime
         assert AgentRuntime is not None
 
     def test_lazy_import_coordinator_executor(self):
-        from fusion_desk import CoordinatorExecutor
+        from fusion_cowork import CoordinatorExecutor
         assert CoordinatorExecutor is not None
