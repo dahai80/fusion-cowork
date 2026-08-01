@@ -644,7 +644,10 @@ class DeskRPCServer:
         perm = SpacePermission(self._space_store)
         svc = SpaceMemberService(self._space_store, perm)
         space_id = params.get("space_id", "")
-        inviter_id = params.get("inviter_id", "local_user")
+        inviter_id = params.get("inviter_id", "")
+        if not inviter_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            inviter_id = sp.owner_id if sp else "local_user"
         role = params.get("role", "member")
         max_uses = params.get("max_uses", 0)
         expires_hours = params.get("expires_hours", 0)
@@ -685,7 +688,10 @@ class DeskRPCServer:
         svc = SpaceMemberService(self._space_store, perm)
         space_id = params.get("space_id", "")
         user_id = params.get("user_id", "")
-        operator_id = params.get("operator_id", "local_user")
+        operator_id = params.get("operator_id", "")
+        if not operator_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            operator_id = sp.owner_id if sp else "local_user"
         try:
             removed = await svc.remove(space_id, user_id, operator_id=operator_id)
             return {"space_id": space_id, "user_id": user_id, "removed": removed}
@@ -701,7 +707,10 @@ class DeskRPCServer:
         space_id = params.get("space_id", "")
         user_id = params.get("user_id", "")
         new_role = params.get("new_role", "member")
-        operator_id = params.get("operator_id", "local_user")
+        operator_id = params.get("operator_id", "")
+        if not operator_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            operator_id = sp.owner_id if sp else "local_user"
         try:
             member = await svc.update_role(space_id, user_id, new_role, operator_id=operator_id)
             return member.to_dict()
@@ -717,7 +726,10 @@ class DeskRPCServer:
         mlx = FusionMLXClient()
         chat_svc = SpaceChatService(self._space_store, mlx, perm)
         space_id = params.get("space_id", "")
-        user_id = params.get("user_id", "local_user")
+        user_id = params.get("user_id", "")
+        if not user_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            user_id = sp.owner_id if sp else "local_user"
         content = params.get("content", "")
         agent_id = params.get("agent_id")
         try:
@@ -766,7 +778,10 @@ class DeskRPCServer:
         perm = SpacePermission(self._space_store)
         kb_svc = SpaceKBService(self._space_store, None, perm)
         space_id = params.get("space_id", "")
-        operator_id = params.get("operator_id", "local_user")
+        operator_id = params.get("operator_id", "")
+        if not operator_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            operator_id = sp.owner_id if sp else "local_user"
         kb_id = params.get("kb_id")
         try:
             result = await kb_svc.bind_kb(space_id, operator_id, kb_id=kb_id)
@@ -795,7 +810,10 @@ class DeskRPCServer:
         kb_client = KBClient()
         kb_svc = SpaceKBService(self._space_store, kb_client, perm)
         space_id = params.get("space_id", "")
-        operator_id = params.get("operator_id", "local_user")
+        operator_id = params.get("operator_id", "")
+        if not operator_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            operator_id = sp.owner_id if sp else "local_user"
         file_path = params.get("file_path", "")
         try:
             result = await kb_svc.upload_document(space_id, operator_id, file_path)
@@ -844,7 +862,10 @@ class DeskRPCServer:
         perm = SpacePermission(self._space_store)
         kb_svc = SpaceKBService(self._space_store, None, perm)
         space_id = params.get("space_id", "")
-        operator_id = params.get("operator_id", "local_user")
+        operator_id = params.get("operator_id", "")
+        if not operator_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            operator_id = sp.owner_id if sp else "local_user"
         try:
             await kb_svc.unbind_kb(space_id, operator_id)
             return {"status": "unbound"}
@@ -875,7 +896,10 @@ class DeskRPCServer:
         mlx = FusionMLXClient()
         rt = SpaceAgentRuntime(self._space_store, mlx, perm)
         space_id = params.get("space_id", "")
-        operator_id = params.get("operator_id", "") or "local_user"
+        operator_id = params.get("operator_id", "")
+        if not operator_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            operator_id = sp.owner_id if sp else "local_user"
         name = params.get("name", "") or params.get("agent_name", "")
         agent_type = params.get("agent_type", "assistant")
         system_prompt = params.get("system_prompt", "")
@@ -901,7 +925,10 @@ class DeskRPCServer:
         rt = SpaceAgentRuntime(self._space_store, mlx, perm)
         space_id = params.get("space_id", "")
         agent_id = params.get("agent_id", "")
-        operator_id = params.get("operator_id", "local_user")
+        operator_id = params.get("operator_id", "")
+        if not operator_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            operator_id = sp.owner_id if sp else "local_user"
         try:
             removed = await rt.remove_agent(space_id, agent_id, operator_id)
             return {"agent_id": agent_id, "removed": removed}
@@ -918,7 +945,10 @@ class DeskRPCServer:
         rt = SpaceAgentRuntime(self._space_store, mlx, perm)
         space_id = params.get("space_id", "")
         agent_id = params.get("agent_id", "")
-        user_id = params.get("user_id", "local_user")
+        user_id = params.get("user_id", "")
+        if not user_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            user_id = sp.owner_id if sp else "local_user"
         message = params.get("message", "")
         model = params.get("model", "")
         try:
@@ -936,7 +966,10 @@ class DeskRPCServer:
         mlx = FusionMLXClient()
         chat_svc = SpaceChatService(self._space_store, mlx, perm)
         space_id = params.get("space_id", "")
-        user_id = params.get("user_id", "local_user")
+        user_id = params.get("user_id", "")
+        if not user_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            user_id = sp.owner_id if sp else "local_user"
         agent_ids = params.get("agent_ids", [])
         message = params.get("message", "")
         model = params.get("model", "")
