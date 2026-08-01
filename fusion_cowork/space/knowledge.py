@@ -47,7 +47,12 @@ class SpaceKBService:
             raise ValueError(f"空间 {space_id} 不存在")
 
         if not self._kb:
-            raise RuntimeError("知识库服务未配置 (KBClient is None)")
+            if not kb_id:
+                kb_id = f"kb_{space_id}"
+                logger.info(f"SpaceKB.bind_kb local fallback kb={kb_id} for space={space_id}")
+            await self._store.update_space(space_id, kb_id=kb_id)
+            logger.info(f"SpaceKB.bind_kb space={space_id} kb={kb_id} (no external KB)")
+            return kb_id
 
         if kb_id:
             bases = await self._kb.list_bases()
@@ -77,7 +82,8 @@ class SpaceKBService:
         if not space.kb_id:
             raise ValueError(f"空间 {space_id} 尚未绑定知识库")
         if not self._kb:
-            raise RuntimeError("知识库服务未配置")
+            logger.warning(f"SpaceKB.upload_document no external KB, file={file_name or file_path} recorded only")
+            return {"status": "recorded", "file": file_name or file_path, "kb_id": space.kb_id}
 
         result = await self._kb.upload_file(
             kb_id=space.kb_id,

@@ -619,8 +619,14 @@ class DeskRPCServer:
         from fusion_cowork.space import SpaceService
         svc = SpaceService(self._space_store)
         space_id = params.get("space_id", "")
-        result = await svc.archive(space_id)
-        return {"space_id": space_id, "archived": result}
+        if not space_id:
+            return {"error": "space_id 必填"}
+        try:
+            result = await svc.archive(space_id)
+            return {"space_id": space_id, "archived": bool(result)}
+        except Exception as e:
+            logger.error(f"space.archive 失败: {e}")
+            return {"error": str(e)}
 
     async def _handle_space_delete(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -869,8 +875,8 @@ class DeskRPCServer:
         mlx = FusionMLXClient()
         rt = SpaceAgentRuntime(self._space_store, mlx, perm)
         space_id = params.get("space_id", "")
-        operator_id = params.get("operator_id", "local_user")
-        name = params.get("name", "")
+        operator_id = params.get("operator_id", "") or "local_user"
+        name = params.get("name", "") or params.get("agent_name", "")
         agent_type = params.get("agent_type", "assistant")
         system_prompt = params.get("system_prompt", "")
         enable_rag = params.get("enable_rag", False)
@@ -1082,9 +1088,12 @@ class DeskRPCServer:
         if err:
             return {"error": err}
         space_id = params.get("space_id", "")
-        user_id = params.get("user_id", "")
-        if not space_id or not user_id:
-            return {"error": "space_id 和 user_id 必填"}
+        user_id = params.get("user_id", "") or params.get("owner_id", "")
+        if not space_id:
+            return {"error": "space_id 必填"}
+        if not user_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            user_id = sp.owner_id if sp else "local_user"
         try:
             result = await svc.create_artifact(
                 space_id=space_id,
@@ -1105,8 +1114,11 @@ class DeskRPCServer:
         space_id = params.get("space_id", "")
         artifact_id = params.get("artifact_id", "")
         user_id = params.get("user_id", "")
-        if not all([space_id, artifact_id, user_id]):
-            return {"error": "space_id, artifact_id, user_id 必填"}
+        if not all([space_id, artifact_id]):
+            return {"error": "space_id, artifact_id 必填"}
+        if not user_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            user_id = sp.owner_id if sp else "local_user"
         try:
             art = await svc.get_artifact(space_id, artifact_id, user_id)
             if not art:
@@ -1122,8 +1134,11 @@ class DeskRPCServer:
         space_id = params.get("space_id", "")
         artifact_id = params.get("artifact_id", "")
         user_id = params.get("user_id", "")
-        if not all([space_id, artifact_id, user_id]):
-            return {"error": "space_id, artifact_id, user_id 必填"}
+        if not all([space_id, artifact_id]):
+            return {"error": "space_id, artifact_id 必填"}
+        if not user_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            user_id = sp.owner_id if sp else "local_user"
         try:
             result = await svc.update_artifact(
                 space_id=space_id, artifact_id=artifact_id, user_id=user_id,
@@ -1142,8 +1157,11 @@ class DeskRPCServer:
         space_id = params.get("space_id", "")
         artifact_id = params.get("artifact_id", "")
         user_id = params.get("user_id", "")
-        if not all([space_id, artifact_id, user_id]):
-            return {"error": "space_id, artifact_id, user_id 必填"}
+        if not all([space_id, artifact_id]):
+            return {"error": "space_id, artifact_id 必填"}
+        if not user_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            user_id = sp.owner_id if sp else "local_user"
         try:
             result = await svc.share_artifact(space_id, artifact_id, user_id)
             return result
@@ -1172,8 +1190,11 @@ class DeskRPCServer:
             return {"error": err}
         space_id = params.get("space_id", "")
         user_id = params.get("user_id", "")
-        if not all([space_id, user_id]):
-            return {"error": "space_id 和 user_id 必填"}
+        if not space_id:
+            return {"error": "space_id 必填"}
+        if not user_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            user_id = sp.owner_id if sp else "local_user"
         try:
             artifacts = await svc.list_artifacts(
                 space_id, user_id, params.get("artifact_type", ""),
@@ -1189,8 +1210,11 @@ class DeskRPCServer:
         space_id = params.get("space_id", "")
         artifact_id = params.get("artifact_id", "")
         user_id = params.get("user_id", "")
-        if not all([space_id, artifact_id, user_id]):
-            return {"error": "space_id, artifact_id, user_id 必填"}
+        if not all([space_id, artifact_id]):
+            return {"error": "space_id, artifact_id 必填"}
+        if not user_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            user_id = sp.owner_id if sp else "local_user"
         removed = await svc.delete_artifact(space_id, artifact_id, user_id)
         return {"deleted": removed}
 
@@ -1258,11 +1282,11 @@ class DeskRPCServer:
         svc, err = self._get_notification_svc()
         if err:
             return {"error": err}
-        space_id = params.get("space_id", "")
-        user_id = params.get("user_id", "")
+        space_id = params.get("space_id", "") or ""
+        user_id = params.get("user_id", "") or "local_user"
         title = params.get("title", "")
-        if not all([space_id, user_id, title]):
-            return {"error": "space_id, user_id, title 必填"}
+        if not title:
+            return {"error": "title 必填"}
         result = await svc.push_notification(
             space_id=space_id, user_id=user_id,
             notification_type=params.get("type", "approval"),
@@ -1276,9 +1300,7 @@ class DeskRPCServer:
         svc, err = self._get_notification_svc()
         if err:
             return {"error": err}
-        user_id = params.get("user_id", "")
-        if not user_id:
-            return {"error": "user_id 必填"}
+        user_id = params.get("user_id", "") or "local_user"
         notifications = await svc.list_notifications(
             user_id, unread_only=params.get("unread_only", False),
         )
@@ -1288,8 +1310,8 @@ class DeskRPCServer:
         svc, err = self._get_notification_svc()
         if err:
             return {"error": err}
-        notif_id = params.get("id", "")
+        notif_id = params.get("id", "") or params.get("notification_id", "")
         if not notif_id:
-            return {"error": "id 必填"}
+            return {"error": "id 或 notification_id 必填"}
         await svc.mark_read(notif_id)
         return {"read": True}
