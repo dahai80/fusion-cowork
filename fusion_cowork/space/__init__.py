@@ -13,51 +13,51 @@ V2.0 M7 里程碑: 共享对话 + 知识库绑定。
 
 from __future__ import annotations
 
+from .agent_runtime import SpaceAgentRuntime
+from .agent_studio_client import AgentStudioClient
+from .api import create_space_api
+from .artifact import SpaceArtifactService
+from .chat import SpaceChatService
+from .fsb import ModuleRegistry, NotificationService
+from .knowledge import SpaceKBService
+from .member import SpaceMemberService
 from .models import (
+    PeerInfo,
     Space,
     SpaceConfig,
     SpaceMember,
     SpaceMessage,
-    SpaceSnapshot,
-    PeerInfo,
     SpaceRole,
+    SpaceSnapshot,
     SpaceStatus,
 )
-from .store import SpaceStore
-from .service import SpaceService
-from .member import SpaceMemberService
 from .permission import SpacePermission
-from .chat import SpaceChatService
-from .knowledge import SpaceKBService
-from .api import create_space_api
-from .shared_context import SharedContext, inject_shared_context, extract_shared_context
-from .agent_runtime import SpaceAgentRuntime
-from .agent_studio_client import AgentStudioClient
-from .artifact import SpaceArtifactService
-from .fsb import ModuleRegistry, NotificationService
+from .service import SpaceService
+from .shared_context import SharedContext, extract_shared_context, inject_shared_context
+from .store import SpaceStore
 
 __all__ = [
-    "Space",
-    "SpaceConfig",
-    "SpaceMember",
-    "SpaceMessage",
-    "SpaceSnapshot",
-    "PeerInfo",
-    "SpaceRole",
-    "SpaceStatus",
-    "SpaceStore",
-    "SpaceService",
-    "SpaceMemberService",
-    "SpacePermission",
-    "SpaceChatService",
-    "SpaceKBService",
-    "create_space_api",
-    "SharedContext",
-    "inject_shared_context",
-    "extract_shared_context",
-    "SpaceAgentRuntime",
     "AgentStudioClient",
-    "SpaceArtifactService",
     "ModuleRegistry",
     "NotificationService",
+    "PeerInfo",
+    "SharedContext",
+    "Space",
+    "SpaceAgentRuntime",
+    "SpaceArtifactService",
+    "SpaceChatService",
+    "SpaceConfig",
+    "SpaceKBService",
+    "SpaceMember",
+    "SpaceMemberService",
+    "SpaceMessage",
+    "SpacePermission",
+    "SpaceRole",
+    "SpaceService",
+    "SpaceSnapshot",
+    "SpaceStatus",
+    "SpaceStore",
+    "create_space_api",
+    "extract_shared_context",
+    "inject_shared_context",
 ]

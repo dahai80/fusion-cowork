@@ -14,7 +14,7 @@ import logging
 import time
 from typing import Any, Callable, Dict, Optional
 
-from .comm import AgentMessageBus, AgentMessage
+from .comm import AgentMessage, AgentMessageBus
 from .orchestrator import Agent
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ class AgentRuntime:
                     self.inbox.get(), timeout=1.0,
                 )
                 await self._handle_message(msg)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except asyncio.CancelledError:
                 break

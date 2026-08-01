@@ -12,8 +12,12 @@ import logging
 from typing import Any, Dict, List, Tuple
 
 from ...engine.node import (
-    BaseNode, NodeConfig, NodeResult, NodeStatus,
-    NodeCategory, register_node,
+    BaseNode,
+    NodeCategory,
+    NodeConfig,
+    NodeResult,
+    NodeStatus,
+    register_node,
 )
 
 logger = logging.getLogger(__name__)
@@ -24,12 +28,19 @@ from . import run_osascript as _run_osascript
 def _try_pyobjc_click(x: int, y: int, button: str = "left", click_count: int = 1) -> bool:
     try:
         from Quartz import (
-            CGEventCreateMouseEvent, CGEventPost,
-            kCGEventLeftMouseDown, kCGEventLeftMouseUp,
-            kCGEventRightMouseDown, kCGEventRightMouseUp,
-            kCGEventOtherMouseDown, kCGEventOtherMouseUp,
-            kCGMouseButtonLeft, kCGMouseButtonRight, kCGMouseButtonCenter,
-            kCGHIDEventTap, kCGMouseEventClickState,
+            CGEventCreateMouseEvent,
+            CGEventPost,
+            kCGEventLeftMouseDown,
+            kCGEventLeftMouseUp,
+            kCGEventOtherMouseDown,
+            kCGEventOtherMouseUp,
+            kCGEventRightMouseDown,
+            kCGEventRightMouseUp,
+            kCGHIDEventTap,
+            kCGMouseButtonCenter,
+            kCGMouseButtonLeft,
+            kCGMouseButtonRight,
+            kCGMouseEventClickState,
         )
         btn_map = {
             "left": (kCGEventLeftMouseDown, kCGEventLeftMouseUp, kCGMouseButtonLeft),
@@ -58,9 +69,11 @@ def _try_pyobjc_click(x: int, y: int, button: str = "left", click_count: int = 1
 def _try_pyobjc_move(x: int, y: int) -> bool:
     try:
         from Quartz import (
-            CGEventCreateMouseEvent, CGEventPost,
-            kCGEventMouseMoved, kCGMouseButtonLeft,
+            CGEventCreateMouseEvent,
+            CGEventPost,
+            kCGEventMouseMoved,
             kCGHIDEventTap,
+            kCGMouseButtonLeft,
         )
         event = CGEventCreateMouseEvent(None, kCGEventMouseMoved, (x, y), kCGMouseButtonLeft)
         CGEventPost(kCGHIDEventTap, event)
@@ -75,10 +88,12 @@ def _try_pyobjc_move(x: int, y: int) -> bool:
 def _try_pyobjc_type(text: str) -> bool:
     try:
         from Quartz import (
-            CGEventCreateKeyboardEvent, CGEventPost,
-            kCGHIDEventTap, CGEventSourceCreate,
+            CGEventCreateKeyboardEvent,
+            CGEventPost,
+            CGEventSourceCreate,
+            kCGEventKeyDown,  # noqa: F401
             kCGEventSourceStateHIDSystemState,
-            kCGEventKeyDown, kCGEventKeyUp,  # noqa: F401
+            kCGHIDEventTap,
         )
         source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState)
         for ch in text:
@@ -408,7 +423,7 @@ class ComputerUseLoopNode(BaseNode):
 
             try:
                 with open(screenshot_path, "rb") as f:
-                    img_b64 = base64.b64encode(f.read()).decode()
+                    _img_b64 = base64.b64encode(f.read()).decode()
             except Exception as e:
                 logger.warning(f"读取截图失败: {e}")
                 continue

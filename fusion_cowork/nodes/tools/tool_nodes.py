@@ -15,8 +15,12 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ...engine.node import (
-    BaseNode, NodeResult, NodeStatus,
-    NodeCategory, register_node, coerce_params,
+    BaseNode,
+    NodeCategory,
+    NodeResult,
+    NodeStatus,
+    coerce_params,
+    register_node,
 )
 
 logger = logging.getLogger(__name__)
@@ -160,7 +164,7 @@ class ShellExecNode(BaseNode):
                 stdout, stderr = await asyncio.wait_for(
                     proc.communicate(), timeout=timeout
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 await proc.wait()
                 return NodeResult(
@@ -288,7 +292,7 @@ class PythonREPLNode(BaseNode):
             "    exec(sys.stdin.read())",
             "    print(json.dumps({'result': 'executed', 'type': 'NoneType'}))",
             "except Exception as e:",
-            f"    print(json.dumps({{'error': str(e), 'type': type(e).__name__}}))",
+            "    print(json.dumps({'error': str(e), 'type': type(e).__name__}))",
         ])
 
         script = "\n".join(script_lines)
@@ -306,7 +310,7 @@ class PythonREPLNode(BaseNode):
                     proc.communicate(input=code.encode("utf-8")),
                     timeout=timeout,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 return NodeResult(
                     status=NodeStatus.FAILED,

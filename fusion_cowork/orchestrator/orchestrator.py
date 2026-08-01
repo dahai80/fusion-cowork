@@ -94,8 +94,8 @@ class AgentOrchestrator:
 
     def register_default_agents(self) -> None:
         """注册默认 Agent + 执行器。"""
-        from .executors import DEFAULT_EXECUTORS, CoordinatorExecutor
         from .comm import AgentMessageBus
+        from .executors import DEFAULT_EXECUTORS, CoordinatorExecutor
 
         if not self._message_bus:
             self._message_bus = AgentMessageBus()

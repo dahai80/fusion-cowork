@@ -1,4 +1,4 @@
-from .manifest import PluginManifest
 from .loader import PluginLoader
+from .manifest import PluginManifest
 
-__all__ = ["PluginManifest", "PluginLoader"]
+__all__ = ["PluginLoader", "PluginManifest"]

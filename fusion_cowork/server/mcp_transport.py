@@ -64,7 +64,7 @@ class StdioTransport:
 
                 await self._dispatch(request)
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except Exception as e:
                 logger.error(f"stdio 读取异常: {e}")

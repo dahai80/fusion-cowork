@@ -1,25 +1,31 @@
 """M2 里程碑测试 — 权限模型、Hook系统、会话持久化、流式事件。"""
 import asyncio
-import json
 import os
 import tempfile
 import time
 
 import pytest
 
-from fusion_cowork.engine.permission import (
-    PermissionManager, PermissionLevel, Permission, HIGH_RISK_NODES,
-)
-from fusion_cowork.engine.hooks import HookManager, HookEvent, HookContext
-from fusion_cowork.engine.session import Session, SessionStore
-from fusion_cowork.engine.events import EventType, WorkflowEvent, EventEmitter
+from fusion_cowork.engine.events import EventEmitter, WorkflowEvent
+from fusion_cowork.engine.hooks import HookContext, HookEvent, HookManager
 from fusion_cowork.engine.node import (
-    BaseNode, NodeConfig, NodeResult, NodeStatus, NodeRegistry, register_node,
+    BaseNode,
+    NodeConfig,
+    NodeResult,
+    NodeStatus,
 )
+from fusion_cowork.engine.permission import (
+    HIGH_RISK_NODES,
+    Permission,
+    PermissionLevel,
+    PermissionManager,
+)
+from fusion_cowork.engine.session import Session, SessionStore
 from fusion_cowork.engine.workflow import (
-    Workflow, WorkflowEngine, WorkflowExecution, WorkflowStatus, Edge, WorkflowStep,
+    Workflow,
+    WorkflowEngine,
+    WorkflowStatus,
 )
-
 
 # ── 权限模型 ──
 

@@ -6,7 +6,7 @@ import logging
 import time
 from typing import List, Optional
 
-from .matrix import CapabilityMatrix, CapabilityLevel
+from .matrix import CapabilityLevel, CapabilityMatrix
 from .runner import BenchmarkRunner
 
 logger = logging.getLogger(__name__)

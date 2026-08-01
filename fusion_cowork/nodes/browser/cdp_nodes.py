@@ -4,8 +4,12 @@ import logging
 from typing import Any, Dict
 
 from ...engine.node import (
-    BaseNode, NodeResult, NodeStatus,
-    NodeCategory, register_node, coerce_params,
+    BaseNode,
+    NodeCategory,
+    NodeResult,
+    NodeStatus,
+    coerce_params,
+    register_node,
 )
 from .cdp_client import CDPClient
 

@@ -167,7 +167,7 @@ class CrossDeviceSync:
         if self.token:
             incoming_token = data.get("token", "")
             if incoming_token != self.token:
-                logger.warning(f"消息认证失败: token 不匹配")
+                logger.warning("消息认证失败: token 不匹配")
                 return
         msg_type = data.get("msg_type", "")
         handlers = self._message_handlers.get(msg_type, [])

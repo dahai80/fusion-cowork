@@ -157,7 +157,7 @@ class PermissionManager:
         target = path or _PERMISSIONS_FILE
         if not os.path.exists(target):
             return
-        with open(target, "r", encoding="utf-8") as f:
+        with open(target, encoding="utf-8") as f:
             data = json.load(f)
         self.level = PermissionLevel(data.get("level", "manual"))
         self.rules = [

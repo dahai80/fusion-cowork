@@ -1,19 +1,17 @@
 """M4 里程碑测试 — DeskRPC事件/会话/权限 + Computer Use + 远程控制 + 结构化输出。"""
-import asyncio
 import json
 import os
 import tempfile
 import time
+from unittest.mock import patch
 
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 
-from fusion_cowork.engine.permission import PermissionManager, PermissionLevel
-from fusion_cowork.engine.hooks import HookManager, HookEvent
+from fusion_cowork.engine.events import EventEmitter
+from fusion_cowork.engine.hooks import HookManager
+from fusion_cowork.engine.node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus
+from fusion_cowork.engine.permission import PermissionLevel, PermissionManager
 from fusion_cowork.engine.session import Session, SessionStore
-from fusion_cowork.engine.events import EventType, WorkflowEvent, EventEmitter
-from fusion_cowork.engine.node import BaseNode, NodeConfig, NodeResult, NodeStatus, NodeRegistry
-from fusion_cowork.engine.workflow import Workflow, WorkflowEngine, WorkflowStatus
 from fusion_cowork.server.desk_rpc import DeskRPCServer
 
 
@@ -182,6 +180,7 @@ class TestDeskRPCConstructor:
 class TestCLIPermission:
     def test_permission_level_command(self):
         from click.testing import CliRunner
+
         from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["permission", "level", "auto"])
@@ -190,6 +189,7 @@ class TestCLIPermission:
 
     def test_permission_list_command(self):
         from click.testing import CliRunner
+
         from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["permission", "list"])
@@ -198,12 +198,16 @@ class TestCLIPermission:
 
 # ── M4: Computer Use 输入节点 ──
 
-from fusion_cowork.nodes.macos.input_nodes import (
-    MouseMoveNode, MouseClickNode, KeyboardTypeNode,
-    KeyboardShortcutNode, ComputerUseLoopNode,
-    _KEY_MAP, _MOD_MAP,
-)
 from fusion_cowork.engine.schema import OutputSchema
+from fusion_cowork.nodes.macos.input_nodes import (
+    _KEY_MAP,
+    _MOD_MAP,
+    ComputerUseLoopNode,
+    KeyboardShortcutNode,
+    KeyboardTypeNode,
+    MouseClickNode,
+    MouseMoveNode,
+)
 
 
 class TestInputNodeRegistration:
@@ -308,7 +312,7 @@ class TestKeyMap:
 
 # ── M4: 远程控制 ──
 
-from fusion_cowork.server.remote import RemoteControlServer, RemoteControlClient
+from fusion_cowork.server.remote import RemoteControlClient, RemoteControlServer
 
 
 class TestRemoteControlServer:
@@ -404,6 +408,7 @@ class TestNodeResultValidate:
 class TestCLICommandsM4:
     def test_computer_use_group(self):
         from click.testing import CliRunner
+
         from fusion_cowork.cli import cli
         result = CliRunner().invoke(cli, ["computer-use", "--help"])
         assert result.exit_code == 0
@@ -411,6 +416,7 @@ class TestCLICommandsM4:
 
     def test_remote_group(self):
         from click.testing import CliRunner
+
         from fusion_cowork.cli import cli
         result = CliRunner().invoke(cli, ["remote", "--help"])
         assert result.exit_code == 0
@@ -418,6 +424,7 @@ class TestCLICommandsM4:
 
     def test_schema_group(self):
         from click.testing import CliRunner
+
         from fusion_cowork.cli import cli
         result = CliRunner().invoke(cli, ["schema", "--help"])
         assert result.exit_code == 0
@@ -425,6 +432,7 @@ class TestCLICommandsM4:
 
     def test_schema_check_node(self):
         from click.testing import CliRunner
+
         from fusion_cowork.cli import cli
         result = CliRunner().invoke(cli, ["schema", "check", "mouse_move"])
         assert result.exit_code == 0

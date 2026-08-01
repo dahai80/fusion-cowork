@@ -22,18 +22,25 @@ from typing import List
 
 import click
 
-from . import __version__, __app_name__, NODE_NAME_ALIASES
+from . import NODE_NAME_ALIASES, __app_name__, __version__
+from .ai import FusionMLXClient, NLWorkflowGenerator
 from .engine import (
     NodeConfig,
-    Workflow, WorkflowEngine, WorkflowStatus,
-    NodeRegistry, TaskScheduler, TaskStatus,
-)
-from .nodes.macos.input_nodes import (
-    MouseMoveNode, MouseClickNode, KeyboardTypeNode,
-    KeyboardShortcutNode, ComputerUseLoopNode,
+    NodeRegistry,
+    TaskScheduler,
+    TaskStatus,
+    Workflow,
+    WorkflowEngine,
+    WorkflowStatus,
 )
 from .nodes.browser import BrowserClient, BrowserManager
-from .ai import FusionMLXClient, NLWorkflowGenerator
+from .nodes.macos.input_nodes import (
+    ComputerUseLoopNode,
+    KeyboardShortcutNode,
+    KeyboardTypeNode,
+    MouseClickNode,
+    MouseMoveNode,
+)
 from .templates import TemplateManager
 from .utils.logger import setup_logger
 
@@ -224,8 +231,8 @@ def list_templates(category: str, tag: str, search: str):
             ])
         console.print_table(["ID", "名称", "难度", "预计时间"], rows)
 
-    click.echo(f"\n💡 使用 'fusion-cowork template run <id>' 运行模板")
-    click.echo(f"💡 使用 'fusion-cowork template show <id>' 查看详情")
+    click.echo("\n💡 使用 'fusion-cowork template run <id>' 运行模板")
+    click.echo("💡 使用 'fusion-cowork template show <id>' 查看详情")
 
 
 @template.command("show")
@@ -244,7 +251,7 @@ def show_template(template_id: str):
     click.echo(f"  难度: {tpl.get('difficulty', '')}")
     click.echo(f"  预计时间: {tpl.get('estimated_time', '')}")
     if tpl.get("needs_ai"):
-        click.echo(f"  🤖 需要 AI 模型 (fusion-mlx)")
+        click.echo("  🤖 需要 AI 模型 (fusion-mlx)")
 
     # 显示工作流节点
     workflow = tpl.get("workflow", {})
@@ -367,7 +374,7 @@ def generate_workflow(prompt: str, model: str):
 
 
 async def _async_generate(prompt: str, model: str):
-    console.print_header(f"🤖 AI 生成工作流")
+    console.print_header("🤖 AI 生成工作流")
 
     # 检查 fusion-mlx 是否可用
     health = await _get_mlx_client().health()
@@ -400,7 +407,7 @@ async def _async_generate(prompt: str, model: str):
     for edge in result.get("edges", []):
         click.echo(f"     └─ {edge.get('source_id')} → {edge.get('target_id')}")
 
-    click.echo(f"\n💡 运行: fusion-cowork workflow run <保存的工作流文件>")
+    click.echo("\n💡 运行: fusion-cowork workflow run <保存的工作流文件>")
 
 
 @ai.command("status")
@@ -457,7 +464,7 @@ async def _async_run_workflow_file(workflow_file: str, dry_run: bool):
     console.print_header(f"🚀 执行工作流: {workflow_file}")
 
     try:
-        with open(workflow_file, "r", encoding="utf-8") as f:
+        with open(workflow_file, encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:
         console.print_error(f"加载工作流文件失败: {e}")
@@ -739,7 +746,7 @@ def browser_open(url: str):
 async def _async_browser_open(url: str):
     client = BrowserClient()
     try:
-        result = await client.open_url(url)
+        _result = await client.open_url(url)
         console.print_success(f"已打开: {url}")
     except Exception as e:
         console.print_error(f"打开失败: {e}")
@@ -768,8 +775,8 @@ def browser_extract(url: str = "", to_file: str = ""):
 
 
 async def _async_browser_extract(url: str, to_file: str):
-    from .nodes.browser import BrowserExtractNode
     from .engine import NodeConfig, NodeStatus
+    from .nodes.browser import BrowserExtractNode
 
     node = BrowserExtractNode(config=NodeConfig(params={"url": url} if url else {}))
     result = await node.execute({"url": url} if url else {})
@@ -934,7 +941,7 @@ def permission():
 @click.argument("level", type=click.Choice(["manual", "auto", "plan", "bypass"]))
 def permission_level(level):
     """设置权限级别。"""
-    from fusion_cowork.engine.permission import PermissionManager, PermissionLevel
+    from fusion_cowork.engine.permission import PermissionLevel, PermissionManager
     pm = PermissionManager()
     pm.level = PermissionLevel(level)
     pm.save()
@@ -1138,8 +1145,8 @@ def cdp():
 @click.option("--port", default=9222, type=int, help="Chrome 远程调试端口")
 def cdp_navigate(url: str, host: str, port: int):
     """导航到指定 URL。"""
-    from .nodes.browser import CDPNavigateNode
     from .engine import NodeConfig
+    from .nodes.browser import CDPNavigateNode
     node = CDPNavigateNode(config=NodeConfig(params={"url": url, "host": host, "port": port}))
     result = asyncio.run(node.execute({"url": url}))
     if result.status.value == "success":
@@ -1153,8 +1160,8 @@ def cdp_navigate(url: str, host: str, port: int):
 @click.option("--port", default=9222, type=int)
 def cdp_snapshot(host: str, port: int):
     """获取页面 a11y 快照。"""
-    from .nodes.browser import CDPSnapshotNode
     from .engine import NodeConfig
+    from .nodes.browser import CDPSnapshotNode
     node = CDPSnapshotNode(config=NodeConfig(params={"host": host, "port": port}))
     result = asyncio.run(node.execute({}))
     if result.status.value == "success":
@@ -1171,8 +1178,8 @@ def cdp_snapshot(host: str, port: int):
 @click.option("--port", default=9222, type=int)
 def cdp_click(backend_node_id: int, host: str, port: int):
     """点击页面元素 (backendNodeId)。"""
-    from .nodes.browser import CDPClickNode
     from .engine import NodeConfig
+    from .nodes.browser import CDPClickNode
     node = CDPClickNode(config=NodeConfig(params={"backend_node_id": backend_node_id, "host": host, "port": port}))
     result = asyncio.run(node.execute({"backend_node_id": backend_node_id}))
     if result.status.value == "success":
@@ -1188,8 +1195,8 @@ def cdp_click(backend_node_id: int, host: str, port: int):
 @click.option("--port", default=9222, type=int)
 def cdp_fill(selector: str, value: str, host: str, port: int):
     """填写表单字段。"""
-    from .nodes.browser import CDPFillNode
     from .engine import NodeConfig
+    from .nodes.browser import CDPFillNode
     node = CDPFillNode(config=NodeConfig(params={"selector": selector, "value": value, "host": host, "port": port}))
     result = asyncio.run(node.execute({"selector": selector, "value": value}))
     if result.status.value == "success":
@@ -1204,8 +1211,8 @@ def cdp_fill(selector: str, value: str, host: str, port: int):
 @click.option("--port", default=9222, type=int)
 def cdp_screenshot(save: str, host: str, port: int):
     """截取页面截图。"""
-    from .nodes.browser import CDPScreenshotNode
     from .engine import NodeConfig
+    from .nodes.browser import CDPScreenshotNode
     node = CDPScreenshotNode(config=NodeConfig(params={"save_path": save, "host": host, "port": port}))
     result = asyncio.run(node.execute({"save_path": save}))
     if result.status.value == "success":
@@ -1220,8 +1227,8 @@ def cdp_screenshot(save: str, host: str, port: int):
 @click.option("--port", default=9222, type=int)
 def cdp_evaluate(script: str, host: str, port: int):
     """在页面中执行 JavaScript。"""
-    from .nodes.browser import CDPEvaluateNode
     from .engine import NodeConfig
+    from .nodes.browser import CDPEvaluateNode
     node = CDPEvaluateNode(config=NodeConfig(params={"script": script, "host": host, "port": port}))
     result = asyncio.run(node.execute({"script": script}))
     if result.status.value == "success":
@@ -1392,7 +1399,7 @@ def remote_submit(workflow_file: str, url: str, token: str):
     async def _run():
         await client.connect(url)
         try:
-            with open(workflow_file, "r", encoding="utf-8") as f:
+            with open(workflow_file, encoding="utf-8") as f:
                 workflow = json.load(f)
             task_id = await client.submit_workflow(workflow)
             console.print_success(f"已提交工作流: {task_id}")
@@ -1420,9 +1427,9 @@ def schema():
 def schema_validate(data_file: str, schema_file: str):
     """校验数据文件是否符合 schema。"""
     from .engine.schema import OutputSchema
-    with open(data_file, "r", encoding="utf-8") as f:
+    with open(data_file, encoding="utf-8") as f:
         data = json.load(f)
-    with open(schema_file, "r", encoding="utf-8") as f:
+    with open(schema_file, encoding="utf-8") as f:
         schema = json.load(f)
     valid = OutputSchema.validate(data, schema)
     if valid:
@@ -1483,6 +1490,7 @@ def benchmark_report(fmt, output):
 def benchmark_run(node, repeats):
     """运行节点性能基准。"""
     import asyncio
+
     from fusion_cowork.benchmark import BenchmarkRunner
     runner = BenchmarkRunner(repeats=repeats)
     specs = [{"node": n, "params": {}} for n in node] if node else [
@@ -1581,7 +1589,7 @@ async def _async_space_get(space_id: str):
         click.echo(f"  创建: {sp.created_at}")
         click.echo(f"  更新: {sp.updated_at}")
         config = sp.config
-        click.echo(f"\n  配置:")
+        click.echo("\n  配置:")
         click.echo(f"    最大成员: {config.max_members}")
         click.echo(f"    Web 搜索: {'✅' if config.enable_web_search else '❌'}")
         click.echo(f"    深度研究: {'✅' if config.enable_deep_research else '❌'}")
@@ -1719,7 +1727,7 @@ async def _async_space_member_remove(space_id: str, user_id: str, operator: str)
         if removed:
             console.print_success(f"已移除成员: {user_id}")
         else:
-            console.print_error(f"移除失败: 成员不存在")
+            console.print_error("移除失败: 成员不存在")
     except (PermissionError, ValueError) as e:
         console.print_error(str(e))
     finally:
@@ -1740,8 +1748,8 @@ def space_chat(space_id: str, user: str, agent: str, model: str):
 
 
 async def _async_space_chat(space_id: str, user: str, agent: str, model: str):
-    from fusion_cowork.space import SpaceStore, SpaceChatService, SpacePermission
     from fusion_cowork.ai.mlx_client import FusionMLXClient
+    from fusion_cowork.space import SpaceChatService, SpacePermission, SpaceStore
     store = SpaceStore()
     await store.initialize()
     try:
@@ -1813,7 +1821,7 @@ def space_kb_bind(space_id: str, operator: str, kb_id: str):
 
 
 async def _async_space_kb_bind(space_id: str, operator: str, kb_id: str):
-    from fusion_cowork.space import SpaceStore, SpaceKBService, SpacePermission
+    from fusion_cowork.space import SpaceKBService, SpacePermission, SpaceStore
     store = SpaceStore()
     await store.initialize()
     try:
@@ -1835,7 +1843,7 @@ def space_kb_status(space_id: str):
 
 
 async def _async_space_kb_status(space_id: str):
-    from fusion_cowork.space import SpaceStore, SpaceKBService, SpacePermission
+    from fusion_cowork.space import SpaceKBService, SpacePermission, SpaceStore
     store = SpaceStore()
     await store.initialize()
     try:
@@ -1862,8 +1870,8 @@ def space_kb_upload(space_id: str, file_path: str, operator: str):
 
 
 async def _async_space_kb_upload(space_id: str, file_path: str, operator: str):
-    from fusion_cowork.space import SpaceStore, SpaceKBService, SpacePermission
     from fusion_cowork.ai.mlx_client import KBClient
+    from fusion_cowork.space import SpaceKBService, SpacePermission, SpaceStore
     store = SpaceStore()
     await store.initialize()
     try:
@@ -1890,8 +1898,8 @@ def space_kb_search(space_id: str, query: str, top_k: int):
 
 
 async def _async_space_kb_search(space_id: str, query: str, top_k: int):
-    from fusion_cowork.space import SpaceStore, SpaceKBService, SpacePermission
     from fusion_cowork.ai.mlx_client import KBClient
+    from fusion_cowork.space import SpaceKBService, SpacePermission, SpaceStore
     store = SpaceStore()
     await store.initialize()
     try:
@@ -1920,7 +1928,7 @@ def space_kb_unbind(space_id: str, operator: str):
 
 
 async def _async_space_kb_unbind(space_id: str, operator: str):
-    from fusion_cowork.space import SpaceStore, SpaceKBService, SpacePermission
+    from fusion_cowork.space import SpaceKBService, SpacePermission, SpaceStore
     store = SpaceStore()
     await store.initialize()
     try:
@@ -1951,8 +1959,8 @@ def space_agent_list(space_id: str):
 
 
 async def _async_space_agent_list(space_id: str):
-    from fusion_cowork.space import SpaceAgentRuntime, SpaceStore, SpacePermission
     from fusion_cowork.ai.mlx_client import FusionMLXClient
+    from fusion_cowork.space import SpaceAgentRuntime, SpacePermission, SpaceStore
     store = SpaceStore()
     await store.initialize()
     try:
@@ -1986,8 +1994,8 @@ def space_agent_add(space_id: str, name: str, agent_type: str, prompt: str, rag:
 
 
 async def _async_space_agent_add(space_id: str, name: str, agent_type: str, prompt: str, rag: bool, operator: str):
-    from fusion_cowork.space import SpaceAgentRuntime, SpaceStore, SpacePermission
     from fusion_cowork.ai.mlx_client import FusionMLXClient
+    from fusion_cowork.space import SpaceAgentRuntime, SpacePermission, SpaceStore
     store = SpaceStore()
     await store.initialize()
     try:
@@ -2015,8 +2023,8 @@ def space_agent_remove(space_id: str, agent_id: str, operator: str):
 
 
 async def _async_space_agent_remove(space_id: str, agent_id: str, operator: str):
-    from fusion_cowork.space import SpaceAgentRuntime, SpaceStore, SpacePermission
     from fusion_cowork.ai.mlx_client import FusionMLXClient
+    from fusion_cowork.space import SpaceAgentRuntime, SpacePermission, SpaceStore
     store = SpaceStore()
     await store.initialize()
     try:
@@ -2046,8 +2054,8 @@ def space_agent_call(space_id: str, agent_id: str, message: str, user: str, mode
 
 
 async def _async_space_agent_call(space_id: str, agent_id: str, message: str, user: str, model: str):
-    from fusion_cowork.space import SpaceAgentRuntime, SpaceStore, SpacePermission
     from fusion_cowork.ai.mlx_client import FusionMLXClient
+    from fusion_cowork.space import SpaceAgentRuntime, SpacePermission, SpaceStore
     store = SpaceStore()
     await store.initialize()
     try:
@@ -2076,8 +2084,8 @@ def space_agent_relay(space_id: str, message: str, agents: str, user: str, model
 
 
 async def _async_space_agent_relay(space_id: str, message: str, agents: str, user: str, model: str):
-    from fusion_cowork.space import SpaceAgentRuntime, SpaceStore, SpacePermission
     from fusion_cowork.ai.mlx_client import FusionMLXClient
+    from fusion_cowork.space import SpaceAgentRuntime, SpacePermission, SpaceStore
     store = SpaceStore()
     await store.initialize()
     try:

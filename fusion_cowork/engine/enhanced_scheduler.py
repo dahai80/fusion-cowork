@@ -252,7 +252,7 @@ class EnhancedScheduler:
         if day != "*":
             desc.append(f"每月第{day}天")
         if minute == "0" and hour != "*":
-            return " ".join(desc) if desc else f"每小时"
+            return " ".join(desc) if desc else "每小时"
 
         return " ".join(desc) if desc else expression
 

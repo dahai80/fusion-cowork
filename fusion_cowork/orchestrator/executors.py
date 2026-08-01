@@ -26,7 +26,7 @@ class NodeExecutor:
             return {"error": "缺少 node_name 参数"}
 
         try:
-            from ..engine.node import NodeRegistry, NodeConfig
+            from ..engine.node import NodeConfig, NodeRegistry
             node = NodeRegistry.create(node_name, config=NodeConfig(params=node_params))
             if not node:
                 return {"error": f"节点创建失败: {node_name}"}
@@ -134,7 +134,7 @@ class ShellExecutor:
                 "stdout": stdout.decode("utf-8", errors="replace")[-2000:],
                 "stderr": stderr.decode("utf-8", errors="replace")[-1000:],
             }
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {"error": f"命令超时 ({timeout}s)"}
         except Exception as e:
             logger.error(f"ShellExecutor 异常: {e}")
@@ -174,7 +174,7 @@ class CoordinatorExecutor:
             "ai": "executor_mlx",
             "shell": "executor_shell",
         }
-        agent_id = agent_map.get(subtask_type, "executor_node")
+        _agent_id = agent_map.get(subtask_type, "executor_node")
 
         task_id = await self._orchestrator.submit_task(
             description=description,

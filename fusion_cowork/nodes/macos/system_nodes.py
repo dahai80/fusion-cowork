@@ -15,9 +15,12 @@ from pathlib import Path
 from typing import Any, Dict
 
 from ...engine.node import (
+    BaseNode,
+    NodeCategory,
+    NodeResult,
+    NodeStatus,
     coerce_params,
-    BaseNode, NodeResult, NodeStatus,
-    NodeCategory, register_node,
+    register_node,
 )
 
 logger = logging.getLogger(__name__)
@@ -153,7 +156,7 @@ class DesktopCleanNode(BaseNode):
             )
 
         organize_by_type = params.get("organize_by_type", True)
-        organize_by_date = params.get("organize_by_date", False)
+        _organize_by_date = params.get("organize_by_date", False)
         remove_old_files = params.get("remove_old_files", False)
         old_days = params.get("old_days_threshold", 90)
         target_base = params.get("target_base_dir", str(source_path))
@@ -888,7 +891,7 @@ class FileWatcherNode(BaseNode):
             # 等待指定时间或停止信号
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             finally:
                 observer.stop()
@@ -1519,13 +1522,13 @@ class NotificationNode(BaseNode):
         msg_escaped = message.replace('"', '\\"')
         sub_escaped = subtitle.replace('"', '\\"')
 
-        sound_cmd = "sound name \"default\"" if sound else ""
+        _sound_cmd = "sound name \"default\"" if sound else ""
 
         script = f'display notification "{msg_escaped}" with title "{title_escaped}"'
         if subtitle:
             script += f' subtitle "{sub_escaped}"'
         if sound:
-            script += f' sound name "default"'
+            script += ' sound name "default"'
 
         try:
             proc = await asyncio.create_subprocess_shell(
@@ -1718,7 +1721,7 @@ class OCRNode(BaseNode):
         params = coerce_params(params, schema)
 
         image_path = inputs.get("image_path", params.get("image_path", ""))
-        language = params.get("language", "zh-Hans,en")
+        _language = params.get("language", "zh-Hans,en")
         method = params.get("method", "native")
 
         if not image_path:
@@ -1771,7 +1774,7 @@ class OCRNode(BaseNode):
         except Exception:
             pass
 
-        return f"[OCR 需要安装 macOS Shortcuts 或 tesseract]"
+        return "[OCR 需要安装 macOS Shortcuts 或 tesseract]"
 
     async def _ocr_mlx(self, path: Path) -> str:
         """使用 fusion-mlx 视觉模型进行 OCR。"""

@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 async def _cleanup_handler(args: str = "") -> Any:
-    from ..engine.node import NodeRegistry, NodeConfig
+    from ..engine.node import NodeConfig, NodeRegistry
     node = NodeRegistry.create("desktop_clean", config=NodeConfig(params={
         "organize_by_type": True,
         "skip_hidden": True,
@@ -22,7 +22,7 @@ async def _cleanup_handler(args: str = "") -> Any:
 
 
 async def _classify_handler(args: str = "") -> Any:
-    from ..engine.node import NodeRegistry, NodeConfig
+    from ..engine.node import NodeConfig, NodeRegistry
     path = args.strip() or "~/Desktop"
     node = NodeRegistry.create("ai_classify", config=NodeConfig(params={
         "classify_by_content": True,
@@ -34,7 +34,7 @@ async def _classify_handler(args: str = "") -> Any:
 
 
 async def _screenshot_handler(args: str = "") -> Any:
-    from ..engine.node import NodeRegistry, NodeConfig
+    from ..engine.node import NodeConfig, NodeRegistry
     node = NodeRegistry.create("screen_capture", config=NodeConfig(params={
         "save_to_clipboard": True,
     }))
@@ -45,7 +45,7 @@ async def _screenshot_handler(args: str = "") -> Any:
 
 
 async def _search_handler(args: str = "") -> Any:
-    from ..engine.node import NodeRegistry, NodeConfig
+    from ..engine.node import NodeConfig, NodeRegistry
     query = args.strip()
     if not query:
         return {"error": "请提供搜索关键词"}
@@ -60,7 +60,7 @@ async def _search_handler(args: str = "") -> Any:
 
 
 async def _organize_handler(args: str = "") -> Any:
-    from ..engine.node import NodeRegistry, NodeConfig
+    from ..engine.node import NodeConfig, NodeRegistry
     node = NodeRegistry.create("download_organizer", config=NodeConfig(params={
         "organize_by_type": True,
         "deduplicate": True,
@@ -73,7 +73,7 @@ async def _organize_handler(args: str = "") -> Any:
 
 
 async def _diskclean_handler(args: str = "") -> Any:
-    from ..engine.node import NodeRegistry, NodeConfig
+    from ..engine.node import NodeConfig, NodeRegistry
     node = NodeRegistry.create("disk_cleaner", config=NodeConfig(params={
         "clean_cache": True,
         "clean_temp": True,

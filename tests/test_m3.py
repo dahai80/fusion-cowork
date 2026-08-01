@@ -10,13 +10,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from fusion_cowork.engine.permission import PermissionManager, PermissionLevel
-from fusion_cowork.engine.hooks import HookManager, HookEvent
-from fusion_cowork.engine.session import Session, SessionStore
-from fusion_cowork.engine.events import EventType, WorkflowEvent, EventEmitter
-from fusion_cowork.engine.node import BaseNode, NodeConfig, NodeResult, NodeStatus, NodeRegistry
+from fusion_cowork.engine.events import EventEmitter, EventType, WorkflowEvent
+from fusion_cowork.engine.hooks import HookEvent, HookManager
+from fusion_cowork.engine.node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus
+from fusion_cowork.engine.permission import PermissionLevel, PermissionManager
+from fusion_cowork.engine.session import SessionStore
 from fusion_cowork.engine.workflow import Workflow, WorkflowEngine, WorkflowStatus
-from fusion_cowork.server.mcp_server import MCPToolRegistry, MCPServer
+from fusion_cowork.server.mcp_server import MCPServer, MCPToolRegistry
 
 
 class _OkNode(BaseNode):
@@ -470,8 +470,8 @@ class TestBuiltinSkills:
         SkillRegistry()._skills.clear()
 
     def test_register_builtin_skills(self):
-        from fusion_cowork.skills.registry import SkillRegistry
         from fusion_cowork.skills.builtin import register_builtin_skills
+        from fusion_cowork.skills.registry import SkillRegistry
         SkillRegistry()._skills.clear()
         registry = SkillRegistry()
         register_builtin_skills(registry)
@@ -479,8 +479,8 @@ class TestBuiltinSkills:
         assert len(skills) >= 6
 
     def test_builtin_skill_names(self):
+        from fusion_cowork.skills.builtin import BUILTIN_SKILLS, register_builtin_skills
         from fusion_cowork.skills.registry import SkillRegistry
-        from fusion_cowork.skills.builtin import register_builtin_skills, BUILTIN_SKILLS
         SkillRegistry()._skills.clear()
         registry = SkillRegistry()
         register_builtin_skills(registry)
@@ -626,6 +626,7 @@ class TestMCPSkillTools:
 class TestCLICommandsM3:
     def test_plugin_group_exists(self):
         from click.testing import CliRunner
+
         from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["plugin", "--help"])
@@ -634,6 +635,7 @@ class TestCLICommandsM3:
 
     def test_skill_group_exists(self):
         from click.testing import CliRunner
+
         from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["skill", "--help"])
@@ -642,6 +644,7 @@ class TestCLICommandsM3:
 
     def test_cdp_group_exists(self):
         from click.testing import CliRunner
+
         from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["cdp", "--help"])
@@ -650,6 +653,7 @@ class TestCLICommandsM3:
 
     def test_plugin_list_command(self):
         from click.testing import CliRunner
+
         from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["plugin", "list"])
@@ -658,6 +662,7 @@ class TestCLICommandsM3:
 
     def test_skill_list_command(self):
         from click.testing import CliRunner
+
         from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["skill", "list"])
@@ -665,6 +670,7 @@ class TestCLICommandsM3:
 
     def test_skill_search_command(self):
         from click.testing import CliRunner
+
         from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["skill", "search", "clean"])

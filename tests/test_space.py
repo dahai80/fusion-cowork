@@ -2,22 +2,27 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from fusion_cowork.space.models import (
-    Space, SpaceConfig, SpaceMember, SpaceMessage,
-    SpaceSnapshot, PeerInfo, SpaceRole, SpaceStatus,
-)
-from fusion_cowork.space.store import SpaceStore
-from fusion_cowork.space.service import SpaceService
-from fusion_cowork.space.member import SpaceMemberService
-from fusion_cowork.space.permission import SpacePermission
 from fusion_cowork.space.chat import SpaceChatService
 from fusion_cowork.space.knowledge import SpaceKBService
+from fusion_cowork.space.member import SpaceMemberService
+from fusion_cowork.space.models import (
+    PeerInfo,
+    Space,
+    SpaceConfig,
+    SpaceMember,
+    SpaceMessage,
+    SpaceRole,
+    SpaceSnapshot,
+    SpaceStatus,
+)
+from fusion_cowork.space.permission import SpacePermission
+from fusion_cowork.space.service import SpaceService
+from fusion_cowork.space.store import SpaceStore
 
 
 def _make_space(name="test", owner_id="u1", **kw):
@@ -31,13 +36,13 @@ def _make_space(name="test", owner_id="u1", **kw):
         kb_id=kw.get("kb_id"),
         collab_mode=kw.get("collab_mode", "local"),
         config=kw.get("config", SpaceConfig()),
-        created_at=kw.get("created_at", datetime.now(timezone.utc).isoformat()),
-        updated_at=kw.get("updated_at", datetime.now(timezone.utc).isoformat()),
+        created_at=kw.get("created_at", datetime.now(UTC).isoformat()),
+        updated_at=kw.get("updated_at", datetime.now(UTC).isoformat()),
     )
 
 
 def _make_member(space_id, user_id, role=SpaceRole.MEMBER, display_name=""):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     return SpaceMember(
         space_id=space_id, user_id=user_id, role=role,
         display_name=display_name or user_id,
@@ -900,13 +905,13 @@ class TestFusionMLXClientEnhancements:
     """M7.4: FusionMLXClient default port + retry + stream robustness."""
 
     def test_default_port_is_11434(self):
-        from fusion_cowork.ai.mlx_client import FusionMLXClient, DEFAULT_MLX_PORT
+        from fusion_cowork.ai.mlx_client import DEFAULT_MLX_PORT, FusionMLXClient
         client = FusionMLXClient()
         assert DEFAULT_MLX_PORT == 11434
         assert "11434" in client.base_url
 
     def test_default_base_url(self):
-        from fusion_cowork.ai.mlx_client import FusionMLXClient, DEFAULT_MLX_BASE_URL
+        from fusion_cowork.ai.mlx_client import DEFAULT_MLX_BASE_URL, FusionMLXClient
         assert DEFAULT_MLX_BASE_URL == "http://localhost:11434/v1"
         client = FusionMLXClient()
         assert client.base_url == "http://localhost:11434/v1"
@@ -924,16 +929,18 @@ class TestFusionMLXClientEnhancements:
 
     @pytest.mark.asyncio
     async def test_chat_retry_on_connect_error(self):
-        from fusion_cowork.ai.mlx_client import FusionMLXClient
         import httpx
+
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
         client = FusionMLXClient(base_url="http://localhost:19999/v1", max_retries=1, retry_delay=0.01)
         with pytest.raises(httpx.ConnectError):
             await client.chat(model="test", messages=[{"role": "user", "content": "hi"}])
 
     @pytest.mark.asyncio
     async def test_stream_chat_retry_on_connect_error(self):
-        from fusion_cowork.ai.mlx_client import FusionMLXClient
         import httpx
+
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
         client = FusionMLXClient(base_url="http://localhost:19999/v1", max_retries=1, retry_delay=0.01)
         chunks = []
         with pytest.raises(httpx.ConnectError):
@@ -950,8 +957,9 @@ class TestFusionMLXClientEnhancements:
 
     @pytest.mark.asyncio
     async def test_chat_no_retry_on_400(self):
-        from fusion_cowork.ai.mlx_client import FusionMLXClient
         import httpx
+
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
         client = FusionMLXClient(max_retries=2, retry_delay=0.01)
         mock_resp = MagicMock()
         mock_resp.status_code = 400
@@ -967,8 +975,9 @@ class TestFusionMLXClientEnhancements:
 
     @pytest.mark.asyncio
     async def test_chat_retries_on_503(self):
-        from fusion_cowork.ai.mlx_client import FusionMLXClient
         import httpx
+
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
         client = FusionMLXClient(max_retries=2, retry_delay=0.01)
         mock_resp_503 = MagicMock()
         mock_resp_503.status_code = 503
@@ -1034,8 +1043,8 @@ class TestSharedContext:
 
     @pytest.mark.asyncio
     async def test_get_messages_with_service(self):
-        from fusion_cowork.space.shared_context import SharedContext
         from fusion_cowork.space.models import SpaceMessage
+        from fusion_cowork.space.shared_context import SharedContext
         chat = AsyncMock()
         msg = SpaceMessage(space_id="sp1", user_id="u1", content="hello")
         chat.list_messages = AsyncMock(return_value=[msg])
@@ -1081,7 +1090,9 @@ class TestSharedContext:
 
     def test_inject_and_extract(self):
         from fusion_cowork.space.shared_context import (
-            SharedContext, inject_shared_context, extract_shared_context,
+            SharedContext,
+            extract_shared_context,
+            inject_shared_context,
         )
         ctx = SharedContext(space_id="sp1")
         node_input = {"data": "test"}
@@ -1120,11 +1131,12 @@ class TestSpaceAgentRuntime:
 
     @pytest.fixture
     async def store_and_runtime(self, tmp_path):
-        from fusion_cowork.space.store import SpaceStore
-        from fusion_cowork.space.permission import SpacePermission
-        from fusion_cowork.space.agent_runtime import SpaceAgentRuntime
-        from fusion_cowork.ai.mlx_client import FusionMLXClient
         from unittest.mock import AsyncMock, MagicMock
+
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
+        from fusion_cowork.space.agent_runtime import SpaceAgentRuntime
+        from fusion_cowork.space.permission import SpacePermission
+        from fusion_cowork.space.store import SpaceStore
         store = SpaceStore(data_dir=str(tmp_path / "spaces"))
         await store.initialize()
         perm = SpacePermission(store)
@@ -1138,8 +1150,9 @@ class TestSpaceAgentRuntime:
     @pytest.mark.asyncio
     async def test_add_agent(self, store_and_runtime):
         store, rt, mlx = store_and_runtime
-        from fusion_cowork.space.models import Space, SpaceConfig, SpaceStatus, SpaceMember, SpaceRole
         from datetime import datetime
+
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         now = datetime.now().isoformat()
         space = Space(id="sp1", name="test", owner_id="owner1",
                       config=SpaceConfig(), created_at=now, updated_at=now)
@@ -1159,8 +1172,9 @@ class TestSpaceAgentRuntime:
     @pytest.mark.asyncio
     async def test_add_agent_permission_denied(self, store_and_runtime):
         store, rt, mlx = store_and_runtime
-        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         from datetime import datetime
+
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         now = datetime.now().isoformat()
         space = Space(id="sp2", name="test", owner_id="owner1",
                       config=SpaceConfig(), created_at=now, updated_at=now)
@@ -1174,8 +1188,9 @@ class TestSpaceAgentRuntime:
     @pytest.mark.asyncio
     async def test_list_agents(self, store_and_runtime):
         store, rt, mlx = store_and_runtime
-        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         from datetime import datetime
+
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         now = datetime.now().isoformat()
         space = Space(id="sp3", name="test", owner_id="owner1",
                       config=SpaceConfig(), created_at=now, updated_at=now)
@@ -1191,8 +1206,9 @@ class TestSpaceAgentRuntime:
     @pytest.mark.asyncio
     async def test_get_agent(self, store_and_runtime):
         store, rt, mlx = store_and_runtime
-        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         from datetime import datetime
+
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         now = datetime.now().isoformat()
         space = Space(id="sp4", name="test", owner_id="owner1",
                       config=SpaceConfig(), created_at=now, updated_at=now)
@@ -1214,8 +1230,9 @@ class TestSpaceAgentRuntime:
     @pytest.mark.asyncio
     async def test_remove_agent(self, store_and_runtime):
         store, rt, mlx = store_and_runtime
-        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         from datetime import datetime
+
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         now = datetime.now().isoformat()
         space = Space(id="sp5", name="test", owner_id="owner1",
                       config=SpaceConfig(), created_at=now, updated_at=now)
@@ -1232,8 +1249,9 @@ class TestSpaceAgentRuntime:
     @pytest.mark.asyncio
     async def test_remove_agent_not_found(self, store_and_runtime):
         store, rt, mlx = store_and_runtime
-        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         from datetime import datetime
+
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         now = datetime.now().isoformat()
         space = Space(id="sp5b", name="test", owner_id="owner1",
                       config=SpaceConfig(), created_at=now, updated_at=now)
@@ -1247,9 +1265,10 @@ class TestSpaceAgentRuntime:
     @pytest.mark.asyncio
     async def test_call_agent(self, store_and_runtime):
         store, rt, mlx = store_and_runtime
-        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
-        from fusion_cowork.ai.mlx_client import LLMResponse
         from datetime import datetime
+
+        from fusion_cowork.ai.mlx_client import LLMResponse
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         now = datetime.now().isoformat()
         space = Space(id="sp6", name="test", owner_id="owner1",
                       config=SpaceConfig(), created_at=now, updated_at=now)
@@ -1273,8 +1292,9 @@ class TestSpaceAgentRuntime:
     @pytest.mark.asyncio
     async def test_call_agent_not_found(self, store_and_runtime):
         store, rt, mlx = store_and_runtime
-        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         from datetime import datetime
+
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         now = datetime.now().isoformat()
         space = Space(id="sp7", name="test", owner_id="owner1",
                       config=SpaceConfig(), created_at=now, updated_at=now)
@@ -1288,8 +1308,9 @@ class TestSpaceAgentRuntime:
     @pytest.mark.asyncio
     async def test_call_agent_permission_denied(self, store_and_runtime):
         store, rt, mlx = store_and_runtime
-        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         from datetime import datetime
+
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         now = datetime.now().isoformat()
         space = Space(id="sp7b", name="test", owner_id="owner1",
                       config=SpaceConfig(), created_at=now, updated_at=now)
@@ -1303,9 +1324,10 @@ class TestSpaceAgentRuntime:
     @pytest.mark.asyncio
     async def test_chain_agents(self, store_and_runtime):
         store, rt, mlx = store_and_runtime
-        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
-        from fusion_cowork.ai.mlx_client import LLMResponse
         from datetime import datetime
+
+        from fusion_cowork.ai.mlx_client import LLMResponse
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         now = datetime.now().isoformat()
         space = Space(id="sp8", name="test", owner_id="owner1",
                       config=SpaceConfig(), created_at=now, updated_at=now)
@@ -1327,8 +1349,9 @@ class TestSpaceAgentRuntime:
     @pytest.mark.asyncio
     async def test_chain_agents_min_two(self, store_and_runtime):
         store, rt, mlx = store_and_runtime
-        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         from datetime import datetime
+
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         now = datetime.now().isoformat()
         space = Space(id="sp_min2", name="test", owner_id="owner1",
                       config=SpaceConfig(), created_at=now, updated_at=now)
@@ -1342,9 +1365,10 @@ class TestSpaceAgentRuntime:
     @pytest.mark.asyncio
     async def test_chain_agents_stops_on_error(self, store_and_runtime):
         store, rt, mlx = store_and_runtime
-        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
-        from fusion_cowork.ai.mlx_client import LLMResponse
         from datetime import datetime
+
+        from fusion_cowork.ai.mlx_client import LLMResponse
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         now = datetime.now().isoformat()
         space = Space(id="sp9", name="test", owner_id="owner1",
                       config=SpaceConfig(), created_at=now, updated_at=now)
@@ -1366,9 +1390,10 @@ class TestSpaceAgentRuntime:
     @pytest.mark.asyncio
     async def test_register_to_orchestrator(self, store_and_runtime):
         store, rt, mlx = store_and_runtime
-        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
-        from fusion_cowork.orchestrator.orchestrator import AgentOrchestrator
         from datetime import datetime
+
+        from fusion_cowork.orchestrator.orchestrator import AgentOrchestrator
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         now = datetime.now().isoformat()
         space = Space(id="sp10", name="test", owner_id="owner1",
                       config=SpaceConfig(), created_at=now, updated_at=now)
@@ -1409,8 +1434,9 @@ class TestAgentStudioClient:
 
     @pytest.mark.asyncio
     async def test_list_published_agents(self):
+        from unittest.mock import AsyncMock, MagicMock
+
         from fusion_cowork.space.agent_studio_client import AgentStudioClient
-        from unittest.mock import AsyncMock, MagicMock, patch
         client = AgentStudioClient()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -1424,8 +1450,9 @@ class TestAgentStudioClient:
 
     @pytest.mark.asyncio
     async def test_get_agent(self):
-        from fusion_cowork.space.agent_studio_client import AgentStudioClient
         from unittest.mock import AsyncMock, MagicMock
+
+        from fusion_cowork.space.agent_studio_client import AgentStudioClient
         client = AgentStudioClient()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -1438,9 +1465,11 @@ class TestAgentStudioClient:
 
     @pytest.mark.asyncio
     async def test_get_agent_not_found(self):
-        from fusion_cowork.space.agent_studio_client import AgentStudioClient
         from unittest.mock import AsyncMock, MagicMock
+
         import httpx
+
+        from fusion_cowork.space.agent_studio_client import AgentStudioClient
         client = AgentStudioClient()
         mock_resp = MagicMock()
         mock_resp.status_code = 404
@@ -1455,8 +1484,9 @@ class TestAgentStudioClient:
 
     @pytest.mark.asyncio
     async def test_import_agent_to_space(self):
-        from fusion_cowork.space.agent_studio_client import AgentStudioClient
         from unittest.mock import AsyncMock, MagicMock
+
+        from fusion_cowork.space.agent_studio_client import AgentStudioClient
         client = AgentStudioClient()
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
@@ -1479,8 +1509,9 @@ class TestAgentStudioClient:
 
     @pytest.mark.asyncio
     async def test_import_agent_with_overrides(self):
-        from fusion_cowork.space.agent_studio_client import AgentStudioClient
         from unittest.mock import AsyncMock, MagicMock
+
+        from fusion_cowork.space.agent_studio_client import AgentStudioClient
         client = AgentStudioClient()
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
@@ -1491,7 +1522,7 @@ class TestAgentStudioClient:
         client._client.request = AsyncMock(return_value=mock_resp)
         mock_runtime = MagicMock()
         mock_runtime.add_agent = AsyncMock(return_value={"id": "new", "name": "Override"})
-        result = await client.import_agent_to_space(
+        _result = await client.import_agent_to_space(
             "a1", mock_runtime, "sp1", "owner1",
             overrides={"name": "Override"},
         )
@@ -1505,13 +1536,14 @@ class TestSpaceChatRelay:
 
     @pytest.fixture
     async def chat_setup(self, tmp_path):
-        from fusion_cowork.space.store import SpaceStore
-        from fusion_cowork.space.permission import SpacePermission
-        from fusion_cowork.space.chat import SpaceChatService
-        from fusion_cowork.ai.mlx_client import FusionMLXClient
-        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         from datetime import datetime
         from unittest.mock import AsyncMock, MagicMock
+
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
+        from fusion_cowork.space.chat import SpaceChatService
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
+        from fusion_cowork.space.permission import SpacePermission
+        from fusion_cowork.space.store import SpaceStore
         store = SpaceStore(data_dir=str(tmp_path / "spaces"))
         await store.initialize()
         now = datetime.now().isoformat()
@@ -1569,10 +1601,11 @@ class TestCallAgentPermission:
 
     @pytest.fixture
     async def perm_setup(self, tmp_path):
-        from fusion_cowork.space.store import SpaceStore
-        from fusion_cowork.space.permission import SpacePermission
-        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         from datetime import datetime
+
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
+        from fusion_cowork.space.permission import SpacePermission
+        from fusion_cowork.space.store import SpaceStore
         store = SpaceStore(data_dir=str(tmp_path / "spaces"))
         await store.initialize()
         now = datetime.now().isoformat()
@@ -1616,11 +1649,13 @@ class TestSpaceArtifactService:
 
     @pytest.fixture
     async def artifact_setup(self):
-        from fusion_cowork.space.store import SpaceStore
-        from fusion_cowork.space.permission import SpacePermission
+        import shutil
+        import tempfile
+
         from fusion_cowork.space.artifact import SpaceArtifactService
-        from fusion_cowork.space.models import Space, SpaceConfig, SpaceStatus, SpaceMember, SpaceRole
-        import tempfile, shutil
+        from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
+        from fusion_cowork.space.permission import SpacePermission
+        from fusion_cowork.space.store import SpaceStore
         d = tempfile.mkdtemp()
         store = SpaceStore(data_dir=d)
         await store.initialize()
@@ -1748,10 +1783,12 @@ class TestArtifactPermissionActions:
 
     @pytest.fixture
     async def perm_setup(self):
-        from fusion_cowork.space.store import SpaceStore
-        from fusion_cowork.space.permission import SpacePermission
+        import shutil
+        import tempfile
+
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
-        import tempfile, shutil
+        from fusion_cowork.space.permission import SpacePermission
+        from fusion_cowork.space.store import SpaceStore
         d = tempfile.mkdtemp()
         store = SpaceStore(data_dir=d)
         await store.initialize()
@@ -1806,9 +1843,11 @@ class TestModuleRegistry:
 
     @pytest.fixture
     async def module_setup(self):
-        from fusion_cowork.space.store import SpaceStore
+        import shutil
+        import tempfile
+
         from fusion_cowork.space.fsb import ModuleRegistry
-        import tempfile, shutil
+        from fusion_cowork.space.store import SpaceStore
         d = tempfile.mkdtemp()
         store = SpaceStore(data_dir=d)
         await store.initialize()
@@ -1875,9 +1914,11 @@ class TestNotificationService:
 
     @pytest.fixture
     async def notif_setup(self):
-        from fusion_cowork.space.store import SpaceStore
+        import shutil
+        import tempfile
+
         from fusion_cowork.space.fsb import NotificationService
-        import tempfile, shutil
+        from fusion_cowork.space.store import SpaceStore
         d = tempfile.mkdtemp()
         store = SpaceStore(data_dir=d)
         await store.initialize()

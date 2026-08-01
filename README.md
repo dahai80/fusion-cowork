@@ -11,6 +11,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
+  <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
 ---
@@ -560,6 +561,12 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] desk.project.importSnapshot — 接收会话快照导入 (issue #8)
 - [x] desk.project.exportToProject — 导出空间内容到 fusion-projects (issue #9)
 
+### V0.1.4 (Patch)
+- [x] CI: GitHub Actions workflow (ruff lint + pytest + coverage)
+- [x] Lint: ruff configured, F-series bugs fixed, 0 issues remaining
+- [x] Test: 519 tests passing
+- [x] Docs: environment variables section, CI badge
+
 ### V0.8.1 ✅ (Issue #3/#4 — Artifact Permissions + FSB Integration)
 - [x] SpaceArtifactService — Artifact CRUD + ownership tracking + permission checks (issue #3)
 - [x] Permission matrix — 15 actions (4 new: view/edit/share/transfer_artifact)
@@ -639,6 +646,7 @@ Fusion-Cowork builds upon patterns from the open-source ecosystem:
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/离线优先-核心特性-important" alt="离线优先">
   <img src="https://img.shields.io/badge/状态-beta-yellow" alt="Beta">
+  <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
 ---
@@ -984,6 +992,12 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] desk.project.syncKnowledge — 接收外部知识库文件同步 (issue #7)
 - [x] desk.project.importSnapshot — 接收会话快照导入 (issue #8)
 - [x] desk.project.exportToProject — 导出空间内容到 fusion-projects (issue #9)
+
+### V0.1.4 (补丁)
+- [x] CI: GitHub Actions 工作流 (ruff lint + pytest + coverage)
+- [x] Lint: ruff 配置完成，F 系列缺陷已修复，0 问题
+- [x] 测试: 519 项测试全通过
+- [x] 文档: 环境变量说明、CI 徽章
 
 ### V0.8.1 ✅ (Issue #3/#4 — Artifact 权限 + FSB 集成)
 - [x] SpaceArtifactService — Artifact CRUD + 所有权追踪 + 权限校验 (issue #3)

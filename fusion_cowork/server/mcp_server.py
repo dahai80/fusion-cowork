@@ -294,7 +294,7 @@ class MCPToolRegistry:
             if hctx and hctx.modified_data and "input_data" in hctx.modified_data:
                 node_params = hctx.modified_data["input_data"]
 
-        from ..engine.node import NodeRegistry, NodeConfig
+        from ..engine.node import NodeConfig, NodeRegistry
         node = NodeRegistry.create(node_name, config=NodeConfig(params=node_params))
         if not node:
             return {"error": f"节点创建失败: {node_name}"}

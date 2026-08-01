@@ -11,11 +11,15 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from ...engine.node import (
-    BaseNode, NodeConfig, NodeResult, NodeStatus,
-    NodeCategory, register_node,
-)
 from ...ai.mlx_client import FusionMLXClient
+from ...engine.node import (
+    BaseNode,
+    NodeCategory,
+    NodeConfig,
+    NodeResult,
+    NodeStatus,
+    register_node,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -264,7 +268,7 @@ class AISummarizeNode(BaseNode):
 
         model = params.get("model", "qwen3.5-9b")
         max_chars = params.get("max_chars_per_file", 8000)
-        extract_keywords = params.get("extract_keywords", True)
+        _extract_keywords = params.get("extract_keywords", True)
         extract_conclusions = params.get("extract_conclusions", True)
 
         summaries = []
@@ -286,7 +290,7 @@ class AISummarizeNode(BaseNode):
                 continue
 
             # 构建摘要提示
-            instruction_text = f"\n额外要求: {instruction}" if instruction else ""
+            _instruction_text = f"\n额外要求: {instruction}" if instruction else ""
             system_prompt = (
                 "你是一个文档摘要助手。分析文档内容并生成结构化摘要。"
                 f"返回 JSON 格式: title, summary, keywords(数组), conclusions(数组){'。' if extract_conclusions else '。'}"
@@ -498,7 +502,7 @@ class AIGenerateNameNode(BaseNode):
         results = []
         for i, f in enumerate(files):
             path = Path(f) if isinstance(f, str) else Path(f.get("path", ""))
-            ext = path.suffix.lower()
+            _ext = path.suffix.lower()
             results.append({
                 "file_name": path.name,
                 "file_path": str(path),

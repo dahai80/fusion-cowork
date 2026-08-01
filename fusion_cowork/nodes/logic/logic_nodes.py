@@ -8,8 +8,11 @@ from pathlib import Path
 from typing import Any, Dict
 
 from ...engine.node import (
-    BaseNode, NodeResult, NodeStatus,
-    NodeCategory, register_node,
+    BaseNode,
+    NodeCategory,
+    NodeResult,
+    NodeStatus,
+    register_node,
 )
 
 logger = logging.getLogger(__name__)
@@ -195,7 +198,7 @@ class LoopNode(BaseNode):
         if not isinstance(items, list):
             items = list(items) if hasattr(items, '__iter__') else [items]
 
-        batch_size = params.get("batch_size", 50)
+        _batch_size = params.get("batch_size", 50)
         max_items = params.get("max_items", 1000)
         operation = params.get("operation", "passthrough")
         extract_field = params.get("extract_field", "name")

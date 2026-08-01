@@ -9,8 +9,11 @@ from pathlib import Path
 from typing import Any, Dict
 
 from ...engine.node import (
-    BaseNode, NodeResult, NodeStatus,
-    NodeCategory, register_node,
+    BaseNode,
+    NodeCategory,
+    NodeResult,
+    NodeStatus,
+    register_node,
 )
 
 logger = logging.getLogger(__name__)
@@ -228,7 +231,8 @@ class FileOutputNode(BaseNode):
 
     def _to_csv(self, data: Any) -> str:
         if isinstance(data, list) and data:
-            import csv, io
+            import csv
+            import io
             output = io.StringIO()
             if isinstance(data[0], dict):
                 writer = csv.DictWriter(output, fieldnames=data[0].keys())

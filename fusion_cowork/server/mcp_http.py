@@ -136,7 +136,7 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
                         try:
                             event = await asyncio.wait_for(queue.get(), timeout=30)
                             yield event.to_sse()
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             yield {"event": "ping", "data": ""}
                 finally:
                     _event_emitter.unsubscribe(sub_id)
@@ -145,7 +145,7 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
                     try:
                         data = await asyncio.wait_for(_sse_queue.get(), timeout=30)
                         yield {"event": "message", "data": json.dumps(data, ensure_ascii=False)}
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         yield {"event": "ping", "data": ""}
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")

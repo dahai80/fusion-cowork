@@ -90,7 +90,7 @@ class ReportGenerator:
             lines.append(f"**统计**: {success}/{total} 节点成功" + (f", {failed} 失败" if failed else ""))
             lines.append()
 
-        lines.append(f"---")
+        lines.append("---")
         lines.append(f"*由 Fusion-Cowork 于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 自动生成*")
         lines.append()
 
@@ -98,7 +98,7 @@ class ReportGenerator:
 
     def _generate_html(self, execution: WorkflowExecution) -> str:
         """生成 HTML 报告。"""
-        markdown = self._generate_markdown(execution)
+        _markdown = self._generate_markdown(execution)
         # 简单 Markdown 转 HTML
         import html as html_mod
 
@@ -154,8 +154,8 @@ class ReportGenerator:
         total_time = sum(e.total_time for e in executions)
         lines.append("## 汇总统计")
         lines.append()
-        lines.append(f"| 指标 | 值 |")
-        lines.append(f"|------|-----|")
+        lines.append("| 指标 | 值 |")
+        lines.append("|------|-----|")
         lines.append(f"| 成功 | {success} |")
         lines.append(f"| 失败 | {failed} |")
         lines.append(f"| 总耗时 | {total_time:.2f}s |")
@@ -177,7 +177,7 @@ class ReportGenerator:
                 lines.append(f"- **摘要**: {execution.result_summary}")
             lines.append()
 
-        lines.append(f"---")
+        lines.append("---")
         lines.append(f"*由 Fusion-Cowork 批量报告生成器于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 自动生成*")
         return "\n".join(lines)
 

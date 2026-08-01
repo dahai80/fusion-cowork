@@ -143,7 +143,7 @@ def create_space_api(
                             event = await asyncio.wait_for(queue.get(), timeout=30)
                             if event.event_type.startswith(prefix):
                                 yield f"event: {event.event_type}\ndata: {json.dumps(event.data, ensure_ascii=False)}\n\n"
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             yield "event: ping\ndata: \n\n"
                 finally:
                     _event_emitter.unsubscribe(sub_id)

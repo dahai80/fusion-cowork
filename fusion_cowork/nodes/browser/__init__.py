@@ -1,28 +1,35 @@
 """Fusion-Cowork 内嵌浏览器节点 + Chrome CDP 节点。"""
 
-from .browser_nodes import BrowserOpenNode, BrowserExtractNode, BrowserAutomateNode, BrowserClient, BrowserManager
+from .browser_nodes import BrowserAutomateNode, BrowserClient, BrowserExtractNode, BrowserManager, BrowserOpenNode
 from .cdp_client import CDPClient
 from .cdp_nodes import (
-    CDPNavigateNode, CDPSnapshotNode, CDPClickNode, CDPFillNode,
-    CDPFillFormNode, CDPScreenshotNode, CDPEvaluateNode,
-    CDPEmulateNode, CDPNetworkNode, CDPConsoleNode,
+    CDPClickNode,
+    CDPConsoleNode,
+    CDPEmulateNode,
+    CDPEvaluateNode,
+    CDPFillFormNode,
+    CDPFillNode,
+    CDPNavigateNode,
+    CDPNetworkNode,
+    CDPScreenshotNode,
+    CDPSnapshotNode,
 )
 
 __all__ = [
-    "BrowserOpenNode",
-    "BrowserExtractNode",
     "BrowserAutomateNode",
     "BrowserClient",
+    "BrowserExtractNode",
     "BrowserManager",
-    "CDPClient",
-    "CDPNavigateNode",
-    "CDPSnapshotNode",
+    "BrowserOpenNode",
     "CDPClickNode",
-    "CDPFillNode",
-    "CDPFillFormNode",
-    "CDPScreenshotNode",
-    "CDPEvaluateNode",
-    "CDPEmulateNode",
-    "CDPNetworkNode",
+    "CDPClient",
     "CDPConsoleNode",
+    "CDPEmulateNode",
+    "CDPEvaluateNode",
+    "CDPFillFormNode",
+    "CDPFillNode",
+    "CDPNavigateNode",
+    "CDPNetworkNode",
+    "CDPScreenshotNode",
+    "CDPSnapshotNode",
 ]

@@ -5,25 +5,33 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-import time
 from pathlib import Path
 
 import pytest
 
+import fusion_cowork.nodes.ai
+import fusion_cowork.nodes.io
+import fusion_cowork.nodes.logic
+
 # 导入所有节点模块确保它们被注册
-import fusion_cowork.nodes.macos  # noqa: F401
-import fusion_cowork.nodes.ai  # noqa: F401
-import fusion_cowork.nodes.io  # noqa: F401
-import fusion_cowork.nodes.logic  # noqa: F401
+import fusion_cowork.nodes.macos
 import fusion_cowork.nodes.tools  # noqa: F401
-
 from fusion_cowork.engine.node import (
-    BaseNode, NodeConfig, NodeResult, NodeStatus,
-    NodeCategory, NodeRegistry, register_node,
-    coerce_param, coerce_params, _coerce_int, _coerce_number, _coerce_bool, _coerce_array,
+    BaseNode,
+    NodeCategory,
+    NodeConfig,
+    NodeRegistry,
+    NodeResult,
+    NodeStatus,
+    _coerce_array,
+    _coerce_bool,
+    _coerce_int,
+    _coerce_number,
+    coerce_param,
+    coerce_params,
+    register_node,
 )
-from fusion_cowork.engine.workflow import Workflow, WorkflowEngine, WorkflowStatus, Edge
-
+from fusion_cowork.engine.workflow import Edge, Workflow, WorkflowEngine, WorkflowStatus
 
 # ── 测试用 Mock 节点 ──
 

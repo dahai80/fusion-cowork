@@ -37,7 +37,7 @@ class BenchmarkRunner:
         self._results: List[BenchmarkResult] = []
 
     async def run_node(self, node_name: str, params: Dict[str, Any]) -> BenchmarkResult:
-        from ..engine.node import NodeRegistry, NodeConfig
+        from ..engine.node import NodeConfig, NodeRegistry
 
         node = NodeRegistry.create(node_name, config=NodeConfig(params=params))
         if not node:

@@ -15,8 +15,12 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from ...engine.node import (
-    BaseNode, NodeResult, NodeStatus,
-    NodeCategory, register_node, coerce_params,
+    BaseNode,
+    NodeCategory,
+    NodeResult,
+    NodeStatus,
+    coerce_params,
+    register_node,
 )
 
 logger = logging.getLogger(__name__)

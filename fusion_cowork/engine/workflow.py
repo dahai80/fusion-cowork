@@ -20,8 +20,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set
 
-from .node import BaseNode, NodeRegistry, NodeResult, NodeStatus
 from .hooks import HookEvent
+from .node import BaseNode, NodeRegistry, NodeResult, NodeStatus
 
 logger = logging.getLogger(__name__)
 

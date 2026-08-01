@@ -2,23 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
-import os
-import tempfile
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-import fusion_cowork.nodes.macos  # noqa: F401
-import fusion_cowork.nodes.ai  # noqa: F401
-import fusion_cowork.nodes.io  # noqa: F401
-import fusion_cowork.nodes.logic  # noqa: F401
+import fusion_cowork.nodes.ai
+import fusion_cowork.nodes.io
+import fusion_cowork.nodes.logic
+import fusion_cowork.nodes.macos
 import fusion_cowork.nodes.tools  # noqa: F401
-
-from fusion_cowork.engine.node import NodeRegistry, NodeConfig
-
 
 # ── MCPToolRegistry ──
 
@@ -56,8 +48,8 @@ class TestMCPToolRegistry:
 class TestStdioTransport:
 
     def test_handler_registration(self):
-        from fusion_cowork.server.mcp_transport import StdioTransport
         from fusion_cowork.server.mcp_server import MCPToolRegistry
+        from fusion_cowork.server.mcp_transport import StdioTransport
         registry = MCPToolRegistry()
         transport = StdioTransport(registry)
         assert "initialize" in transport._request_handlers
@@ -67,8 +59,8 @@ class TestStdioTransport:
 
     @pytest.mark.asyncio
     async def test_handle_initialize(self):
-        from fusion_cowork.server.mcp_transport import StdioTransport, MCP_PROTOCOL_VERSION
         from fusion_cowork.server.mcp_server import MCPToolRegistry
+        from fusion_cowork.server.mcp_transport import MCP_PROTOCOL_VERSION, StdioTransport
         registry = MCPToolRegistry()
         transport = StdioTransport(registry)
         result = await transport._handle_initialize({"clientInfo": {"name": "test"}})
@@ -78,8 +70,8 @@ class TestStdioTransport:
 
     @pytest.mark.asyncio
     async def test_handle_tools_list(self):
-        from fusion_cowork.server.mcp_transport import StdioTransport
         from fusion_cowork.server.mcp_server import MCPToolRegistry
+        from fusion_cowork.server.mcp_transport import StdioTransport
         registry = MCPToolRegistry()
         registry.register_tools()
         transport = StdioTransport(registry)
@@ -89,8 +81,8 @@ class TestStdioTransport:
 
     @pytest.mark.asyncio
     async def test_dispatch_method_not_found(self):
-        from fusion_cowork.server.mcp_transport import StdioTransport
         from fusion_cowork.server.mcp_server import MCPToolRegistry
+        from fusion_cowork.server.mcp_transport import StdioTransport
         registry = MCPToolRegistry()
         transport = StdioTransport(registry)
         with patch.object(transport, "_send_error", new_callable=AsyncMock) as mock_err:
@@ -244,7 +236,7 @@ class TestAgentMessageBus:
     def test_subscribe(self):
         from fusion_cowork.orchestrator.comm import AgentMessageBus
         bus = AgentMessageBus()
-        q = bus.subscribe("test_topic")
+        _q = bus.subscribe("test_topic")
         assert "test_topic" in bus._subscribers
         assert len(bus._subscribers["test_topic"]) == 1
 
@@ -253,7 +245,7 @@ class TestAgentMessageBus:
         from fusion_cowork.orchestrator.comm import AgentMessageBus
         bus = AgentMessageBus()
         q = bus.subscribe("test_topic")
-        msg_id = await bus.publish("test_topic", "sender_a", {"key": "value"})
+        _msg_id = await bus.publish("test_topic", "sender_a", {"key": "value"})
         msg = q.get_nowait()
         assert msg.sender == "sender_a"
         assert msg.payload == {"key": "value"}
@@ -263,7 +255,7 @@ class TestAgentMessageBus:
         from fusion_cowork.orchestrator.comm import AgentMessageBus
         bus = AgentMessageBus()
         q = bus.subscribe("inbox:receiver_b")
-        msg_id = await bus.send("sender_a", "receiver_b", {"data": 42})
+        _msg_id = await bus.send("sender_a", "receiver_b", {"data": 42})
         msg = q.get_nowait()
         assert msg.sender == "sender_a"
         assert msg.receiver == "receiver_b"
@@ -283,8 +275,8 @@ class TestMCPHttpApp:
 
     def test_create_http_app(self):
         pytest.importorskip("fastapi", reason="需要 [web] 依赖")
-        from fusion_cowork.server.mcp_server import MCPToolRegistry
         from fusion_cowork.server.mcp_http import create_http_app
+        from fusion_cowork.server.mcp_server import MCPToolRegistry
         registry = MCPToolRegistry()
         registry.register_tools()
         app = create_http_app(registry)

@@ -4,26 +4,25 @@ import asyncio
 import json
 import os
 import tempfile
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from unittest.mock import MagicMock, AsyncMock
 
-from fusion_cowork.benchmark.matrix import CapabilityMatrix, Capability, CapabilityLevel
-from fusion_cowork.benchmark.runner import BenchmarkRunner, BenchmarkResult
+from fusion_cowork.benchmark.matrix import Capability, CapabilityLevel, CapabilityMatrix
 from fusion_cowork.benchmark.report import ReportRenderer
-from fusion_cowork.engine.node import BaseNode, NodeConfig, NodeResult, NodeStatus, NodeRegistry
-from fusion_cowork.engine.workflow import Workflow, WorkflowEngine, WorkflowStatus
-from fusion_cowork.engine.permission import PermissionManager, PermissionLevel
-from fusion_cowork.engine.hooks import HookManager, HookEvent, HookContext
+from fusion_cowork.benchmark.runner import BenchmarkResult, BenchmarkRunner
+from fusion_cowork.engine.events import EventEmitter
+from fusion_cowork.engine.hooks import HookContext, HookEvent, HookManager
+from fusion_cowork.engine.node import NodeConfig, NodeRegistry
+from fusion_cowork.engine.permission import PermissionLevel, PermissionManager
 from fusion_cowork.engine.session import Session, SessionStore
-from fusion_cowork.engine.events import EventEmitter, EventType, WorkflowEvent
-from fusion_cowork.server.mcp_server import MCPToolRegistry
-from fusion_cowork.server.desk_rpc import DeskRPCServer
-from fusion_cowork.orchestrator.orchestrator import AgentOrchestrator, Agent, AgentRole, AgentTask
-from fusion_cowork.orchestrator.executors import CoordinatorExecutor
-from fusion_cowork.orchestrator.comm import AgentMessageBus, AgentMessage
+from fusion_cowork.engine.workflow import Workflow, WorkflowEngine, WorkflowStatus
 from fusion_cowork.orchestrator.agent_runtime import AgentRuntime
-
+from fusion_cowork.orchestrator.comm import AgentMessageBus
+from fusion_cowork.orchestrator.executors import CoordinatorExecutor
+from fusion_cowork.orchestrator.orchestrator import Agent, AgentOrchestrator, AgentRole, AgentTask
+from fusion_cowork.server.desk_rpc import DeskRPCServer
+from fusion_cowork.server.mcp_server import MCPToolRegistry
 
 # ── CapabilityMatrix ──
 
@@ -131,7 +130,6 @@ class TestCapability:
 class TestBenchmarkRunner:
     @pytest.mark.asyncio
     async def test_run_node(self):
-        import fusion_cowork.nodes.io
         runner = BenchmarkRunner(warmup=0, repeats=1)
         result = await runner.run_node("file_input", {"path": "~"})
         assert result.status == "success"
@@ -146,7 +144,6 @@ class TestBenchmarkRunner:
 
     @pytest.mark.asyncio
     async def test_run_nodes_batch(self):
-        import fusion_cowork.nodes.io
         runner = BenchmarkRunner(warmup=0, repeats=2)
         results = await runner.run_nodes([
             {"node": "file_input", "params": {"path": "~"}},
@@ -155,7 +152,6 @@ class TestBenchmarkRunner:
 
     @pytest.mark.asyncio
     async def test_summary(self):
-        import fusion_cowork.nodes.io
         runner = BenchmarkRunner(warmup=0, repeats=2)
         await runner.run_node("file_input", {"path": "~"})
         await runner.run_node("file_input", {"path": "~"})
@@ -171,7 +167,6 @@ class TestBenchmarkRunner:
 
     @pytest.mark.asyncio
     async def test_to_json(self):
-        import fusion_cowork.nodes.io
         runner = BenchmarkRunner(warmup=0, repeats=1)
         await runner.run_node("file_input", {"path": "~"})
         j = runner.to_json()
@@ -290,7 +285,6 @@ class TestE2EDeskRPC:
 
     @pytest.mark.asyncio
     async def test_nodes_list(self):
-        import fusion_cowork.nodes.io
         r = await self.rpc._dispatch({"jsonrpc": "2.0", "id": 2, "method": "desk.nodes.list", "params": {}})
         assert r["result"]["count"] > 0
 
@@ -341,8 +335,6 @@ class TestE2EWorkflowFull:
 
     @pytest.mark.asyncio
     async def test_workflow_with_all_middleware(self):
-        import fusion_cowork.nodes.io
-        from fusion_cowork.engine.node import NodeRegistry, NodeConfig
         node = NodeRegistry.create("file_input", config=NodeConfig(params={"path": "~"}))
         wf = Workflow(workflow_id="e2e_wf", name="e2e_test")
         wf.add_node(node)
@@ -360,8 +352,6 @@ class TestE2EWorkflowFull:
 
     @pytest.mark.asyncio
     async def test_workflow_permission_denied(self):
-        import fusion_cowork.nodes.tools
-        from fusion_cowork.engine.node import NodeRegistry, NodeConfig
         pm_deny = PermissionManager(level=PermissionLevel.MANUAL)
         node = NodeRegistry.create("shell_exec", config=NodeConfig(params={"command": "echo hi"}))
         wf = Workflow(workflow_id="e2e_deny", name="deny_test")
@@ -372,8 +362,6 @@ class TestE2EWorkflowFull:
 
     @pytest.mark.asyncio
     async def test_workflow_hook_cancel(self):
-        import fusion_cowork.nodes.io
-        from fusion_cowork.engine.node import NodeRegistry, NodeConfig
         async def cancel_hook(ctx: HookContext):
             ctx.cancel()
 
@@ -391,6 +379,7 @@ class TestE2EWorkflowFull:
 class TestCLIBenchmark:
     def test_benchmark_report_markdown(self):
         from click.testing import CliRunner
+
         from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["benchmark", "report", "--format", "markdown"])
@@ -399,6 +388,7 @@ class TestCLIBenchmark:
 
     def test_benchmark_report_json(self):
         from click.testing import CliRunner
+
         from fusion_cowork.cli import cli
         runner = CliRunner()
         result = runner.invoke(cli, ["benchmark", "report", "--format", "json"])
@@ -409,6 +399,7 @@ class TestCLIBenchmark:
 
     def test_benchmark_report_save(self):
         from click.testing import CliRunner
+
         from fusion_cowork.cli import cli
         runner = CliRunner()
         with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
@@ -588,7 +579,7 @@ class TestHookWorkflowIntegration:
         engine = WorkflowEngine(hook_manager=mgr)
         wf = Workflow(name="hook_test")
         wf.add_node(DesktopCleanNode())
-        result = await engine.execute(wf)
+        _result = await engine.execute(wf)
         assert "start" in events
         assert "end" in events
 
@@ -618,7 +609,7 @@ class TestHookWorkflowIntegration:
         engine = WorkflowEngine(hook_manager=mgr)
         wf = Workflow(name="modify_test")
         wf.add_node(DesktopCleanNode())
-        result = await engine.execute(wf)
+        _result = await engine.execute(wf)
         assert "modified" in mod_events
 
     @pytest.mark.asyncio
@@ -632,7 +623,7 @@ class TestHookWorkflowIntegration:
         node = DesktopCleanNode(node_id="will_fail")
         node.execute = AsyncMock(side_effect=RuntimeError("forced error"))
         wf.add_node(node)
-        result = await engine.execute(wf)
+        _result = await engine.execute(wf)
         assert "node_error" in error_events
 
 
@@ -671,8 +662,8 @@ class TestHeadlessRunner:
 
     @pytest.mark.asyncio
     async def test_headless_runner_run_workflow(self):
-        from fusion_cowork.sdk.headless import HeadlessRunner
         from fusion_cowork.nodes.macos import DesktopCleanNode  # noqa: F401 — trigger registration
+        from fusion_cowork.sdk.headless import HeadlessRunner
         runner = HeadlessRunner()
         wf_def = {
             "name": "test_wf",

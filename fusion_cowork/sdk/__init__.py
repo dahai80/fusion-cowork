@@ -56,12 +56,12 @@ class FusionCoworkSDK:
     def _ensure_node_modules(cls) -> None:
         if cls._node_modules_loaded:
             return
-        import fusion_cowork.nodes.macos  # noqa: F401 — trigger registration
-        import fusion_cowork.nodes.ai  # noqa: F401
-        import fusion_cowork.nodes.io  # noqa: F401
-        import fusion_cowork.nodes.logic  # noqa: F401
+        import fusion_cowork.nodes.ai
+        import fusion_cowork.nodes.browser
+        import fusion_cowork.nodes.io
+        import fusion_cowork.nodes.logic
+        import fusion_cowork.nodes.macos
         import fusion_cowork.nodes.tools  # noqa: F401
-        import fusion_cowork.nodes.browser  # noqa: F401
         cls._node_modules_loaded = True
 
     async def _local_list_nodes(self) -> List[Dict[str, Any]]:
@@ -90,7 +90,7 @@ class FusionCoworkSDK:
         }
 
     async def _local_exec_node(self, node_name: str, data: dict) -> Dict[str, Any]:
-        from fusion_cowork.engine.node import NodeRegistry, NodeConfig
+        from fusion_cowork.engine.node import NodeConfig, NodeRegistry
         self._ensure_node_modules()
         params = data.get("params", {})
         node = NodeRegistry.create(node_name, config=NodeConfig(params=params))

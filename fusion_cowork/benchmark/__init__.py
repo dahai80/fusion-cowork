@@ -1,11 +1,14 @@
 """Benchmark — Claude Cowork vs Fusion-Cowork 功能对比与性能度量。"""
 
-from .matrix import CapabilityMatrix, Capability, CapabilityLevel
-from .runner import BenchmarkRunner, BenchmarkResult
+from .matrix import Capability, CapabilityLevel, CapabilityMatrix
 from .report import ReportRenderer
+from .runner import BenchmarkResult, BenchmarkRunner
 
 __all__ = [
-    "CapabilityMatrix", "Capability", "CapabilityLevel",
-    "BenchmarkRunner", "BenchmarkResult",
+    "BenchmarkResult",
+    "BenchmarkRunner",
+    "Capability",
+    "CapabilityLevel",
+    "CapabilityMatrix",
     "ReportRenderer",
 ]
