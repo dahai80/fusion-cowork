@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import json
+import os
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
@@ -48,12 +49,14 @@ class FusionMLXClient:
     def __init__(
         self,
         base_url: str = DEFAULT_MLX_BASE_URL,
-        api_key: str = "local",
+        api_key: str = "",
         timeout: float = 120.0,
         max_retries: int = MAX_RETRIES,
         retry_delay: float = RETRY_DELAY,
     ):
         self.base_url = base_url.rstrip("/")
+        if not api_key:
+            api_key = os.environ.get("FUSION_MLX_API_KEY", "local")
         self.api_key = api_key
         self.timeout = timeout
         self.max_retries = max_retries
