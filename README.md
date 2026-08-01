@@ -92,6 +92,20 @@ fusion-cowork mcp serve --transport http --port 9761
 
 # Start Desk RPC server (for Fusion-Studio GUI)
 fusion-cowork desk rpc
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FUSION_MLX_API_KEY` | `local` | API key for fusion-mlx (must match `auth.api_key` in `~/.fusion-mlx/settings.json`) |
+| `FUSION_MLX_URL` | `http://localhost:11434/v1` | fusion-mlx base URL |
+| `FUSION_RAG_URL` | `http://localhost:11436` | fusion-rag (fusion-kb) base URL |
+
+```bash
+# Example: set API key to match your fusion-mlx settings
+export FUSION_MLX_API_KEY="your-api-key-here"
+fusion-cowork desk rpc
 
 # Session management
 fusion-cowork session list
