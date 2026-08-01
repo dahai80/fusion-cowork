@@ -298,14 +298,26 @@ class DeskRPCServer:
 
     async def _handle_workflow_run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..engine import Workflow, WorkflowEngine
+        template_id = params.get("template_id", "")
         workflow_def = params.get("workflow", {})
+        if not workflow_def and template_id:
+            from ..templates import TemplateManager
+            tmpl = TemplateManager().get_template(template_id)
+            if tmpl:
+                workflow_def = tmpl
+            else:
+                return {"error": f"模板不存在: {template_id}"}
+        if not workflow_def:
+            return {"error": "workflow 或 template_id 必填"}
         wf = Workflow.from_dict(workflow_def)
         engine = WorkflowEngine()
         result = await engine.execute(wf)
         return {
-            "status": result.status.value,
-            "data": result.data,
-            "summary": result.summary,
+            "id": result.id,
+            "status": result.status.value if hasattr(result.status, 'value') else str(result.status),
+            "summary": result.result_summary,
+            "steps": [s.to_dict() if hasattr(s, 'to_dict') else str(s) for s in result.steps],
+            "error": result.error,
         }
 
     async def _handle_workflow_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -331,7 +343,7 @@ class DeskRPCServer:
 
     async def _handle_template_get(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..templates import TemplateManager
-        template_id = params.get("template_id", "")
+        template_id = params.get("template_id", "") or params.get("id", "")
         mgr = TemplateManager()
         template = mgr.get_template(template_id)
         if not template:
@@ -464,8 +476,8 @@ class DeskRPCServer:
             return {"error": "EventEmitter 未配置"}
         sub_id = params.get("sub_id", "")
         events = []
-        if sub_id and sub_id in self._event_emitter._subscriptions:
-            queue = self._event_emitter._subscriptions[sub_id]
+        if sub_id and sub_id in self._event_emitter._subscribers:
+            queue = self._event_emitter._subscribers[sub_id]
             while not queue.empty():
                 events.append(queue.get_nowait().to_dict())
         return {"count": len(events), "events": events}
@@ -503,19 +515,46 @@ class DeskRPCServer:
     async def _handle_session_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._session_store:
             return {"error": "SessionStore 未配置"}
+        from fusion_cowork.engine.session import Session
         name = params.get("name", "")
-        description = params.get("description", "")
-        session = self._session_store.create(name=name, description=description)
+        workflow_id = params.get("workflow_id", "")
+        workflow_name = name or params.get("workflow_name", "")
+        initial_input = params.get("initial_input", {})
+        metadata = params.get("metadata", {})
+        if description := params.get("description", ""):
+            metadata["description"] = description
+        if space_id := params.get("space_id", ""):
+            metadata["space_id"] = space_id
+        if user_id := params.get("user_id", ""):
+            metadata["user_id"] = user_id
+        session = Session(
+            workflow_id=workflow_id,
+            workflow_name=workflow_name,
+            initial_input=initial_input,
+            metadata=metadata,
+        )
+        self._session_store.save(session)
+        logger.info(f"Session created: {session.id} workflow={workflow_name}")
         return self._session_store.to_dict(session)
 
     async def _handle_session_update(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._session_store:
             return {"error": "SessionStore 未配置"}
         session_id = params.get("session_id", "")
-        updates = params.get("updates", {})
-        session = self._session_store.update(session_id, **updates)
+        session = self._session_store.get(session_id)
         if not session:
             return {"error": f"会话不存在: {session_id}"}
+        updates = params.get("updates", {})
+        if "name" in updates or "workflow_name" in updates:
+            session.workflow_name = updates.get("workflow_name", updates.get("name", session.workflow_name))
+        if "status" in updates:
+            self._session_store.update_status(session_id, updates["status"])
+        if "steps" in updates:
+            self._session_store.update_steps(session_id, updates["steps"])
+        if "metadata" in updates:
+            session.metadata.update(updates["metadata"])
+            self._session_store.save(session)
+        session = self._session_store.get(session_id)
         return self._session_store.to_dict(session)
 
     async def _handle_session_delete(self, params: Dict[str, Any]) -> Dict[str, Any]:
