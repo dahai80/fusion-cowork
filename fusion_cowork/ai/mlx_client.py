@@ -286,7 +286,7 @@ class KBClient:
         top_k: int = 5,
     ) -> str:
         payload = {"question": question, "top_k": top_k}
-        resp = await self.client.post(f"/kb/bases/{kb_id}/query", json=payload)
+        resp = await self.client.post(f"/kb/bases/{kb_id}/ask", json=payload)
         resp.raise_for_status()
         data = resp.json()
         return data.get("answer", "")
