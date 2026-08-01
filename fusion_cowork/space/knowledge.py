@@ -58,7 +58,11 @@ class SpaceKBService:
             bases = await self._kb.list_bases()
             found = any(b.get("id") == kb_id or b.get("name") == kb_id for b in bases)
             if not found:
-                raise ValueError(f"知识库 {kb_id} 不存在")
+                try:
+                    await self._kb.create_kb(name=kb_id)
+                    logger.info(f"SpaceKB.bind_kb auto-created kb={kb_id} in RAG for space={space_id}")
+                except Exception as e:
+                    logger.warning(f"SpaceKB.bind_kb failed to create kb={kb_id}: {e}")
         else:
             kb_id = await self._kb.create_kb(name=f"space_{space_id}")
             logger.info(f"SpaceKB.bind_kb created new kb={kb_id} for space={space_id}")

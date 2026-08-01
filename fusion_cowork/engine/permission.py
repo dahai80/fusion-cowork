@@ -166,6 +166,18 @@ class PermissionManager:
         ]
         logger.info(f"权限规则已加载: {len(self.rules)} 条 (level={self.level.value})")
 
+    def reset(self, tool_name: str = "") -> int:
+        if tool_name:
+            before = len(self.rules)
+            self.rules = [r for r in self.rules if r.tool_name != tool_name]
+            removed = before - len(self.rules)
+        else:
+            removed = len(self.rules)
+            self.rules.clear()
+        self._pending_approvals.clear()
+        logger.info(f"PermissionManager.reset removed={removed} tool_name={tool_name or '*'}")
+        return removed
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "level": self.level.value,

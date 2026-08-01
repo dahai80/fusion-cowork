@@ -698,8 +698,10 @@ class TestSpaceKBService:
         svc = SpaceKBService(store, None, perm)
         sp = await store.create_space(_make_space("kbn", "u1"))
         await store.add_member(_make_member(sp.id, "u1", SpaceRole.OWNER))
-        with pytest.raises(RuntimeError, match="知识库服务未配置"):
-            await svc.bind_kb(sp.id, "u1")
+        kb_id = await svc.bind_kb(sp.id, "u1")
+        assert kb_id == f"kb_{sp.id}"
+        updated = await store.get_space(sp.id)
+        assert updated.kb_id == kb_id
 
     @pytest.mark.asyncio
     async def test_search(self, kb_svc, store, kb_mock):
