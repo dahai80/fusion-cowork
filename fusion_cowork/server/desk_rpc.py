@@ -102,6 +102,7 @@ class DeskRPCServer:
             # 协作空间 - 对话
             "desk.space.chat.send": self._handle_space_chat_send,
             "desk.space.chat.list": self._handle_space_chat_list,
+            "desk.space.chat.history": self._handle_space_chat_list,
             "desk.space.chat.context": self._handle_space_chat_context,
             # 协作空间 - 知识库
             "desk.space.knowledge.bind": self._handle_space_kb_bind,
@@ -137,6 +138,9 @@ class DeskRPCServer:
             "desk.notification.push": self._handle_notification_push,
             "desk.notification.list": self._handle_notification_list,
             "desk.notification.markRead": self._handle_notification_mark_read,
+            # 通知推送 — 兼容 Studio space.notification 命名空间
+            "desk.space.notification.list": self._handle_notification_list,
+            "desk.space.notification.mark_read": self._handle_notification_mark_read,
         }
         logger.info(f"Desk RPC 注册 {len(self._handlers)} 个方法")
 
