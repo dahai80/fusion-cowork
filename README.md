@@ -570,6 +570,14 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] desk.project.importSnapshot — 接收会话快照导入 (issue #8)
 - [x] desk.project.exportToProject — 导出空间内容到 fusion-projects (issue #9)
 
+### V0.1.7 (Patch)
+- [x] 19 missing RPC handlers for Studio GUI (#19, #23)
+- [x] P0: desk.space.chat.stream — streaming chat
+- [x] P1: agent.update, snapshot CRUD (5), comment CRUD (2)
+- [x] P2: workflow (3), discovery.scan, desktop (2), session snapshot (5)
+- [x] Store: update_agent, remove_agent, snapshot get/delete, comment CRUD
+- [x] Total RPC methods: 79 → 99
+
 ### V0.1.6 (Patch)
 - [x] RPC alias: `desk.space.chat.history` → chat.list (Studio compat, #20)
 - [x] RPC alias: `desk.space.notification.*` → notification.* (Studio compat, #21)
@@ -1021,6 +1029,14 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] desk.project.syncKnowledge — 接收外部知识库文件同步 (issue #7)
 - [x] desk.project.importSnapshot — 接收会话快照导入 (issue #8)
 - [x] desk.project.exportToProject — 导出空间内容到 fusion-projects (issue #9)
+
+### V0.1.7 (补丁)
+- [x] 19 个缺失 RPC handler 补全，兼容 Studio GUI (#19, #23)
+- [x] P0: desk.space.chat.stream — 流式对话
+- [x] P1: agent.update, 快照 CRUD (5), 评论 CRUD (2)
+- [x] P2: 工作流 (3), 发现扫描, 桌面共享 (2), 会话快照 (5)
+- [x] Store 层: update_agent, remove_agent, 快照 get/delete, 评论 CRUD
+- [x] RPC 方法总数: 79 → 99
 
 ### V0.1.6 (补丁)
 - [x] RPC 别名: `desk.space.chat.history` → chat.list (Studio 兼容, #20)
