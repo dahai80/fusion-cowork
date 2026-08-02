@@ -93,6 +93,15 @@ fusion-cowork mcp serve --transport http --port 9761
 
 # Start Desk RPC server (for Fusion-Studio GUI)
 fusion-cowork desk rpc
+
+# Lifecycle management via start.sh
+./start.sh start    # Start desk RPC daemon
+./start.sh stop     # Graceful stop
+./start.sh restart  # Stop + start
+./start.sh status   # PID, socket, memory, uptime
+./start.sh log [-f] # Tail logs (-f to follow)
+./start.sh doctor   # Health check (venv, CLI, socket, upstream services)
+./start.sh clean    # Rotate logs, clear __pycache__
 ```
 
 ### Environment Variables
@@ -566,6 +575,10 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] Lint: ruff configured, F-series bugs fixed, 0 issues remaining
 - [x] Test: 519 tests passing
 - [x] Docs: environment variables section, CI badge
+- [x] start.sh lifecycle manager (start/stop/restart/status/log/doctor/clean)
+- [x] `python -m fusion_cowork` now works (__main__.py)
+- [x] Remove desk.mlx.start/stop — product layer should not manage infra (#16)
+- [x] Fix pyproject.toml description — "本地优先" replaces "纯本地离线" (#16)
 
 ### V0.8.1 ✅ (Issue #3/#4 — Artifact Permissions + FSB Integration)
 - [x] SpaceArtifactService — Artifact CRUD + ownership tracking + permission checks (issue #3)
@@ -728,6 +741,15 @@ fusion-cowork mcp serve --transport http --port 9761
 
 # 启动 Desk RPC 服务 (供 Fusion-Studio GUI 调用)
 fusion-cowork desk rpc
+
+# 生命周期管理 (start.sh)
+./start.sh start    # 启动 desk RPC 守护进程
+./start.sh stop     # 优雅停止
+./start.sh restart  # 停止 + 启动
+./start.sh status   # PID、Socket、内存、运行时间
+./start.sh log [-f] # 查看日志 (-f 实时跟踪)
+./start.sh doctor   # 健康检查 (venv、CLI、Socket、上游服务)
+./start.sh clean    # 轮转日志、清理 __pycache__
 
 # 会话管理
 fusion-cowork session list
@@ -998,6 +1020,10 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] Lint: ruff 配置完成，F 系列缺陷已修复，0 问题
 - [x] 测试: 519 项测试全通过
 - [x] 文档: 环境变量说明、CI 徽章
+- [x] start.sh 生命周期管理 (start/stop/restart/status/log/doctor/clean)
+- [x] `python -m fusion_cowork` 现在可用 (__main__.py)
+- [x] 移除 desk.mlx.start/stop — 产品层不应管理基础设施 (#16)
+- [x] 修正 pyproject.toml 描述 — "本地优先" 替代 "纯本地离线" (#16)
 
 ### V0.8.1 ✅ (Issue #3/#4 — Artifact 权限 + FSB 集成)
 - [x] SpaceArtifactService — Artifact CRUD + 所有权追踪 + 权限校验 (issue #3)
