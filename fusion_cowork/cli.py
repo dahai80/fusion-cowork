@@ -808,7 +808,7 @@ def mcp():
 @mcp.command("serve")
 @click.option("--transport", "-t", type=click.Choice(["stdio", "http"]), default="stdio", help="传输模式 (stdio/http)")
 @click.option("--host", "-h", default="127.0.0.1", help="HTTP 监听地址")
-@click.option("--port", "-p", default=9761, type=int, help="HTTP 监听端口")
+@click.option("--port", "-p", default=11438, type=int, help="HTTP 监听端口")
 def mcp_serve(transport: str, host: str, port: int):
     """启动 MCP 服务 — 供 Claude Code / Claude Desktop 调用。"""
     from .server.mcp_server import MCPServer
@@ -1337,7 +1337,7 @@ def remote():
 
 @remote.command("serve")
 @click.option("--host", "-h", default="127.0.0.1", help="监听地址")
-@click.option("--port", "-p", default=9762, type=int, help="监听端口")
+@click.option("--port", "-p", default=11439, type=int, help="监听端口")
 @click.option("--token", "-t", default="", help="认证令牌 (空则无认证)")
 def remote_serve(host: str, port: int, token: str):
     """启动远程控制服务。"""
@@ -1365,7 +1365,7 @@ def remote_serve(host: str, port: int, token: str):
 
 
 @remote.command("connect")
-@click.argument("url", default="ws://127.0.0.1:9762/control")
+@click.argument("url", default="ws://127.0.0.1:11439/control")
 @click.option("--token", "-t", default="", help="认证令牌")
 def remote_connect(url: str, token: str):
     """连接到远程 fusion-cowork 实例。"""
@@ -1389,7 +1389,7 @@ def remote_connect(url: str, token: str):
 
 @remote.command("submit")
 @click.argument("workflow_file", type=click.Path(exists=True))
-@click.option("--url", default="ws://127.0.0.1:9762/control", help="远程服务地址")
+@click.option("--url", default="ws://127.0.0.1:11439/control", help="远程服务地址")
 @click.option("--token", "-t", default="", help="认证令牌")
 def remote_submit(workflow_file: str, url: str, token: str):
     """提交工作流到远程 fusion-cowork 执行。"""

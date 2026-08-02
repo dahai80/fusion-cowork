@@ -79,7 +79,7 @@ result = await orc.execute_plan(plan.plan_id)
 ### MCP Server (V0.2)
 ```python
 from fusion_cowork import MCPServer
-server = MCPServer(port=9761)
+server = MCPServer(port=11438)
 await server.start()  # 15 tools exposed
 tools = server.get_tools_list()
 ```
@@ -87,7 +87,7 @@ tools = server.get_tools_list()
 ### CrossDeviceSync (V0.3)
 ```python
 from fusion_cowork import CrossDeviceSync
-sync = CrossDeviceSync(port=9760)
+sync = CrossDeviceSync(port=11437)
 await sync.start()
 await sync.sync_workflow(workflow_data)
 ```

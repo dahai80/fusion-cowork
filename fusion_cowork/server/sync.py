@@ -34,7 +34,7 @@ class Device:
     name: str
     device_type: str = "mac"  # mac | iphone | ipad
     host: str = "localhost"
-    port: int = 9760
+    port: int = 11437
     status: DeviceStatus = DeviceStatus.OFFLINE
     capabilities: List[str] = field(default_factory=list)
     last_seen: float = 0.0
@@ -63,8 +63,8 @@ class CrossDeviceSync:
 
     def __init__(
         self,
-        host: str = "0.0.0.0",
-        port: int = 9760,
+        host: str = "127.0.0.1",
+        port: int = 11437,
         token: Optional[str] = None,
         ssl_cert: Optional[str] = None,
         ssl_key: Optional[str] = None,

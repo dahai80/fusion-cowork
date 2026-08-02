@@ -327,10 +327,10 @@ class MCPServer:
 
         # HTTP 模式 (远程调用)
         server = MCPServer()
-        await server.serve_http(port=9761)
+        await server.serve_http(port=11438)
     """
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 9761,
+    def __init__(self, host: str = "127.0.0.1", port: int = 11438,
                  permission_manager=None, hook_manager=None):
         self.host = host
         self.port = port

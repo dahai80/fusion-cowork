@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class RemoteControlServer:
-    def __init__(self, host: str = "127.0.0.1", port: int = 9762, token: Optional[str] = None):
+    def __init__(self, host: str = "127.0.0.1", port: int = 11439, token: Optional[str] = None):
         self.host = host
         self.port = port
         self.token = token
@@ -203,7 +203,7 @@ class RemoteControlClient:
         self.token = token
         self._ws = None
 
-    async def connect(self, url: str = "ws://127.0.0.1:9762/control"):
+    async def connect(self, url: str = "ws://127.0.0.1:11439/control"):
         try:
             import websockets
         except ImportError:

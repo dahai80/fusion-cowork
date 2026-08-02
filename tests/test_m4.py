@@ -317,8 +317,8 @@ from fusion_cowork.server.remote import RemoteControlClient, RemoteControlServer
 
 class TestRemoteControlServer:
     def test_init(self):
-        server = RemoteControlServer(host="0.0.0.0", port=9999, token="t1")
-        assert server.host == "0.0.0.0"
+        server = RemoteControlServer(host="127.0.0.1", port=9999, token="t1")
+        assert server.host == "127.0.0.1"
         assert server.port == 9999
         assert server.token == "t1"
 
