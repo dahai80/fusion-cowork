@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 __app_name__ = "Fusion-Cowork"
 
 # ── 节点工具名称映射表（吸纳自 Squish tool_name_map.py） ──
@@ -255,6 +255,20 @@ _LAZY_IMPORTS: dict[str, str] = {
     "extract_shared_context": "fusion_cowork.space",
     "SpaceAgentRuntime": "fusion_cowork.space",
     "AgentStudioClient": "fusion_cowork.space",
+    # FD-05 ConfigCenter
+    "ConfigCenter": "fusion_cowork.config_center",
+    "ConfigChange": "fusion_cowork.config_center",
+    "ConfigObserver": "fusion_cowork.config_center",
+    # FD-06 MCP Gateway
+    "MCPGateway": "fusion_cowork.server.mcp_gateway",
+    "ManagedProcess": "fusion_cowork.server.mcp_gateway",
+    "ProcessStatus": "fusion_cowork.server.mcp_gateway",
+    "TransportType": "fusion_cowork.server.mcp_gateway",
+    # FD-07 Plugin Sandbox
+    "PluginSandbox": "fusion_cowork.plugins.sandbox",
+    "ResourceLimits": "fusion_cowork.plugins.sandbox",
+    "SandboxResult": "fusion_cowork.plugins.sandbox",
+    "SandboxStatus": "fusion_cowork.plugins.sandbox",
 }
 
 _lazy_cache: dict[str, object] = {}
