@@ -89,7 +89,7 @@ fusion-cowork system info
 fusion-cowork mcp serve
 
 # Start MCP server (HTTP mode)
-fusion-cowork mcp serve --transport http --port 9761
+fusion-cowork mcp serve --transport http --port 11438
 
 # Start Desk RPC server (for Fusion-Studio GUI)
 fusion-cowork desk rpc
@@ -397,13 +397,13 @@ WebSocket-based remote control for external clients:
 
 ```bash
 # Start remote server
-fusion-cowork remote serve --port 9762 --token mytoken
+fusion-cowork remote serve --port 11439 --token mytoken
 
 # Connect from another machine
-fusion-cowork remote connect ws://host:9762/control --token mytoken
+fusion-cowork remote connect ws://host:11439/control --token mytoken
 
 # Submit workflow remotely
-fusion-cowork remote submit workflow.json --url ws://host:9762/control
+fusion-cowork remote submit workflow.json --url ws://host:11439/control
 ```
 
 ### Structured Output 🆕 (M4)
@@ -752,7 +752,7 @@ fusion-cowork system info
 fusion-cowork mcp serve
 
 # 启动 MCP 服务 (HTTP 模式)
-fusion-cowork mcp serve --transport http --port 9761
+fusion-cowork mcp serve --transport http --port 11438
 
 # 启动 Desk RPC 服务 (供 Fusion-Studio GUI 调用)
 fusion-cowork desk rpc

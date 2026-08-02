@@ -56,13 +56,13 @@ fusion_cowork/server/
 **CLI 集成**:
 ```bash
 fusion-cowork mcp serve --transport stdio    # Claude Code 调用
-fusion-cowork mcp serve --transport http --port 9761  # HTTP 模式
+fusion-cowork mcp serve --transport http --port 11438  # HTTP 模式
 ```
 
 **验收标准**:
 - [ ] `claude mcp add fusion-cowork -- fusion-cowork mcp serve --transport stdio` 成功注册
 - [ ] Claude Code 可通过 MCP 调用 `take_screenshot`, `clipboard_read`, `run_workflow`
-- [ ] `fusion-cowork mcp serve --transport http --port 9761` 可通过 HTTP 调用
+- [ ] `fusion-cowork mcp serve --transport http --port 11438` 可通过 HTTP 调用
 
 ### 3.2 Desk↔Studio IPC 连通 (W2)
 
@@ -512,7 +512,7 @@ class ComputerUseLoopNode(BaseNode):
 class RemoteControlServer:
     """远程控制服务 — WebSocket 接入。"""
 
-    # 1. 客户端连接 ws://localhost:9762/control
+    # 1. 客户端连接 ws://localhost:11439/control
     # 2. 认证后可: 查看状态、提交工作流、取消任务
     # 3. 事件通过 WS 实时推送
 
@@ -525,8 +525,8 @@ class RemoteControlClient:
 
 **CLI 集成**:
 ```bash
-fusion-cowork remote serve --port 9762
-fusion-cowork remote connect ws://host:9762/control
+fusion-cowork remote serve --port 11439
+fusion-cowork remote connect ws://host:11439/control
 ```
 
 **验收标准**:
@@ -676,7 +676,7 @@ class HookManager:
 class FusionCoworkSDK:
     """SDK 入口 — 编程式访问 fusion-cowork 全部能力。"""
 
-    def __init__(self, base_url: str = "http://localhost:9761"):
+    def __init__(self, base_url: str = "http://localhost:11438"):
         self._client = httpx.AsyncClient(base_url=base_url)
 
     # 工作流
@@ -724,7 +724,7 @@ class HeadlessRunner:
 
 **CLI 集成**:
 ```bash
-fusion-cowork sdk serve --port 9761     # 启动 SDK HTTP 服务
+fusion-cowork sdk serve --port 11438     # 启动 SDK HTTP 服务
 fusion-cowork run --workflow wf.json    # Headless 单次执行
 fusion-cowork run --template cleanup    # Headless 模板执行
 ```

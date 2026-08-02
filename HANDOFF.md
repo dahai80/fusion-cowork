@@ -116,7 +116,7 @@ fusion-cowork permission level <manual|auto|plan|bypass>
 fusion-cowork permission approve/deny <tool_name> --scope <scope>
 fusion-cowork permission list
 fusion-cowork session list/show/fork/delete/cleanup
-fusion-cowork mcp serve [--transport stdio|http] [--port 9761]
+fusion-cowork mcp serve [--transport stdio|http] [--port 11438]
 fusion-cowork desk rpc
 ```
 
