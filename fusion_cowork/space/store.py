@@ -466,6 +466,41 @@ class SpaceStore:
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
+    async def update_agent(self, space_id: str, agent_id: str, **kwargs) -> bool:
+        if not kwargs:
+            return False
+        db = await self._ensure_db()
+        sets = []
+        vals = []
+        for k, v in kwargs.items():
+            if k in ("name", "agent_type", "system_prompt", "enable_rag", "config"):
+                if k == "config":
+                    v = json.dumps(v, ensure_ascii=False)
+                elif k == "enable_rag":
+                    v = int(v)
+                sets.append(f"{k} = ?")
+                vals.append(v)
+        if not sets:
+            return False
+        vals.extend([agent_id, space_id])
+        await db.execute(
+            f"UPDATE space_agents SET {', '.join(sets)} WHERE id = ? AND space_id = ?",
+            vals,
+        )
+        await db.commit()
+        logger.info(f"SpaceStore.update_agent id={agent_id} fields={list(kwargs.keys())}")
+        return True
+
+    async def remove_agent(self, space_id: str, agent_id: str) -> bool:
+        db = await self._ensure_db()
+        await db.execute(
+            "DELETE FROM space_agents WHERE id = ? AND space_id = ?",
+            (agent_id, space_id),
+        )
+        await db.commit()
+        logger.info(f"SpaceStore.remove_agent id={agent_id} space={space_id}")
+        return True
+
     # ── Snapshot CRUD ──
 
     async def create_snapshot(self, snapshot: SpaceSnapshot) -> SpaceSnapshot:
@@ -492,6 +527,51 @@ class SpaceStore:
         )
         rows = await cursor.fetchall()
         return [self._row_to_snapshot(r) for r in rows]
+
+    async def get_snapshot(self, space_id: str, snapshot_id: str) -> Optional[SpaceSnapshot]:
+        db = await self._ensure_db()
+        cursor = await db.execute(
+            "SELECT * FROM space_snapshots WHERE id = ? AND space_id = ?",
+            (snapshot_id, space_id),
+        )
+        row = await cursor.fetchone()
+        return self._row_to_snapshot(row) if row else None
+
+    async def delete_snapshot(self, space_id: str, snapshot_id: str) -> bool:
+        db = await self._ensure_db()
+        await db.execute(
+            "DELETE FROM space_snapshots WHERE id = ? AND space_id = ?",
+            (snapshot_id, space_id),
+        )
+        await db.commit()
+        logger.info(f"SpaceStore.delete_snapshot id={snapshot_id}")
+        return True
+
+    # ── Comment CRUD ──
+
+    async def add_comment(self, message_id: str, author_id: str, author_name: str,
+                          content: str) -> str:
+        import uuid
+        comment_id = f"cmt_{uuid.uuid4().hex[:8]}"
+        db = await self._ensure_db()
+        await db.execute(
+            "INSERT INTO space_comments (id, message_id, author_id, author_name, "
+            "content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (comment_id, message_id, author_id, author_name, content,
+             datetime.now().isoformat()),
+        )
+        await db.commit()
+        logger.info(f"SpaceStore.add_comment id={comment_id}")
+        return comment_id
+
+    async def list_comments(self, message_id: str) -> List[Dict[str, Any]]:
+        db = await self._ensure_db()
+        cursor = await db.execute(
+            "SELECT * FROM space_comments WHERE message_id = ? ORDER BY created_at",
+            (message_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
 
     # ── Invite Link CRUD ──
 
