@@ -1619,7 +1619,6 @@ class DeskRPCServer:
     async def _handle_space_workflow_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
-        from fusion_cowork.engine.workflow import Workflow
         space_id = params.get("space_id", "")
         try:
             workflows = await self._space_store.list_artifacts(space_id)
@@ -1656,7 +1655,6 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.engine.workflow import WorkflowEngine
-        space_id = params.get("space_id", "")
         artifact_id = params.get("artifact_id", "") or params.get("workflow_id", "")
         inputs = params.get("inputs", {})
         try:
@@ -1724,7 +1722,6 @@ class DeskRPCServer:
             sp = await self._space_store.get_space(space_id) if self._space_store else None
             operator_id = sp.owner_id if sp else "local_user"
         try:
-            session = await self._session_store.get(session_id) if self._session_store else None
             snapshot = SpaceSnapshot(
                 space_id=space_id,
                 name=label or f"session_snap_{session_id[:8]}",
@@ -1755,7 +1752,6 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         space_id = params.get("space_id", "")
-        session_id = params.get("session_id", "")
         snapshot_id = params.get("snapshot_id", "")
         try:
             src = await self._space_store.get_snapshot(space_id, snapshot_id)
