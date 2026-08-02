@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import os
+from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -117,6 +118,33 @@ class DeskRPCServer:
             "desk.space.agent.remove": self._handle_space_agent_remove,
             "desk.space.agent.call": self._handle_space_agent_call,
             "desk.space.agent.relay": self._handle_space_agent_relay,
+            "desk.space.agent.update": self._handle_space_agent_update,
+            # 协作空间 - 快照
+            "desk.space.snapshot.list": self._handle_space_snapshot_list,
+            "desk.space.snapshot.create": self._handle_space_snapshot_create,
+            "desk.space.snapshot.clone": self._handle_space_snapshot_clone,
+            "desk.space.snapshot.restore": self._handle_space_snapshot_restore,
+            "desk.space.snapshot.delete": self._handle_space_snapshot_delete,
+            # 协作空间 - 流式对话
+            "desk.space.chat.stream": self._handle_space_chat_stream,
+            # 协作空间 - 评论
+            "desk.space.comment.create": self._handle_space_comment_create,
+            "desk.space.comment.list": self._handle_space_comment_list,
+            # 协作空间 - 工作流
+            "desk.space.workflow.list": self._handle_space_workflow_list,
+            "desk.space.workflow.create": self._handle_space_workflow_create,
+            "desk.space.workflow.run": self._handle_space_workflow_run,
+            # 协作空间 - 发现
+            "desk.space.discovery.scan": self._handle_space_discovery_scan,
+            # 协作空间 - 桌面共享
+            "desk.space.desktop.share": self._handle_space_desktop_share,
+            "desk.space.desktop.control": self._handle_space_desktop_control,
+            # 会话快照
+            "desk.session.snapshot_list": self._handle_session_snapshot_list,
+            "desk.session.snapshot_create": self._handle_session_snapshot_create,
+            "desk.session.snapshot_restore": self._handle_session_snapshot_restore,
+            "desk.session.snapshot_fork": self._handle_session_snapshot_fork,
+            "desk.session.snapshot_delete": self._handle_session_snapshot_delete,
             # 跨产品集成 — fusion-projects
             "desk.project.syncKnowledge": self._handle_project_sync_knowledge,
             "desk.project.importSnapshot": self._handle_project_import_snapshot,
@@ -1369,3 +1397,390 @@ class DeskRPCServer:
             return {"error": "id 或 notification_id 必填"}
         await svc.mark_read(notif_id)
         return {"read": True}
+
+    # ── Agent Update ──
+
+    async def _handle_space_agent_update(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        space_id = params.get("space_id", "")
+        agent_id = params.get("agent_id", "")
+        if not space_id or not agent_id:
+            return {"error": "space_id 和 agent_id 必填"}
+        update_fields = {}
+        for key in ("name", "system_prompt", "enable_rag", "config", "agent_type"):
+            if key in params:
+                update_fields[key] = params[key]
+        model = params.get("model")
+        if model:
+            config = update_fields.get("config", {})
+            if isinstance(config, str):
+                import json as _json
+                try:
+                    config = _json.loads(config)
+                except Exception:
+                    config = {}
+            config["model"] = model
+            update_fields["config"] = config
+        permission = params.get("permission")
+        if permission:
+            config = update_fields.get("config", {})
+            if isinstance(config, str):
+                import json as _json
+                try:
+                    config = _json.loads(config)
+                except Exception:
+                    config = {}
+            config["permission"] = permission
+            update_fields["config"] = config
+        capabilities = params.get("capabilities")
+        if capabilities:
+            config = update_fields.get("config", {})
+            if isinstance(config, str):
+                import json as _json
+                try:
+                    config = _json.loads(config)
+                except Exception:
+                    config = {}
+            config["capabilities"] = capabilities
+            update_fields["config"] = config
+        if not update_fields:
+            return {"error": "无更新字段"}
+        try:
+            ok = await self._space_store.update_agent(space_id, agent_id, **update_fields)
+            return {"agent_id": agent_id, "updated": ok}
+        except Exception as e:
+            logger.error(f"agent.update failed: {e}")
+            return {"error": str(e)}
+
+    # ── Snapshot ──
+
+    async def _handle_space_snapshot_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        space_id = params.get("space_id", "")
+        try:
+            snapshots = await self._space_store.list_snapshots(space_id)
+            return {"snapshots": [s.to_dict() for s in snapshots]}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _handle_space_snapshot_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space.models import SpaceSnapshot
+        space_id = params.get("space_id", "")
+        name = params.get("name", "")
+        operator_id = params.get("operator_id", "")
+        if not operator_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            operator_id = sp.owner_id if sp else "local_user"
+        try:
+            msgs = await self._space_store.get_messages(space_id, limit=1000)
+            agents = await self._space_store.list_agents(space_id)
+            snapshot = SpaceSnapshot(
+                space_id=space_id,
+                name=name or f"snapshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                messages_count=len(msgs),
+                agents_count=len(agents),
+                snapshot_data={
+                    "messages": [m.to_dict() for m in msgs],
+                    "agents": agents,
+                },
+                created_by=operator_id,
+            )
+            result = await self._space_store.create_snapshot(snapshot)
+            return result.to_dict()
+        except Exception as e:
+            logger.error(f"snapshot.create failed: {e}")
+            return {"error": str(e)}
+
+    async def _handle_space_snapshot_clone(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        space_id = params.get("space_id", "")
+        snapshot_id = params.get("snapshot_id", "")
+        try:
+            src = await self._space_store.get_snapshot(space_id, snapshot_id)
+            if not src:
+                return {"error": f"快照 {snapshot_id} 不存在"}
+            from fusion_cowork.space.models import SpaceSnapshot
+            clone = SpaceSnapshot(
+                space_id=space_id,
+                name=f"{src.name} (clone)",
+                messages_count=src.messages_count,
+                agents_count=src.agents_count,
+                files_count=src.files_count,
+                workflows_count=src.workflows_count,
+                artifacts_count=src.artifacts_count,
+                snapshot_data=src.snapshot_data,
+                created_by=params.get("operator_id", "local_user"),
+            )
+            result = await self._space_store.create_snapshot(clone)
+            return result.to_dict()
+        except Exception as e:
+            logger.error(f"snapshot.clone failed: {e}")
+            return {"error": str(e)}
+
+    async def _handle_space_snapshot_restore(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        space_id = params.get("space_id", "")
+        snapshot_id = params.get("snapshot_id", "")
+        try:
+            snap = await self._space_store.get_snapshot(space_id, snapshot_id)
+            if not snap:
+                return {"error": f"快照 {snapshot_id} 不存在"}
+            restored = 0
+            for msg_data in snap.snapshot_data.get("messages", []):
+                from fusion_cowork.space.models import SpaceMessage
+                m = SpaceMessage.from_dict(msg_data)
+                m.id = ""  # let store generate new id
+                m.space_id = space_id
+                await self._space_store.add_message(m)
+                restored += 1
+            logger.info(f"snapshot.restore space={space_id} msgs={restored}")
+            return {"restored": restored, "snapshot_id": snapshot_id}
+        except Exception as e:
+            logger.error(f"snapshot.restore failed: {e}")
+            return {"error": str(e)}
+
+    async def _handle_space_snapshot_delete(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        space_id = params.get("space_id", "")
+        snapshot_id = params.get("snapshot_id", "")
+        try:
+            ok = await self._space_store.delete_snapshot(space_id, snapshot_id)
+            return {"deleted": ok, "snapshot_id": snapshot_id}
+        except Exception as e:
+            return {"error": str(e)}
+
+    # ── Chat Stream ──
+
+    async def _handle_space_chat_stream(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
+        from fusion_cowork.space import SpaceChatService, SpacePermission
+        perm = SpacePermission(self._space_store)
+        mlx = FusionMLXClient()
+        chat_svc = SpaceChatService(self._space_store, mlx, perm)
+        space_id = params.get("space_id", "")
+        user_id = params.get("user_id", "")
+        if not user_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            user_id = sp.owner_id if sp else "local_user"
+        content = params.get("content", "")
+        agent_id = params.get("agent_id", "")
+        model = params.get("model", "")
+        try:
+            chunks = []
+            async for chunk in chat_svc.stream_message(
+                space_id, user_id, content, agent_id, model=model,
+            ):
+                chunks.append(chunk)
+            full = "".join(chunks)
+            return {"content": full, "chunk_count": len(chunks)}
+        except PermissionError as e:
+            return {"error": str(e)}
+
+    # ── Comments ──
+
+    async def _handle_space_comment_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        message_id = params.get("message_id", "")
+        author_id = params.get("author_id", "") or "local_user"
+        author_name = params.get("author_name", "") or author_id
+        content = params.get("content", "")
+        if not message_id or not content:
+            return {"error": "message_id 和 content 必填"}
+        try:
+            comment_id = await self._space_store.add_comment(
+                message_id, author_id, author_name, content,
+            )
+            return {"comment_id": comment_id}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _handle_space_comment_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        message_id = params.get("message_id", "")
+        try:
+            comments = await self._space_store.list_comments(message_id)
+            return {"comments": comments}
+        except Exception as e:
+            return {"error": str(e)}
+
+    # ── Space Workflow ──
+
+    async def _handle_space_workflow_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.engine.workflow import Workflow
+        space_id = params.get("space_id", "")
+        try:
+            workflows = await self._space_store.list_artifacts(space_id)
+            wf_list = [a for a in workflows if a.get("kind") == "workflow"]
+            return {"workflows": wf_list}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _handle_space_workflow_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        space_id = params.get("space_id", "")
+        name = params.get("name", "")
+        nodes = params.get("nodes", [])
+        edges = params.get("edges", [])
+        operator_id = params.get("operator_id", "")
+        if not operator_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            operator_id = sp.owner_id if sp else "local_user"
+        try:
+            artifact_id = await self._space_store.add_artifact({
+                "space_id": space_id,
+                "name": name,
+                "kind": "workflow",
+                "content": json.dumps({"nodes": nodes, "edges": edges}),
+                "owner_id": operator_id,
+            })
+            return {"artifact_id": artifact_id, "name": name}
+        except Exception as e:
+            logger.error(f"workflow.create failed: {e}")
+            return {"error": str(e)}
+
+    async def _handle_space_workflow_run(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.engine.workflow import WorkflowEngine
+        space_id = params.get("space_id", "")
+        artifact_id = params.get("artifact_id", "") or params.get("workflow_id", "")
+        inputs = params.get("inputs", {})
+        try:
+            artifact = await self._space_store.get_artifact(artifact_id)
+            if not artifact:
+                return {"error": f"工作流 {artifact_id} 不存在"}
+            wf_data = json.loads(artifact.get("content", "{}"))
+            engine = WorkflowEngine()
+            wf = engine.create_workflow(
+                name=artifact.get("name", "workflow"),
+                nodes=wf_data.get("nodes", []),
+                edges=wf_data.get("edges", []),
+            )
+            result = await engine.execute(wf, inputs=inputs)
+            return {"execution_id": result.get("execution_id", ""), "status": "completed", "result": result}
+        except Exception as e:
+            logger.error(f"workflow.run failed: {e}")
+            return {"error": str(e)}
+
+    # ── Discovery ──
+
+    async def _handle_space_discovery_scan(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        logger.info("discovery.scan: Bonjour scan not yet implemented")
+        return {"peers": [], "message": "Bonjour scan not yet available"}
+
+    # ── Desktop Sharing ──
+
+    async def _handle_space_desktop_share(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        space_id = params.get("space_id", "")
+        enable = params.get("enable", True)
+        role = params.get("role", "presenter")
+        logger.info(f"desktop.share space={space_id} enable={enable} role={role}")
+        return {"status": "not_implemented", "message": "Desktop sharing not yet available"}
+
+    async def _handle_space_desktop_control(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        space_id = params.get("space_id", "")
+        action = params.get("action", "")
+        logger.info(f"desktop.control space={space_id} action={action}")
+        return {"status": "not_implemented", "message": "Desktop control not yet available"}
+
+    # ── Session Snapshots ──
+
+    async def _handle_session_snapshot_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        space_id = params.get("space_id", "")
+        session_id = params.get("session_id", "")
+        try:
+            snapshots = await self._space_store.list_snapshots(space_id)
+            session_snaps = [s for s in snapshots
+                            if s.snapshot_data.get("session_id") == session_id]
+            return {"snapshots": [s.to_dict() for s in session_snaps]}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _handle_session_snapshot_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        from fusion_cowork.space.models import SpaceSnapshot
+        space_id = params.get("space_id", "")
+        session_id = params.get("session_id", "")
+        label = params.get("label", "")
+        operator_id = params.get("operator_id", "")
+        if not operator_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            operator_id = sp.owner_id if sp else "local_user"
+        try:
+            session = await self._session_store.get(session_id) if self._session_store else None
+            snapshot = SpaceSnapshot(
+                space_id=space_id,
+                name=label or f"session_snap_{session_id[:8]}",
+                snapshot_data={"session_id": session_id, "steps": []},
+                created_by=operator_id,
+            )
+            result = await self._space_store.create_snapshot(snapshot)
+            return result.to_dict()
+        except Exception as e:
+            logger.error(f"session.snapshot_create failed: {e}")
+            return {"error": str(e)}
+
+    async def _handle_session_snapshot_restore(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        space_id = params.get("space_id", "")
+        session_id = params.get("session_id", "")
+        snapshot_id = params.get("snapshot_id", "")
+        try:
+            snap = await self._space_store.get_snapshot(space_id, snapshot_id)
+            if not snap:
+                return {"error": f"快照 {snapshot_id} 不存在"}
+            return {"restored": True, "snapshot_id": snapshot_id, "session_id": session_id}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _handle_session_snapshot_fork(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        space_id = params.get("space_id", "")
+        session_id = params.get("session_id", "")
+        snapshot_id = params.get("snapshot_id", "")
+        try:
+            src = await self._space_store.get_snapshot(space_id, snapshot_id)
+            if not src:
+                return {"error": f"快照 {snapshot_id} 不存在"}
+            from fusion_cowork.space.models import SpaceSnapshot
+            fork = SpaceSnapshot(
+                space_id=space_id,
+                name=f"{src.name} (fork)",
+                snapshot_data=src.snapshot_data,
+                created_by=params.get("operator_id", "local_user"),
+            )
+            result = await self._space_store.create_snapshot(fork)
+            return result.to_dict()
+        except Exception as e:
+            logger.error(f"session.snapshot_fork failed: {e}")
+            return {"error": str(e)}
+
+    async def _handle_session_snapshot_delete(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._space_store:
+            return {"error": "SpaceStore 未配置"}
+        space_id = params.get("space_id", "")
+        snapshot_id = params.get("snapshot_id", "")
+        try:
+            ok = await self._space_store.delete_snapshot(space_id, snapshot_id)
+            return {"deleted": ok, "snapshot_id": snapshot_id}
+        except Exception as e:
+            return {"error": str(e)}
