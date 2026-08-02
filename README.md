@@ -570,6 +570,10 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] desk.project.importSnapshot — 接收会话快照导入 (issue #8)
 - [x] desk.project.exportToProject — 导出空间内容到 fusion-projects (issue #9)
 
+### V0.1.9 (Patch)
+- [x] Remove local-only docs from git tracking (6 files → .gitignore)
+- [x] feat: ast_diff module migrated from fusion-multi-node (#26, #27)
+
 ### V0.1.8 (Patch)
 - [x] Port standardization: 9760→11437, 9761→11438, 9762→11439 (#24, #25)
 - [x] Ruff lint: 4 unused variable fixes in desk_rpc handlers
