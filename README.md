@@ -570,6 +570,10 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] desk.project.importSnapshot — 接收会话快照导入 (issue #8)
 - [x] desk.project.exportToProject — 导出空间内容到 fusion-projects (issue #9)
 
+### V0.1.8 (Patch)
+- [x] Port standardization: 9760→11437, 9761→11438, 9762→11439 (#24, #25)
+- [x] Ruff lint: 4 unused variable fixes in desk_rpc handlers
+
 ### V0.1.7 (Patch)
 - [x] 19 missing RPC handlers for Studio GUI (#19, #23)
 - [x] P0: desk.space.chat.stream — streaming chat
