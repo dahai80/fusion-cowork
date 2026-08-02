@@ -570,15 +570,17 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] desk.project.importSnapshot — 接收会话快照导入 (issue #8)
 - [x] desk.project.exportToProject — 导出空间内容到 fusion-projects (issue #9)
 
+### V0.1.5 (Patch)
+- [x] start.sh lifecycle manager (start/stop/restart/status/log/doctor/clean)
+- [x] `python -m fusion_cowork` now works (__main__.py)
+- [x] Remove desk.mlx.start/stop — product layer should not manage infra (#16)
+- [x] Fix pyproject.toml description — "本地优先" replaces "纯本地离线" (#16)
+
 ### V0.1.4 (Patch)
 - [x] CI: GitHub Actions workflow (ruff lint + pytest + coverage)
 - [x] Lint: ruff configured, F-series bugs fixed, 0 issues remaining
 - [x] Test: 519 tests passing
 - [x] Docs: environment variables section, CI badge
-- [x] start.sh lifecycle manager (start/stop/restart/status/log/doctor/clean)
-- [x] `python -m fusion_cowork` now works (__main__.py)
-- [x] Remove desk.mlx.start/stop — product layer should not manage infra (#16)
-- [x] Fix pyproject.toml description — "本地优先" replaces "纯本地离线" (#16)
 
 ### V0.8.1 ✅ (Issue #3/#4 — Artifact Permissions + FSB Integration)
 - [x] SpaceArtifactService — Artifact CRUD + ownership tracking + permission checks (issue #3)
