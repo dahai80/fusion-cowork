@@ -34,6 +34,14 @@ build/
 .fusion-cowork.pid
 logs/
 
+# Local-only docs (not tracked in git)
+HANDOFF.md
+CLAUDE.md
+ARCHITECTURE_COMPLIANCE.md
+claude-cowork-insight.md
+audit-cowork-report.md
+fusion-cowork-prd-plan.md
+
 # Swift build
 browser/.build/
 browser/.build.*/
