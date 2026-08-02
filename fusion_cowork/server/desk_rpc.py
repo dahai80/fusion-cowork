@@ -67,8 +67,6 @@ class DeskRPCServer:
             "desk.agent.cancel": self._handle_agent_cancel,
             # MLX
             "desk.mlx.status": self._handle_mlx_status,
-            "desk.mlx.start": self._handle_mlx_start,
-            "desk.mlx.stop": self._handle_mlx_stop,
             "desk.mlx.models": self._handle_mlx_models,
             # 系统
             "desk.system.info": self._handle_system_info,
@@ -411,28 +409,6 @@ class DeskRPCServer:
             return {"status": "running", "info": status}
         except Exception:
             return {"status": "stopped"}
-
-    async def _handle_mlx_start(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        import subprocess
-        try:
-            result = subprocess.run(
-                ["bash", os.path.expanduser("~/claude-home/fusion-mlx/start.sh"), "start"],
-                capture_output=True, text=True, timeout=30,
-            )
-            return {"status": "started", "output": result.stdout[-200:]}
-        except Exception as e:
-            return {"status": "error", "error": str(e)}
-
-    async def _handle_mlx_stop(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        import subprocess
-        try:
-            result = subprocess.run(
-                ["bash", os.path.expanduser("~/claude-home/fusion-mlx/start.sh"), "stop"],
-                capture_output=True, text=True, timeout=30,
-            )
-            return {"status": "stopped", "output": result.stdout[-200:]}
-        except Exception as e:
-            return {"status": "error", "error": str(e)}
 
     async def _handle_mlx_models(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..ai import FusionMLXClient
