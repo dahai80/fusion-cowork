@@ -570,6 +570,11 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] desk.project.importSnapshot — 接收会话快照导入 (issue #8)
 - [x] desk.project.exportToProject — 导出空间内容到 fusion-projects (issue #9)
 
+### V0.1.6 (Patch)
+- [x] RPC alias: `desk.space.chat.history` → chat.list (Studio compat, #20)
+- [x] RPC alias: `desk.space.notification.*` → notification.* (Studio compat, #21)
+- [x] GUI gap audit: 19 missing RPC handlers documented (#19)
+
 ### V0.1.5 (Patch)
 - [x] start.sh lifecycle manager (start/stop/restart/status/log/doctor/clean)
 - [x] `python -m fusion_cowork` now works (__main__.py)
@@ -1016,6 +1021,17 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] desk.project.syncKnowledge — 接收外部知识库文件同步 (issue #7)
 - [x] desk.project.importSnapshot — 接收会话快照导入 (issue #8)
 - [x] desk.project.exportToProject — 导出空间内容到 fusion-projects (issue #9)
+
+### V0.1.6 (补丁)
+- [x] RPC 别名: `desk.space.chat.history` → chat.list (Studio 兼容, #20)
+- [x] RPC 别名: `desk.space.notification.*` → notification.* (Studio 兼容, #21)
+- [x] GUI 差距审计: 19 个缺失 RPC handler 已归档 (#19)
+
+### V0.1.5 (补丁)
+- [x] start.sh 生命周期管理 (start/stop/restart/status/log/doctor/clean)
+- [x] `python -m fusion_cowork` 现在可用 (__main__.py)
+- [x] 移除 desk.mlx.start/stop — 产品层不应管理基础设施 (#16)
+- [x] 修正 pyproject.toml 描述 — "本地优先" 替代 "纯本地离线" (#16)
 
 ### V0.1.4 (补丁)
 - [x] CI: GitHub Actions 工作流 (ruff lint + pytest + coverage)
