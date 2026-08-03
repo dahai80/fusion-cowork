@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-brightgreen" alt="macOS">
   <img src="https://img.shields.io/badge/Python-3.11%2B-blue" alt="Python">
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="许可证">
+  <img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="许可证">
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/离线优先-核心特性-important" alt="离线优先">
   <img src="https://img.shields.io/badge/状态-beta-yellow" alt="Beta">
@@ -645,7 +645,7 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 
 ## 📄 开源协议
 
-本项目基于 MIT 许可证开源。详见 [LICENSE](LICENSE)。
+本项目基于 Apache License 2.0 开源。详见 [LICENSE](LICENSE)。
 
 ---
 
