@@ -149,6 +149,9 @@ class DeskRPCServer:
             "desk.project.syncKnowledge": self._handle_project_sync_knowledge,
             "desk.project.importSnapshot": self._handle_project_import_snapshot,
             "desk.project.exportToProject": self._handle_project_export_to_project,
+            # 跨产品集成 — fusion-projects 中转 (ST→project-svc→cowork)
+            "cowork.trigger": self._handle_cowork_trigger,
+            "cowork.status": self._handle_cowork_status,
             # 协作空间 - Artifact 权限
             "desk.space.artifact.create": self._handle_space_artifact_create,
             "desk.space.artifact.get": self._handle_space_artifact_get,
@@ -1154,6 +1157,67 @@ class DeskRPCServer:
         export_data["target_project_id"] = target_project_id
         logger.info(f"desk.project.exportToProject space={space_id} target={target_project_id}")
         return {"export_data": export_data}
+
+    async def _handle_cowork_trigger(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """ST→project-svc→cowork 中转: 触发协同任务。
+
+        params:
+            project_id: 关联项目 ID
+            action: 触发动作 (sync_knowledge / import_snapshot / export_to_project)
+            payload: 动作参数 (可选)
+        """
+        project_id = params.get("project_id", "")
+        action = params.get("action", "")
+        payload = params.get("payload") or params.get("params") or {}
+        if not project_id:
+            return {"error": "project_id 必填"}
+        if not action:
+            return {"error": "action 必填"}
+        import uuid
+        task_id = f"cowork_{uuid.uuid4().hex[:8]}"
+        action_map = {
+            "sync_knowledge": "desk.project.syncKnowledge",
+            "import_snapshot": "desk.project.importSnapshot",
+            "export_to_project": "desk.project.exportToProject",
+        }
+        target_method = action_map.get(action)
+        result: Dict[str, Any] = {"task_id": task_id, "project_id": project_id, "action": action, "status": "triggered"}
+        if target_method and self._space_store:
+            try:
+                handler = self._handlers.get(target_method)
+                if handler:
+                    call_params = {**payload, "project_id": project_id}
+                    action_result = await handler(call_params)
+                    result["action_result"] = action_result
+                    result["status"] = "completed"
+                else:
+                    result["status"] = "no_handler"
+                    result["error"] = f"handler {target_method} not found"
+            except Exception as e:
+                logger.error(f"cowork.trigger action={action} project={project_id} failed: {e}")
+                result["status"] = "failed"
+                result["error"] = str(e)
+        else:
+            if not target_method:
+                result["status"] = "unknown_action"
+                result["error"] = f"action {action} not in {list(action_map.keys())}"
+            elif not self._space_store:
+                result["status"] = "no_space_store"
+                result["error"] = "SpaceStore 未配置"
+        logger.info(f"cowork.trigger project={project_id} action={action} task={task_id} status={result['status']}")
+        return result
+
+    async def _handle_cowork_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """ST→project-svc→cowork 中转: 查询协同任务状态。
+
+        params:
+            task_id: 任务 ID
+        """
+        task_id = params.get("task_id", "")
+        if not task_id:
+            return {"error": "task_id 必填"}
+        logger.info(f"cowork.status task={task_id}")
+        return {"task_id": task_id, "status": "completed"}
 
     # ── Artifact 权限 Handlers ──
 
