@@ -904,17 +904,17 @@ class TestSpaceAPI:
 class TestFusionMLXClientEnhancements:
     """M7.4: FusionMLXClient default port + retry + stream robustness."""
 
-    def test_default_port_is_11434(self):
+    def test_default_port_is_11432(self):
         from fusion_cowork.ai.mlx_client import DEFAULT_MLX_PORT, FusionMLXClient
         client = FusionMLXClient()
-        assert DEFAULT_MLX_PORT == 11434
-        assert "11434" in client.base_url
+        assert DEFAULT_MLX_PORT == 11432
+        assert "11432" in client.base_url
 
     def test_default_base_url(self):
         from fusion_cowork.ai.mlx_client import DEFAULT_MLX_BASE_URL, FusionMLXClient
-        assert DEFAULT_MLX_BASE_URL == "http://localhost:11434/v1"
+        assert DEFAULT_MLX_BASE_URL == "http://localhost:11432/v1"
         client = FusionMLXClient()
-        assert client.base_url == "http://localhost:11434/v1"
+        assert client.base_url == "http://localhost:11432/v1"
 
     def test_custom_base_url_still_works(self):
         from fusion_cowork.ai.mlx_client import FusionMLXClient
