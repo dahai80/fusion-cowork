@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 class WorkflowStatus(Enum):
     """工作流执行状态。"""
+
     PENDING = "pending"
     RUNNING = "running"
     SUCCESS = "success"
@@ -39,6 +40,7 @@ class WorkflowStatus(Enum):
 @dataclass
 class WorkflowStep:
     """工作流中的一步执行记录。"""
+
     node_id: str
     node_name: str
     node_display_name: str
@@ -55,6 +57,7 @@ class WorkflowStep:
 @dataclass
 class WorkflowExecution:
     """工作流执行记录。"""
+
     id: str
     workflow_id: str
     workflow_name: str
@@ -70,10 +73,11 @@ class WorkflowExecution:
 @dataclass
 class Edge:
     """工作流中节点间的连接边。"""
+
     source_id: str
     target_id: str
     source_output: str = "output"  # 源节点的输出端口
-    target_input: str = "input"    # 目标节点的输入端口
+    target_input: str = "input"  # 目标节点的输入端口
     label: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
@@ -135,13 +139,13 @@ class Workflow:
         if node_id not in self.nodes:
             return False
         del self.nodes[node_id]
-        self.edges = [e for e in self.edges
-                      if e.source_id != node_id and e.target_id != node_id]
+        self.edges = [e for e in self.edges if e.source_id != node_id and e.target_id != node_id]
         self.updated_at = time.time()
         return True
 
-    def connect(self, source_id: str, target_id: str,
-                source_output: str = "output", target_input: str = "input") -> bool:
+    def connect(
+        self, source_id: str, target_id: str, source_output: str = "output", target_input: str = "input"
+    ) -> bool:
         """连接两个节点。"""
         if source_id not in self.nodes or target_id not in self.nodes:
             return False
@@ -149,12 +153,14 @@ class Workflow:
         if self._would_create_cycle(source_id, target_id):
             logger.warning(f"连接 {source_id} → {target_id} 会形成环，已阻止")
             return False
-        self.edges.append(Edge(
-            source_id=source_id,
-            target_id=target_id,
-            source_output=source_output,
-            target_input=target_input,
-        ))
+        self.edges.append(
+            Edge(
+                source_id=source_id,
+                target_id=target_id,
+                source_output=source_output,
+                target_input=target_input,
+            )
+        )
         self.updated_at = time.time()
         return True
 
@@ -262,9 +268,13 @@ class Workflow:
             "updated_at": self.updated_at,
             "nodes": {nid: node.to_dict() for nid, node in self.nodes.items()},
             "edges": [
-                {"source_id": e.source_id, "target_id": e.target_id,
-                 "source_output": e.source_output, "target_input": e.target_input,
-                 "label": e.label}
+                {
+                    "source_id": e.source_id,
+                    "target_id": e.target_id,
+                    "source_output": e.source_output,
+                    "target_input": e.target_input,
+                    "label": e.label,
+                }
                 for e in self.edges
             ],
         }
@@ -338,14 +348,21 @@ class WorkflowEngine:
     - 进度回调
     """
 
-    def __init__(self, permission_manager=None, hook_manager=None,
-                 session_store=None, event_emitter=None):
+    def __init__(
+        self,
+        permission_manager=None,
+        hook_manager=None,
+        session_store=None,
+        event_emitter=None,
+        trajectory_recorder=None,
+    ):
         self._executions: Dict[str, WorkflowExecution] = {}
         self._cancel_flags: Dict[str, bool] = {}
         self._progress_callbacks: List[callable] = []
         self._permission_manager = permission_manager
         self._hook_manager = hook_manager
         self._session_store = session_store
+        self._trajectory_recorder = trajectory_recorder
         self._event_emitter = event_emitter
 
     def on_progress(self, callback: callable) -> None:
@@ -382,6 +399,7 @@ class WorkflowEngine:
         session = None
         if self._session_store:
             from .session import Session
+
             session = Session(
                 workflow_id=workflow.id,
                 workflow_name=workflow.name,
@@ -392,9 +410,16 @@ class WorkflowEngine:
             self._session_store.save(session)
             logger.debug(f"Session 自动创建: {session.id}")
 
+        # D1 轨迹飞轮：绑定 session_id 并 attach Hook 处理器
+        if self._trajectory_recorder is not None:
+            if session is not None:
+                self._trajectory_recorder.bind_session(session.id)
+            self._trajectory_recorder.attach()
+
         # Event: WORKFLOW_START
         if self._event_emitter:
             from .events import EventType
+
             self._event_emitter.create_event(
                 EventType.WORKFLOW_START,
                 execution_id=exec_id,
@@ -431,10 +456,14 @@ class WorkflowEngine:
 
         # Hook: WORKFLOW_START
         if self._hook_manager:
-            ctx = await self._hook_manager.fire(HookEvent.WORKFLOW_START, {
-                "execution_id": exec_id, "workflow_id": workflow.id,
-                "workflow_name": workflow.name,
-            })
+            ctx = await self._hook_manager.fire(
+                HookEvent.WORKFLOW_START,
+                {
+                    "execution_id": exec_id,
+                    "workflow_id": workflow.id,
+                    "workflow_name": workflow.name,
+                },
+            )
             if ctx and ctx.cancelled:
                 execution.status = WorkflowStatus.CANCELLED
                 execution.completed_at = time.time()
@@ -488,10 +517,15 @@ class WorkflowEngine:
 
                 # Hook: PRE_NODE_EXECUTE
                 if self._hook_manager:
-                    hctx = await self._hook_manager.fire(HookEvent.PRE_NODE_EXECUTE, {
-                        "execution_id": exec_id, "node_id": node_id,
-                        "node_name": node.name, "input_data": node_input,
-                    })
+                    hctx = await self._hook_manager.fire(
+                        HookEvent.PRE_NODE_EXECUTE,
+                        {
+                            "execution_id": exec_id,
+                            "node_id": node_id,
+                            "node_name": node.name,
+                            "input_data": node_input,
+                        },
+                    )
                     if hctx and hctx.cancelled:
                         logger.info(f"节点 '{node.name}' 被Hook取消")
                         step = WorkflowStep(
@@ -531,9 +565,11 @@ class WorkflowEngine:
                     # Event: NODE_START
                     if self._event_emitter:
                         from .events import EventType
+
                         self._event_emitter.create_event(
                             EventType.NODE_START,
-                            execution_id=exec_id, node_id=node_id,
+                            execution_id=exec_id,
+                            node_id=node_id,
                             node_name=node.name,
                             data={"input_data": node_input},
                         )
@@ -550,10 +586,15 @@ class WorkflowEngine:
 
                     # Hook: POST_NODE_EXECUTE
                     if self._hook_manager:
-                        await self._hook_manager.fire(HookEvent.POST_NODE_EXECUTE, {
-                            "execution_id": exec_id, "node_id": node_id,
-                            "node_name": node.name, "result": result,
-                        })
+                        await self._hook_manager.fire(
+                            HookEvent.POST_NODE_EXECUTE,
+                            {
+                                "execution_id": exec_id,
+                                "node_id": node_id,
+                                "node_name": node.name,
+                                "result": result,
+                            },
+                        )
 
                     # 缓存结果
                     node_results[node_id] = result
@@ -565,19 +606,26 @@ class WorkflowEngine:
                     # Event: NODE_END
                     if self._event_emitter:
                         from .events import EventType
+
                         self._event_emitter.create_event(
                             EventType.NODE_END,
-                            execution_id=exec_id, node_id=node_id,
+                            execution_id=exec_id,
+                            node_id=node_id,
                             node_name=node.name,
                             data={"status": result.status.value},
                         )
 
                     if result.status == NodeStatus.FAILED:
                         if self._hook_manager:
-                            await self._hook_manager.fire(HookEvent.NODE_ERROR, {
-                                "execution_id": exec_id, "node_id": node_id,
-                                "node_name": node.name, "error": result.error,
-                            })
+                            await self._hook_manager.fire(
+                                HookEvent.NODE_ERROR,
+                                {
+                                    "execution_id": exec_id,
+                                    "node_id": node_id,
+                                    "node_name": node.name,
+                                    "error": result.error,
+                                },
+                            )
                         if not node.config.continue_on_error:
                             execution.status = WorkflowStatus.FAILED
                             execution.error = f"节点 '{node.config.label or node.name}' 执行失败: {result.error}"
@@ -594,10 +642,15 @@ class WorkflowEngine:
                     logger.error(f"节点 '{node.config.label or node.name}' 执行异常: {e}")
 
                     if self._hook_manager:
-                        await self._hook_manager.fire(HookEvent.NODE_ERROR, {
-                            "execution_id": exec_id, "node_id": node_id,
-                            "node_name": node.name, "error": str(e),
-                        })
+                        await self._hook_manager.fire(
+                            HookEvent.NODE_ERROR,
+                            {
+                                "execution_id": exec_id,
+                                "node_id": node_id,
+                                "node_name": node.name,
+                                "error": str(e),
+                            },
+                        )
 
                     self._notify_progress(execution, step)
 
@@ -624,18 +677,27 @@ class WorkflowEngine:
             # Hook: WORKFLOW_END / WORKFLOW_CANCEL
             if self._hook_manager:
                 if execution.status == WorkflowStatus.CANCELLED:
-                    await self._hook_manager.fire(HookEvent.WORKFLOW_CANCEL, {
-                        "execution_id": exec_id, "workflow_id": workflow.id,
-                    })
-                await self._hook_manager.fire(HookEvent.WORKFLOW_END, {
-                    "execution_id": exec_id, "workflow_id": workflow.id,
-                    "status": execution.status.value,
-                    "total_time": execution.total_time,
-                })
+                    await self._hook_manager.fire(
+                        HookEvent.WORKFLOW_CANCEL,
+                        {
+                            "execution_id": exec_id,
+                            "workflow_id": workflow.id,
+                        },
+                    )
+                await self._hook_manager.fire(
+                    HookEvent.WORKFLOW_END,
+                    {
+                        "execution_id": exec_id,
+                        "workflow_id": workflow.id,
+                        "status": execution.status.value,
+                        "total_time": execution.total_time,
+                    },
+                )
 
             # Event: WORKFLOW_END
             if self._event_emitter:
                 from .events import EventType
+
                 self._event_emitter.create_event(
                     EventType.WORKFLOW_END,
                     execution_id=exec_id,
@@ -645,7 +707,14 @@ class WorkflowEngine:
             # Session: auto-update
             if session and self._session_store:
                 steps_data = [
-                    {"node_id": s.node_id, "status": s.status.value if hasattr(s.status, "value") else s.status}
+                    {
+                        "node_id": s.node_id,
+                        "node_name": s.node_name,
+                        "status": s.status.value if hasattr(s.status, "value") else s.status,
+                        "execution_time": s.execution_time,
+                        "error": s.error,
+                        "summary": s.summary,
+                    }
                     for s in execution.steps
                 ]
                 self._session_store.update_steps(session.id, steps_data)

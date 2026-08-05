@@ -113,7 +113,7 @@ fusion-cowork desk rpc
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `FUSION_MLX_API_KEY` | `local` | API key for fusion-mlx (must match `auth.api_key` in `~/.fusion-mlx/settings.json`) |
-| `FUSION_MLX_URL` | `http://localhost:11432/v1` | fusion-mlx base URL |
+| `FUSION_MLX_URL` | `http://localhost:11434/v1` | fusion-mlx base URL |
 | `FUSION_RAG_URL` | `http://localhost:11436` | fusion-rag (fusion-kb) base URL |
 
 ```bash
@@ -264,7 +264,7 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 | Component | Protocol | Purpose |
 |-----------|----------|---------|
 | **fusion-mlx** | HTTP API (port 8000) | LLM inference, text generation, embeddings |
-| **Fusion-KB** | HTTP API (port 11432) | Knowledge base semantic search, RAG |
+| **Fusion-KB** | HTTP API (port 11434) | Knowledge base semantic search, RAG |
 | **Fusion-Code** | Auto-generated scripts | Complex logic execution |
 | **Agent-Studio** | Workflow import | Advanced pre-built workflows |
 | **Model-Hub** | Model dispatch | Auto-select optimal local model |
@@ -341,7 +341,7 @@ Plugin system allows extending Fusion-Cowork with custom nodes:
     "version": "1.0.0",
     "description": "Custom nodes",
     "nodes": ["my_custom_node"],
-    "entry_point": "plugin"
+    "entry_point": "plugin",
 }
 ```
 
@@ -552,7 +552,7 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] SpaceChatService — shared context + Agent reply + streaming (SSE)
 - [x] SpaceKBService — fusion-kb binding + document management + RAG search/query
 - [x] SpaceAPI — 18 REST endpoints + SSE event stream (`/spaces/{id}/stream`)
-- [x] FusionMLXClient enhancements — port fix (11432) + retry on transient errors + stream robustness
+- [x] FusionMLXClient enhancements — port fix (11434) + retry on transient errors + stream robustness
 - [x] KBClient completion — create_kb/delete_kb/upload_file/list_documents
 - [x] SharedContext — workflow node access to space messages + KB search/query
 - [x] CLI extensions — `space chat` interactive dialog + `space knowledge bind/status/upload/search/unbind`

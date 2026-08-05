@@ -25,8 +25,21 @@ INDUSTRY_TEMPLATES: List[Dict[str, Any]] = [
         "workflow": {
             "name": "设计素材自动整理",
             "nodes": [
-                {"id": "n1", "name": "file_input", "config": {"params": {"path": "~/Desktop/设计素材", "file_patterns": "*.psd,*.ai,*.sketch,*.fig,*.png,*.jpg,*.svg"}}},
-                {"id": "n2", "name": "file_classifier", "config": {"params": {"move_to_subdirs": True, "target_base": "~/Desktop/设计素材_已归档"}}},
+                {
+                    "id": "n1",
+                    "name": "file_input",
+                    "config": {
+                        "params": {
+                            "path": "~/Desktop/设计素材",
+                            "file_patterns": "*.psd,*.ai,*.sketch,*.fig,*.png,*.jpg,*.svg",
+                        }
+                    },
+                },
+                {
+                    "id": "n2",
+                    "name": "file_classifier",
+                    "config": {"params": {"move_to_subdirs": True, "target_base": "~/Desktop/设计素材_已归档"}},
+                },
             ],
             "edges": [{"source_id": "n1", "target_id": "n2"}],
         },
@@ -42,8 +55,16 @@ INDUSTRY_TEMPLATES: List[Dict[str, Any]] = [
         "workflow": {
             "name": "设计稿批量导出",
             "nodes": [
-                {"id": "n1", "name": "file_input", "config": {"params": {"path": "~/Desktop/设计稿", "file_patterns": "*.sketch,*.fig"}}},
-                {"id": "n2", "name": "file_copy", "config": {"params": {"destination": "~/Desktop/设计稿_导出", "create_subdir": True}}},
+                {
+                    "id": "n1",
+                    "name": "file_input",
+                    "config": {"params": {"path": "~/Desktop/设计稿", "file_patterns": "*.sketch,*.fig"}},
+                },
+                {
+                    "id": "n2",
+                    "name": "file_copy",
+                    "config": {"params": {"destination": "~/Desktop/设计稿_导出", "create_subdir": True}},
+                },
             ],
             "edges": [{"source_id": "n1", "target_id": "n2"}],
         },
@@ -61,7 +82,18 @@ INDUSTRY_TEMPLATES: List[Dict[str, Any]] = [
             "name": "项目代码清理",
             "nodes": [
                 {"id": "n1", "name": "file_input", "config": {"params": {"path": "~/Projects", "recursive": True}}},
-                {"id": "n2", "name": "disk_cleaner", "config": {"params": {"clean_pycache": True, "clean_ds_store": True, "clean_node_modules": True, "dry_run": True}}},
+                {
+                    "id": "n2",
+                    "name": "disk_cleaner",
+                    "config": {
+                        "params": {
+                            "clean_pycache": True,
+                            "clean_ds_store": True,
+                            "clean_node_modules": True,
+                            "dry_run": True,
+                        }
+                    },
+                },
             ],
             "edges": [{"source_id": "n1", "target_id": "n2"}],
         },
@@ -78,9 +110,21 @@ INDUSTRY_TEMPLATES: List[Dict[str, Any]] = [
         "workflow": {
             "name": "日志智能分析",
             "nodes": [
-                {"id": "n1", "name": "file_input", "config": {"params": {"path": "~/Desktop/logs", "file_patterns": "*.log,*.log.*"}}},
-                {"id": "n2", "name": "ai_summarize", "config": {"params": {"model": "", "extract_keywords": True, "extract_conclusions": True}}},
-                {"id": "n3", "name": "file_output", "config": {"params": {"output_path": "~/Desktop/日志分析报告", "format": "markdown"}}},
+                {
+                    "id": "n1",
+                    "name": "file_input",
+                    "config": {"params": {"path": "~/Desktop/logs", "file_patterns": "*.log,*.log.*"}},
+                },
+                {
+                    "id": "n2",
+                    "name": "ai_summarize",
+                    "config": {"params": {"model": "", "extract_keywords": True, "extract_conclusions": True}},
+                },
+                {
+                    "id": "n3",
+                    "name": "file_output",
+                    "config": {"params": {"output_path": "~/Desktop/日志分析报告", "format": "markdown"}},
+                },
             ],
             "edges": [{"source_id": "n1", "target_id": "n2"}, {"source_id": "n2", "target_id": "n3"}],
         },
@@ -96,8 +140,18 @@ INDUSTRY_TEMPLATES: List[Dict[str, Any]] = [
         "workflow": {
             "name": "项目初始化脚手架",
             "nodes": [
-                {"id": "n1", "name": "shell_exec", "config": {"params": {"command": "mkdir -p src tests docs", "workdir": "~/Desktop/新项目"}}},
-                {"id": "n2", "name": "file_output", "config": {"params": {"output_path": "~/Desktop/新项目", "file_name": "README", "format": "markdown"}}},
+                {
+                    "id": "n1",
+                    "name": "shell_exec",
+                    "config": {"params": {"command": "mkdir -p src tests docs", "workdir": "~/Desktop/新项目"}},
+                },
+                {
+                    "id": "n2",
+                    "name": "file_output",
+                    "config": {
+                        "params": {"output_path": "~/Desktop/新项目", "file_name": "README", "format": "markdown"}
+                    },
+                },
             ],
             "edges": [{"source_id": "n1", "target_id": "n2"}],
         },
@@ -114,9 +168,26 @@ INDUSTRY_TEMPLATES: List[Dict[str, Any]] = [
         "workflow": {
             "name": "CSV 数据清洗",
             "nodes": [
-                {"id": "n1", "name": "file_input", "config": {"params": {"path": "~/Desktop/data", "file_patterns": "*.csv"}}},
-                {"id": "n2", "name": "python_repl", "config": {"params": {"code": "import pandas as pd; df = pd.read_csv('input.csv'); df = df.drop_duplicates().fillna('N/A'); df.to_csv('output_clean.csv', index=False)", "timeout": 30}}},
-                {"id": "n3", "name": "file_output", "config": {"params": {"output_path": "~/Desktop/清洗结果", "format": "csv"}}},
+                {
+                    "id": "n1",
+                    "name": "file_input",
+                    "config": {"params": {"path": "~/Desktop/data", "file_patterns": "*.csv"}},
+                },
+                {
+                    "id": "n2",
+                    "name": "python_repl",
+                    "config": {
+                        "params": {
+                            "code": "import pandas as pd; df = pd.read_csv('input.csv'); df = df.drop_duplicates().fillna('N/A'); df.to_csv('output_clean.csv', index=False)",
+                            "timeout": 30,
+                        }
+                    },
+                },
+                {
+                    "id": "n3",
+                    "name": "file_output",
+                    "config": {"params": {"output_path": "~/Desktop/清洗结果", "format": "csv"}},
+                },
             ],
             "edges": [{"source_id": "n1", "target_id": "n2"}, {"source_id": "n2", "target_id": "n3"}],
         },
@@ -132,8 +203,16 @@ INDUSTRY_TEMPLATES: List[Dict[str, Any]] = [
         "workflow": {
             "name": "数据格式批量转换",
             "nodes": [
-                {"id": "n1", "name": "file_input", "config": {"params": {"path": "~/Desktop/data", "file_patterns": "*.csv,*.json"}}},
-                {"id": "n2", "name": "file_output", "config": {"params": {"output_path": "~/Desktop/转换结果", "format": "csv"}}},
+                {
+                    "id": "n1",
+                    "name": "file_input",
+                    "config": {"params": {"path": "~/Desktop/data", "file_patterns": "*.csv,*.json"}},
+                },
+                {
+                    "id": "n2",
+                    "name": "file_output",
+                    "config": {"params": {"output_path": "~/Desktop/转换结果", "format": "csv"}},
+                },
             ],
             "edges": [{"source_id": "n1", "target_id": "n2"}],
         },
@@ -150,8 +229,27 @@ INDUSTRY_TEMPLATES: List[Dict[str, Any]] = [
         "workflow": {
             "name": "系统状态巡检",
             "nodes": [
-                {"id": "n1", "name": "shell_exec", "config": {"params": {"command": "df -h && echo '---' && free -h && echo '---' && top -l 1 -n 0", "timeout": 10}}},
-                {"id": "n2", "name": "file_output", "config": {"params": {"output_path": "~/Desktop/巡检报告", "file_name": "系统巡检_{date}", "format": "markdown"}}},
+                {
+                    "id": "n1",
+                    "name": "shell_exec",
+                    "config": {
+                        "params": {
+                            "command": "df -h && echo '---' && free -h && echo '---' && top -l 1 -n 0",
+                            "timeout": 10,
+                        }
+                    },
+                },
+                {
+                    "id": "n2",
+                    "name": "file_output",
+                    "config": {
+                        "params": {
+                            "output_path": "~/Desktop/巡检报告",
+                            "file_name": "系统巡检_{date}",
+                            "format": "markdown",
+                        }
+                    },
+                },
             ],
             "edges": [{"source_id": "n1", "target_id": "n2"}],
         },
@@ -167,8 +265,22 @@ INDUSTRY_TEMPLATES: List[Dict[str, Any]] = [
         "workflow": {
             "name": "重要文件自动备份",
             "nodes": [
-                {"id": "n1", "name": "file_input", "config": {"params": {"path": "~/Documents/重要文件", "recursive": True}}},
-                {"id": "n2", "name": "file_copy", "config": {"params": {"destination": "~/Backups/重要文件", "preserve_metadata": True, "create_subdir": True}}},
+                {
+                    "id": "n1",
+                    "name": "file_input",
+                    "config": {"params": {"path": "~/Documents/重要文件", "recursive": True}},
+                },
+                {
+                    "id": "n2",
+                    "name": "file_copy",
+                    "config": {
+                        "params": {
+                            "destination": "~/Backups/重要文件",
+                            "preserve_metadata": True,
+                            "create_subdir": True,
+                        }
+                    },
+                },
             ],
             "edges": [{"source_id": "n1", "target_id": "n2"}],
         },
@@ -184,8 +296,18 @@ INDUSTRY_TEMPLATES: List[Dict[str, Any]] = [
         "workflow": {
             "name": "磁盘空间预警",
             "nodes": [
-                {"id": "n1", "name": "shell_exec", "config": {"params": {"command": "df -h / | tail -1 | awk '{print $5}' | sed 's/%//'", "timeout": 5}}},
-                {"id": "n2", "name": "disk_cleaner", "config": {"params": {"clean_cache": True, "clean_temp": True, "dry_run": True}}},
+                {
+                    "id": "n1",
+                    "name": "shell_exec",
+                    "config": {
+                        "params": {"command": "df -h / | tail -1 | awk '{print $5}' | sed 's/%//'", "timeout": 5}
+                    },
+                },
+                {
+                    "id": "n2",
+                    "name": "disk_cleaner",
+                    "config": {"params": {"clean_cache": True, "clean_temp": True, "dry_run": True}},
+                },
             ],
             "edges": [{"source_id": "n1", "target_id": "n2"}],
         },

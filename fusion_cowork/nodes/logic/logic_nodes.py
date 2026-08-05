@@ -24,6 +24,7 @@ class FilterNode(BaseNode):
 
     支持按文件类型、大小、日期、名称等维度过滤。
     """
+
     name = "filter"
     display_name = "条件过滤"
     category = NodeCategory.LOGIC
@@ -47,7 +48,15 @@ class FilterNode(BaseNode):
             "properties": {
                 "filter_type": {
                     "type": "string",
-                    "enum": ["extension", "name_pattern", "min_size", "max_size", "date_after", "date_before", "custom"],
+                    "enum": [
+                        "extension",
+                        "name_pattern",
+                        "min_size",
+                        "max_size",
+                        "date_after",
+                        "date_before",
+                        "custom",
+                    ],
                     "default": "extension",
                 },
                 "filter_value": {"type": "string", "default": ".pdf,.docx,.md", "description": "过滤值"},
@@ -80,7 +89,11 @@ class FilterNode(BaseNode):
         filtered = []
 
         for item in items:
-            item_str = str(item) if not isinstance(item, dict) else item.get("name", item.get("file_name", str(item.get("path", ""))))
+            item_str = (
+                str(item)
+                if not isinstance(item, dict)
+                else item.get("name", item.get("file_name", str(item.get("path", ""))))
+            )
             item_path = Path(item_str) if item_str else Path()
 
             match = self._matches_filter(item, item_str, item_path, filter_type, filter_value, case_sensitive)
@@ -104,8 +117,9 @@ class FilterNode(BaseNode):
             summary=f"通过 {len(passed)}/{len(passed) + len(filtered)} 项",
         )
 
-    def _matches_filter(self, item: Any, item_str: str, item_path: Path,
-                        filter_type: str, filter_value: str, case_sensitive: bool) -> bool:
+    def _matches_filter(
+        self, item: Any, item_str: str, item_path: Path, filter_type: str, filter_value: str, case_sensitive: bool
+    ) -> bool:
         """检查单个项是否匹配过滤条件。"""
         if not filter_value:
             return True
@@ -159,6 +173,7 @@ class LoopNode(BaseNode):
 
     注意：LoopNode 在 V0.1 中作为单次批量处理，不支持真正的循环展开。
     """
+
     name = "loop"
     display_name = "循环处理"
     category = NodeCategory.LOGIC
@@ -196,7 +211,7 @@ class LoopNode(BaseNode):
         params = self.config.params
 
         if not isinstance(items, list):
-            items = list(items) if hasattr(items, '__iter__') else [items]
+            items = list(items) if hasattr(items, "__iter__") else [items]
 
         _batch_size = params.get("batch_size", 50)
         max_items = params.get("max_items", 1000)
@@ -216,13 +231,15 @@ class LoopNode(BaseNode):
                 elif operation == "collect_metadata":
                     p = Path(item) if isinstance(item, str) else Path(item.get("path", str(item)))
                     if p.exists():
-                        results.append({
-                            "name": p.name,
-                            "path": str(p),
-                            "size": p.stat().st_size if p.is_file() else 0,
-                            "modified": p.stat().st_mtime,
-                            "is_dir": p.is_dir(),
-                        })
+                        results.append(
+                            {
+                                "name": p.name,
+                                "path": str(p),
+                                "size": p.stat().st_size if p.is_file() else 0,
+                                "modified": p.stat().st_mtime,
+                                "is_dir": p.is_dir(),
+                            }
+                        )
                         success_count += 1
                 elif operation == "extract_field":
                     if isinstance(item, dict):
@@ -252,6 +269,7 @@ class LoopNode(BaseNode):
 @register_node
 class MergeNode(BaseNode):
     """数据合并节点 — 合并多个上游节点的数据。"""
+
     name = "merge"
     display_name = "数据合并"
     category = NodeCategory.LOGIC

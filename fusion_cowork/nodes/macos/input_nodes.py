@@ -42,6 +42,7 @@ def _try_pyobjc_click(x: int, y: int, button: str = "left", click_count: int = 1
             kCGMouseButtonRight,
             kCGMouseEventClickState,
         )
+
         btn_map = {
             "left": (kCGEventLeftMouseDown, kCGEventLeftMouseUp, kCGMouseButtonLeft),
             "right": (kCGEventRightMouseDown, kCGEventRightMouseUp, kCGMouseButtonRight),
@@ -75,6 +76,7 @@ def _try_pyobjc_move(x: int, y: int) -> bool:
             kCGHIDEventTap,
             kCGMouseButtonLeft,
         )
+
         event = CGEventCreateMouseEvent(None, kCGEventMouseMoved, (x, y), kCGMouseButtonLeft)
         CGEventPost(kCGHIDEventTap, event)
         return True
@@ -95,6 +97,7 @@ def _try_pyobjc_type(text: str) -> bool:
             kCGEventSourceStateHIDSystemState,
             kCGHIDEventTap,
         )
+
         source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState)
         for ch in text:
             code = ord(ch)
@@ -116,11 +119,11 @@ def _applescript_click(x: int, y: int, button: str = "left", click_count: int = 
         click_cmd = "right click at"
     elif click_count >= 2:
         click_cmd = "double click at"
-    script = f'''
+    script = f"""
     tell application "System Events"
         {click_cmd} {{{x}, {y}}}
     end tell
-    '''
+    """
     return _run_osascript(script)
 
 
@@ -129,7 +132,7 @@ def _applescript_move(x: int, y: int) -> Tuple[int, str]:
 
 
 def _applescript_type(text: str) -> Tuple[int, str]:
-    escaped = text.replace('"', '\\"').replace('\\', '\\\\')
+    escaped = text.replace('"', '\\"').replace("\\", "\\\\")
     script = f'''
     tell application "System Events"
         keystroke "{escaped}"
@@ -142,11 +145,11 @@ def _applescript_key_code(key_code: int, modifiers: List[str] = None) -> Tuple[i
     mod_str = ""
     if modifiers:
         mod_str = " using {" + ", ".join(f"{m} down" for m in modifiers) + "}"
-    script = f'''
+    script = f"""
     tell application "System Events"
         key code {key_code}{mod_str}
     end tell
-    '''
+    """
     return _run_osascript(script)
 
 
@@ -163,23 +166,45 @@ def _applescript_keystroke(key: str, modifiers: List[str] = None) -> Tuple[int, 
 
 
 _KEY_MAP = {
-    "enter": 36, "return": 36,
-    "tab": 48, "escape": 53, "esc": 53,
-    "delete": 51, "backspace": 51,
+    "enter": 36,
+    "return": 36,
+    "tab": 48,
+    "escape": 53,
+    "esc": 53,
+    "delete": 51,
+    "backspace": 51,
     "forward_delete": 117,
-    "home": 115, "end": 119,
-    "page_up": 116, "page_down": 121,
-    "left": 123, "right": 124, "up": 126, "down": 125,
-    "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96,
-    "f6": 97, "f7": 98, "f8": 100, "f9": 101, "f10": 109,
-    "f11": 103, "f12": 111,
+    "home": 115,
+    "end": 119,
+    "page_up": 116,
+    "page_down": 121,
+    "left": 123,
+    "right": 124,
+    "up": 126,
+    "down": 125,
+    "f1": 122,
+    "f2": 120,
+    "f3": 99,
+    "f4": 118,
+    "f5": 96,
+    "f6": 97,
+    "f7": 98,
+    "f8": 100,
+    "f9": 101,
+    "f10": 109,
+    "f11": 103,
+    "f12": 111,
     "space": 49,
 }
 
 _MOD_MAP = {
-    "cmd": "command", "command": "command",
-    "shift": "shift", "ctrl": "control", "control": "control",
-    "alt": "option", "option": "option",
+    "cmd": "command",
+    "command": "command",
+    "shift": "shift",
+    "ctrl": "control",
+    "control": "control",
+    "alt": "option",
+    "option": "option",
 }
 
 
@@ -238,7 +263,12 @@ class MouseClickNode(BaseNode):
             "properties": {
                 "x": {"type": "integer", "description": "X 坐标 (像素), 不指定则点击当前位置"},
                 "y": {"type": "integer", "description": "Y 坐标 (像素)"},
-                "button": {"type": "string", "enum": ["left", "right", "middle"], "default": "left", "description": "鼠标按键"},
+                "button": {
+                    "type": "string",
+                    "enum": ["left", "right", "middle"],
+                    "default": "left",
+                    "description": "鼠标按键",
+                },
                 "click_count": {"type": "integer", "default": 1, "description": "点击次数 (1=单击, 2=双击)"},
             },
             "required": [],
@@ -408,9 +438,13 @@ class ComputerUseLoopNode(BaseNode):
             steps_taken += 1
             logger.info(f"computer_use step {step + 1}/{max_steps}")
 
-            capture = ScreenCaptureNode(config=NodeConfig(params={
-                "output_dir": self.config.params.get("screenshot_path", ""),
-            }))
+            capture = ScreenCaptureNode(
+                config=NodeConfig(
+                    params={
+                        "output_dir": self.config.params.get("screenshot_path", ""),
+                    }
+                )
+            )
             cap_result = await capture.execute({})
 
             if cap_result.status != NodeStatus.SUCCESS:
@@ -435,10 +469,10 @@ class ComputerUseLoopNode(BaseNode):
                 f"如果未完成，回复需要执行的操作，格式:\n"
                 f"ACTION: <操作类型> PARAMS: <参数JSON>\n\n"
                 f"操作类型:\n"
-                f"- mouse_move: PARAMS: {{\"x\": 数字, \"y\": 数字}}\n"
-                f"- mouse_click: PARAMS: {{\"x\": 数字, \"y\": 数字, \"button\": \"left/right\"}}\n"
-                f"- keyboard_type: PARAMS: {{\"text\": \"要输入的文本\"}}\n"
-                f"- keyboard_shortcut: PARAMS: {{\"key\": \"按键\", \"modifiers\": [\"cmd\"]}}\n"
+                f'- mouse_move: PARAMS: {{"x": 数字, "y": 数字}}\n'
+                f'- mouse_click: PARAMS: {{"x": 数字, "y": 数字, "button": "left/right"}}\n'
+                f'- keyboard_type: PARAMS: {{"text": "要输入的文本"}}\n'
+                f'- keyboard_shortcut: PARAMS: {{"key": "按键", "modifiers": ["cmd"]}}\n'
             )
 
             try:

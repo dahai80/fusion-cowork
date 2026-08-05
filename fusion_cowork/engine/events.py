@@ -5,6 +5,7 @@ EventEmitter 支持：
 - SSE 推送到 HTTP 客户端
 - 事件缓冲（断线重连后回放）
 """
+
 import asyncio
 import json
 import logging
@@ -78,7 +79,7 @@ class EventEmitter:
     def emit(self, event: WorkflowEvent):
         self._buffer.append(event)
         if len(self._buffer) > self._buffer_size:
-            self._buffer = self._buffer[-self._buffer_size:]
+            self._buffer = self._buffer[-self._buffer_size :]
         for sub_id, queue in self._subscribers.items():
             try:
                 queue.put_nowait(event)

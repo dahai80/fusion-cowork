@@ -37,9 +37,7 @@ class SpaceArtifactService:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         if not await self._perm.check(space_id, owner_user_id, "edit_artifact"):
-            raise PermissionError(
-                f"User {owner_user_id} cannot create artifact in space {space_id}"
-            )
+            raise PermissionError(f"User {owner_user_id} cannot create artifact in space {space_id}")
         db = await self._store._ensure_db()
         artifact_id = f"art_{uuid.uuid4().hex[:8]}"
         now = datetime.now().isoformat()
@@ -48,25 +46,39 @@ class SpaceArtifactService:
             "(id, space_id, name, artifact_type, content, owner_user_id, "
             "metadata, version, created_by, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
-            (artifact_id, space_id, name, artifact_type, content,
-             owner_user_id, json.dumps(metadata or {}, ensure_ascii=False),
-             owner_user_id, now, now),
+            (
+                artifact_id,
+                space_id,
+                name,
+                artifact_type,
+                content,
+                owner_user_id,
+                json.dumps(metadata or {}, ensure_ascii=False),
+                owner_user_id,
+                now,
+                now,
+            ),
         )
         await db.commit()
         logger.info(f"SpaceArtifactService.create_artifact id={artifact_id} space={space_id}")
         return {
-            "id": artifact_id, "space_id": space_id,
-            "owner_user_id": owner_user_id, "artifact_type": artifact_type,
-            "name": name, "version": 1, "created_at": now,
+            "id": artifact_id,
+            "space_id": space_id,
+            "owner_user_id": owner_user_id,
+            "artifact_type": artifact_type,
+            "name": name,
+            "version": 1,
+            "created_at": now,
         }
 
     async def get_artifact(
-        self, space_id: str, artifact_id: str, user_id: str,
+        self,
+        space_id: str,
+        artifact_id: str,
+        user_id: str,
     ) -> Optional[Dict[str, Any]]:
         if not await self._perm.check(space_id, user_id, "view_artifact"):
-            raise PermissionError(
-                f"User {user_id} cannot view artifact in space {space_id}"
-            )
+            raise PermissionError(f"User {user_id} cannot view artifact in space {space_id}")
         db = await self._store._ensure_db()
         cursor = await db.execute(
             "SELECT * FROM space_artifacts WHERE id = ? AND space_id = ?",
@@ -85,9 +97,7 @@ class SpaceArtifactService:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         if not await self._perm.check(space_id, user_id, "edit_artifact"):
-            raise PermissionError(
-                f"User {user_id} cannot edit artifact in space {space_id}"
-            )
+            raise PermissionError(f"User {user_id} cannot edit artifact in space {space_id}")
         db = await self._store._ensure_db()
         cursor = await db.execute(
             "SELECT * FROM space_artifacts WHERE id = ? AND space_id = ?",
@@ -99,9 +109,7 @@ class SpaceArtifactService:
         art = dict(row)
         if art["owner_user_id"] != user_id:
             if not await self._perm.is_owner_or_admin(space_id, user_id):
-                raise PermissionError(
-                    f"Only artifact owner or admin can edit: {artifact_id}"
-                )
+                raise PermissionError(f"Only artifact owner or admin can edit: {artifact_id}")
         now = datetime.now().isoformat()
         new_version = (art.get("version", 1) or 1) + 1
         sets = ["version = ?", "updated_at = ?"]
@@ -125,12 +133,13 @@ class SpaceArtifactService:
         return {"id": artifact_id, "version": new_version, "updated_at": now}
 
     async def share_artifact(
-        self, space_id: str, artifact_id: str, user_id: str,
+        self,
+        space_id: str,
+        artifact_id: str,
+        user_id: str,
     ) -> Dict[str, Any]:
         if not await self._perm.check(space_id, user_id, "share_artifact"):
-            raise PermissionError(
-                f"User {user_id} cannot share artifact in space {space_id}"
-            )
+            raise PermissionError(f"User {user_id} cannot share artifact in space {space_id}")
         db = await self._store._ensure_db()
         cursor = await db.execute(
             "SELECT owner_user_id FROM space_artifacts WHERE id = ? AND space_id = ?",
@@ -147,12 +156,14 @@ class SpaceArtifactService:
         return {"artifact_id": artifact_id, "share_code": share_code}
 
     async def transfer_ownership(
-        self, space_id: str, artifact_id: str, from_user_id: str, to_user_id: str,
+        self,
+        space_id: str,
+        artifact_id: str,
+        from_user_id: str,
+        to_user_id: str,
     ) -> Dict[str, Any]:
         if not await self._perm.check(space_id, from_user_id, "transfer_artifact"):
-            raise PermissionError(
-                f"User {from_user_id} cannot transfer artifact in space {space_id}"
-            )
+            raise PermissionError(f"User {from_user_id} cannot transfer artifact in space {space_id}")
         db = await self._store._ensure_db()
         cursor = await db.execute(
             "SELECT owner_user_id FROM space_artifacts WHERE id = ? AND space_id = ?",
@@ -174,12 +185,13 @@ class SpaceArtifactService:
         return {"artifact_id": artifact_id, "new_owner": to_user_id}
 
     async def list_artifacts(
-        self, space_id: str, user_id: str, artifact_type: str = "",
+        self,
+        space_id: str,
+        user_id: str,
+        artifact_type: str = "",
     ) -> List[Dict[str, Any]]:
         if not await self._perm.check(space_id, user_id, "view_artifact"):
-            raise PermissionError(
-                f"User {user_id} cannot list artifacts in space {space_id}"
-            )
+            raise PermissionError(f"User {user_id} cannot list artifacts in space {space_id}")
         db = await self._store._ensure_db()
         if artifact_type:
             cursor = await db.execute(
@@ -195,7 +207,10 @@ class SpaceArtifactService:
         return [dict(r) for r in rows]
 
     async def delete_artifact(
-        self, space_id: str, artifact_id: str, user_id: str,
+        self,
+        space_id: str,
+        artifact_id: str,
+        user_id: str,
     ) -> bool:
         if not await self._perm.is_owner_or_admin(space_id, user_id):
             return False

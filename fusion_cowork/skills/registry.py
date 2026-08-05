@@ -74,9 +74,11 @@ class SkillRegistry:
         for skill in self._skills.values():
             if skill.name in seen:
                 continue
-            if (query in skill.name.lower()
-                    or query in skill.description.lower()
-                    or any(query in a.lower() for a in skill.aliases)):
+            if (
+                query in skill.name.lower()
+                or query in skill.description.lower()
+                or any(query in a.lower() for a in skill.aliases)
+            ):
                 results.append(skill)
                 seen.add(skill.name)
         return results

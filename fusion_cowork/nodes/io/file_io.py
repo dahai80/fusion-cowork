@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 @register_node
 class FileInputNode(BaseNode):
     """文件输入节点 — 读取文件列表或目录内容作为工作流输入。"""
+
     name = "file_input"
     display_name = "文件输入"
     category = NodeCategory.IO
@@ -77,6 +78,7 @@ class FileInputNode(BaseNode):
         sort_order = params.get("sort_order", "asc")
 
         import fnmatch
+
         files = []
 
         if path.is_file():
@@ -135,6 +137,7 @@ class FileInputNode(BaseNode):
 @register_node
 class FileOutputNode(BaseNode):
     """文件输出节点 — 将工作流结果写入文件。"""
+
     name = "file_output"
     display_name = "文件输出"
     category = NodeCategory.IO
@@ -174,6 +177,7 @@ class FileOutputNode(BaseNode):
         out_dir.mkdir(parents=True, exist_ok=True)
 
         import time
+
         date_str = time.strftime("%Y%m%d_%H%M%S")
         actual_name = file_name.replace("{date}", date_str)
 
@@ -187,6 +191,7 @@ class FileOutputNode(BaseNode):
         try:
             if fmt == "json":
                 import json as j
+
                 out_path.write_text(j.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
             elif fmt == "markdown":
                 content = self._to_markdown(data)
@@ -223,7 +228,7 @@ class FileOutputNode(BaseNode):
         if isinstance(data, list):
             lines = ["# 处理报告\n"]
             for i, item in enumerate(data):
-                lines.append(f"## 条目 {i+1}")
+                lines.append(f"## 条目 {i + 1}")
                 lines.append(f"```json\n{json.dumps(item, ensure_ascii=False, indent=2)}\n```")
                 lines.append("")
             return "\n".join(lines)
@@ -233,6 +238,7 @@ class FileOutputNode(BaseNode):
         if isinstance(data, list) and data:
             import csv
             import io
+
             output = io.StringIO()
             if isinstance(data[0], dict):
                 writer = csv.DictWriter(output, fieldnames=data[0].keys())

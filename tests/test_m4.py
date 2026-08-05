@@ -1,4 +1,5 @@
 """M4 里程碑测试 — DeskRPC事件/会话/权限 + Computer Use + 远程控制 + 结构化输出。"""
+
 import json
 import os
 import tempfile
@@ -28,6 +29,7 @@ class _OkNode(BaseNode):
 
 
 # ── DeskRPC 事件 ──
+
 
 class TestDeskRPCEvents:
     @pytest.mark.asyncio
@@ -66,6 +68,7 @@ class TestDeskRPCEvents:
 
 
 # ── DeskRPC 会话 ──
+
 
 class TestDeskRPCSession:
     def setup_method(self):
@@ -107,6 +110,7 @@ class TestDeskRPCSession:
 
 
 # ── DeskRPC 权限 ──
+
 
 class TestDeskRPCPermission:
     @pytest.mark.asyncio
@@ -155,6 +159,7 @@ class TestDeskRPCPermission:
 
 # ── DeskRPC 构造器 ──
 
+
 class TestDeskRPCConstructor:
     def test_accepts_all_m2_modules(self):
         pm = PermissionManager()
@@ -162,8 +167,10 @@ class TestDeskRPCConstructor:
         em = EventEmitter()
         store = SessionStore(db_path=tempfile.mktemp(suffix=".db"))
         rpc = DeskRPCServer(
-            permission_manager=pm, hook_manager=hm,
-            event_emitter=em, session_store=store,
+            permission_manager=pm,
+            hook_manager=hm,
+            event_emitter=em,
+            session_store=store,
         )
         assert rpc._permission_manager is pm
         assert rpc._hook_manager is hm
@@ -177,11 +184,13 @@ class TestDeskRPCConstructor:
 
 # ── CLI 权限命令 ──
 
+
 class TestCLIPermission:
     def test_permission_level_command(self):
         from click.testing import CliRunner
 
         from fusion_cowork.cli import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["permission", "level", "auto"])
         assert result.exit_code == 0
@@ -191,6 +200,7 @@ class TestCLIPermission:
         from click.testing import CliRunner
 
         from fusion_cowork.cli import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["permission", "list"])
         assert result.exit_code == 0
@@ -359,6 +369,7 @@ class TestRemoteControlClient:
 
 # ── M4: 结构化输出 ──
 
+
 class TestOutputSchema:
     def test_validate_object_pass(self):
         schema = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
@@ -380,7 +391,10 @@ class TestOutputSchema:
         assert OutputSchema.validate({"any": "data"}, {}) is True
 
     def test_validate_nested(self):
-        schema = {"type": "object", "properties": {"u": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}}}
+        schema = {
+            "type": "object",
+            "properties": {"u": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}},
+        }
         assert OutputSchema.validate({"u": {"id": 1}}, schema) is True
         assert OutputSchema.validate({"u": {"id": "bad"}}, schema) is False
 
@@ -405,11 +419,13 @@ class TestNodeResultValidate:
 
 # ── M4: CLI 命令 ──
 
+
 class TestCLICommandsM4:
     def test_computer_use_group(self):
         from click.testing import CliRunner
 
         from fusion_cowork.cli import cli
+
         result = CliRunner().invoke(cli, ["computer-use", "--help"])
         assert result.exit_code == 0
         assert "move" in result.output
@@ -418,6 +434,7 @@ class TestCLICommandsM4:
         from click.testing import CliRunner
 
         from fusion_cowork.cli import cli
+
         result = CliRunner().invoke(cli, ["remote", "--help"])
         assert result.exit_code == 0
         assert "serve" in result.output
@@ -426,6 +443,7 @@ class TestCLICommandsM4:
         from click.testing import CliRunner
 
         from fusion_cowork.cli import cli
+
         result = CliRunner().invoke(cli, ["schema", "--help"])
         assert result.exit_code == 0
         assert "validate" in result.output
@@ -434,6 +452,7 @@ class TestCLICommandsM4:
         from click.testing import CliRunner
 
         from fusion_cowork.cli import cli
+
         result = CliRunner().invoke(cli, ["schema", "check", "mouse_move"])
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -443,17 +462,21 @@ class TestCLICommandsM4:
 class TestLazyImportsM4:
     def test_mouse_move_lazy(self):
         from fusion_cowork import MouseMoveNode
+
         assert MouseMoveNode is not None
 
     def test_remote_server_lazy(self):
         from fusion_cowork import RemoteControlServer
+
         assert RemoteControlServer is not None
 
     def test_output_schema_lazy(self):
         from fusion_cowork import OutputSchema
+
         assert OutputSchema is not None
 
     def test_node_name_aliases_m4(self):
         from fusion_cowork import NODE_NAME_ALIASES
+
         assert NODE_NAME_ALIASES.get("鼠标移动") == "mouse_move"
         assert NODE_NAME_ALIASES.get("Computer Use") == "computer_use_loop"

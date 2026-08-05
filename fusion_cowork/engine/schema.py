@@ -17,6 +17,7 @@ class OutputSchema:
     def validate(data: Any, schema: Dict[str, Any]) -> bool:
         try:
             import jsonschema
+
             jsonschema.validate(instance=data, schema=schema)
             return True
         except ImportError:
@@ -31,6 +32,7 @@ class OutputSchema:
         errors = []
         try:
             import jsonschema
+
             validator = jsonschema.Draft7Validator(schema)
             for err in sorted(validator.iter_errors(data), key=lambda e: list(e.path)):
                 errors.append(f"{'.'.join(str(p) for p in err.absolute_path)}: {err.message}")

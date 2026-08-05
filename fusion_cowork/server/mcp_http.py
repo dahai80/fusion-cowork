@@ -95,9 +95,15 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
         if not handler:
             if req_id is not None:
                 return JSONResponse(
-                    {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"Method not found: {method}"}}
+                    {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "error": {"code": -32601, "message": f"Method not found: {method}"},
+                    }
                 )
-            return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32601, "message": "Method not found"}})
+            return JSONResponse(
+                {"jsonrpc": "2.0", "id": None, "error": {"code": -32601, "message": "Method not found"}}
+            )
 
         if method not in ("initialize", "initialized", "ping") and not _initialized:
             if req_id is not None:
@@ -126,6 +132,7 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
     @app.get("/sse")
     async def sse_endpoint(request: Request):
         """SSE 推送通道 — 订阅 EventEmitter 事件流。"""
+
         async def event_stream():
             if _event_emitter:
                 sub_id, queue = _event_emitter.subscribe()

@@ -22,8 +22,7 @@ _LEVEL_ICON = {
 class ReportRenderer:
     """对比报告渲染器。"""
 
-    def __init__(self, matrix: Optional[CapabilityMatrix] = None,
-                 runner: Optional[BenchmarkRunner] = None):
+    def __init__(self, matrix: Optional[CapabilityMatrix] = None, runner: Optional[BenchmarkRunner] = None):
         self._matrix = matrix or CapabilityMatrix()
         self._runner = runner
 
@@ -56,8 +55,7 @@ class ReportRenderer:
                 lines.append(f"| {c.name} | {cw} | {dk} | {c.parity:.0%} |")
             lines.append("")
 
-        desk_only = [c for c in self._matrix.list_all()
-                     if c.desk_level.value > 0 and c.cowork_level.value == 0]
+        desk_only = [c for c in self._matrix.list_all() if c.desk_level.value > 0 and c.cowork_level.value == 0]
         if desk_only:
             lines.append("## 🏆 Fusion-Cowork 独有优势\n")
             for c in desk_only:
@@ -111,6 +109,7 @@ blockquote{{border-left:4px solid #ddd;margin:1em 0;padding:0.5em 1em;color:#666
 
 def _md_to_html_body(md: str) -> str:
     import re
+
     lines = md.split("\n")
     html: List[str] = []
     in_table = False

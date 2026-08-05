@@ -10,11 +10,17 @@ logger = logging.getLogger(__name__)
 
 async def _cleanup_handler(args: str = "") -> Any:
     from ..engine.node import NodeConfig, NodeRegistry
-    node = NodeRegistry.create("desktop_clean", config=NodeConfig(params={
-        "organize_by_type": True,
-        "skip_hidden": True,
-        "dry_run": False,
-    }))
+
+    node = NodeRegistry.create(
+        "desktop_clean",
+        config=NodeConfig(
+            params={
+                "organize_by_type": True,
+                "skip_hidden": True,
+                "dry_run": False,
+            }
+        ),
+    )
     if node is None:
         return {"error": "desktop_clean 节点不可用"}
     result = await node.execute({})
@@ -23,10 +29,16 @@ async def _cleanup_handler(args: str = "") -> Any:
 
 async def _classify_handler(args: str = "") -> Any:
     from ..engine.node import NodeConfig, NodeRegistry
+
     path = args.strip() or "~/Desktop"
-    node = NodeRegistry.create("ai_classify", config=NodeConfig(params={
-        "classify_by_content": True,
-    }))
+    node = NodeRegistry.create(
+        "ai_classify",
+        config=NodeConfig(
+            params={
+                "classify_by_content": True,
+            }
+        ),
+    )
     if node is None:
         return {"error": "ai_classify 节点不可用"}
     result = await node.execute({"path": path})
@@ -35,9 +47,15 @@ async def _classify_handler(args: str = "") -> Any:
 
 async def _screenshot_handler(args: str = "") -> Any:
     from ..engine.node import NodeConfig, NodeRegistry
-    node = NodeRegistry.create("screen_capture", config=NodeConfig(params={
-        "save_to_clipboard": True,
-    }))
+
+    node = NodeRegistry.create(
+        "screen_capture",
+        config=NodeConfig(
+            params={
+                "save_to_clipboard": True,
+            }
+        ),
+    )
     if node is None:
         return {"error": "screen_capture 节点不可用"}
     result = await node.execute({})
@@ -46,13 +64,19 @@ async def _screenshot_handler(args: str = "") -> Any:
 
 async def _search_handler(args: str = "") -> Any:
     from ..engine.node import NodeConfig, NodeRegistry
+
     query = args.strip()
     if not query:
         return {"error": "请提供搜索关键词"}
-    node = NodeRegistry.create("web_search", config=NodeConfig(params={
-        "query": query,
-        "max_results": 5,
-    }))
+    node = NodeRegistry.create(
+        "web_search",
+        config=NodeConfig(
+            params={
+                "query": query,
+                "max_results": 5,
+            }
+        ),
+    )
     if node is None:
         return {"error": "web_search 节点不可用"}
     result = await node.execute({"query": query})
@@ -61,11 +85,17 @@ async def _search_handler(args: str = "") -> Any:
 
 async def _organize_handler(args: str = "") -> Any:
     from ..engine.node import NodeConfig, NodeRegistry
-    node = NodeRegistry.create("download_organizer", config=NodeConfig(params={
-        "organize_by_type": True,
-        "deduplicate": True,
-        "dry_run": False,
-    }))
+
+    node = NodeRegistry.create(
+        "download_organizer",
+        config=NodeConfig(
+            params={
+                "organize_by_type": True,
+                "deduplicate": True,
+                "dry_run": False,
+            }
+        ),
+    )
     if node is None:
         return {"error": "download_organizer 节点不可用"}
     result = await node.execute({})
@@ -74,13 +104,19 @@ async def _organize_handler(args: str = "") -> Any:
 
 async def _diskclean_handler(args: str = "") -> Any:
     from ..engine.node import NodeConfig, NodeRegistry
-    node = NodeRegistry.create("disk_cleaner", config=NodeConfig(params={
-        "clean_cache": True,
-        "clean_temp": True,
-        "clean_pycache": True,
-        "clean_ds_store": True,
-        "dry_run": False,
-    }))
+
+    node = NodeRegistry.create(
+        "disk_cleaner",
+        config=NodeConfig(
+            params={
+                "clean_cache": True,
+                "clean_temp": True,
+                "clean_pycache": True,
+                "clean_ds_store": True,
+                "dry_run": False,
+            }
+        ),
+    )
     if node is None:
         return {"error": "disk_cleaner 节点不可用"}
     result = await node.execute({})

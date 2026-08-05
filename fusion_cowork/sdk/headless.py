@@ -20,9 +20,11 @@ class HeadlessRunner:
     def __init__(self, engine=None, template_manager=None):
         if engine is None:
             from fusion_cowork.engine import WorkflowEngine
+
             engine = WorkflowEngine()
         if template_manager is None:
             from fusion_cowork.templates import TemplateManager
+
             template_manager = TemplateManager()
         self._engine = engine
         self._template_manager = template_manager
@@ -36,6 +38,7 @@ class HeadlessRunner:
             logger.error(f"HeadlessRunner: template not found: {template_id}")
             return {"error": f"template not found: {template_id}"}
         from fusion_cowork.engine import Workflow
+
         wf_data = template.get("workflow", template)
         wf = Workflow.from_dict(wf_data)
         self._running = True
@@ -57,6 +60,7 @@ class HeadlessRunner:
     async def run_workflow(self, workflow_def: dict, inputs: dict = None) -> Dict[str, Any]:
         logger.info("HeadlessRunner: running workflow")
         from fusion_cowork.engine import Workflow
+
         wf = Workflow.from_dict(workflow_def)
         self._running = True
         try:

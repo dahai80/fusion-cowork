@@ -93,8 +93,9 @@ class PluginSandbox:
         self._on_crash = callback
         logger.info("PluginSandbox.on_crash callback registered")
 
-    async def execute(self, plugin_name: str, command: str, args: List[str] = None,
-                      env: Dict[str, str] = None, stdin_data: str = "") -> SandboxResult:
+    async def execute(
+        self, plugin_name: str, command: str, args: List[str] = None, env: Dict[str, str] = None, stdin_data: str = ""
+    ) -> SandboxResult:
         sandbox_id = f"sbx_{uuid.uuid4().hex[:8]}"
         result = SandboxResult(
             sandbox_id=sandbox_id,
@@ -141,8 +142,8 @@ class PluginSandbox:
                 return result
 
             result.exit_code = proc.returncode
-            result.stdout = stdout_bytes[:self._limits.max_output_bytes].decode(errors="replace")
-            result.stderr = stderr_bytes[:self._limits.max_output_bytes].decode(errors="replace")
+            result.stdout = stdout_bytes[: self._limits.max_output_bytes].decode(errors="replace")
+            result.stderr = stderr_bytes[: self._limits.max_output_bytes].decode(errors="replace")
             result.finished_at = time.time()
             result.cpu_time = result.finished_at - result.started_at
 
@@ -190,6 +191,7 @@ class PluginSandbox:
                 resource.setrlimit(resource.RLIMIT_FSIZE, (file_bytes, file_bytes))
             except (ValueError, OSError) as e:
                 logger.debug(f"PluginSandbox setrlimit FSIZE failed: {e}")
+
         return _set_limits
 
     def heartbeat(self, sandbox_id: str) -> bool:
@@ -279,8 +281,13 @@ class PluginSandbox:
         now = time.time()
         to_remove = []
         for sid, result in self._sandboxes.items():
-            if result.status in (SandboxStatus.STOPPED, SandboxStatus.CRASHED,
-                                 SandboxStatus.TIMEOUT, SandboxStatus.OOM, SandboxStatus.VIOLATION):
+            if result.status in (
+                SandboxStatus.STOPPED,
+                SandboxStatus.CRASHED,
+                SandboxStatus.TIMEOUT,
+                SandboxStatus.OOM,
+                SandboxStatus.VIOLATION,
+            ):
                 if result.finished_at and (now - result.finished_at) > max_age_seconds:
                     to_remove.append(sid)
         for sid in to_remove:

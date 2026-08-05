@@ -117,8 +117,7 @@ class SpacePermission:
         allowed = role_perms.get(action, False)
         if not allowed:
             logger.info(
-                f"SpacePermission.check 拒绝: space={space_id} "
-                f"user={user_id} role={member.role} action={action}",
+                f"SpacePermission.check 拒绝: space={space_id} user={user_id} role={member.role} action={action}",
             )
         return allowed
 

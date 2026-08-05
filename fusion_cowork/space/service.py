@@ -67,7 +67,10 @@ class SpaceService:
         offset: int = 0,
     ) -> List[Space]:
         return await self._store.list_spaces(
-            status=status, owner_id=owner_id, limit=limit, offset=offset,
+            status=status,
+            owner_id=owner_id,
+            limit=limit,
+            offset=offset,
         )
 
     async def update(self, space_id: str, **kwargs) -> Optional[Space]:
@@ -75,7 +78,8 @@ class SpaceService:
 
     async def archive(self, space_id: str) -> Optional[Space]:
         result = await self._store.update_space(
-            space_id, status=SpaceStatus.ARCHIVED.value,
+            space_id,
+            status=SpaceStatus.ARCHIVED.value,
         )
         if result:
             logger.info(f"SpaceService.archive id={space_id}")
@@ -83,7 +87,8 @@ class SpaceService:
 
     async def unarchive(self, space_id: str) -> Optional[Space]:
         result = await self._store.update_space(
-            space_id, status=SpaceStatus.ACTIVE.value,
+            space_id,
+            status=SpaceStatus.ACTIVE.value,
         )
         if result:
             logger.info(f"SpaceService.unarchive id={space_id}")

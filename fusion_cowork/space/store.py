@@ -170,25 +170,30 @@ _MIGRATION_SQL = [
     "ALTER TABLE space_artifacts ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'",
     "ALTER TABLE space_artifacts ADD COLUMN version INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE space_artifacts ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
-    ("CREATE TABLE IF NOT EXISTS sidebar_modules ("
-     "id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '', "
-     "route_path TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, "
-     "metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"),
-    ("CREATE TABLE IF NOT EXISTS space_notifications ("
-     "id TEXT PRIMARY KEY, space_id TEXT NOT NULL, user_id TEXT NOT NULL, "
-     "notification_type TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', "
-     "content TEXT NOT NULL DEFAULT '', metadata TEXT NOT NULL DEFAULT '{}', "
-     "read INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)"),
+    (
+        "CREATE TABLE IF NOT EXISTS sidebar_modules ("
+        "id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '', "
+        "route_path TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, "
+        "metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    ),
+    (
+        "CREATE TABLE IF NOT EXISTS space_notifications ("
+        "id TEXT PRIMARY KEY, space_id TEXT NOT NULL, user_id TEXT NOT NULL, "
+        "notification_type TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', "
+        "content TEXT NOT NULL DEFAULT '', metadata TEXT NOT NULL DEFAULT '{}', "
+        "read INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)"
+    ),
 ]
 
 
 class SpaceStore:
     """协作空间存储 — aiosqlite 异步 CRUD。"""
 
-    def __init__(self, data_dir: str = _DEFAULT_DATA_DIR):
+    def __init__(self, data_dir: str = _DEFAULT_DATA_DIR, trajectory_exporter=None):
         self._data_dir = data_dir
         self._db_path = os.path.join(data_dir, _DB_FILENAME)
         self._db: Optional[aiosqlite.Connection] = None
+        self._trajectory_exporter = trajectory_exporter
 
     async def initialize(self) -> None:
         os.makedirs(self._data_dir, exist_ok=True)
@@ -225,11 +230,19 @@ class SpaceStore:
             "INSERT INTO spaces (id, name, description, owner_id, status, "
             "kb_bind_mode, kb_id, collab_mode, config, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (space.id, space.name, space.description, space.owner_id,
-             space.status.value if isinstance(space.status, SpaceStatus) else space.status,
-             space.kb_bind_mode, space.kb_id, space.collab_mode,
-             json.dumps(space.config.to_dict(), ensure_ascii=False),
-             space.created_at, space.updated_at),
+            (
+                space.id,
+                space.name,
+                space.description,
+                space.owner_id,
+                space.status.value if isinstance(space.status, SpaceStatus) else space.status,
+                space.kb_bind_mode,
+                space.kb_id,
+                space.collab_mode,
+                json.dumps(space.config.to_dict(), ensure_ascii=False),
+                space.created_at,
+                space.updated_at,
+            ),
         )
         await db.commit()
         logger.info(f"SpaceStore.create_space id={space.id} name={space.name}")
@@ -311,9 +324,14 @@ class SpaceStore:
         await db.execute(
             "INSERT INTO space_members (space_id, user_id, role, display_name, joined_at, last_active) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (member.space_id, member.user_id,
-             member.role.value if isinstance(member.role, SpaceRole) else member.role,
-             member.display_name, member.joined_at, member.last_active),
+            (
+                member.space_id,
+                member.user_id,
+                member.role.value if isinstance(member.role, SpaceRole) else member.role,
+                member.display_name,
+                member.joined_at,
+                member.last_active,
+            ),
         )
         await db.commit()
         logger.info(f"SpaceStore.add_member space={member.space_id} user={member.user_id} role={member.role}")
@@ -389,13 +407,28 @@ class SpaceStore:
             "INSERT INTO space_messages (id, space_id, user_id, agent_id, role, content, "
             "content_type, attachments, parent_msg_id, thread_id, metadata, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (msg.id, msg.space_id, msg.user_id, msg.agent_id, msg.role, msg.content,
-             msg.content_type, json.dumps(msg.attachments, ensure_ascii=False),
-             msg.parent_msg_id, msg.thread_id,
-             json.dumps(msg.metadata, ensure_ascii=False), msg.created_at),
+            (
+                msg.id,
+                msg.space_id,
+                msg.user_id,
+                msg.agent_id,
+                msg.role,
+                msg.content,
+                msg.content_type,
+                json.dumps(msg.attachments, ensure_ascii=False),
+                msg.parent_msg_id,
+                msg.thread_id,
+                json.dumps(msg.metadata, ensure_ascii=False),
+                msg.created_at,
+            ),
         )
         await db.commit()
         logger.debug(f"SpaceStore.add_message id={msg.id} space={msg.space_id}")
+        if self._trajectory_exporter is not None:
+            try:
+                self._trajectory_exporter.export_message(msg)
+            except Exception as e:
+                logger.error(f"space 轨迹导出失败 msg={msg.id}: {e}")
         return msg
 
     async def get_messages(
@@ -406,8 +439,7 @@ class SpaceStore:
     ) -> List[SpaceMessage]:
         db = await self._ensure_db()
         cursor = await db.execute(
-            "SELECT * FROM space_messages WHERE space_id = ? "
-            "ORDER BY created_at ASC LIMIT ? OFFSET ?",
+            "SELECT * FROM space_messages WHERE space_id = ? ORDER BY created_at ASC LIMIT ? OFFSET ?",
             (space_id, limit, offset),
         )
         rows = await cursor.fetchall()
@@ -432,16 +464,23 @@ class SpaceStore:
 
     async def add_agent(self, agent_data: Dict[str, Any]) -> str:
         import uuid
+
         agent_id = agent_data.get("id") or f"agent_{uuid.uuid4().hex[:8]}"
         db = await self._ensure_db()
         await db.execute(
             "INSERT INTO space_agents (id, space_id, name, agent_type, system_prompt, "
             "enable_rag, config, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (agent_id, agent_data.get("space_id", ""), agent_data.get("name", ""),
-             agent_data.get("agent_type", "assistant"), agent_data.get("system_prompt", ""),
-             int(agent_data.get("enable_rag", False)),
-             json.dumps(agent_data.get("config", {}), ensure_ascii=False),
-             agent_data.get("created_by", ""), datetime.now().isoformat()),
+            (
+                agent_id,
+                agent_data.get("space_id", ""),
+                agent_data.get("name", ""),
+                agent_data.get("agent_type", "assistant"),
+                agent_data.get("system_prompt", ""),
+                int(agent_data.get("enable_rag", False)),
+                json.dumps(agent_data.get("config", {}), ensure_ascii=False),
+                agent_data.get("created_by", ""),
+                datetime.now().isoformat(),
+            ),
         )
         await db.commit()
         logger.info(f"SpaceStore.add_agent id={agent_id}")
@@ -461,7 +500,8 @@ class SpaceStore:
     async def list_agents(self, space_id: str) -> List[Dict[str, Any]]:
         db = await self._ensure_db()
         cursor = await db.execute(
-            "SELECT * FROM space_agents WHERE space_id = ?", (space_id,),
+            "SELECT * FROM space_agents WHERE space_id = ?",
+            (space_id,),
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
@@ -509,11 +549,19 @@ class SpaceStore:
             "INSERT INTO space_snapshots (id, space_id, name, messages_count, agents_count, "
             "files_count, workflows_count, artifacts_count, snapshot_data, created_by, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (snapshot.id, snapshot.space_id, snapshot.name,
-             snapshot.messages_count, snapshot.agents_count, snapshot.files_count,
-             snapshot.workflows_count, snapshot.artifacts_count,
-             json.dumps(snapshot.snapshot_data, ensure_ascii=False),
-             snapshot.created_by, snapshot.created_at),
+            (
+                snapshot.id,
+                snapshot.space_id,
+                snapshot.name,
+                snapshot.messages_count,
+                snapshot.agents_count,
+                snapshot.files_count,
+                snapshot.workflows_count,
+                snapshot.artifacts_count,
+                json.dumps(snapshot.snapshot_data, ensure_ascii=False),
+                snapshot.created_by,
+                snapshot.created_at,
+            ),
         )
         await db.commit()
         logger.info(f"SpaceStore.create_snapshot id={snapshot.id} space={snapshot.space_id}")
@@ -549,16 +597,15 @@ class SpaceStore:
 
     # ── Comment CRUD ──
 
-    async def add_comment(self, message_id: str, author_id: str, author_name: str,
-                          content: str) -> str:
+    async def add_comment(self, message_id: str, author_id: str, author_name: str, content: str) -> str:
         import uuid
+
         comment_id = f"cmt_{uuid.uuid4().hex[:8]}"
         db = await self._ensure_db()
         await db.execute(
             "INSERT INTO space_comments (id, message_id, author_id, author_name, "
             "content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (comment_id, message_id, author_id, author_name, content,
-             datetime.now().isoformat()),
+            (comment_id, message_id, author_id, author_name, content, datetime.now().isoformat()),
         )
         await db.commit()
         logger.info(f"SpaceStore.add_comment id={comment_id}")
@@ -575,9 +622,15 @@ class SpaceStore:
 
     # ── Invite Link CRUD ──
 
-    async def create_invite(self, code: str, space_id: str, role: str = "member",
-                            max_uses: int = 0, expires_at: Optional[str] = None,
-                            created_by: str = "") -> str:
+    async def create_invite(
+        self,
+        code: str,
+        space_id: str,
+        role: str = "member",
+        max_uses: int = 0,
+        expires_at: Optional[str] = None,
+        created_by: str = "",
+    ) -> str:
         db = await self._ensure_db()
         role_str = role.value if isinstance(role, SpaceRole) else role
         await db.execute(
@@ -592,7 +645,8 @@ class SpaceStore:
     async def get_invite(self, code: str) -> Optional[Dict[str, Any]]:
         db = await self._ensure_db()
         cursor = await db.execute(
-            "SELECT * FROM space_invite_links WHERE code = ?", (code,),
+            "SELECT * FROM space_invite_links WHERE code = ?",
+            (code,),
         )
         row = await cursor.fetchone()
         return dict(row) if row else None
@@ -600,22 +654,29 @@ class SpaceStore:
     async def use_invite(self, code: str) -> bool:
         db = await self._ensure_db()
         await db.execute(
-            "UPDATE space_invite_links SET uses = uses + 1 WHERE code = ?", (code,),
+            "UPDATE space_invite_links SET uses = uses + 1 WHERE code = ?",
+            (code,),
         )
         await db.commit()
         return True
 
     # ── Sync Events ──
 
-    async def add_sync_event(self, space_id: str, event_type: str,
-                             event_data: Dict[str, Any], lamport_ts: int,
-                             node_id: str) -> int:
+    async def add_sync_event(
+        self, space_id: str, event_type: str, event_data: Dict[str, Any], lamport_ts: int, node_id: str
+    ) -> int:
         db = await self._ensure_db()
         cursor = await db.execute(
             "INSERT INTO sync_events (space_id, event_type, event_data, lamport_ts, node_id, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (space_id, event_type, json.dumps(event_data, ensure_ascii=False),
-             lamport_ts, node_id, datetime.now().isoformat()),
+            (
+                space_id,
+                event_type,
+                json.dumps(event_data, ensure_ascii=False),
+                lamport_ts,
+                node_id,
+                datetime.now().isoformat(),
+            ),
         )
         await db.commit()
         return cursor.lastrowid

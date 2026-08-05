@@ -44,9 +44,12 @@ def _make_space(name="test", owner_id="u1", **kw):
 def _make_member(space_id, user_id, role=SpaceRole.MEMBER, display_name=""):
     now = datetime.now(UTC).isoformat()
     return SpaceMember(
-        space_id=space_id, user_id=user_id, role=role,
+        space_id=space_id,
+        user_id=user_id,
+        role=role,
         display_name=display_name or user_id,
-        joined_at=now, last_active=now,
+        joined_at=now,
+        last_active=now,
     )
 
 
@@ -74,6 +77,7 @@ def member_svc(store, perm):
 
 
 # ── Models ──
+
 
 class TestSpaceRole:
     def test_values(self):
@@ -130,15 +134,28 @@ class TestSpace:
 
     def test_from_dict(self):
         d = {
-            "id": "sp_2", "name": "hello", "description": "desc",
-            "owner_id": "u2", "status": "active", "kb_bind_mode": "new_private",
-            "kb_id": None, "collab_mode": "local",
-            "config": {"max_members": 20, "enable_web_search": True,
-                       "enable_deep_research": True, "enable_computer_use": False,
-                       "allow_member_upload": True, "allow_member_agent": True,
-                       "allow_member_workflow": True, "auto_archive_days": 0,
-                       "stream_response": True, "default_model": ""},
-            "created_at": "2026-01-01T00:00:00", "updated_at": "2026-01-01T00:00:00",
+            "id": "sp_2",
+            "name": "hello",
+            "description": "desc",
+            "owner_id": "u2",
+            "status": "active",
+            "kb_bind_mode": "new_private",
+            "kb_id": None,
+            "collab_mode": "local",
+            "config": {
+                "max_members": 20,
+                "enable_web_search": True,
+                "enable_deep_research": True,
+                "enable_computer_use": False,
+                "allow_member_upload": True,
+                "allow_member_agent": True,
+                "allow_member_workflow": True,
+                "auto_archive_days": 0,
+                "stream_response": True,
+                "default_model": "",
+            },
+            "created_at": "2026-01-01T00:00:00",
+            "updated_at": "2026-01-01T00:00:00",
         }
         sp = Space.from_dict(d)
         assert sp.id == "sp_2"
@@ -147,8 +164,7 @@ class TestSpace:
 
 class TestSpaceMember:
     def test_to_dict_from_dict(self):
-        m = SpaceMember(space_id="sp_1", user_id="u1", role=SpaceRole.OWNER,
-                        display_name="Alice")
+        m = SpaceMember(space_id="sp_1", user_id="u1", role=SpaceRole.OWNER, display_name="Alice")
         d = m.to_dict()
         m2 = SpaceMember.from_dict(d)
         assert m2.space_id == "sp_1"
@@ -158,8 +174,7 @@ class TestSpaceMember:
 
 class TestSpaceMessage:
     def test_to_dict_from_dict(self):
-        msg = SpaceMessage(id="msg_1", space_id="sp_1", user_id="u1",
-                           content="hello", content_type="text")
+        msg = SpaceMessage(id="msg_1", space_id="sp_1", user_id="u1", content="hello", content_type="text")
         d = msg.to_dict()
         m2 = SpaceMessage.from_dict(d)
         assert m2.id == "msg_1"
@@ -167,8 +182,9 @@ class TestSpaceMessage:
         assert m2.attachments == []
 
     def test_with_attachments(self):
-        msg = SpaceMessage(id="msg_2", space_id="sp_1", user_id="u1",
-                           content="see file", attachments=[{"name": "a.pdf"}])
+        msg = SpaceMessage(
+            id="msg_2", space_id="sp_1", user_id="u1", content="see file", attachments=[{"name": "a.pdf"}]
+        )
         d = msg.to_dict()
         m2 = SpaceMessage.from_dict(d)
         assert len(m2.attachments) == 1
@@ -176,8 +192,7 @@ class TestSpaceMessage:
 
 class TestPeerInfo:
     def test_to_dict_from_dict(self):
-        p = PeerInfo(user_id="u1", display_name="Bob", host="127.0.0.1",
-                     port=9000, space_ids=["sp_1"])
+        p = PeerInfo(user_id="u1", display_name="Bob", host="127.0.0.1", port=9000, space_ids=["sp_1"])
         d = p.to_dict()
         p2 = PeerInfo.from_dict(d)
         assert p2.host == "127.0.0.1"
@@ -185,6 +200,7 @@ class TestPeerInfo:
 
 
 # ── Store ──
+
 
 class TestSpaceStore:
     @pytest.mark.asyncio
@@ -300,9 +316,15 @@ class TestSpaceStore:
     async def test_create_and_list_snapshots(self, store):
         sp = await store.create_space(_make_space("snap", "u1"))
         snap = SpaceSnapshot(
-            id="snap_test1", space_id=sp.id, name="v1",
-            messages_count=1, agents_count=0, files_count=0,
-            workflows_count=0, artifacts_count=0, snapshot_data={"k": "v"},
+            id="snap_test1",
+            space_id=sp.id,
+            name="v1",
+            messages_count=1,
+            agents_count=0,
+            files_count=0,
+            workflows_count=0,
+            artifacts_count=0,
+            snapshot_data={"k": "v"},
             created_by="u1",
         )
         created = await store.create_snapshot(snap)
@@ -314,8 +336,11 @@ class TestSpaceStore:
     async def test_create_and_use_invite(self, store):
         sp = await store.create_space(_make_space("inv", "u1"))
         code = await store.create_invite(
-            code="inv_test1", space_id=sp.id,
-            role=SpaceRole.MEMBER.value, created_by="u1", max_uses=2,
+            code="inv_test1",
+            space_id=sp.id,
+            role=SpaceRole.MEMBER.value,
+            created_by="u1",
+            max_uses=2,
         )
         assert code.startswith("inv_")
         got = await store.get_invite(code)
@@ -330,14 +355,17 @@ class TestSpaceStore:
     async def test_add_sync_event(self, store):
         sp = await store.create_space(_make_space("sync", "u1"))
         row_id = await store.add_sync_event(
-            space_id=sp.id, event_type="member_join",
+            space_id=sp.id,
+            event_type="member_join",
             event_data={"user_id": "u2", "role": "member"},
-            lamport_ts=1, node_id="node1",
+            lamport_ts=1,
+            node_id="node1",
         )
         assert row_id > 0
 
 
 # ── Service ──
+
 
 class TestSpaceService:
     @pytest.mark.asyncio
@@ -399,23 +427,38 @@ class TestSpaceService:
 
 # ── Permission ──
 
+
 class TestSpacePermission:
     @pytest.mark.asyncio
     async def test_owner_has_all_permissions(self, perm, store):
         sp = await store.create_space(_make_space("p", "u1"))
         await store.add_member(_make_member(sp.id, "u1", SpaceRole.OWNER))
-        for action in ["manage_space", "manage_members", "send_message",
-                       "manage_agents", "run_workflow", "upload_file",
-                       "delete_data", "manage_snapshots"]:
+        for action in [
+            "manage_space",
+            "manage_members",
+            "send_message",
+            "manage_agents",
+            "run_workflow",
+            "upload_file",
+            "delete_data",
+            "manage_snapshots",
+        ]:
             assert await perm.check(sp.id, "u1", action) is True
 
     @pytest.mark.asyncio
     async def test_viewer_has_no_permissions(self, perm, store):
         sp = await store.create_space(_make_space("pv", "u1"))
         await store.add_member(_make_member(sp.id, "u2", SpaceRole.VIEWER))
-        for action in ["manage_space", "manage_members", "send_message",
-                       "manage_agents", "run_workflow", "upload_file",
-                       "delete_data", "manage_snapshots"]:
+        for action in [
+            "manage_space",
+            "manage_members",
+            "send_message",
+            "manage_agents",
+            "run_workflow",
+            "upload_file",
+            "delete_data",
+            "manage_snapshots",
+        ]:
             assert await perm.check(sp.id, "u2", action) is False
 
     @pytest.mark.asyncio
@@ -464,6 +507,7 @@ class TestSpacePermission:
 
 # ── Member Service ──
 
+
 class TestSpaceMemberService:
     @pytest.mark.asyncio
     async def test_invite_creates_code(self, member_svc, store):
@@ -493,8 +537,7 @@ class TestSpaceMemberService:
     async def test_join_expired_invite_fails(self, member_svc, store):
         sp = await store.create_space(_make_space("me", "u1"))
         await store.add_member(_make_member(sp.id, "u1", SpaceRole.OWNER))
-        code = await member_svc.invite(sp.id, "u1", role=SpaceRole.MEMBER.value,
-                                       expires_hours=-1)
+        code = await member_svc.invite(sp.id, "u1", role=SpaceRole.MEMBER.value, expires_hours=-1)
         with pytest.raises(ValueError, match="过期"):
             await member_svc.join(code, user_id="u2")
 
@@ -511,8 +554,7 @@ class TestSpaceMemberService:
     async def test_add_direct(self, member_svc, store):
         sp = await store.create_space(_make_space("mad", "u1"))
         await store.add_member(_make_member(sp.id, "u1", SpaceRole.OWNER))
-        m = await member_svc.add_direct(sp.id, "u2", display_name="Bob",
-                                        operator_id="u1", role=SpaceRole.MEMBER)
+        m = await member_svc.add_direct(sp.id, "u2", display_name="Bob", operator_id="u1", role=SpaceRole.MEMBER)
         assert m.user_id == "u2"
 
     @pytest.mark.asyncio
@@ -580,6 +622,7 @@ class TestSpaceMemberService:
 
 
 # ── M7 Chat Service ──
+
 
 class TestSpaceChatService:
     @pytest.fixture
@@ -656,6 +699,7 @@ class TestSpaceChatService:
 
 
 # ── M7 KB Service ──
+
 
 class TestSpaceKBService:
     @pytest.fixture
@@ -800,6 +844,7 @@ async def _async_gen(chunks: list[str]):
 
 # ── M7 Space API ──
 
+
 class TestSpaceAPI:
     @pytest.fixture
     def mlx_mock(self):
@@ -822,6 +867,7 @@ class TestSpaceAPI:
     @pytest.fixture
     def api_app(self, store, perm, mlx_mock, kb_mock):
         from fusion_cowork.space.api import create_space_api
+
         space_svc = SpaceService(store)
         member_svc = SpaceMemberService(store, perm)
         chat_svc = SpaceChatService(store, mlx_mock, perm)
@@ -831,6 +877,7 @@ class TestSpaceAPI:
     @pytest.fixture
     def client(self, api_app):
         from httpx import ASGITransport, AsyncClient
+
         return AsyncClient(transport=ASGITransport(app=api_app), base_url="http://test")
 
     @pytest.mark.asyncio
@@ -866,10 +913,8 @@ class TestSpaceAPI:
         async with client as c:
             resp = await c.post("/spaces", json={"name": "msg-space", "owner_id": "u1"})
             space_id = resp.json()["id"]
-            await c.post(f"/spaces/{space_id}/members",
-                         json={"user_id": "u1", "operator_id": "u1", "role": "owner"})
-            msg_resp = await c.post(f"/spaces/{space_id}/messages",
-                                    json={"user_id": "u1", "content": "hello API"})
+            await c.post(f"/spaces/{space_id}/members", json={"user_id": "u1", "operator_id": "u1", "role": "owner"})
+            msg_resp = await c.post(f"/spaces/{space_id}/messages", json={"user_id": "u1", "content": "hello API"})
             assert msg_resp.status_code == 201
             assert msg_resp.json()["content"] == "hello API"
 
@@ -882,11 +927,9 @@ class TestSpaceAPI:
         async with client as c:
             resp = await c.post("/spaces", json={"name": "kb-space", "owner_id": "u1"})
             space_id = resp.json()["id"]
-            await c.post(f"/spaces/{space_id}/members",
-                         json={"user_id": "u1", "operator_id": "u1", "role": "owner"})
+            await c.post(f"/spaces/{space_id}/members", json={"user_id": "u1", "operator_id": "u1", "role": "owner"})
 
-            bind_resp = await c.post(f"/spaces/{space_id}/kb/bind",
-                                     json={"operator_id": "u1"})
+            bind_resp = await c.post(f"/spaces/{space_id}/kb/bind", json={"operator_id": "u1"})
             assert bind_resp.status_code == 200
             assert bind_resp.json()["kb_id"] == "kb_api1"
 
@@ -904,25 +947,43 @@ class TestSpaceAPI:
 class TestFusionMLXClientEnhancements:
     """M7.4: FusionMLXClient default port + retry + stream robustness."""
 
-    def test_default_port_is_11432(self):
+    def test_default_port_is_11434(self):
         from fusion_cowork.ai.mlx_client import DEFAULT_MLX_PORT, FusionMLXClient
+
         client = FusionMLXClient()
-        assert DEFAULT_MLX_PORT == 11432
-        assert "11432" in client.base_url
+        assert DEFAULT_MLX_PORT == 11434
+        assert "11434" in client.base_url
 
     def test_default_base_url(self):
         from fusion_cowork.ai.mlx_client import DEFAULT_MLX_BASE_URL, FusionMLXClient
-        assert DEFAULT_MLX_BASE_URL == "http://localhost:11432/v1"
+
+        assert DEFAULT_MLX_BASE_URL == "http://localhost:11434/v1"
         client = FusionMLXClient()
-        assert client.base_url == "http://localhost:11432/v1"
+        assert client.base_url == "http://localhost:11434/v1"
+
+    def test_api_key_no_local_fallback(self):
+        import os
+
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
+
+        saved = os.environ.pop("FUSION_MLX_API_KEY", None)
+        try:
+            client = FusionMLXClient()
+            assert client.api_key == ""
+            assert client.api_key != "local"
+        finally:
+            if saved is not None:
+                os.environ["FUSION_MLX_API_KEY"] = saved
 
     def test_custom_base_url_still_works(self):
         from fusion_cowork.ai.mlx_client import FusionMLXClient
+
         client = FusionMLXClient(base_url="http://localhost:18000/v1")
         assert client.base_url == "http://localhost:18000/v1"
 
     def test_retry_params(self):
         from fusion_cowork.ai.mlx_client import FusionMLXClient
+
         client = FusionMLXClient(max_retries=3, retry_delay=0.5)
         assert client.max_retries == 3
         assert client.retry_delay == 0.5
@@ -932,6 +993,7 @@ class TestFusionMLXClientEnhancements:
         import httpx
 
         from fusion_cowork.ai.mlx_client import FusionMLXClient
+
         client = FusionMLXClient(base_url="http://localhost:19999/v1", max_retries=1, retry_delay=0.01)
         with pytest.raises(httpx.ConnectError):
             await client.chat(model="test", messages=[{"role": "user", "content": "hi"}])
@@ -941,6 +1003,7 @@ class TestFusionMLXClientEnhancements:
         import httpx
 
         from fusion_cowork.ai.mlx_client import FusionMLXClient
+
         client = FusionMLXClient(base_url="http://localhost:19999/v1", max_retries=1, retry_delay=0.01)
         chunks = []
         with pytest.raises(httpx.ConnectError):
@@ -951,6 +1014,7 @@ class TestFusionMLXClientEnhancements:
     @pytest.mark.asyncio
     async def test_async_context_manager(self):
         from fusion_cowork.ai.mlx_client import FusionMLXClient
+
         async with FusionMLXClient(base_url="http://localhost:19999/v1") as client:
             assert client._client is None
         assert client._client is None
@@ -960,13 +1024,12 @@ class TestFusionMLXClientEnhancements:
         import httpx
 
         from fusion_cowork.ai.mlx_client import FusionMLXClient
+
         client = FusionMLXClient(max_retries=2, retry_delay=0.01)
         mock_resp = MagicMock()
         mock_resp.status_code = 400
         mock_resp.text = "Bad Request"
-        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "400", request=MagicMock(), response=mock_resp
-        )
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError("400", request=MagicMock(), response=mock_resp)
         client._client = MagicMock()
         client._client.post = AsyncMock(return_value=mock_resp)
         with pytest.raises(httpx.HTTPStatusError):
@@ -978,6 +1041,7 @@ class TestFusionMLXClientEnhancements:
         import httpx
 
         from fusion_cowork.ai.mlx_client import FusionMLXClient
+
         client = FusionMLXClient(max_retries=2, retry_delay=0.01)
         mock_resp_503 = MagicMock()
         mock_resp_503.status_code = 503
@@ -1004,6 +1068,7 @@ class TestSharedContext:
 
     def test_create_context(self):
         from fusion_cowork.space.shared_context import SharedContext
+
         ctx = SharedContext(space_id="sp1")
         assert ctx.space_id == "sp1"
         assert ctx._chat is None
@@ -1011,6 +1076,7 @@ class TestSharedContext:
 
     def test_create_with_services(self):
         from fusion_cowork.space.shared_context import SharedContext
+
         chat = MagicMock()
         kb = MagicMock()
         ctx = SharedContext(space_id="sp1", chat_service=chat, kb_service=kb, extra={"foo": "bar"})
@@ -1020,6 +1086,7 @@ class TestSharedContext:
 
     def test_to_dict(self):
         from fusion_cowork.space.shared_context import SharedContext
+
         ctx = SharedContext(space_id="sp1", chat_service=MagicMock(), extra={"k": 1})
         d = ctx.to_dict()
         assert d["space_id"] == "sp1"
@@ -1029,6 +1096,7 @@ class TestSharedContext:
 
     def test_from_dict(self):
         from fusion_cowork.space.shared_context import SharedContext
+
         d = {"space_id": "sp2", "extra": {"x": 1}}
         ctx = SharedContext.from_dict(d)
         assert ctx.space_id == "sp2"
@@ -1037,6 +1105,7 @@ class TestSharedContext:
     @pytest.mark.asyncio
     async def test_get_messages_no_service(self):
         from fusion_cowork.space.shared_context import SharedContext
+
         ctx = SharedContext(space_id="sp1")
         result = await ctx.get_messages()
         assert result == []
@@ -1045,6 +1114,7 @@ class TestSharedContext:
     async def test_get_messages_with_service(self):
         from fusion_cowork.space.models import SpaceMessage
         from fusion_cowork.space.shared_context import SharedContext
+
         chat = AsyncMock()
         msg = SpaceMessage(space_id="sp1", user_id="u1", content="hello")
         chat.list_messages = AsyncMock(return_value=[msg])
@@ -1056,6 +1126,7 @@ class TestSharedContext:
     @pytest.mark.asyncio
     async def test_search_kb_no_service(self):
         from fusion_cowork.space.shared_context import SharedContext
+
         ctx = SharedContext(space_id="sp1")
         result = await ctx.search_kb("test query")
         assert result == []
@@ -1063,6 +1134,7 @@ class TestSharedContext:
     @pytest.mark.asyncio
     async def test_search_kb_with_service(self):
         from fusion_cowork.space.shared_context import SharedContext
+
         kb = AsyncMock()
         kb.search = AsyncMock(return_value=[{"content": "doc1", "score": 0.9}])
         ctx = SharedContext(space_id="sp1", kb_service=kb)
@@ -1073,6 +1145,7 @@ class TestSharedContext:
     @pytest.mark.asyncio
     async def test_query_kb(self):
         from fusion_cowork.space.shared_context import SharedContext
+
         kb = AsyncMock()
         kb.query = AsyncMock(return_value="answer text")
         ctx = SharedContext(space_id="sp1", kb_service=kb)
@@ -1082,6 +1155,7 @@ class TestSharedContext:
     @pytest.mark.asyncio
     async def test_get_messages_error_fallback(self):
         from fusion_cowork.space.shared_context import SharedContext
+
         chat = AsyncMock()
         chat.list_messages = AsyncMock(side_effect=RuntimeError("db error"))
         ctx = SharedContext(space_id="sp1", chat_service=chat)
@@ -1094,6 +1168,7 @@ class TestSharedContext:
             extract_shared_context,
             inject_shared_context,
         )
+
         ctx = SharedContext(space_id="sp1")
         node_input = {"data": "test"}
         inject_shared_context(node_input, ctx)
@@ -1104,11 +1179,13 @@ class TestSharedContext:
 
     def test_extract_no_context(self):
         from fusion_cowork.space.shared_context import extract_shared_context
+
         assert extract_shared_context({}) is None
         assert extract_shared_context({"_shared_context": "not_a_context"}) is None
 
     def test_extra_operations(self):
         from fusion_cowork.space.shared_context import SharedContext
+
         ctx = SharedContext(space_id="sp1")
         assert ctx.get_extra("missing") is None
         assert ctx.get_extra("missing", 42) == 42
@@ -1118,6 +1195,7 @@ class TestSharedContext:
     @pytest.mark.asyncio
     async def test_query_kb_no_service(self):
         from fusion_cowork.space.shared_context import SharedContext
+
         ctx = SharedContext(space_id="sp1")
         result = await ctx.query_kb("q")
         assert result == ""
@@ -1137,6 +1215,7 @@ class TestSpaceAgentRuntime:
         from fusion_cowork.space.agent_runtime import SpaceAgentRuntime
         from fusion_cowork.space.permission import SpacePermission
         from fusion_cowork.space.store import SpaceStore
+
         store = SpaceStore(data_dir=str(tmp_path / "spaces"))
         await store.initialize()
         perm = SpacePermission(store)
@@ -1153,16 +1232,21 @@ class TestSpaceAgentRuntime:
         from datetime import datetime
 
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
+
         now = datetime.now().isoformat()
-        space = Space(id="sp1", name="test", owner_id="owner1",
-                      config=SpaceConfig(), created_at=now, updated_at=now)
+        space = Space(id="sp1", name="test", owner_id="owner1", config=SpaceConfig(), created_at=now, updated_at=now)
         await store.create_space(space)
-        member = SpaceMember(space_id="sp1", user_id="owner1", role=SpaceRole.OWNER,
-                             display_name="owner", joined_at=now, last_active=now)
+        member = SpaceMember(
+            space_id="sp1", user_id="owner1", role=SpaceRole.OWNER, display_name="owner", joined_at=now, last_active=now
+        )
         await store.add_member(member)
         result = await rt.add_agent(
-            space_id="sp1", operator_id="owner1", name="Writer",
-            agent_type="assistant", system_prompt="You write.", enable_rag=True,
+            space_id="sp1",
+            operator_id="owner1",
+            name="Writer",
+            agent_type="assistant",
+            system_prompt="You write.",
+            enable_rag=True,
         )
         assert result["name"] == "Writer"
         assert result["agent_type"] == "assistant"
@@ -1175,12 +1259,18 @@ class TestSpaceAgentRuntime:
         from datetime import datetime
 
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
+
         now = datetime.now().isoformat()
-        space = Space(id="sp2", name="test", owner_id="owner1",
-                      config=SpaceConfig(), created_at=now, updated_at=now)
+        space = Space(id="sp2", name="test", owner_id="owner1", config=SpaceConfig(), created_at=now, updated_at=now)
         await store.create_space(space)
-        member = SpaceMember(space_id="sp2", user_id="viewer1", role=SpaceRole.VIEWER,
-                             display_name="viewer", joined_at=now, last_active=now)
+        member = SpaceMember(
+            space_id="sp2",
+            user_id="viewer1",
+            role=SpaceRole.VIEWER,
+            display_name="viewer",
+            joined_at=now,
+            last_active=now,
+        )
         await store.add_member(member)
         with pytest.raises(PermissionError):
             await rt.add_agent(space_id="sp2", operator_id="viewer1", name="X")
@@ -1191,12 +1281,13 @@ class TestSpaceAgentRuntime:
         from datetime import datetime
 
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
+
         now = datetime.now().isoformat()
-        space = Space(id="sp3", name="test", owner_id="owner1",
-                      config=SpaceConfig(), created_at=now, updated_at=now)
+        space = Space(id="sp3", name="test", owner_id="owner1", config=SpaceConfig(), created_at=now, updated_at=now)
         await store.create_space(space)
-        member = SpaceMember(space_id="sp3", user_id="owner1", role=SpaceRole.OWNER,
-                             display_name="owner", joined_at=now, last_active=now)
+        member = SpaceMember(
+            space_id="sp3", user_id="owner1", role=SpaceRole.OWNER, display_name="owner", joined_at=now, last_active=now
+        )
         await store.add_member(member)
         await rt.add_agent(space_id="sp3", operator_id="owner1", name="A1")
         await rt.add_agent(space_id="sp3", operator_id="owner1", name="A2")
@@ -1209,12 +1300,13 @@ class TestSpaceAgentRuntime:
         from datetime import datetime
 
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
+
         now = datetime.now().isoformat()
-        space = Space(id="sp4", name="test", owner_id="owner1",
-                      config=SpaceConfig(), created_at=now, updated_at=now)
+        space = Space(id="sp4", name="test", owner_id="owner1", config=SpaceConfig(), created_at=now, updated_at=now)
         await store.create_space(space)
-        member = SpaceMember(space_id="sp4", user_id="owner1", role=SpaceRole.OWNER,
-                             display_name="owner", joined_at=now, last_active=now)
+        member = SpaceMember(
+            space_id="sp4", user_id="owner1", role=SpaceRole.OWNER, display_name="owner", joined_at=now, last_active=now
+        )
         await store.add_member(member)
         result = await rt.add_agent(space_id="sp4", operator_id="owner1", name="G1")
         fetched = await rt.get_agent("sp4", result["id"])
@@ -1233,12 +1325,13 @@ class TestSpaceAgentRuntime:
         from datetime import datetime
 
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
+
         now = datetime.now().isoformat()
-        space = Space(id="sp5", name="test", owner_id="owner1",
-                      config=SpaceConfig(), created_at=now, updated_at=now)
+        space = Space(id="sp5", name="test", owner_id="owner1", config=SpaceConfig(), created_at=now, updated_at=now)
         await store.create_space(space)
-        member = SpaceMember(space_id="sp5", user_id="owner1", role=SpaceRole.OWNER,
-                             display_name="owner", joined_at=now, last_active=now)
+        member = SpaceMember(
+            space_id="sp5", user_id="owner1", role=SpaceRole.OWNER, display_name="owner", joined_at=now, last_active=now
+        )
         await store.add_member(member)
         result = await rt.add_agent(space_id="sp5", operator_id="owner1", name="R1")
         removed = await rt.remove_agent("sp5", result["id"], "owner1")
@@ -1252,12 +1345,18 @@ class TestSpaceAgentRuntime:
         from datetime import datetime
 
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
+
         now = datetime.now().isoformat()
-        space = Space(id="sp5b", name="test", owner_id="owner1",
-                      config=SpaceConfig(), created_at=now, updated_at=now)
+        space = Space(id="sp5b", name="test", owner_id="owner1", config=SpaceConfig(), created_at=now, updated_at=now)
         await store.create_space(space)
-        member = SpaceMember(space_id="sp5b", user_id="owner1", role=SpaceRole.OWNER,
-                             display_name="owner", joined_at=now, last_active=now)
+        member = SpaceMember(
+            space_id="sp5b",
+            user_id="owner1",
+            role=SpaceRole.OWNER,
+            display_name="owner",
+            joined_at=now,
+            last_active=now,
+        )
         await store.add_member(member)
         removed = await rt.remove_agent("sp5b", "agent_xxx", "owner1")
         assert removed is False
@@ -1269,18 +1368,26 @@ class TestSpaceAgentRuntime:
 
         from fusion_cowork.ai.mlx_client import LLMResponse
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
+
         now = datetime.now().isoformat()
-        space = Space(id="sp6", name="test", owner_id="owner1",
-                      config=SpaceConfig(), created_at=now, updated_at=now)
+        space = Space(id="sp6", name="test", owner_id="owner1", config=SpaceConfig(), created_at=now, updated_at=now)
         await store.create_space(space)
-        owner_m = SpaceMember(space_id="sp6", user_id="owner1", role=SpaceRole.OWNER,
-                              display_name="owner", joined_at=now, last_active=now)
+        owner_m = SpaceMember(
+            space_id="sp6", user_id="owner1", role=SpaceRole.OWNER, display_name="owner", joined_at=now, last_active=now
+        )
         await store.add_member(owner_m)
-        member = SpaceMember(space_id="sp6", user_id="member1", role=SpaceRole.MEMBER,
-                             display_name="member", joined_at=now, last_active=now)
+        member = SpaceMember(
+            space_id="sp6",
+            user_id="member1",
+            role=SpaceRole.MEMBER,
+            display_name="member",
+            joined_at=now,
+            last_active=now,
+        )
         await store.add_member(member)
-        result = await rt.add_agent(space_id="sp6", operator_id="owner1", name="Caller",
-                                     system_prompt="You are helpful.")
+        result = await rt.add_agent(
+            space_id="sp6", operator_id="owner1", name="Caller", system_prompt="You are helpful."
+        )
         agent_id = result["id"]
         mlx.chat.return_value = LLMResponse(content="Hello back!")
         reply = await rt.call_agent("sp6", agent_id, "member1", "Hello")
@@ -1295,12 +1402,18 @@ class TestSpaceAgentRuntime:
         from datetime import datetime
 
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
+
         now = datetime.now().isoformat()
-        space = Space(id="sp7", name="test", owner_id="owner1",
-                      config=SpaceConfig(), created_at=now, updated_at=now)
+        space = Space(id="sp7", name="test", owner_id="owner1", config=SpaceConfig(), created_at=now, updated_at=now)
         await store.create_space(space)
-        member = SpaceMember(space_id="sp7", user_id="member1", role=SpaceRole.MEMBER,
-                             display_name="member", joined_at=now, last_active=now)
+        member = SpaceMember(
+            space_id="sp7",
+            user_id="member1",
+            role=SpaceRole.MEMBER,
+            display_name="member",
+            joined_at=now,
+            last_active=now,
+        )
         await store.add_member(member)
         with pytest.raises(ValueError, match="not found"):
             await rt.call_agent("sp7", "nonexist_agent", "member1", "hi")
@@ -1311,12 +1424,18 @@ class TestSpaceAgentRuntime:
         from datetime import datetime
 
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
+
         now = datetime.now().isoformat()
-        space = Space(id="sp7b", name="test", owner_id="owner1",
-                      config=SpaceConfig(), created_at=now, updated_at=now)
+        space = Space(id="sp7b", name="test", owner_id="owner1", config=SpaceConfig(), created_at=now, updated_at=now)
         await store.create_space(space)
-        member = SpaceMember(space_id="sp7b", user_id="viewer1", role=SpaceRole.VIEWER,
-                             display_name="viewer", joined_at=now, last_active=now)
+        member = SpaceMember(
+            space_id="sp7b",
+            user_id="viewer1",
+            role=SpaceRole.VIEWER,
+            display_name="viewer",
+            joined_at=now,
+            last_active=now,
+        )
         await store.add_member(member)
         with pytest.raises(PermissionError):
             await rt.call_agent("sp7b", "agent_x", "viewer1", "hi")
@@ -1328,12 +1447,13 @@ class TestSpaceAgentRuntime:
 
         from fusion_cowork.ai.mlx_client import LLMResponse
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
+
         now = datetime.now().isoformat()
-        space = Space(id="sp8", name="test", owner_id="owner1",
-                      config=SpaceConfig(), created_at=now, updated_at=now)
+        space = Space(id="sp8", name="test", owner_id="owner1", config=SpaceConfig(), created_at=now, updated_at=now)
         await store.create_space(space)
-        member = SpaceMember(space_id="sp8", user_id="owner1", role=SpaceRole.OWNER,
-                             display_name="owner", joined_at=now, last_active=now)
+        member = SpaceMember(
+            space_id="sp8", user_id="owner1", role=SpaceRole.OWNER, display_name="owner", joined_at=now, last_active=now
+        )
         await store.add_member(member)
         a1 = await rt.add_agent(space_id="sp8", operator_id="owner1", name="Step1")
         a2 = await rt.add_agent(space_id="sp8", operator_id="owner1", name="Step2")
@@ -1352,12 +1472,20 @@ class TestSpaceAgentRuntime:
         from datetime import datetime
 
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
+
         now = datetime.now().isoformat()
-        space = Space(id="sp_min2", name="test", owner_id="owner1",
-                      config=SpaceConfig(), created_at=now, updated_at=now)
+        space = Space(
+            id="sp_min2", name="test", owner_id="owner1", config=SpaceConfig(), created_at=now, updated_at=now
+        )
         await store.create_space(space)
-        owner_m = SpaceMember(space_id="sp_min2", user_id="owner1", role=SpaceRole.OWNER,
-                              display_name="owner", joined_at=now, last_active=now)
+        owner_m = SpaceMember(
+            space_id="sp_min2",
+            user_id="owner1",
+            role=SpaceRole.OWNER,
+            display_name="owner",
+            joined_at=now,
+            last_active=now,
+        )
         await store.add_member(owner_m)
         with pytest.raises(ValueError, match="at least 2"):
             await rt.chain_agents("sp_min2", ["a1"], "owner1", "msg")
@@ -1369,12 +1497,13 @@ class TestSpaceAgentRuntime:
 
         from fusion_cowork.ai.mlx_client import LLMResponse
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
+
         now = datetime.now().isoformat()
-        space = Space(id="sp9", name="test", owner_id="owner1",
-                      config=SpaceConfig(), created_at=now, updated_at=now)
+        space = Space(id="sp9", name="test", owner_id="owner1", config=SpaceConfig(), created_at=now, updated_at=now)
         await store.create_space(space)
-        member = SpaceMember(space_id="sp9", user_id="owner1", role=SpaceRole.OWNER,
-                             display_name="owner", joined_at=now, last_active=now)
+        member = SpaceMember(
+            space_id="sp9", user_id="owner1", role=SpaceRole.OWNER, display_name="owner", joined_at=now, last_active=now
+        )
         await store.add_member(member)
         a1 = await rt.add_agent(space_id="sp9", operator_id="owner1", name="Ok")
         a2 = await rt.add_agent(space_id="sp9", operator_id="owner1", name="Fail")
@@ -1394,15 +1523,20 @@ class TestSpaceAgentRuntime:
 
         from fusion_cowork.orchestrator.orchestrator import AgentOrchestrator
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
+
         now = datetime.now().isoformat()
-        space = Space(id="sp10", name="test", owner_id="owner1",
-                      config=SpaceConfig(), created_at=now, updated_at=now)
+        space = Space(id="sp10", name="test", owner_id="owner1", config=SpaceConfig(), created_at=now, updated_at=now)
         await store.create_space(space)
-        member = SpaceMember(space_id="sp10", user_id="owner1", role=SpaceRole.OWNER,
-                             display_name="owner", joined_at=now, last_active=now)
+        member = SpaceMember(
+            space_id="sp10",
+            user_id="owner1",
+            role=SpaceRole.OWNER,
+            display_name="owner",
+            joined_at=now,
+            last_active=now,
+        )
         await store.add_member(member)
-        await rt.add_agent(space_id="sp10", operator_id="owner1", name="OrchA",
-                           agent_type="planner")
+        await rt.add_agent(space_id="sp10", operator_id="owner1", name="OrchA", agent_type="planner")
         orch = AgentOrchestrator()
         count = await rt.register_to_orchestrator("sp10", orch)
         assert count == 1
@@ -1415,6 +1549,7 @@ class TestAgentStudioClient:
     @pytest.mark.asyncio
     async def test_init(self):
         from fusion_cowork.space.agent_studio_client import AgentStudioClient
+
         client = AgentStudioClient(base_url="http://localhost:9999")
         assert client._base_url == "http://localhost:9999"
         await client.close()
@@ -1422,12 +1557,14 @@ class TestAgentStudioClient:
     @pytest.mark.asyncio
     async def test_context_manager(self):
         from fusion_cowork.space.agent_studio_client import AgentStudioClient
+
         async with AgentStudioClient() as client:
             assert client._base_url == "http://localhost:8765"
 
     @pytest.mark.asyncio
     async def test_custom_timeout(self):
         from fusion_cowork.space.agent_studio_client import AgentStudioClient
+
         client = AgentStudioClient(timeout=60.0)
         assert client._timeout == 60.0
         await client.close()
@@ -1437,6 +1574,7 @@ class TestAgentStudioClient:
         from unittest.mock import AsyncMock, MagicMock
 
         from fusion_cowork.space.agent_studio_client import AgentStudioClient
+
         client = AgentStudioClient()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -1453,6 +1591,7 @@ class TestAgentStudioClient:
         from unittest.mock import AsyncMock, MagicMock
 
         from fusion_cowork.space.agent_studio_client import AgentStudioClient
+
         client = AgentStudioClient()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -1470,14 +1609,17 @@ class TestAgentStudioClient:
         import httpx
 
         from fusion_cowork.space.agent_studio_client import AgentStudioClient
+
         client = AgentStudioClient()
         mock_resp = MagicMock()
         mock_resp.status_code = 404
-        mock_resp.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError(
-            "not found", request=MagicMock(), response=mock_resp))
+        mock_resp.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError("not found", request=MagicMock(), response=mock_resp)
+        )
         client._client.request = AsyncMock(return_value=mock_resp)
-        client._client.request = AsyncMock(side_effect=httpx.HTTPStatusError(
-            "not found", request=MagicMock(), response=mock_resp))
+        client._client.request = AsyncMock(
+            side_effect=httpx.HTTPStatusError("not found", request=MagicMock(), response=mock_resp)
+        )
         result = await client.get_agent("missing")
         assert result is None
         await client.close()
@@ -1487,21 +1629,31 @@ class TestAgentStudioClient:
         from unittest.mock import AsyncMock, MagicMock
 
         from fusion_cowork.space.agent_studio_client import AgentStudioClient
+
         client = AgentStudioClient()
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
         mock_resp.json.return_value = {
-            "id": "studio_a1", "name": "StudioWriter",
-            "system_prompt": "Write!", "agent_type": "assistant",
-            "enable_rag": True, "config": {"model": "big"},
+            "id": "studio_a1",
+            "name": "StudioWriter",
+            "system_prompt": "Write!",
+            "agent_type": "assistant",
+            "enable_rag": True,
+            "config": {"model": "big"},
         }
         client._client.request = AsyncMock(return_value=mock_resp)
         mock_runtime = MagicMock()
-        mock_runtime.add_agent = AsyncMock(return_value={
-            "id": "agent_new", "name": "StudioWriter",
-        })
+        mock_runtime.add_agent = AsyncMock(
+            return_value={
+                "id": "agent_new",
+                "name": "StudioWriter",
+            }
+        )
         result = await client.import_agent_to_space(
-            "studio_a1", mock_runtime, "sp1", "owner1",
+            "studio_a1",
+            mock_runtime,
+            "sp1",
+            "owner1",
         )
         assert result["name"] == "StudioWriter"
         mock_runtime.add_agent.assert_called_once()
@@ -1512,18 +1664,26 @@ class TestAgentStudioClient:
         from unittest.mock import AsyncMock, MagicMock
 
         from fusion_cowork.space.agent_studio_client import AgentStudioClient
+
         client = AgentStudioClient()
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
         mock_resp.json.return_value = {
-            "id": "a1", "name": "Orig", "system_prompt": "Orig",
-            "agent_type": "assistant", "enable_rag": False, "config": {},
+            "id": "a1",
+            "name": "Orig",
+            "system_prompt": "Orig",
+            "agent_type": "assistant",
+            "enable_rag": False,
+            "config": {},
         }
         client._client.request = AsyncMock(return_value=mock_resp)
         mock_runtime = MagicMock()
         mock_runtime.add_agent = AsyncMock(return_value={"id": "new", "name": "Override"})
         _result = await client.import_agent_to_space(
-            "a1", mock_runtime, "sp1", "owner1",
+            "a1",
+            mock_runtime,
+            "sp1",
+            "owner1",
             overrides={"name": "Override"},
         )
         call_kwargs = mock_runtime.add_agent.call_args[1]
@@ -1544,14 +1704,22 @@ class TestSpaceChatRelay:
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         from fusion_cowork.space.permission import SpacePermission
         from fusion_cowork.space.store import SpaceStore
+
         store = SpaceStore(data_dir=str(tmp_path / "spaces"))
         await store.initialize()
         now = datetime.now().isoformat()
-        space = Space(id="relay_sp", name="test", owner_id="owner1",
-                      config=SpaceConfig(), created_at=now, updated_at=now)
+        space = Space(
+            id="relay_sp", name="test", owner_id="owner1", config=SpaceConfig(), created_at=now, updated_at=now
+        )
         await store.create_space(space)
-        member = SpaceMember(space_id="relay_sp", user_id="owner1", role=SpaceRole.OWNER,
-                             display_name="owner", joined_at=now, last_active=now)
+        member = SpaceMember(
+            space_id="relay_sp",
+            user_id="owner1",
+            role=SpaceRole.OWNER,
+            display_name="owner",
+            joined_at=now,
+            last_active=now,
+        )
         await store.add_member(member)
         perm = SpacePermission(store)
         mlx = MagicMock(spec=FusionMLXClient)
@@ -1560,6 +1728,7 @@ class TestSpaceChatRelay:
         chat_svc = SpaceChatService(store, mlx, perm)
         # Add 2 agents
         from fusion_cowork.space.agent_runtime import SpaceAgentRuntime
+
         rt = SpaceAgentRuntime(store, mlx, perm)
         a1 = await rt.add_agent("relay_sp", "owner1", "Agent1", system_prompt="You are A1")
         a2 = await rt.add_agent("relay_sp", "owner1", "Agent2", system_prompt="You are A2")
@@ -1570,12 +1739,16 @@ class TestSpaceChatRelay:
     async def test_relay_agents(self, chat_setup):
         store, chat_svc, mlx, a1, a2 = chat_setup
         from fusion_cowork.ai.mlx_client import LLMResponse
+
         mlx.chat.side_effect = [
             LLMResponse(content="response from A1"),
             LLMResponse(content="response from A2"),
         ]
         results = await chat_svc.relay_agents(
-            "relay_sp", "owner1", [a1, a2], "start message",
+            "relay_sp",
+            "owner1",
+            [a1, a2],
+            "start message",
         )
         assert len(results) == 2
         assert results[0]["content"] == "response from A1"
@@ -1586,7 +1759,10 @@ class TestSpaceChatRelay:
         store, chat_svc, mlx, a1, a2 = chat_setup
         with pytest.raises(PermissionError):
             await chat_svc.relay_agents(
-                "relay_sp", "non_member", [a1, a2], "msg",
+                "relay_sp",
+                "non_member",
+                [a1, a2],
+                "msg",
             )
 
     @pytest.mark.asyncio
@@ -1606,15 +1782,23 @@ class TestCallAgentPermission:
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         from fusion_cowork.space.permission import SpacePermission
         from fusion_cowork.space.store import SpaceStore
+
         store = SpaceStore(data_dir=str(tmp_path / "spaces"))
         await store.initialize()
         now = datetime.now().isoformat()
-        space = Space(id="perm_sp", name="test", owner_id="owner1",
-                      config=SpaceConfig(), created_at=now, updated_at=now)
+        space = Space(
+            id="perm_sp", name="test", owner_id="owner1", config=SpaceConfig(), created_at=now, updated_at=now
+        )
         await store.create_space(space)
         for role in SpaceRole:
-            m = SpaceMember(space_id="perm_sp", user_id=f"{role.value}_user",
-                            role=role, display_name=role.value, joined_at=now, last_active=now)
+            m = SpaceMember(
+                space_id="perm_sp",
+                user_id=f"{role.value}_user",
+                role=role,
+                display_name=role.value,
+                joined_at=now,
+                last_active=now,
+            )
             await store.add_member(m)
         perm = SpacePermission(store)
         yield perm
@@ -1656,20 +1840,30 @@ class TestSpaceArtifactService:
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         from fusion_cowork.space.permission import SpacePermission
         from fusion_cowork.space.store import SpaceStore
+
         d = tempfile.mkdtemp()
         store = SpaceStore(data_dir=d)
         await store.initialize()
         perm = SpacePermission(store)
         svc = SpaceArtifactService(store, perm)
-        sp = Space(id="art_sp", name="artifact test", owner_id="owner_u",
-                   config=SpaceConfig(), created_at="2026-01-01T00:00:00",
-                   updated_at="2026-01-01T00:00:00")
+        sp = Space(
+            id="art_sp",
+            name="artifact test",
+            owner_id="owner_u",
+            config=SpaceConfig(),
+            created_at="2026-01-01T00:00:00",
+            updated_at="2026-01-01T00:00:00",
+        )
         await store.create_space(sp)
-        for uid, role in [("owner_u", "owner"), ("admin_u", "admin"),
-                          ("member_u", "member"), ("viewer_u", "viewer")]:
-            m = SpaceMember(space_id="art_sp", user_id=uid, role=SpaceRole(role),
-                            display_name=uid, joined_at="2026-01-01T00:00:00",
-                            last_active="2026-01-01T00:00:00")
+        for uid, role in [("owner_u", "owner"), ("admin_u", "admin"), ("member_u", "member"), ("viewer_u", "viewer")]:
+            m = SpaceMember(
+                space_id="art_sp",
+                user_id=uid,
+                role=SpaceRole(role),
+                display_name=uid,
+                joined_at="2026-01-01T00:00:00",
+                last_active="2026-01-01T00:00:00",
+            )
             await store.add_member(m)
         yield svc, store
         await store.close()
@@ -1707,8 +1901,7 @@ class TestSpaceArtifactService:
     async def test_update_artifact_by_owner(self, artifact_setup):
         svc, _ = artifact_setup
         created = await svc.create_artifact("art_sp", "owner_u", name="doc")
-        result = await svc.update_artifact("art_sp", created["id"], "owner_u",
-                                           content="updated", name="doc_v2")
+        result = await svc.update_artifact("art_sp", created["id"], "owner_u", content="updated", name="doc_v2")
         assert result["version"] == 2
 
     @pytest.mark.asyncio
@@ -1743,8 +1936,7 @@ class TestSpaceArtifactService:
     async def test_transfer_ownership(self, artifact_setup):
         svc, _ = artifact_setup
         created = await svc.create_artifact("art_sp", "owner_u", name="doc")
-        result = await svc.transfer_ownership("art_sp", created["id"],
-                                              "owner_u", "member_u")
+        result = await svc.transfer_ownership("art_sp", created["id"], "owner_u", "member_u")
         assert result["new_owner"] == "member_u"
 
     @pytest.mark.asyncio
@@ -1752,8 +1944,7 @@ class TestSpaceArtifactService:
         svc, _ = artifact_setup
         created = await svc.create_artifact("art_sp", "owner_u", name="doc")
         with pytest.raises(PermissionError):
-            await svc.transfer_ownership("art_sp", created["id"],
-                                         "member_u", "viewer_u")
+            await svc.transfer_ownership("art_sp", created["id"], "member_u", "viewer_u")
 
     @pytest.mark.asyncio
     async def test_list_artifacts(self, artifact_setup):
@@ -1789,19 +1980,29 @@ class TestArtifactPermissionActions:
         from fusion_cowork.space.models import Space, SpaceConfig, SpaceMember, SpaceRole
         from fusion_cowork.space.permission import SpacePermission
         from fusion_cowork.space.store import SpaceStore
+
         d = tempfile.mkdtemp()
         store = SpaceStore(data_dir=d)
         await store.initialize()
         perm = SpacePermission(store)
-        sp = Space(id="perm2_sp", name="perm2", owner_id="owner_u",
-                   config=SpaceConfig(), created_at="2026-01-01T00:00:00",
-                   updated_at="2026-01-01T00:00:00")
+        sp = Space(
+            id="perm2_sp",
+            name="perm2",
+            owner_id="owner_u",
+            config=SpaceConfig(),
+            created_at="2026-01-01T00:00:00",
+            updated_at="2026-01-01T00:00:00",
+        )
         await store.create_space(sp)
-        for uid, role in [("owner_u", "owner"), ("admin_u", "admin"),
-                          ("member_u", "member"), ("viewer_u", "viewer")]:
-            m = SpaceMember(space_id="perm2_sp", user_id=uid, role=SpaceRole(role),
-                            display_name=uid, joined_at="2026-01-01T00:00:00",
-                            last_active="2026-01-01T00:00:00")
+        for uid, role in [("owner_u", "owner"), ("admin_u", "admin"), ("member_u", "member"), ("viewer_u", "viewer")]:
+            m = SpaceMember(
+                space_id="perm2_sp",
+                user_id=uid,
+                role=SpaceRole(role),
+                display_name=uid,
+                joined_at="2026-01-01T00:00:00",
+                last_active="2026-01-01T00:00:00",
+            )
             await store.add_member(m)
         yield perm
         await store.close()
@@ -1848,6 +2049,7 @@ class TestModuleRegistry:
 
         from fusion_cowork.space.fsb import ModuleRegistry
         from fusion_cowork.space.store import SpaceStore
+
         d = tempfile.mkdtemp()
         store = SpaceStore(data_dir=d)
         await store.initialize()
@@ -1859,8 +2061,7 @@ class TestModuleRegistry:
     @pytest.mark.asyncio
     async def test_register_module(self, module_setup):
         reg, _ = module_setup
-        result = await reg.register_module("fsb", "Fusion Small Business",
-                                           icon="🏪", route_path="/fsb")
+        result = await reg.register_module("fsb", "Fusion Small Business", icon="🏪", route_path="/fsb")
         assert result["id"] == "fsb"
         assert result["name"] == "Fusion Small Business"
         assert result["enabled"] is True
@@ -1919,6 +2120,7 @@ class TestNotificationService:
 
         from fusion_cowork.space.fsb import NotificationService
         from fusion_cowork.space.store import SpaceStore
+
         d = tempfile.mkdtemp()
         store = SpaceStore(data_dir=d)
         await store.initialize()
@@ -1931,8 +2133,10 @@ class TestNotificationService:
     async def test_push_notification(self, notif_setup):
         svc, _ = notif_setup
         result = await svc.push_notification(
-            space_id="sp1", user_id="user1",
-            notification_type="approval", title="待审批任务",
+            space_id="sp1",
+            user_id="user1",
+            notification_type="approval",
+            title="待审批任务",
         )
         assert result["type"] == "approval"
         assert result["title"] == "待审批任务"

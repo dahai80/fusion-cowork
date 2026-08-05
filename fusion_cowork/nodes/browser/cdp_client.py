@@ -9,12 +9,14 @@ logger = logging.getLogger(__name__)
 
 try:
     import httpx
+
     HAS_HTTPX = True
 except ImportError:
     HAS_HTTPX = False
 
 try:
     import websockets
+
     HAS_WEBSOCKETS = True
 except ImportError:
     HAS_WEBSOCKETS = False
@@ -74,9 +76,7 @@ class CDPClient:
             data = json.loads(raw)
             if data.get("id") == self._msg_id:
                 return data
-        raise RuntimeError(
-            f"CDP send() 超过最大重试次数 ({max_retries}): method={method}"
-        )
+        raise RuntimeError(f"CDP send() 超过最大重试次数 ({max_retries}): method={method}")
 
     @property
     def connected(self) -> bool:
@@ -106,14 +106,26 @@ class CDPClient:
                 y = (content[1] + content[3] + content[5] + content[7]) / 4
             else:
                 return False
-            await self.send("Input.dispatchMouseEvent", {
-                "type": "mousePressed", "x": x, "y": y,
-                "button": "left", "clickCount": 1,
-            })
-            await self.send("Input.dispatchMouseEvent", {
-                "type": "mouseReleased", "x": x, "y": y,
-                "button": "left", "clickCount": 1,
-            })
+            await self.send(
+                "Input.dispatchMouseEvent",
+                {
+                    "type": "mousePressed",
+                    "x": x,
+                    "y": y,
+                    "button": "left",
+                    "clickCount": 1,
+                },
+            )
+            await self.send(
+                "Input.dispatchMouseEvent",
+                {
+                    "type": "mouseReleased",
+                    "x": x,
+                    "y": y,
+                    "button": "left",
+                    "clickCount": 1,
+                },
+            )
             logger.info(f"CDP 点击: node={backend_node_id}, x={x:.0f}, y={y:.0f}")
             return True
         except Exception as e:
@@ -124,9 +136,13 @@ class CDPClient:
         try:
             doc = await self.send("DOM.getDocument")
             root_id = doc.get("result", {}).get("root", {}).get("nodeId", 0)
-            query = await self.send("DOM.querySelector", {
-                "nodeId": root_id, "selector": selector,
-            })
+            query = await self.send(
+                "DOM.querySelector",
+                {
+                    "nodeId": root_id,
+                    "selector": selector,
+                },
+            )
             node_id = query.get("result", {}).get("nodeId", 0)
             if node_id == 0:
                 return False
@@ -140,24 +156,34 @@ class CDPClient:
 
     async def screenshot(self) -> bytes:
         import base64
+
         result = await self.send("Page.captureScreenshot", {"format": "png"})
         data_b64 = result.get("result", {}).get("data", "")
         logger.info(f"CDP 截图: {len(data_b64)} bytes base64")
         return base64.b64decode(data_b64)
 
     async def evaluate_js(self, script: str) -> Any:
-        result = await self.send("Runtime.evaluate", {
-            "expression": script, "returnByValue": True,
-        })
+        result = await self.send(
+            "Runtime.evaluate",
+            {
+                "expression": script,
+                "returnByValue": True,
+            },
+        )
         value = result.get("result", {}).get("result", {}).get("value")
         logger.info(f"CDP 执行JS: {script[:60]}")
         return value
 
     async def emulate_viewport(self, width: int, height: int, device_scale: float = 1.0, mobile: bool = False) -> None:
-        await self.send("Emulation.setDeviceMetricsOverride", {
-            "width": width, "height": height,
-            "deviceScaleFactor": device_scale, "mobile": mobile,
-        })
+        await self.send(
+            "Emulation.setDeviceMetricsOverride",
+            {
+                "width": width,
+                "height": height,
+                "deviceScaleFactor": device_scale,
+                "mobile": mobile,
+            },
+        )
         logger.info(f"CDP 模拟视口: {width}x{height}")
 
     async def list_network_requests(self) -> List[Dict[str, Any]]:

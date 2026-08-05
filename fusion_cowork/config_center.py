@@ -42,7 +42,7 @@ class ConfigObserver:
     def __init__(self, callback: Callable, keys: Optional[List[str]] = None):
         self.callback = callback
         self.keys = keys
-        self._id = f"obs_{id(callback)}_{int(time.time()*1000)}"
+        self._id = f"obs_{id(callback)}_{int(time.time() * 1000)}"
 
     def matches(self, key: str) -> bool:
         if self.keys is None:
@@ -62,7 +62,7 @@ class ConfigCenter:
             "engine.retry_delay": 1.0,
             "engine.timeout": 300,
             "engine.concurrency": 4,
-            "ai.base_url": "http://localhost:11432",
+            "ai.base_url": "http://localhost:11434",
             "ai.model": "default",
             "ai.temperature": 0.7,
             "ai.max_tokens": 2048,

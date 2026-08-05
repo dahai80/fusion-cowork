@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 class TaskStatus(Enum):
     """任务状态。"""
+
     ACTIVE = "active"
     PAUSED = "paused"
     COMPLETED = "completed"
@@ -37,6 +38,7 @@ class TaskStatus(Enum):
 @dataclass
 class ScheduledTask:
     """定时任务定义。"""
+
     id: str
     name: str
     workflow_id: str

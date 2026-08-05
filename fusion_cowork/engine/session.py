@@ -6,6 +6,7 @@ SQLite 存储会话数据，支持：
 - 会话分叉（fork）— 从某步骤重新执行
 - 自动清理过期会话
 """
+
 import json
 import logging
 import sqlite3
@@ -100,27 +101,34 @@ class SessionStore:
         now = time.time()
         session.updated_at = now
         with self._connect() as conn:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT OR REPLACE INTO sessions
                 (id, workflow_id, workflow_name, status, initial_input,
                  execution_id, created_at, updated_at, completed_at,
                  metadata, steps_snapshot)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                session.id, session.workflow_id, session.workflow_name,
-                session.status, json.dumps(session.initial_input),
-                session.execution_id, session.created_at, session.updated_at,
-                session.completed_at, json.dumps(session.metadata),
-                json.dumps(session.steps_snapshot),
-            ))
+            """,
+                (
+                    session.id,
+                    session.workflow_id,
+                    session.workflow_name,
+                    session.status,
+                    json.dumps(session.initial_input),
+                    session.execution_id,
+                    session.created_at,
+                    session.updated_at,
+                    session.completed_at,
+                    json.dumps(session.metadata),
+                    json.dumps(session.steps_snapshot),
+                ),
+            )
         logger.debug(f"Session 保存: {session.id} status={session.status}")
         return session
 
     def get(self, session_id: str) -> Optional[Session]:
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM sessions WHERE id = ?", (session_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
         if row:
             return self._row_to_session(row)
         return None

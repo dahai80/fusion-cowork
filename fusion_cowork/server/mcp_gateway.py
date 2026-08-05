@@ -83,10 +83,17 @@ class MCPGateway:
         self._health_task: Optional[asyncio.Task] = None
         self._running = False
 
-    async def spawn(self, name: str, command: str, args: List[str] = None,
-                    env: Dict[str, str] = None, transport: TransportType = TransportType.STDIO,
-                    plugin_name: str = "", auto_restart: bool = True,
-                    max_restarts: int = 3) -> ManagedProcess:
+    async def spawn(
+        self,
+        name: str,
+        command: str,
+        args: List[str] = None,
+        env: Dict[str, str] = None,
+        transport: TransportType = TransportType.STDIO,
+        plugin_name: str = "",
+        auto_restart: bool = True,
+        max_restarts: int = 3,
+    ) -> ManagedProcess:
         process_id = f"proc_{uuid.uuid4().hex[:8]}"
         mp = ManagedProcess(
             process_id=process_id,
@@ -145,7 +152,7 @@ class MCPGateway:
             if mp.auto_restart and mp.restart_count < mp.max_restarts:
                 mp.restart_count += 1
                 logger.info(f"MCPGateway auto-restart id={mp.process_id} attempt={mp.restart_count}")
-                await asyncio.sleep(2 ** mp.restart_count)
+                await asyncio.sleep(2**mp.restart_count)
                 await self._start_process(mp)
         except Exception as e:
             logger.error(f"MCPGateway._watch_process error id={mp.process_id}: {e}")
@@ -204,9 +211,12 @@ class MCPGateway:
             results[pid] = await self.health(pid)
         return results
 
-    def register_client(self, client_info: Dict[str, Any] = None,
-                        transport: TransportType = TransportType.STDIO,
-                        process_id: Optional[str] = None) -> ClientSession:
+    def register_client(
+        self,
+        client_info: Dict[str, Any] = None,
+        transport: TransportType = TransportType.STDIO,
+        process_id: Optional[str] = None,
+    ) -> ClientSession:
         session_id = f"sess_{uuid.uuid4().hex[:8]}"
         session = ClientSession(
             session_id=session_id,

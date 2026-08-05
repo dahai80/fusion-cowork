@@ -61,7 +61,8 @@ class AgentRuntime:
         while self._running:
             try:
                 msg: AgentMessage = await asyncio.wait_for(
-                    self.inbox.get(), timeout=1.0,
+                    self.inbox.get(),
+                    timeout=1.0,
                 )
                 await self._handle_message(msg)
             except TimeoutError:

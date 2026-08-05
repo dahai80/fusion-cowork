@@ -26,6 +26,7 @@ from fusion_cowork.server.mcp_server import MCPToolRegistry
 
 # ── CapabilityMatrix ──
 
+
 class TestCapabilityMatrix:
     def test_default_caps_loaded(self):
         m = CapabilityMatrix()
@@ -72,8 +73,7 @@ class TestCapabilityMatrix:
 
     def test_add_custom(self):
         m = CapabilityMatrix()
-        cap = Capability(id="custom", name="Custom", category="Test",
-                         desk_level=CapabilityLevel.FULL)
+        cap = Capability(id="custom", name="Custom", category="Test", desk_level=CapabilityLevel.FULL)
         m.add(cap)
         assert m.get("custom") is not None
         assert len(m.list_all()) == 33
@@ -94,31 +94,42 @@ class TestCapabilityMatrix:
 
 # ── Capability ──
 
+
 class TestCapability:
     def test_parity_desk_adv_cowork_full(self):
-        c = Capability(id="t", name="T", category="X",
-                       desk_level=CapabilityLevel.ADVANCED, cowork_level=CapabilityLevel.FULL)
+        c = Capability(
+            id="t", name="T", category="X", desk_level=CapabilityLevel.ADVANCED, cowork_level=CapabilityLevel.FULL
+        )
         assert c.parity == 1.5
 
     def test_parity_equal(self):
-        c = Capability(id="t", name="T", category="X",
-                       desk_level=CapabilityLevel.FULL, cowork_level=CapabilityLevel.FULL)
+        c = Capability(
+            id="t", name="T", category="X", desk_level=CapabilityLevel.FULL, cowork_level=CapabilityLevel.FULL
+        )
         assert c.parity == 1.0
 
     def test_parity_cowork_none_desk_has(self):
-        c = Capability(id="t", name="T", category="X",
-                       desk_level=CapabilityLevel.FULL, cowork_level=CapabilityLevel.NONE)
+        c = Capability(
+            id="t", name="T", category="X", desk_level=CapabilityLevel.FULL, cowork_level=CapabilityLevel.NONE
+        )
         assert c.parity == 1.0
 
     def test_parity_both_none(self):
-        c = Capability(id="t", name="T", category="X",
-                       desk_level=CapabilityLevel.NONE, cowork_level=CapabilityLevel.NONE)
+        c = Capability(
+            id="t", name="T", category="X", desk_level=CapabilityLevel.NONE, cowork_level=CapabilityLevel.NONE
+        )
         assert c.parity == 0.0
 
     def test_to_dict(self):
-        c = Capability(id="t", name="T", category="X",
-                       desk_level=CapabilityLevel.FULL, cowork_level=CapabilityLevel.PARTIAL,
-                       desk_detail="dd", cowork_detail="cd")
+        c = Capability(
+            id="t",
+            name="T",
+            category="X",
+            desk_level=CapabilityLevel.FULL,
+            cowork_level=CapabilityLevel.PARTIAL,
+            desk_detail="dd",
+            cowork_detail="cd",
+        )
         d = c.to_dict()
         assert d["desk_level"] == "FULL"
         assert d["cowork_level"] == "PARTIAL"
@@ -126,6 +137,7 @@ class TestCapability:
 
 
 # ── BenchmarkRunner ──
+
 
 class TestBenchmarkRunner:
     @pytest.mark.asyncio
@@ -145,9 +157,11 @@ class TestBenchmarkRunner:
     @pytest.mark.asyncio
     async def test_run_nodes_batch(self):
         runner = BenchmarkRunner(warmup=0, repeats=2)
-        results = await runner.run_nodes([
-            {"node": "file_input", "params": {"path": "~"}},
-        ])
+        results = await runner.run_nodes(
+            [
+                {"node": "file_input", "params": {"path": "~"}},
+            ]
+        )
         assert len(results) == 2
 
     @pytest.mark.asyncio
@@ -176,6 +190,7 @@ class TestBenchmarkRunner:
 
 
 # ── ReportRenderer ──
+
 
 class TestReportRenderer:
     def test_markdown_has_title(self):
@@ -234,6 +249,7 @@ class TestReportRenderer:
 
 # ── 端到端: MCP 全链路 ──
 
+
 class TestE2EMCP:
     @pytest.mark.asyncio
     async def test_mcp_tools_list(self):
@@ -262,6 +278,7 @@ class TestE2EMCP:
 
 # ── 端到端: DeskRPC + Engine + Session + Event ──
 
+
 class TestE2EDeskRPC:
     def setup_method(self):
         self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
@@ -271,8 +288,10 @@ class TestE2EDeskRPC:
         self.pm = PermissionManager(level=PermissionLevel.BYPASS)
         self.hm = HookManager()
         self.rpc = DeskRPCServer(
-            event_emitter=self.em, session_store=self.store,
-            permission_manager=self.pm, hook_manager=self.hm,
+            event_emitter=self.em,
+            session_store=self.store,
+            permission_manager=self.pm,
+            hook_manager=self.hm,
         )
 
     def teardown_method(self):
@@ -302,12 +321,16 @@ class TestE2EDeskRPC:
         self.store.save(s)
         r1 = await self.rpc._dispatch({"jsonrpc": "2.0", "id": 5, "method": "desk.session.list", "params": {}})
         assert r1["result"]["count"] == 1
-        r2 = await self.rpc._dispatch({"jsonrpc": "2.0", "id": 6, "method": "desk.session.get", "params": {"session_id": s.id}})
+        r2 = await self.rpc._dispatch(
+            {"jsonrpc": "2.0", "id": 6, "method": "desk.session.get", "params": {"session_id": s.id}}
+        )
         assert r2["result"]["workflow_name"] == "e2e_test"
 
     @pytest.mark.asyncio
     async def test_permission_workflow(self):
-        r1 = await self.rpc._dispatch({"jsonrpc": "2.0", "id": 7, "method": "desk.permission.check", "params": {"tool_name": "shell_exec"}})
+        r1 = await self.rpc._dispatch(
+            {"jsonrpc": "2.0", "id": 7, "method": "desk.permission.check", "params": {"tool_name": "shell_exec"}}
+        )
         assert r1["result"]["allowed"] is True
         r2 = await self.rpc._dispatch({"jsonrpc": "2.0", "id": 8, "method": "desk.permission.list", "params": {}})
         assert "level" in r2["result"]
@@ -320,6 +343,7 @@ class TestE2EDeskRPC:
 
 
 # ── 端到端: WorkflowEngine + Permission + Hook + Session + Event ──
+
 
 class TestE2EWorkflowFull:
     def setup_method(self):
@@ -376,11 +400,13 @@ class TestE2EWorkflowFull:
 
 # ── CLI Benchmark 命令 ──
 
+
 class TestCLIBenchmark:
     def test_benchmark_report_markdown(self):
         from click.testing import CliRunner
 
         from fusion_cowork.cli import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["benchmark", "report", "--format", "markdown"])
         assert result.exit_code == 0
@@ -390,6 +416,7 @@ class TestCLIBenchmark:
         from click.testing import CliRunner
 
         from fusion_cowork.cli import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["benchmark", "report", "--format", "json"])
         assert result.exit_code == 0
@@ -401,6 +428,7 @@ class TestCLIBenchmark:
         from click.testing import CliRunner
 
         from fusion_cowork.cli import cli
+
         runner = CliRunner()
         with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
             path = f.name
@@ -546,8 +574,13 @@ class TestHookPriority:
     async def test_register_with_priority(self):
         mgr = HookManager()
         calls = []
-        def h1(ctx): calls.append("h1")
-        def h2(ctx): calls.append("h2")
+
+        def h1(ctx):
+            calls.append("h1")
+
+        def h2(ctx):
+            calls.append("h2")
+
         mgr.register(HookEvent.PRE_NODE_EXECUTE, h2, priority=1)
         mgr.register(HookEvent.PRE_NODE_EXECUTE, h1, priority=10)
         await mgr.fire(HookEvent.PRE_NODE_EXECUTE, {"test": True})
@@ -570,6 +603,7 @@ class TestHookWorkflowIntegration:
     @pytest.mark.asyncio
     async def test_workflow_fire_hooks(self):
         from fusion_cowork.nodes.macos import DesktopCleanNode
+
         mgr = HookManager()
         events = []
         mgr.register(HookEvent.WORKFLOW_START, lambda ctx: events.append("start"))
@@ -586,9 +620,12 @@ class TestHookWorkflowIntegration:
     @pytest.mark.asyncio
     async def test_hook_cancel_node(self):
         from fusion_cowork.nodes.macos import DesktopCleanNode
+
         mgr = HookManager()
+
         def cancel_hook(ctx: HookContext):
             ctx.cancel()
+
         mgr.register(HookEvent.PRE_NODE_EXECUTE, cancel_hook)
         engine = WorkflowEngine(hook_manager=mgr)
         wf = Workflow(name="cancel_test")
@@ -599,12 +636,15 @@ class TestHookWorkflowIntegration:
     @pytest.mark.asyncio
     async def test_hook_modify_params(self):
         from fusion_cowork.nodes.macos import DesktopCleanNode
+
         mgr = HookManager()
         mod_events = []
+
         def modify_hook(ctx: HookContext):
             if ctx.event == HookEvent.PRE_NODE_EXECUTE:
                 ctx.modify("params_overridden", True)
                 mod_events.append("modified")
+
         mgr.register(HookEvent.PRE_NODE_EXECUTE, modify_hook)
         engine = WorkflowEngine(hook_manager=mgr)
         wf = Workflow(name="modify_test")
@@ -615,6 +655,7 @@ class TestHookWorkflowIntegration:
     @pytest.mark.asyncio
     async def test_hook_node_error(self):
         from fusion_cowork.nodes.macos import DesktopCleanNode
+
         mgr = HookManager()
         error_events = []
         mgr.register(HookEvent.NODE_ERROR, lambda ctx: error_events.append("node_error"))
@@ -631,8 +672,10 @@ class TestHookPermissionIntegration:
     @pytest.mark.asyncio
     async def test_permission_hook_auto_approve(self):
         mgr = HookManager()
+
         def auto_approve(ctx: HookContext):
             ctx.modify("approved", True)
+
         mgr.register(HookEvent.PERMISSION_REQUEST, auto_approve)
         pm = PermissionManager(level=PermissionLevel.MANUAL, hook_manager=mgr)
         result = await pm.check("shell_exec", "execute", {"command": "ls"})
@@ -641,8 +684,10 @@ class TestHookPermissionIntegration:
     @pytest.mark.asyncio
     async def test_permission_hook_auto_deny(self):
         mgr = HookManager()
+
         def auto_deny(ctx: HookContext):
             ctx.cancel()
+
         mgr.register(HookEvent.PERMISSION_REQUEST, auto_deny)
         pm = PermissionManager(level=PermissionLevel.AUTO, hook_manager=mgr)
         result = await pm.check("shell_exec", "execute", {"command": "rm -rf /"})
@@ -656,6 +701,7 @@ class TestHeadlessRunner:
     @pytest.mark.asyncio
     async def test_headless_runner_run_template(self):
         from fusion_cowork.sdk.headless import HeadlessRunner
+
         runner = HeadlessRunner()
         result = await runner.run_template("desktop_clean")
         assert result is not None
@@ -664,6 +710,7 @@ class TestHeadlessRunner:
     async def test_headless_runner_run_workflow(self):
         from fusion_cowork.nodes.macos import DesktopCleanNode  # noqa: F401 — trigger registration
         from fusion_cowork.sdk.headless import HeadlessRunner
+
         runner = HeadlessRunner()
         wf_def = {
             "name": "test_wf",
@@ -676,6 +723,7 @@ class TestHeadlessRunner:
     @pytest.mark.asyncio
     async def test_headless_runner_cancel(self):
         from fusion_cowork.sdk.headless import HeadlessRunner
+
         runner = HeadlessRunner()
         runner._running = True
         await runner.cancel()
@@ -686,6 +734,7 @@ class TestFusionCoworkSDK:
     @pytest.mark.asyncio
     async def test_sdk_list_nodes(self):
         from fusion_cowork.sdk import FusionCoworkSDK
+
         sdk = FusionCoworkSDK(base_url="http://localhost:19999")
         nodes = await sdk.list_nodes()
         assert isinstance(nodes, list)
@@ -694,6 +743,7 @@ class TestFusionCoworkSDK:
     @pytest.mark.asyncio
     async def test_sdk_list_templates(self):
         from fusion_cowork.sdk import FusionCoworkSDK
+
         sdk = FusionCoworkSDK(base_url="http://localhost:19999")
         templates = await sdk.list_templates()
         assert isinstance(templates, list)
@@ -702,16 +752,20 @@ class TestFusionCoworkSDK:
 class TestSDKModuleImport:
     def test_sdk_import(self):
         from fusion_cowork.sdk import FusionCoworkSDK
+
         assert FusionCoworkSDK is not None
 
     def test_headless_import(self):
         from fusion_cowork.sdk.headless import HeadlessRunner
+
         assert HeadlessRunner is not None
 
     def test_lazy_import_agent_runtime(self):
         from fusion_cowork import AgentRuntime
+
         assert AgentRuntime is not None
 
     def test_lazy_import_coordinator_executor(self):
         from fusion_cowork import CoordinatorExecutor
+
         assert CoordinatorExecutor is not None

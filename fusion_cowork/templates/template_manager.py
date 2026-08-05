@@ -38,9 +38,9 @@ BUILTIN_TEMPLATES = [
                             "recursive": False,
                             "file_patterns": "*",
                             "include_hidden": False,
-                            "sort_by": "type"
+                            "sort_by": "type",
                         }
-                    }
+                    },
                 },
                 {
                     "id": "n2",
@@ -51,15 +51,13 @@ BUILTIN_TEMPLATES = [
                             "organize_by_date": False,
                             "remove_old_files": False,
                             "skip_hidden": True,
-                            "dry_run": False
+                            "dry_run": False,
                         }
-                    }
-                }
+                    },
+                },
             ],
-            "edges": [
-                {"source_id": "n1", "target_id": "n2"}
-            ]
-        }
+            "edges": [{"source_id": "n1", "target_id": "n2"}],
+        },
     },
     {
         "id": "download_organizer",
@@ -83,9 +81,9 @@ BUILTIN_TEMPLATES = [
                             "recursive": False,
                             "file_patterns": "*",
                             "sort_by": "date",
-                            "sort_order": "desc"
+                            "sort_order": "desc",
                         }
-                    }
+                    },
                 },
                 {
                     "id": "n2",
@@ -96,15 +94,13 @@ BUILTIN_TEMPLATES = [
                             "deduplicate": True,
                             "clean_old_files": False,
                             "target_dir": "~/Documents/Downloads_Archive",
-                            "dry_run": False
+                            "dry_run": False,
                         }
-                    }
-                }
+                    },
+                },
             ],
-            "edges": [
-                {"source_id": "n1", "target_id": "n2"}
-            ]
-        }
+            "edges": [{"source_id": "n1", "target_id": "n2"}],
+        },
     },
     {
         "id": "pdf_summarizer",
@@ -128,9 +124,9 @@ BUILTIN_TEMPLATES = [
                             "path": "~/Desktop",
                             "recursive": True,
                             "file_patterns": "*.pdf,*.docx,*.md,*.txt",
-                            "sort_by": "name"
+                            "sort_by": "name",
                         }
-                    }
+                    },
                 },
                 {
                     "id": "n2",
@@ -141,9 +137,9 @@ BUILTIN_TEMPLATES = [
                             "summary_length": "medium",
                             "extract_keywords": True,
                             "extract_conclusions": True,
-                            "generate_report": True
+                            "generate_report": True,
                         }
-                    }
+                    },
                 },
                 {
                     "id": "n3",
@@ -152,16 +148,13 @@ BUILTIN_TEMPLATES = [
                         "params": {
                             "output_path": "~/Desktop/Output",
                             "file_name": "文档摘要报告_{date}",
-                            "format": "markdown"
+                            "format": "markdown",
                         }
-                    }
-                }
+                    },
+                },
             ],
-            "edges": [
-                {"source_id": "n1", "target_id": "n2"},
-                {"source_id": "n2", "target_id": "n3"}
-            ]
-        }
+            "edges": [{"source_id": "n1", "target_id": "n2"}, {"source_id": "n2", "target_id": "n3"}],
+        },
     },
     {
         "id": "file_classify_organize",
@@ -181,42 +174,22 @@ BUILTIN_TEMPLATES = [
                     "id": "n1",
                     "name": "file_input",
                     "config": {
-                        "params": {
-                            "path": "~/Desktop",
-                            "recursive": False,
-                            "file_patterns": "*",
-                            "sort_by": "name"
-                        }
-                    }
+                        "params": {"path": "~/Desktop", "recursive": False, "file_patterns": "*", "sort_by": "name"}
+                    },
                 },
                 {
                     "id": "n2",
                     "name": "ai_classify",
-                    "config": {
-                        "params": {
-                            "model": "",
-                            "classify_by_content": True,
-                            "max_files_per_batch": 10
-                        }
-                    }
+                    "config": {"params": {"model": "", "classify_by_content": True, "max_files_per_batch": 10}},
                 },
                 {
                     "id": "n3",
                     "name": "file_classifier",
-                    "config": {
-                        "params": {
-                            "move_to_subdirs": True,
-                            "target_base": "~/Desktop",
-                            "dry_run": False
-                        }
-                    }
-                }
+                    "config": {"params": {"move_to_subdirs": True, "target_base": "~/Desktop", "dry_run": False}},
+                },
             ],
-            "edges": [
-                {"source_id": "n1", "target_id": "n2"},
-                {"source_id": "n2", "target_id": "n3"}
-            ]
-        }
+            "edges": [{"source_id": "n1", "target_id": "n2"}, {"source_id": "n2", "target_id": "n3"}],
+        },
     },
     {
         "id": "batch_ai_rename",
@@ -236,41 +209,20 @@ BUILTIN_TEMPLATES = [
                     "id": "n1",
                     "name": "file_input",
                     "config": {
-                        "params": {
-                            "path": "~/Desktop",
-                            "recursive": False,
-                            "file_patterns": "*",
-                            "sort_by": "name"
-                        }
-                    }
+                        "params": {"path": "~/Desktop", "recursive": False, "file_patterns": "*", "sort_by": "name"}
+                    },
                 },
                 {
                     "id": "n2",
                     "name": "ai_generate_name",
                     "config": {
-                        "params": {
-                            "model": "",
-                            "use_content": True,
-                            "lowercase": False,
-                            "replace_spaces": True
-                        }
-                    }
+                        "params": {"model": "", "use_content": True, "lowercase": False, "replace_spaces": True}
+                    },
                 },
-                {
-                    "id": "n3",
-                    "name": "file_batch_rename",
-                    "config": {
-                        "params": {
-                            "dry_run": True
-                        }
-                    }
-                }
+                {"id": "n3", "name": "file_batch_rename", "config": {"params": {"dry_run": True}}},
             ],
-            "edges": [
-                {"source_id": "n1", "target_id": "n2"},
-                {"source_id": "n2", "target_id": "n3"}
-            ]
-        }
+            "edges": [{"source_id": "n1", "target_id": "n2"}, {"source_id": "n2", "target_id": "n3"}],
+        },
     },
     {
         "id": "disk_cleanup",
@@ -297,13 +249,13 @@ BUILTIN_TEMPLATES = [
                             "clean_ds_store": True,
                             "clean_node_modules": False,
                             "dry_run": True,
-                            "max_depth": 5
+                            "max_depth": 5,
                         }
-                    }
+                    },
                 }
             ],
-            "edges": []
-        }
+            "edges": [],
+        },
     },
     {
         "id": "project_docs_collect",
@@ -326,26 +278,20 @@ BUILTIN_TEMPLATES = [
                             "path": "~/Desktop",
                             "recursive": True,
                             "file_patterns": "*.pdf,*.docx,*.md,*.txt,*.py,*.js,*.ts,*.json,*.yaml,*.yml,*.toml,*.png,*.jpg,*.svg",
-                            "sort_by": "type"
+                            "sort_by": "type",
                         }
-                    }
+                    },
                 },
                 {
                     "id": "n2",
                     "name": "file_classifier",
                     "config": {
-                        "params": {
-                            "move_to_subdirs": True,
-                            "target_base": "~/Desktop/项目归集",
-                            "dry_run": False
-                        }
-                    }
-                }
+                        "params": {"move_to_subdirs": True, "target_base": "~/Desktop/项目归集", "dry_run": False}
+                    },
+                },
             ],
-            "edges": [
-                {"source_id": "n1", "target_id": "n2"}
-            ]
-        }
+            "edges": [{"source_id": "n1", "target_id": "n2"}],
+        },
     },
     {
         "id": "duplicate_finder",
@@ -369,9 +315,9 @@ BUILTIN_TEMPLATES = [
                             "recursive": True,
                             "file_patterns": "*",
                             "sort_by": "size",
-                            "sort_order": "desc"
+                            "sort_order": "desc",
                         }
-                    }
+                    },
                 },
                 {
                     "id": "n2",
@@ -381,15 +327,13 @@ BUILTIN_TEMPLATES = [
                             "organize_by_type": False,
                             "deduplicate": True,
                             "clean_old_files": False,
-                            "dry_run": True
+                            "dry_run": True,
                         }
-                    }
-                }
+                    },
+                },
             ],
-            "edges": [
-                {"source_id": "n1", "target_id": "n2"}
-            ]
-        }
+            "edges": [{"source_id": "n1", "target_id": "n2"}],
+        },
     },
     {
         "id": "log_cleaner",
@@ -413,25 +357,14 @@ BUILTIN_TEMPLATES = [
                             "recursive": True,
                             "file_patterns": "*.log,*.log.*",
                             "sort_by": "date",
-                            "sort_order": "desc"
+                            "sort_order": "desc",
                         }
-                    }
+                    },
                 },
-                {
-                    "id": "n2",
-                    "name": "file_delete",
-                    "config": {
-                        "params": {
-                            "use_trash": True,
-                            "dry_run": True
-                        }
-                    }
-                }
+                {"id": "n2", "name": "file_delete", "config": {"params": {"use_trash": True, "dry_run": True}}},
             ],
-            "edges": [
-                {"source_id": "n1", "target_id": "n2"}
-            ]
-        }
+            "edges": [{"source_id": "n1", "target_id": "n2"}],
+        },
     },
     {
         "id": "image_batch_rename",
@@ -454,9 +387,9 @@ BUILTIN_TEMPLATES = [
                             "path": "~/Desktop",
                             "recursive": False,
                             "file_patterns": "*.jpg,*.jpeg,*.png,*.gif,*.bmp,*.webp,*.svg,*.heic",
-                            "sort_by": "name"
+                            "sort_by": "name",
                         }
-                    }
+                    },
                 },
                 {
                     "id": "n2",
@@ -468,28 +401,19 @@ BUILTIN_TEMPLATES = [
                             "padding": 4,
                             "lowercase": True,
                             "replace_spaces": True,
-                            "dry_run": True
+                            "dry_run": True,
                         }
-                    }
+                    },
                 },
                 {
                     "id": "n3",
                     "name": "file_classifier",
-                    "config": {
-                        "params": {
-                            "move_to_subdirs": True,
-                            "target_base": "~/Desktop/图片",
-                            "dry_run": False
-                        }
-                    }
-                }
+                    "config": {"params": {"move_to_subdirs": True, "target_base": "~/Desktop/图片", "dry_run": False}},
+                },
             ],
-            "edges": [
-                {"source_id": "n1", "target_id": "n2"},
-                {"source_id": "n2", "target_id": "n3"}
-            ]
-        }
-    }
+            "edges": [{"source_id": "n1", "target_id": "n2"}, {"source_id": "n2", "target_id": "n3"}],
+        },
+    },
 ]
 
 
@@ -605,8 +529,10 @@ class TemplateManager:
         query = query.lower()
         results = []
         for tpl in self.list_templates():
-            if (query in tpl.get("name", "").lower()
-                    or query in tpl.get("description", "").lower()
-                    or any(query in tag.lower() for tag in tpl.get("tags", []))):
+            if (
+                query in tpl.get("name", "").lower()
+                or query in tpl.get("description", "").lower()
+                or any(query in tag.lower() for tag in tpl.get("tags", []))
+            ):
                 results.append(tpl)
         return results

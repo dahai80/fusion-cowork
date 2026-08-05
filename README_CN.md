@@ -113,7 +113,7 @@ fusion-cowork desk rpc
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `FUSION_MLX_API_KEY` | `local` | fusion-mlx API 密钥（需匹配 `~/.fusion-mlx/settings.json` 中 `auth.api_key`） |
-| `FUSION_MLX_URL` | `http://localhost:11432/v1` | fusion-mlx 基础 URL |
+| `FUSION_MLX_URL` | `http://localhost:11434/v1` | fusion-mlx 基础 URL |
 | `FUSION_RAG_URL` | `http://localhost:11436` | fusion-rag (fusion-kb) 基础 URL |
 
 ```bash
@@ -264,7 +264,7 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 | 组件 | 协议 | 用途 |
 |------|------|------|
 | **fusion-mlx** | HTTP API (端口 8000) | LLM 推理、文本生成、嵌入 |
-| **Fusion-KB** | HTTP API (端口 11432) | 知识库语义检索、RAG |
+| **Fusion-KB** | HTTP API (端口 11434) | 知识库语义检索、RAG |
 | **Fusion-Code** | 自动生成脚本 | 复杂逻辑自动执行 |
 | **Agent-Studio** | 工作流导入 | 调用高级编排的工作流 |
 | **Model-Hub** | 模型调度 | 自动选择最优本地模型 |
@@ -341,7 +341,7 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
     "version": "1.0.0",
     "description": "自定义节点",
     "nodes": ["my_custom_node"],
-    "entry_point": "plugin"
+    "entry_point": "plugin",
 }
 ```
 
@@ -552,7 +552,7 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] SpaceChatService — 共享上下文 + Agent 回复 + 流式推理 (SSE)
 - [x] SpaceKBService — fusion-kb 绑定 + 文档管理 + RAG 搜索/查询
 - [x] SpaceAPI — 18 个 REST 端点 + SSE 事件流 (`/spaces/{id}/stream`)
-- [x] FusionMLXClient 增强 — 端口修正 (11432) + 瞬态错误重试 + 流式健壮性
+- [x] FusionMLXClient 增强 — 端口修正 (11434) + 瞬态错误重试 + 流式健壮性
 - [x] KBClient 完善 — create_kb/delete_kb/upload_file/list_documents
 - [x] SharedContext — 工作流节点访问空间消息 + KB 搜索/查询
 - [x] CLI 扩展 — `space chat` 交互式对话 + `space knowledge bind/status/upload/search/unbind`

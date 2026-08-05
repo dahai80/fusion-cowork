@@ -20,6 +20,7 @@ class FusionCoworkSDK:
         if self._client is None:
             try:
                 import httpx
+
                 self._client = httpx.AsyncClient(base_url=self._base_url, timeout=30.0)
             except ImportError:
                 logger.warning("httpx not installed, SDK using local mode")
@@ -62,20 +63,24 @@ class FusionCoworkSDK:
         import fusion_cowork.nodes.logic
         import fusion_cowork.nodes.macos
         import fusion_cowork.nodes.tools  # noqa: F401
+
         cls._node_modules_loaded = True
 
     async def _local_list_nodes(self) -> List[Dict[str, Any]]:
         from fusion_cowork.engine.node import NodeRegistry
+
         self._ensure_node_modules()
         return NodeRegistry.list()
 
     async def _local_list_templates(self) -> List[Dict[str, Any]]:
         from fusion_cowork.templates import TemplateManager
+
         mgr = TemplateManager()
         return [{"id": t.get("id", ""), "name": t.get("name", "")} for t in mgr.list_templates()]
 
     async def _local_run_workflow(self, data: dict) -> Dict[str, Any]:
         from fusion_cowork.engine import Workflow, WorkflowEngine
+
         self._ensure_node_modules()
         wf_def = data.get("workflow", {})
         if not wf_def:
@@ -91,6 +96,7 @@ class FusionCoworkSDK:
 
     async def _local_exec_node(self, node_name: str, data: dict) -> Dict[str, Any]:
         from fusion_cowork.engine.node import NodeConfig, NodeRegistry
+
         self._ensure_node_modules()
         params = data.get("params", {})
         node = NodeRegistry.create(node_name, config=NodeConfig(params=params))

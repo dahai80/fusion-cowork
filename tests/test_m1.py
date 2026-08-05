@@ -14,10 +14,11 @@ import fusion_cowork.nodes.tools  # noqa: F401
 
 # ── MCPToolRegistry ──
 
-class TestMCPToolRegistry:
 
+class TestMCPToolRegistry:
     def test_register_and_list_tools(self):
         from fusion_cowork.server.mcp_server import MCPToolRegistry
+
         registry = MCPToolRegistry()
         registry.register_tools()
         tools = registry.list_tools()
@@ -30,6 +31,7 @@ class TestMCPToolRegistry:
     @pytest.mark.asyncio
     async def test_call_unknown_tool(self):
         from fusion_cowork.server.mcp_server import MCPToolRegistry
+
         registry = MCPToolRegistry()
         registry.register_tools()
         result = await registry.call_tool("nonexistent", {})
@@ -37,6 +39,7 @@ class TestMCPToolRegistry:
 
     def test_input_schema_uses_inputSchema(self):
         from fusion_cowork.server.mcp_server import MCPToolRegistry
+
         registry = MCPToolRegistry()
         registry.register_tools()
         for tool in registry.list_tools():
@@ -45,11 +48,12 @@ class TestMCPToolRegistry:
 
 # ── StdioTransport ──
 
-class TestStdioTransport:
 
+class TestStdioTransport:
     def test_handler_registration(self):
         from fusion_cowork.server.mcp_server import MCPToolRegistry
         from fusion_cowork.server.mcp_transport import StdioTransport
+
         registry = MCPToolRegistry()
         transport = StdioTransport(registry)
         assert "initialize" in transport._request_handlers
@@ -61,6 +65,7 @@ class TestStdioTransport:
     async def test_handle_initialize(self):
         from fusion_cowork.server.mcp_server import MCPToolRegistry
         from fusion_cowork.server.mcp_transport import MCP_PROTOCOL_VERSION, StdioTransport
+
         registry = MCPToolRegistry()
         transport = StdioTransport(registry)
         result = await transport._handle_initialize({"clientInfo": {"name": "test"}})
@@ -72,6 +77,7 @@ class TestStdioTransport:
     async def test_handle_tools_list(self):
         from fusion_cowork.server.mcp_server import MCPToolRegistry
         from fusion_cowork.server.mcp_transport import StdioTransport
+
         registry = MCPToolRegistry()
         registry.register_tools()
         transport = StdioTransport(registry)
@@ -83,6 +89,7 @@ class TestStdioTransport:
     async def test_dispatch_method_not_found(self):
         from fusion_cowork.server.mcp_server import MCPToolRegistry
         from fusion_cowork.server.mcp_transport import StdioTransport
+
         registry = MCPToolRegistry()
         transport = StdioTransport(registry)
         with patch.object(transport, "_send_error", new_callable=AsyncMock) as mock_err:
@@ -92,10 +99,11 @@ class TestStdioTransport:
 
 # ── MCPServer 门面 ──
 
-class TestMCPServer:
 
+class TestMCPServer:
     def test_compatible_get_tools_list(self):
         from fusion_cowork.server.mcp_server import MCPServer
+
         server = MCPServer()
         server._registry.register_tools()
         tools = server.get_tools_list()
@@ -104,6 +112,7 @@ class TestMCPServer:
     @pytest.mark.asyncio
     async def test_compatible_handle_tool_call(self):
         from fusion_cowork.server.mcp_server import MCPServer
+
         server = MCPServer()
         server._registry.register_tools()
         result = await server.handle_tool_call("nonexistent_tool", {})
@@ -112,10 +121,11 @@ class TestMCPServer:
 
 # ── DeskRPCServer ──
 
-class TestDeskRPCServer:
 
+class TestDeskRPCServer:
     def test_handler_registration(self):
         from fusion_cowork.server.desk_rpc import DeskRPCServer
+
         rpc = DeskRPCServer()
         assert "desk.health" in rpc._handlers
         assert "desk.nodes.list" in rpc._handlers
@@ -128,6 +138,7 @@ class TestDeskRPCServer:
     @pytest.mark.asyncio
     async def test_handle_health(self):
         from fusion_cowork.server.desk_rpc import DeskRPCServer
+
         rpc = DeskRPCServer()
         result = await rpc._handle_health({})
         assert result["status"] == "ok"
@@ -136,6 +147,7 @@ class TestDeskRPCServer:
     @pytest.mark.asyncio
     async def test_handle_nodes_list(self):
         from fusion_cowork.server.desk_rpc import DeskRPCServer
+
         rpc = DeskRPCServer()
         result = await rpc._handle_nodes_list({})
         assert "nodes" in result
@@ -144,6 +156,7 @@ class TestDeskRPCServer:
     @pytest.mark.asyncio
     async def test_dispatch_method_not_found(self):
         from fusion_cowork.server.desk_rpc import DeskRPCServer
+
         rpc = DeskRPCServer()
         response = await rpc._dispatch({"method": "desk.nonexistent", "id": 1, "params": {}})
         assert "error" in response
@@ -152,11 +165,12 @@ class TestDeskRPCServer:
 
 # ── Agent 执行器 ──
 
-class TestExecutors:
 
+class TestExecutors:
     @pytest.mark.asyncio
     async def test_node_executor_missing_node_name(self):
         from fusion_cowork.orchestrator.executors import NodeExecutor
+
         ex = NodeExecutor()
         result = await ex({})
         assert "error" in result
@@ -164,6 +178,7 @@ class TestExecutors:
     @pytest.mark.asyncio
     async def test_node_executor_unknown_node(self):
         from fusion_cowork.orchestrator.executors import NodeExecutor
+
         ex = NodeExecutor()
         result = await ex({"node_name": "nonexistent_node_xyz", "node_params": {}})
         assert "error" in result
@@ -171,6 +186,7 @@ class TestExecutors:
     @pytest.mark.asyncio
     async def test_workflow_executor_missing_params(self):
         from fusion_cowork.orchestrator.executors import WorkflowExecutor
+
         ex = WorkflowExecutor()
         result = await ex({})
         assert "error" in result
@@ -178,6 +194,7 @@ class TestExecutors:
     @pytest.mark.asyncio
     async def test_shell_executor_missing_command(self):
         from fusion_cowork.orchestrator.executors import ShellExecutor
+
         ex = ShellExecutor()
         result = await ex({})
         assert "error" in result
@@ -185,6 +202,7 @@ class TestExecutors:
     @pytest.mark.asyncio
     async def test_shell_executor_echo(self):
         from fusion_cowork.orchestrator.executors import ShellExecutor
+
         ex = ShellExecutor()
         result = await ex({"command": "echo hello", "timeout": 10})
         assert result["status"] == "completed"
@@ -193,6 +211,7 @@ class TestExecutors:
     @pytest.mark.asyncio
     async def test_default_executors_keys(self):
         from fusion_cowork.orchestrator.executors import DEFAULT_EXECUTORS
+
         assert "executor_node" in DEFAULT_EXECUTORS
         assert "executor_workflow" in DEFAULT_EXECUTORS
         assert "executor_mlx" in DEFAULT_EXECUTORS
@@ -201,10 +220,11 @@ class TestExecutors:
 
 # ── AgentOrchestrator 增强 ──
 
-class TestAgentOrchestratorEnhanced:
 
+class TestAgentOrchestratorEnhanced:
     def test_register_default_agents(self):
         from fusion_cowork.orchestrator import AgentOrchestrator
+
         orch = AgentOrchestrator()
         orch.register_default_agents()
         assert len(orch._agents) >= 7
@@ -214,6 +234,7 @@ class TestAgentOrchestratorEnhanced:
 
     def test_register_default_executors(self):
         from fusion_cowork.orchestrator import AgentOrchestrator
+
         orch = AgentOrchestrator()
         orch.register_default_agents()
         assert "executor_node" in orch._executors
@@ -222,6 +243,7 @@ class TestAgentOrchestratorEnhanced:
     @pytest.mark.asyncio
     async def test_submit_task(self):
         from fusion_cowork.orchestrator import AgentOrchestrator
+
         orch = AgentOrchestrator()
         orch.register_default_agents()
         task_id = await orch.submit_task("test task", {"command": "echo test", "timeout": 10})
@@ -231,10 +253,11 @@ class TestAgentOrchestratorEnhanced:
 
 # ── AgentMessageBus ──
 
-class TestAgentMessageBus:
 
+class TestAgentMessageBus:
     def test_subscribe(self):
         from fusion_cowork.orchestrator.comm import AgentMessageBus
+
         bus = AgentMessageBus()
         _q = bus.subscribe("test_topic")
         assert "test_topic" in bus._subscribers
@@ -243,6 +266,7 @@ class TestAgentMessageBus:
     @pytest.mark.asyncio
     async def test_publish(self):
         from fusion_cowork.orchestrator.comm import AgentMessageBus
+
         bus = AgentMessageBus()
         q = bus.subscribe("test_topic")
         _msg_id = await bus.publish("test_topic", "sender_a", {"key": "value"})
@@ -253,6 +277,7 @@ class TestAgentMessageBus:
     @pytest.mark.asyncio
     async def test_send_point_to_point(self):
         from fusion_cowork.orchestrator.comm import AgentMessageBus
+
         bus = AgentMessageBus()
         q = bus.subscribe("inbox:receiver_b")
         _msg_id = await bus.send("sender_a", "receiver_b", {"data": 42})
@@ -262,21 +287,21 @@ class TestAgentMessageBus:
 
     def test_history(self):
         from fusion_cowork.orchestrator.comm import AgentMessageBus
+
         bus = AgentMessageBus()
-        bus._history.append(
-            type("Msg", (), {"topic": "test", "msg_id": "1"})()
-        )
+        bus._history.append(type("Msg", (), {"topic": "test", "msg_id": "1"})())
         assert len(bus.get_history("test")) == 1
 
 
 # ── MCP HTTP App ──
 
-class TestMCPHttpApp:
 
+class TestMCPHttpApp:
     def test_create_http_app(self):
         pytest.importorskip("fastapi", reason="需要 [web] 依赖")
         from fusion_cowork.server.mcp_http import create_http_app
         from fusion_cowork.server.mcp_server import MCPToolRegistry
+
         registry = MCPToolRegistry()
         registry.register_tools()
         app = create_http_app(registry)

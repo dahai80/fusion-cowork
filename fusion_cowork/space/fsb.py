@@ -41,26 +41,24 @@ class ModuleRegistry:
             "INSERT OR REPLACE INTO sidebar_modules "
             "(id, name, icon, route_path, enabled, metadata, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (module_id, name, icon, route_path, int(enabled),
-             json.dumps(metadata or {}, ensure_ascii=False), now, now),
+            (module_id, name, icon, route_path, int(enabled), json.dumps(metadata or {}, ensure_ascii=False), now, now),
         )
         await db.commit()
         logger.info(f"ModuleRegistry.register id={module_id} name={name}")
         return {
-            "id": module_id, "name": name, "icon": icon,
-            "route_path": route_path, "enabled": enabled,
+            "id": module_id,
+            "name": name,
+            "icon": icon,
+            "route_path": route_path,
+            "enabled": enabled,
         }
 
     async def list_modules(self, enabled_only: bool = False) -> List[Dict[str, Any]]:
         db = await self._store._ensure_db()
         if enabled_only:
-            cursor = await db.execute(
-                "SELECT * FROM sidebar_modules WHERE enabled = 1 ORDER BY id"
-            )
+            cursor = await db.execute("SELECT * FROM sidebar_modules WHERE enabled = 1 ORDER BY id")
         else:
-            cursor = await db.execute(
-                "SELECT * FROM sidebar_modules ORDER BY id"
-            )
+            cursor = await db.execute("SELECT * FROM sidebar_modules ORDER BY id")
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
@@ -87,7 +85,8 @@ class ModuleRegistry:
     async def get_module(self, module_id: str) -> Optional[Dict[str, Any]]:
         db = await self._store._ensure_db()
         cursor = await db.execute(
-            "SELECT * FROM sidebar_modules WHERE id = ?", (module_id,),
+            "SELECT * FROM sidebar_modules WHERE id = ?",
+            (module_id,),
         )
         row = await cursor.fetchone()
         return dict(row) if row else None
@@ -116,13 +115,25 @@ class NotificationService:
             "INSERT INTO space_notifications "
             "(id, space_id, user_id, notification_type, title, content, "
             "metadata, read, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
-            (notif_id, space_id, user_id, notification_type, title, content,
-             json.dumps(metadata or {}, ensure_ascii=False), now),
+            (
+                notif_id,
+                space_id,
+                user_id,
+                notification_type,
+                title,
+                content,
+                json.dumps(metadata or {}, ensure_ascii=False),
+                now,
+            ),
         )
         await db.commit()
         event_data = {
-            "id": notif_id, "space_id": space_id, "user_id": user_id,
-            "type": notification_type, "title": title, "created_at": now,
+            "id": notif_id,
+            "space_id": space_id,
+            "user_id": user_id,
+            "type": notification_type,
+            "title": title,
+            "created_at": now,
         }
         for queue in self._subscribers.get(user_id, []):
             queue.append(event_data)
@@ -130,7 +141,9 @@ class NotificationService:
         return event_data
 
     async def list_notifications(
-        self, user_id: str, unread_only: bool = False,
+        self,
+        user_id: str,
+        unread_only: bool = False,
     ) -> List[Dict[str, Any]]:
         db = await self._store._ensure_db()
         if unread_only:

@@ -27,6 +27,7 @@ class NodeExecutor:
 
         try:
             from ..engine.node import NodeConfig, NodeRegistry
+
             node = NodeRegistry.create(node_name, config=NodeConfig(params=node_params))
             if not node:
                 return {"error": f"节点创建失败: {node_name}"}
@@ -91,6 +92,7 @@ class MLXExecutor:
 
         try:
             from ..ai import FusionMLXClient
+
             client = FusionMLXClient()
 
             if task_type == "chat":

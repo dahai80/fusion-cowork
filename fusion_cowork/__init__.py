@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.2.4"
+__version__ = "0.2.5"
 __app_name__ = "Fusion-Cowork"
 
 # ── 节点工具名称映射表（吸纳自 Squish tool_name_map.py） ──
@@ -269,6 +269,12 @@ _LAZY_IMPORTS: dict[str, str] = {
     "ResourceLimits": "fusion_cowork.plugins.sandbox",
     "SandboxResult": "fusion_cowork.plugins.sandbox",
     "SandboxStatus": "fusion_cowork.plugins.sandbox",
+    # D1 轨迹飞轮
+    "TrajectoryRecorder": "fusion_cowork.trajectory",
+    "TrajectoryEvent": "fusion_cowork.trajectory",
+    "TrajectoryWriter": "fusion_cowork.trajectory",
+    "SpaceTrajectoryExporter": "fusion_cowork.trajectory",
+    "SpaceMessageTrajectory": "fusion_cowork.trajectory",
 }
 
 _lazy_cache: dict[str, object] = {}
@@ -283,6 +289,7 @@ def __getattr__(name: str) -> object:
         return _lazy_cache[name]
     if name in _LAZY_IMPORTS:
         import importlib
+
         mod_name = _LAZY_IMPORTS[name]
         try:
             mod = importlib.import_module(mod_name)
@@ -291,8 +298,7 @@ def __getattr__(name: str) -> object:
             return obj
         except (ImportError, AttributeError) as exc:
             raise AttributeError(
-                f"module 'fusion_cowork' has no attribute {name!r} "
-                f"(lazy import {mod_name!r} failed: {exc})"
+                f"module 'fusion_cowork' has no attribute {name!r} (lazy import {mod_name!r} failed: {exc})"
             ) from None
     raise AttributeError(f"module 'fusion_cowork' has no attribute {name!r}")
 

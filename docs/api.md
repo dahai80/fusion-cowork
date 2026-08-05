@@ -22,6 +22,7 @@ print(execution.status, execution.total_time)
 ### `EnhancedScheduler` (V0.2)
 ```python
 from fusion_cowork import EnhancedScheduler
+
 scheduler = EnhancedScheduler(task_scheduler)
 stats = scheduler.get_stats(days=7)
 calendar = scheduler.get_calendar_data(2026, 7)
@@ -30,6 +31,7 @@ calendar = scheduler.get_calendar_data(2026, 7)
 ### `WorkflowOptimizer` (V0.2)
 ```python
 from fusion_cowork import WorkflowOptimizer
+
 optimizer = WorkflowOptimizer()
 analysis = optimizer.analyze_workflow(history)
 print(analysis.score, analysis.bottleneck_nodes)
@@ -67,6 +69,7 @@ print(analysis.score, analysis.bottleneck_nodes)
 ## Orchestrator (V0.3)
 ```python
 from fusion_cowork import AgentOrchestrator, Agent, AgentRole
+
 orc = AgentOrchestrator()
 orc.register_agent(Agent("agent1", "Planner", AgentRole.PLANNER))
 plan = await orc.create_plan("analysis", "Analyze files")
@@ -79,6 +82,7 @@ result = await orc.execute_plan(plan.plan_id)
 ### MCP Server (V0.2)
 ```python
 from fusion_cowork import MCPServer
+
 server = MCPServer(port=11438)
 await server.start()  # 15 tools exposed
 tools = server.get_tools_list()
@@ -87,6 +91,7 @@ tools = server.get_tools_list()
 ### CrossDeviceSync (V0.3)
 ```python
 from fusion_cowork import CrossDeviceSync
+
 sync = CrossDeviceSync(port=11437)
 await sync.start()
 await sync.sync_workflow(workflow_data)
@@ -95,6 +100,7 @@ await sync.sync_workflow(workflow_data)
 ## Report Generator (V0.2)
 ```python
 from fusion_cowork import ReportGenerator
+
 gen = ReportGenerator()
 report = gen.generate_workflow_report(execution, format="html")
 gen.save_report(report, "~/Desktop/reports")

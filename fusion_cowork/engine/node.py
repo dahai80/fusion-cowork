@@ -86,6 +86,7 @@ def _coerce_array(value: Any) -> Any:
         if s.startswith("[") and s.endswith("]"):
             try:
                 import json
+
                 return json.loads(s)
             except (json.JSONDecodeError, ValueError):
                 pass
@@ -120,6 +121,7 @@ def coerce_param(value: Any, param_type: str) -> Any:
         if isinstance(value, str):
             try:
                 import json
+
                 return json.loads(value)
             except (json.JSONDecodeError, ValueError):
                 return value
@@ -155,6 +157,7 @@ def coerce_params(
 
 class NodeStatus(Enum):
     """节点执行状态。"""
+
     PENDING = "pending"
     RUNNING = "running"
     SUCCESS = "success"
@@ -166,18 +169,20 @@ class NodeStatus(Enum):
 
 class NodeCategory(Enum):
     """节点分类。"""
-    MACOS_SYSTEM = "macos_system"       # macOS 系统操作
-    FILE_OPERATION = "file_operation"   # 文件操作
-    AI_PROCESSING = "ai_processing"     # AI 处理
-    TOOL = "tool"                       # 通用工具（新增，来自 Squish 工具模式）
-    IO = "io"                           # 输入/输出
-    LOGIC = "logic"                     # 逻辑控制
+
+    MACOS_SYSTEM = "macos_system"  # macOS 系统操作
+    FILE_OPERATION = "file_operation"  # 文件操作
+    AI_PROCESSING = "ai_processing"  # AI 处理
+    TOOL = "tool"  # 通用工具（新增，来自 Squish 工具模式）
+    IO = "io"  # 输入/输出
+    LOGIC = "logic"  # 逻辑控制
     FUSION_ECOSYSTEM = "fusion_ecosystem"  # Fusion 生态互通
 
 
 @dataclass
 class NodeConfig:
     """节点配置参数。"""
+
     label: str = ""
     description: str = ""
     continue_on_error: bool = False
@@ -190,6 +195,7 @@ class NodeConfig:
 @dataclass
 class NodeResult:
     """节点执行结果。"""
+
     status: NodeStatus
     data: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
@@ -201,6 +207,7 @@ class NodeResult:
     def validate(self) -> bool:
         if self.schema and self.data is not None:
             from .schema import OutputSchema
+
             return OutputSchema.validate(self.data, self.schema)
         return True
 
@@ -397,15 +404,17 @@ class NodeRegistry:
         for name, node_class in cls._registry.items():
             if category and node_class.category != category:
                 continue
-            result.append({
-                "name": name,
-                "display_name": node_class.display_name,
-                "category": node_class.category.value,
-                "description": node_class.description,
-                "icon": node_class.icon,
-                "default_label": node_class.default_label,
-                "params_schema": node_class(NodeConfig()).get_params_schema(),
-            })
+            result.append(
+                {
+                    "name": name,
+                    "display_name": node_class.display_name,
+                    "category": node_class.category.value,
+                    "description": node_class.description,
+                    "icon": node_class.icon,
+                    "default_label": node_class.default_label,
+                    "params_schema": node_class(NodeConfig()).get_params_schema(),
+                }
+            )
         return result
 
     @classmethod
@@ -429,11 +438,13 @@ def register_node(func=None, *, name: str = ""):
         @register_node(name="custom_name")
         class MyNode(BaseNode): ...
     """
+
     def wrapper(node_class):
         if name:
             node_class.name = name
         NodeRegistry.register(node_class)
         return node_class
+
     if func is not None:
         return wrapper(func)
     return wrapper

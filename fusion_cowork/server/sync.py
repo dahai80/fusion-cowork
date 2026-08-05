@@ -30,6 +30,7 @@ class DeviceStatus(Enum):
 @dataclass
 class Device:
     """设备信息。"""
+
     device_id: str
     name: str
     device_type: str = "mac"  # mac | iphone | ipad
@@ -43,6 +44,7 @@ class Device:
 @dataclass
 class SyncMessage:
     """同步消息。"""
+
     msg_id: str
     msg_type: str  # workflow_sync | status_update | file_transfer | command
     sender: str
@@ -97,10 +99,7 @@ class CrossDeviceSync:
     def get_online_devices(self) -> List[Device]:
         """获取在线设备。"""
         now = time.time()
-        return [
-            d for d in self._devices.values()
-            if d.status == DeviceStatus.ONLINE and now - d.last_seen < 30
-        ]
+        return [d for d in self._devices.values() if d.status == DeviceStatus.ONLINE and now - d.last_seen < 30]
 
     def on_message(self, msg_type: str, handler: Callable) -> None:
         """注册消息处理器。"""
@@ -130,6 +129,7 @@ class CrossDeviceSync:
             ssl_ctx = None
             if self.ssl_cert and self.ssl_key:
                 import ssl
+
                 ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
                 ssl_ctx.load_cert_chain(self.ssl_cert, self.ssl_key)
                 if self.ssl_verify:
@@ -145,14 +145,16 @@ class CrossDeviceSync:
                 asyncio.open_connection(device.host, device.port, ssl=ssl_ctx),
                 timeout=5.0,
             )
-            data = json.dumps({
-                "msg_id": msg.msg_id,
-                "msg_type": msg.msg_type,
-                "sender": msg.sender,
-                "payload": msg.payload,
-                "timestamp": msg.timestamp,
-                "token": self.token or "",
-            })
+            data = json.dumps(
+                {
+                    "msg_id": msg.msg_id,
+                    "msg_type": msg.msg_type,
+                    "sender": msg.sender,
+                    "payload": msg.payload,
+                    "timestamp": msg.timestamp,
+                    "token": self.token or "",
+                }
+            )
             writer.write(data.encode("utf-8"))
             await writer.drain()
             writer.close()

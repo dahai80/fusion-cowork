@@ -16,7 +16,9 @@ def run_osascript(script: str, timeout: int = 30) -> Tuple[int, str]:
     """
     proc = subprocess.run(
         ["osascript", "-e", script],
-        capture_output=True, text=True, timeout=timeout,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
     )
     return proc.returncode, proc.stdout.strip()
 

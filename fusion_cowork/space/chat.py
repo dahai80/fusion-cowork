@@ -46,6 +46,7 @@ class SpaceChatService:
         config = agent_def.get("config", {})
         if isinstance(config, str):
             import json as _json
+
             try:
                 config = _json.loads(config)
             except (_json.JSONDecodeError, TypeError):
@@ -216,10 +217,7 @@ class SpaceChatService:
     ) -> List[dict]:
         if not rag_results:
             return messages
-        rag_context = "\n".join(
-            f"[{i + 1}] {r.get('content', '')}"
-            for i, r in enumerate(rag_results)
-        )
+        rag_context = "\n".join(f"[{i + 1}] {r.get('content', '')}" for i, r in enumerate(rag_results))
         rag_msg = {
             "role": "system",
             "content": f"以下是相关参考资料，请基于这些内容回答用户问题:\n\n{rag_context}",
@@ -296,10 +294,14 @@ class SpaceChatService:
                 await self._emit(space_id, "error", {"agent_id": agent_id, "error": str(e)})
                 break
 
-        await self._emit(space_id, "relay_complete", {
-            "agent_ids": agent_ids,
-            "steps": len(results),
-        })
+        await self._emit(
+            space_id,
+            "relay_complete",
+            {
+                "agent_ids": agent_ids,
+                "steps": len(results),
+            },
+        )
         logger.info(f"SpaceChat.relay_agents space={space_id} agents={agent_ids} steps={len(results)}")
         return results
 

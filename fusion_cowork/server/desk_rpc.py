@@ -26,10 +26,15 @@ DEFAULT_SOCK_PATH = "/tmp/fusion-cowork.sock"
 class DeskRPCServer:
     """Desk RPC 服务端 — 监听 UDS，处理 Studio 发来的 JSON-RPC 请求。"""
 
-    def __init__(self, sock_path: str = DEFAULT_SOCK_PATH,
-                 event_emitter=None, session_store=None,
-                 permission_manager=None, hook_manager=None,
-                 space_store=None):
+    def __init__(
+        self,
+        sock_path: str = DEFAULT_SOCK_PATH,
+        event_emitter=None,
+        session_store=None,
+        permission_manager=None,
+        hook_manager=None,
+        space_store=None,
+    ):
         self._sock_path = sock_path
         self._server: Optional[asyncio.AbstractServer] = None
         self._running = False
@@ -182,7 +187,8 @@ class DeskRPCServer:
 
         self._running = True
         self._server = await asyncio.start_unix_server(
-            self._handle_client, path=self._sock_path,
+            self._handle_client,
+            path=self._sock_path,
         )
         logger.info(f"Desk RPC 服务启动: {self._sock_path}")
 
@@ -214,10 +220,14 @@ class DeskRPCServer:
                     request = json.loads(line)
                 except json.JSONDecodeError as e:
                     logger.warning(f"无效 JSON: {e}")
-                    await self._write_response(writer, {
-                        "jsonrpc": "2.0", "id": None,
-                        "error": {"code": -32700, "message": "Parse error"},
-                    })
+                    await self._write_response(
+                        writer,
+                        {
+                            "jsonrpc": "2.0",
+                            "id": None,
+                            "error": {"code": -32700, "message": "Parse error"},
+                        },
+                    )
                     continue
 
                 response = await self._dispatch(request)
@@ -238,7 +248,8 @@ class DeskRPCServer:
         handler = self._handlers.get(method)
         if not handler:
             return {
-                "jsonrpc": "2.0", "id": req_id,
+                "jsonrpc": "2.0",
+                "id": req_id,
                 "error": {"code": -32601, "message": f"Method not found: {method}"},
             }
 
@@ -250,7 +261,8 @@ class DeskRPCServer:
         except Exception as e:
             logger.error(f"Desk RPC 处理 {method} 异常: {e}")
             return {
-                "jsonrpc": "2.0", "id": req_id,
+                "jsonrpc": "2.0",
+                "id": req_id,
                 "error": {"code": -32603, "message": f"Internal error: {e}"},
             }
 
@@ -267,18 +279,22 @@ class DeskRPCServer:
 
     async def _handle_nodes_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..engine.node import NodeRegistry
+
         nodes = []
         for name, cls in NodeRegistry._registry.items():
             doc = getattr(cls, "__doc__", "") or ""
-            nodes.append({
-                "name": name,
-                "category": getattr(cls, "category", "unknown"),
-                "description": doc.strip()[:100],
-            })
+            nodes.append(
+                {
+                    "name": name,
+                    "category": getattr(cls, "category", "unknown"),
+                    "description": doc.strip()[:100],
+                }
+            )
         return {"nodes": nodes, "count": len(nodes)}
 
     async def _handle_nodes_info(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..engine.node import NodeRegistry
+
         name = params.get("name", "")
         cls = NodeRegistry._registry.get(name)
         if not cls:
@@ -293,6 +309,7 @@ class DeskRPCServer:
 
     async def _handle_nodes_execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..engine.node import NodeConfig, NodeRegistry
+
         name = params.get("name", "")
         node_params = params.get("params", {})
         node = NodeRegistry.create(name, config=NodeConfig(params=node_params))
@@ -308,6 +325,7 @@ class DeskRPCServer:
 
     async def _handle_nodes_categories(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..engine.node import NodeRegistry
+
         categories: Dict[str, int] = {}
         for name, cls in NodeRegistry._registry.items():
             cat = getattr(cls, "category", "unknown")
@@ -316,12 +334,14 @@ class DeskRPCServer:
 
     async def _handle_workflow_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..templates import TemplateManager
+
         mgr = TemplateManager()
         templates = mgr.list_templates()
         return {"templates": templates, "count": len(templates)}
 
     async def _handle_workflow_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..ai import NLWorkflowGenerator
+
         prompt = params.get("prompt", "")
         if not prompt:
             return {"error": "prompt 不能为空"}
@@ -331,10 +351,12 @@ class DeskRPCServer:
 
     async def _handle_workflow_run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..engine import Workflow, WorkflowEngine
+
         template_id = params.get("template_id", "")
         workflow_def = params.get("workflow", {})
         if not workflow_def and template_id:
             from ..templates import TemplateManager
+
             tmpl = TemplateManager().get_template(template_id)
             if tmpl:
                 workflow_def = tmpl
@@ -347,9 +369,9 @@ class DeskRPCServer:
         result = await engine.execute(wf)
         return {
             "id": result.id,
-            "status": result.status.value if hasattr(result.status, 'value') else str(result.status),
+            "status": result.status.value if hasattr(result.status, "value") else str(result.status),
             "summary": result.result_summary,
-            "steps": [s.to_dict() if hasattr(s, 'to_dict') else str(s) for s in result.steps],
+            "steps": [s.to_dict() if hasattr(s, "to_dict") else str(s) for s in result.steps],
             "error": result.error,
         }
 
@@ -358,6 +380,7 @@ class DeskRPCServer:
 
     async def _handle_workflow_cancel(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..engine import WorkflowEngine
+
         execution_id = params.get("execution_id", "")
         if not execution_id:
             return {"error": "execution_id 不能为空"}
@@ -367,6 +390,7 @@ class DeskRPCServer:
 
     async def _handle_template_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..templates import TemplateManager
+
         mgr = TemplateManager()
         category = params.get("category", "")
         templates = mgr.list_templates()
@@ -376,6 +400,7 @@ class DeskRPCServer:
 
     async def _handle_template_get(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..templates import TemplateManager
+
         template_id = params.get("template_id", "") or params.get("id", "")
         mgr = TemplateManager()
         template = mgr.get_template(template_id)
@@ -386,6 +411,7 @@ class DeskRPCServer:
     async def _handle_template_run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..engine import Workflow, WorkflowEngine
         from ..templates import TemplateManager
+
         template_id = params.get("template_id", "")
         _variables = params.get("variables", {})
         mgr = TemplateManager()
@@ -404,12 +430,14 @@ class DeskRPCServer:
 
     async def _handle_agent_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..orchestrator import AgentOrchestrator
+
         orch = AgentOrchestrator()
         agents = [{"id": a.agent_id, "name": a.name, "role": a.role.value} for a in orch._agents.values()]
         return {"agents": agents, "count": len(agents)}
 
     async def _handle_agent_submit(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..orchestrator import AgentOrchestrator
+
         task = params.get("task", "")
         if not task:
             return {"error": "task 不能为空"}
@@ -420,6 +448,7 @@ class DeskRPCServer:
 
     async def _handle_agent_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..orchestrator import AgentOrchestrator
+
         orch = AgentOrchestrator()
         task_id = params.get("task_id", "")
         t = orch.get_task(task_id)
@@ -429,6 +458,7 @@ class DeskRPCServer:
 
     async def _handle_agent_cancel(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..orchestrator import AgentOrchestrator
+
         task_id = params.get("task_id", "")
         if not task_id:
             return {"error": "task_id 不能为空"}
@@ -438,6 +468,7 @@ class DeskRPCServer:
 
     async def _handle_mlx_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..ai import FusionMLXClient
+
         client = FusionMLXClient()
         try:
             status = await client.health_check()
@@ -447,6 +478,7 @@ class DeskRPCServer:
 
     async def _handle_mlx_models(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..ai import FusionMLXClient
+
         client = FusionMLXClient()
         try:
             models = await client.list_models()
@@ -458,6 +490,7 @@ class DeskRPCServer:
         import platform
 
         import psutil
+
         return {
             "platform": platform.platform(),
             "python": platform.python_version(),
@@ -528,6 +561,7 @@ class DeskRPCServer:
         if not self._session_store:
             return {"error": "SessionStore 未配置"}
         from fusion_cowork.engine.session import Session
+
         name = params.get("name", "")
         workflow_id = params.get("workflow_id", "")
         workflow_name = name or params.get("workflow_name", "")
@@ -617,14 +651,14 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceService
+
         svc = SpaceService(self._space_store)
         name = params.get("name", "")
         owner_id = params.get("owner_id", "local_user")
         description = params.get("description", "")
         collab_mode = params.get("collab_mode", "local")
         try:
-            sp = await svc.create(name=name, owner_id=owner_id,
-                                  description=description, collab_mode=collab_mode)
+            sp = await svc.create(name=name, owner_id=owner_id, description=description, collab_mode=collab_mode)
             return sp.to_dict()
         except Exception as e:
             logger.error(f"space.create 失败: {e}")
@@ -634,6 +668,7 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceService
+
         svc = SpaceService(self._space_store)
         status = params.get("status")
         owner_id = params.get("owner_id")
@@ -645,6 +680,7 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceService
+
         svc = SpaceService(self._space_store)
         space_id = params.get("space_id", "")
         sp = await svc.get(space_id)
@@ -656,6 +692,7 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceService
+
         svc = SpaceService(self._space_store)
         space_id = params.get("space_id", "")
         updates = params.get("updates", {})
@@ -668,6 +705,7 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceService
+
         svc = SpaceService(self._space_store)
         space_id = params.get("space_id", "")
         if not space_id:
@@ -683,6 +721,7 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceService
+
         svc = SpaceService(self._space_store)
         space_id = params.get("space_id", "")
         await svc.delete(space_id)
@@ -692,6 +731,7 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceMemberService, SpacePermission
+
         perm = SpacePermission(self._space_store)
         svc = SpaceMemberService(self._space_store, perm)
         space_id = params.get("space_id", "")
@@ -703,8 +743,7 @@ class DeskRPCServer:
         max_uses = params.get("max_uses", 0)
         expires_hours = params.get("expires_hours", 0)
         try:
-            code = await svc.invite(space_id, inviter_id, role=role,
-                                    max_uses=max_uses, expires_hours=expires_hours)
+            code = await svc.invite(space_id, inviter_id, role=role, max_uses=max_uses, expires_hours=expires_hours)
             return {"invite_code": code, "space_id": space_id}
         except (PermissionError, ValueError) as e:
             return {"error": str(e)}
@@ -713,6 +752,7 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceMemberService, SpacePermission
+
         perm = SpacePermission(self._space_store)
         svc = SpaceMemberService(self._space_store, perm)
         invite_code = params.get("invite_code", "")
@@ -735,6 +775,7 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceMemberService, SpacePermission
+
         perm = SpacePermission(self._space_store)
         svc = SpaceMemberService(self._space_store, perm)
         space_id = params.get("space_id", "")
@@ -753,6 +794,7 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceMemberService, SpacePermission
+
         perm = SpacePermission(self._space_store)
         svc = SpaceMemberService(self._space_store, perm)
         space_id = params.get("space_id", "")
@@ -773,6 +815,7 @@ class DeskRPCServer:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceChatService, SpacePermission
+
         perm = SpacePermission(self._space_store)
         mlx = FusionMLXClient()
         chat_svc = SpaceChatService(self._space_store, mlx, perm)
@@ -794,6 +837,7 @@ class DeskRPCServer:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceChatService, SpacePermission
+
         perm = SpacePermission(self._space_store)
         mlx = FusionMLXClient()
         chat_svc = SpaceChatService(self._space_store, mlx, perm)
@@ -811,6 +855,7 @@ class DeskRPCServer:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceChatService, SpacePermission
+
         perm = SpacePermission(self._space_store)
         mlx = FusionMLXClient()
         chat_svc = SpaceChatService(self._space_store, mlx, perm)
@@ -826,6 +871,7 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceKBService, SpacePermission
+
         perm = SpacePermission(self._space_store)
         kb_svc = SpaceKBService(self._space_store, None, perm)
         space_id = params.get("space_id", "")
@@ -844,6 +890,7 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceKBService, SpacePermission
+
         perm = SpacePermission(self._space_store)
         kb_svc = SpaceKBService(self._space_store, None, perm)
         space_id = params.get("space_id", "")
@@ -857,6 +904,7 @@ class DeskRPCServer:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.ai.mlx_client import KBClient
         from fusion_cowork.space import SpaceKBService, SpacePermission
+
         perm = SpacePermission(self._space_store)
         kb_client = KBClient()
         kb_svc = SpaceKBService(self._space_store, kb_client, perm)
@@ -877,6 +925,7 @@ class DeskRPCServer:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.ai.mlx_client import KBClient
         from fusion_cowork.space import SpaceKBService, SpacePermission
+
         perm = SpacePermission(self._space_store)
         kb_client = KBClient()
         kb_svc = SpaceKBService(self._space_store, kb_client, perm)
@@ -894,6 +943,7 @@ class DeskRPCServer:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.ai.mlx_client import KBClient
         from fusion_cowork.space import SpaceKBService, SpacePermission
+
         perm = SpacePermission(self._space_store)
         kb_client = KBClient()
         kb_svc = SpaceKBService(self._space_store, kb_client, perm)
@@ -910,6 +960,7 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceKBService, SpacePermission
+
         perm = SpacePermission(self._space_store)
         kb_svc = SpaceKBService(self._space_store, None, perm)
         space_id = params.get("space_id", "")
@@ -928,6 +979,7 @@ class DeskRPCServer:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceAgentRuntime, SpacePermission
+
         perm = SpacePermission(self._space_store)
         mlx = FusionMLXClient()
         rt = SpaceAgentRuntime(self._space_store, mlx, perm)
@@ -943,6 +995,7 @@ class DeskRPCServer:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceAgentRuntime, SpacePermission
+
         perm = SpacePermission(self._space_store)
         mlx = FusionMLXClient()
         rt = SpaceAgentRuntime(self._space_store, mlx, perm)
@@ -958,9 +1011,13 @@ class DeskRPCServer:
         config = params.get("config", {})
         try:
             result = await rt.add_agent(
-                space_id=space_id, operator_id=operator_id, name=name,
-                agent_type=agent_type, system_prompt=system_prompt,
-                enable_rag=enable_rag, config=config,
+                space_id=space_id,
+                operator_id=operator_id,
+                name=name,
+                agent_type=agent_type,
+                system_prompt=system_prompt,
+                enable_rag=enable_rag,
+                config=config,
             )
             return result
         except PermissionError as e:
@@ -971,6 +1028,7 @@ class DeskRPCServer:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceAgentRuntime, SpacePermission
+
         perm = SpacePermission(self._space_store)
         mlx = FusionMLXClient()
         rt = SpaceAgentRuntime(self._space_store, mlx, perm)
@@ -991,6 +1049,7 @@ class DeskRPCServer:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceAgentRuntime, SpacePermission
+
         perm = SpacePermission(self._space_store)
         mlx = FusionMLXClient()
         rt = SpaceAgentRuntime(self._space_store, mlx, perm)
@@ -1013,6 +1072,7 @@ class DeskRPCServer:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceChatService, SpacePermission
+
         perm = SpacePermission(self._space_store)
         mlx = FusionMLXClient()
         chat_svc = SpaceChatService(self._space_store, mlx, perm)
@@ -1026,7 +1086,11 @@ class DeskRPCServer:
         model = params.get("model", "")
         try:
             results = await chat_svc.relay_agents(
-                space_id, user_id, agent_ids, message, model=model,
+                space_id,
+                user_id,
+                agent_ids,
+                message,
+                model=model,
             )
             return {"results": results}
         except (PermissionError, ValueError) as e:
@@ -1046,6 +1110,7 @@ class DeskRPCServer:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.ai.mlx_client import KBClient
         from fusion_cowork.space import SpaceKBService, SpacePermission
+
         space_id = params.get("space_id", "")
         files = params.get("files", [])
         operator_id = params.get("operator_id", "project_sync")
@@ -1067,9 +1132,14 @@ class DeskRPCServer:
                 continue
             try:
                 import base64
+
                 content_bytes = base64.b64decode(content_b64)
                 result = await kb_svc.upload_document(
-                    space_id, operator_id, name, content_bytes, folder=folder,
+                    space_id,
+                    operator_id,
+                    name,
+                    content_bytes,
+                    folder=folder,
                 )
                 synced.append({"name": name, "result": result})
             except Exception as e:
@@ -1091,6 +1161,7 @@ class DeskRPCServer:
         import uuid
 
         from fusion_cowork.space.models import SpaceMessage
+
         space_id = params.get("space_id", "")
         snapshot = params.get("snapshot", {})
         operator_id = params.get("operator_id", "project_import")
@@ -1146,9 +1217,14 @@ class DeskRPCServer:
         if items.get("chatHistory", True):
             messages = await self._space_store.get_messages(space_id, limit=1000)
             export_data["messages"] = [
-                {"id": m.id, "user_id": m.user_id, "content": m.content,
-                 "content_type": m.content_type, "agent_id": m.agent_id or "",
-                 "created_at": m.created_at}
+                {
+                    "id": m.id,
+                    "user_id": m.user_id,
+                    "content": m.content,
+                    "content_type": m.content_type,
+                    "agent_id": m.agent_id or "",
+                    "created_at": m.created_at,
+                }
                 for m in messages
             ]
         if items.get("files", True):
@@ -1174,6 +1250,7 @@ class DeskRPCServer:
         if not action:
             return {"error": "action 必填"}
         import uuid
+
         task_id = f"cowork_{uuid.uuid4().hex[:8]}"
         action_map = {
             "sync_knowledge": "desk.project.syncKnowledge",
@@ -1224,6 +1301,7 @@ class DeskRPCServer:
     def _get_artifact_svc(self):
         from ..space.artifact import SpaceArtifactService
         from ..space.permission import SpacePermission
+
         if not self._space_store:
             return None, "space_store 未初始化"
         perm = SpacePermission(self._space_store)
@@ -1287,7 +1365,9 @@ class DeskRPCServer:
             user_id = sp.owner_id if sp else "local_user"
         try:
             result = await svc.update_artifact(
-                space_id=space_id, artifact_id=artifact_id, user_id=user_id,
+                space_id=space_id,
+                artifact_id=artifact_id,
+                user_id=user_id,
                 content=params.get("content", ""),
                 name=params.get("name", ""),
                 metadata=params.get("metadata"),
@@ -1343,7 +1423,9 @@ class DeskRPCServer:
             user_id = sp.owner_id if sp else "local_user"
         try:
             artifacts = await svc.list_artifacts(
-                space_id, user_id, params.get("artifact_type", ""),
+                space_id,
+                user_id,
+                params.get("artifact_type", ""),
             )
             return {"artifacts": artifacts}
         except PermissionError as e:
@@ -1368,6 +1450,7 @@ class DeskRPCServer:
 
     def _get_module_registry(self):
         from ..space.fsb import ModuleRegistry
+
         if not self._space_store:
             return None, "space_store 未初始化"
         return ModuleRegistry(self._space_store), None
@@ -1381,7 +1464,8 @@ class DeskRPCServer:
         if not module_id or not name:
             return {"error": "id 和 name 必填"}
         result = await reg.register_module(
-            module_id=module_id, name=name,
+            module_id=module_id,
+            name=name,
             icon=params.get("icon", ""),
             route_path=params.get("route_path", ""),
             enabled=params.get("enabled", True),
@@ -1420,6 +1504,7 @@ class DeskRPCServer:
 
     def _get_notification_svc(self):
         from ..space.fsb import NotificationService
+
         if not self._space_store:
             return None, "space_store 未初始化"
         return NotificationService(self._space_store), None
@@ -1434,7 +1519,8 @@ class DeskRPCServer:
         if not title:
             return {"error": "title 必填"}
         result = await svc.push_notification(
-            space_id=space_id, user_id=user_id,
+            space_id=space_id,
+            user_id=user_id,
             notification_type=params.get("type", "approval"),
             title=title,
             content=params.get("content", ""),
@@ -1448,7 +1534,8 @@ class DeskRPCServer:
             return {"error": err}
         user_id = params.get("user_id", "") or "local_user"
         notifications = await svc.list_notifications(
-            user_id, unread_only=params.get("unread_only", False),
+            user_id,
+            unread_only=params.get("unread_only", False),
         )
         return {"notifications": notifications}
 
@@ -1480,6 +1567,7 @@ class DeskRPCServer:
             config = update_fields.get("config", {})
             if isinstance(config, str):
                 import json as _json
+
                 try:
                     config = _json.loads(config)
                 except Exception:
@@ -1491,6 +1579,7 @@ class DeskRPCServer:
             config = update_fields.get("config", {})
             if isinstance(config, str):
                 import json as _json
+
                 try:
                     config = _json.loads(config)
                 except Exception:
@@ -1502,6 +1591,7 @@ class DeskRPCServer:
             config = update_fields.get("config", {})
             if isinstance(config, str):
                 import json as _json
+
                 try:
                     config = _json.loads(config)
                 except Exception:
@@ -1533,6 +1623,7 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space.models import SpaceSnapshot
+
         space_id = params.get("space_id", "")
         name = params.get("name", "")
         operator_id = params.get("operator_id", "")
@@ -1569,6 +1660,7 @@ class DeskRPCServer:
             if not src:
                 return {"error": f"快照 {snapshot_id} 不存在"}
             from fusion_cowork.space.models import SpaceSnapshot
+
             clone = SpaceSnapshot(
                 space_id=space_id,
                 name=f"{src.name} (clone)",
@@ -1598,6 +1690,7 @@ class DeskRPCServer:
             restored = 0
             for msg_data in snap.snapshot_data.get("messages", []):
                 from fusion_cowork.space.models import SpaceMessage
+
                 m = SpaceMessage.from_dict(msg_data)
                 m.id = ""  # let store generate new id
                 m.space_id = space_id
@@ -1627,6 +1720,7 @@ class DeskRPCServer:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceChatService, SpacePermission
+
         perm = SpacePermission(self._space_store)
         mlx = FusionMLXClient()
         chat_svc = SpaceChatService(self._space_store, mlx, perm)
@@ -1641,7 +1735,11 @@ class DeskRPCServer:
         try:
             chunks = []
             async for chunk in chat_svc.stream_message(
-                space_id, user_id, content, agent_id, model=model,
+                space_id,
+                user_id,
+                content,
+                agent_id,
+                model=model,
             ):
                 chunks.append(chunk)
             full = "".join(chunks)
@@ -1662,7 +1760,10 @@ class DeskRPCServer:
             return {"error": "message_id 和 content 必填"}
         try:
             comment_id = await self._space_store.add_comment(
-                message_id, author_id, author_name, content,
+                message_id,
+                author_id,
+                author_name,
+                content,
             )
             return {"comment_id": comment_id}
         except Exception as e:
@@ -1703,13 +1804,15 @@ class DeskRPCServer:
             sp = await self._space_store.get_space(space_id) if self._space_store else None
             operator_id = sp.owner_id if sp else "local_user"
         try:
-            artifact_id = await self._space_store.add_artifact({
-                "space_id": space_id,
-                "name": name,
-                "kind": "workflow",
-                "content": json.dumps({"nodes": nodes, "edges": edges}),
-                "owner_id": operator_id,
-            })
+            artifact_id = await self._space_store.add_artifact(
+                {
+                    "space_id": space_id,
+                    "name": name,
+                    "kind": "workflow",
+                    "content": json.dumps({"nodes": nodes, "edges": edges}),
+                    "owner_id": operator_id,
+                }
+            )
             return {"artifact_id": artifact_id, "name": name}
         except Exception as e:
             logger.error(f"workflow.create failed: {e}")
@@ -1719,6 +1822,7 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.engine.workflow import WorkflowEngine
+
         artifact_id = params.get("artifact_id", "") or params.get("workflow_id", "")
         inputs = params.get("inputs", {})
         try:
@@ -1768,8 +1872,7 @@ class DeskRPCServer:
         session_id = params.get("session_id", "")
         try:
             snapshots = await self._space_store.list_snapshots(space_id)
-            session_snaps = [s for s in snapshots
-                            if s.snapshot_data.get("session_id") == session_id]
+            session_snaps = [s for s in snapshots if s.snapshot_data.get("session_id") == session_id]
             return {"snapshots": [s.to_dict() for s in session_snaps]}
         except Exception as e:
             return {"error": str(e)}
@@ -1778,6 +1881,7 @@ class DeskRPCServer:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space.models import SpaceSnapshot
+
         space_id = params.get("space_id", "")
         session_id = params.get("session_id", "")
         label = params.get("label", "")
@@ -1822,6 +1926,7 @@ class DeskRPCServer:
             if not src:
                 return {"error": f"快照 {snapshot_id} 不存在"}
             from fusion_cowork.space.models import SpaceSnapshot
+
             fork = SpaceSnapshot(
                 space_id=space_id,
                 name=f"{src.name} (fork)",

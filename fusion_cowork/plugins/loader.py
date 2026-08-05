@@ -16,7 +16,9 @@ logger = logging.getLogger(__name__)
 
 class PluginLoader:
     def __init__(self, plugins_dir: str = ""):
-        self._plugins_dir = Path(plugins_dir).expanduser() if plugins_dir else Path.home() / ".fusion-cowork" / "plugins"
+        self._plugins_dir = (
+            Path(plugins_dir).expanduser() if plugins_dir else Path.home() / ".fusion-cowork" / "plugins"
+        )
         self._plugins_dir.mkdir(parents=True, exist_ok=True)
         self._loaded: Dict[str, PluginManifest] = {}
         self._node_map: Dict[str, List[str]] = {}

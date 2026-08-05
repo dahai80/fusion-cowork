@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class OptimizationSuggestion:
     """优化建议。"""
+
     category: str  # performance | memory | parallelism | configuration
     severity: str  # critical | warning | info
     title: str
@@ -35,6 +36,7 @@ class OptimizationSuggestion:
 @dataclass
 class WorkflowAnalysis:
     """工作流分析结果。"""
+
     workflow_name: str
     total_executions: int
     avg_duration: float
@@ -104,8 +106,11 @@ class WorkflowOptimizer:
 
                 if node_name not in node_stats:
                     node_stats[node_name] = {
-                        "total_time": 0, "count": 0, "failures": 0,
-                        "max_time": 0, "min_time": float("inf"),
+                        "total_time": 0,
+                        "count": 0,
+                        "failures": 0,
+                        "max_time": 0,
+                        "min_time": float("inf"),
                     }
 
                 stats = node_stats[node_name]
@@ -137,13 +142,15 @@ class WorkflowOptimizer:
 
         bottlenecks = []
         for name, stats in sorted_nodes[:3]:
-            bottlenecks.append({
-                "name": name,
-                "avg_time": round(stats["avg_time"], 3),
-                "max_time": round(stats["max_time"], 3),
-                "failure_rate": round(stats["failure_rate"], 1),
-                "executions": stats["count"],
-            })
+            bottlenecks.append(
+                {
+                    "name": name,
+                    "avg_time": round(stats["avg_time"], 3),
+                    "max_time": round(stats["max_time"], 3),
+                    "failure_rate": round(stats["failure_rate"], 1),
+                    "executions": stats["count"],
+                }
+            )
 
         return bottlenecks
 
@@ -160,55 +167,63 @@ class WorkflowOptimizer:
         bottlenecks = self._find_bottlenecks(node_stats)
         for b in bottlenecks:
             if b["avg_time"] > avg_duration * 0.5:
-                suggestions.append(OptimizationSuggestion(
-                    category="performance",
-                    severity="warning",
-                    title=f"节点 '{b['name']}' 是性能瓶颈",
-                    description=f"平均耗时 {b['avg_time']:.2f}s，占总执行时间 {b['avg_time']/max(avg_duration,0.001)*100:.0f}%",
-                    current_value=f"{b['avg_time']:.2f}s",
-                    suggested_value=f"目标 < {avg_duration * 0.3:.2f}s",
-                    expected_improvement="预计可提升 30-50%",
-                    auto_fix=False,
-                ))
+                suggestions.append(
+                    OptimizationSuggestion(
+                        category="performance",
+                        severity="warning",
+                        title=f"节点 '{b['name']}' 是性能瓶颈",
+                        description=f"平均耗时 {b['avg_time']:.2f}s，占总执行时间 {b['avg_time'] / max(avg_duration, 0.001) * 100:.0f}%",
+                        current_value=f"{b['avg_time']:.2f}s",
+                        suggested_value=f"目标 < {avg_duration * 0.3:.2f}s",
+                        expected_improvement="预计可提升 30-50%",
+                        auto_fix=False,
+                    )
+                )
 
         # 检查失败率
         for name, stats in node_stats.items():
             if stats["failure_rate"] > 10:
-                suggestions.append(OptimizationSuggestion(
-                    category="reliability",
-                    severity="critical" if stats["failure_rate"] > 30 else "warning",
-                    title=f"节点 '{name}' 失败率过高",
-                    description=f"失败率 {stats['failure_rate']:.0f}% ({stats['failures']}/{stats['count']})",
-                    current_value=f"{stats['failure_rate']:.0f}%",
-                    suggested_value="目标 < 5%",
-                    expected_improvement="建议启用 continue_on_error",
-                    auto_fix=True,
-                ))
+                suggestions.append(
+                    OptimizationSuggestion(
+                        category="reliability",
+                        severity="critical" if stats["failure_rate"] > 30 else "warning",
+                        title=f"节点 '{name}' 失败率过高",
+                        description=f"失败率 {stats['failure_rate']:.0f}% ({stats['failures']}/{stats['count']})",
+                        current_value=f"{stats['failure_rate']:.0f}%",
+                        suggested_value="目标 < 5%",
+                        expected_improvement="建议启用 continue_on_error",
+                        auto_fix=True,
+                    )
+                )
 
         # 检查并行度
         if total_execs > 10 and avg_duration > 5:
-            suggestions.append(OptimizationSuggestion(
-                category="parallelism",
-                severity="info",
-                title="考虑增加并行度",
-                description="工作流包含独立节点，可并行执行减少总耗时",
-                current_value="串行执行",
-                suggested_value="并行执行独立节点",
-                expected_improvement="预计可节省 40-60% 时间",
-                auto_fix=False,
-            ))
+            suggestions.append(
+                OptimizationSuggestion(
+                    category="parallelism",
+                    severity="info",
+                    title="考虑增加并行度",
+                    description="工作流包含独立节点，可并行执行减少总耗时",
+                    current_value="串行执行",
+                    suggested_value="并行执行独立节点",
+                    expected_improvement="预计可节省 40-60% 时间",
+                    auto_fix=False,
+                )
+            )
 
         # 通用优化
-        suggestions.append(OptimizationSuggestion(
-            category="configuration",
-            severity="info",
-            title="启用 dry_run 预览模式",
-            description="执行前使用 dry_run 预览可避免误操作",
-            current_value="直接执行",
-            suggested_value="先 dry_run 预览",
-            expected_improvement="提高操作安全性",
-            auto_fix=True,
-        ))
+        suggestions.append(
+            OptimizationSuggestion(
+                category="configuration",
+                severity="info",
+                title="启用 dry_run 预览模式",
+                description="执行前使用 dry_run 预览可避免误操作",
+                current_value="直接执行",
+                suggested_value="先 dry_run 预览",
+                expected_improvement="提高操作安全性",
+                auto_fix=True,
+            )
+        )
 
         return suggestions
 

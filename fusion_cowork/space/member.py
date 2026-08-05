@@ -57,10 +57,15 @@ class SpaceMemberService:
         expires_at = None
         if expires_hours != 0:
             from datetime import timedelta
+
             expires_at = (datetime.now() + timedelta(hours=expires_hours)).isoformat()
         await self._store.create_invite(
-            code=code, space_id=space_id, role=role,
-            max_uses=max_uses, expires_at=expires_at, created_by=inviter_id,
+            code=code,
+            space_id=space_id,
+            role=role,
+            max_uses=max_uses,
+            expires_at=expires_at,
+            created_by=inviter_id,
         )
         logger.info(f"SpaceMemberService.invite code={code} space={space_id} role={role}")
         return code

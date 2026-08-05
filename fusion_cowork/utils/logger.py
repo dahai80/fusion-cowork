@@ -44,9 +44,7 @@ def setup_logger(
         log_path = Path(log_file).expanduser()
         log_path.parent.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(str(log_path), encoding="utf-8")
-        file_handler.setFormatter(
-            logging.Formatter("[%(asctime)s] %(levelname)-8s %(name)s:%(lineno)d - %(message)s")
-        )
+        file_handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)-8s %(name)s:%(lineno)d - %(message)s"))
         file_handler.setLevel(logging.DEBUG)
         logger.addHandler(file_handler)
 

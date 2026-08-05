@@ -58,8 +58,10 @@ class BenchmarkRunner:
         except Exception as e:
             elapsed = (time.monotonic() - t0) * 1000
             br = BenchmarkResult(
-                node_name=node_name, status="error",
-                latency_ms=elapsed, error=str(e),
+                node_name=node_name,
+                status="error",
+                latency_ms=elapsed,
+                error=str(e),
             )
         self._results.append(br)
         logger.info(f"Benchmark {node_name}: {br.latency_ms:.1f}ms status={br.status}")
@@ -96,8 +98,10 @@ class BenchmarkRunner:
         except Exception as e:
             elapsed = (time.monotonic() - t0) * 1000
             br = BenchmarkResult(
-                node_name=wf.name or "workflow", status="error",
-                latency_ms=elapsed, error=str(e),
+                node_name=wf.name or "workflow",
+                status="error",
+                latency_ms=elapsed,
+                error=str(e),
             )
         self._results.append(br)
         logger.info(f"Benchmark workflow: {br.latency_ms:.1f}ms status={br.status}")
@@ -117,11 +121,20 @@ class BenchmarkRunner:
             avg = sum(latencies) / len(latencies)
             mn = min(latencies)
             mx = max(latencies)
-            stats[name] = {"avg_ms": round(avg, 2), "min_ms": round(mn, 2), "max_ms": round(mx, 2), "runs": len(latencies)}
+            stats[name] = {
+                "avg_ms": round(avg, 2),
+                "min_ms": round(mn, 2),
+                "max_ms": round(mx, 2),
+                "runs": len(latencies),
+            }
         return {"total_runs": len(self._results), "nodes": stats}
 
     def to_json(self, indent: int = 2) -> str:
-        return json.dumps({
-            "summary": self.summary(),
-            "results": [r.to_dict() for r in self._results],
-        }, indent=indent, ensure_ascii=False)
+        return json.dumps(
+            {
+                "summary": self.summary(),
+                "results": [r.to_dict() for r in self._results],
+            },
+            indent=indent,
+            ensure_ascii=False,
+        )

@@ -193,13 +193,22 @@ class MCPToolRegistry:
 
         self._node_map = {
             "read_file": ("file_input", lambda a: {"path": a.get("path", "~")}),
-            "write_file": ("file_output", lambda a: {"data": {"content": a.get("content", "")}, "output_path": a.get("path", "~/Desktop")}),
+            "write_file": (
+                "file_output",
+                lambda a: {"data": {"content": a.get("content", "")}, "output_path": a.get("path", "~/Desktop")},
+            ),
             "list_directory": ("file_input", lambda a: {"path": a.get("path", "~"), "recursive": False}),
-            "run_terminal": ("shell_exec", lambda a: {"command": a.get("command", ""), "timeout": a.get("timeout", 30)}),
+            "run_terminal": (
+                "shell_exec",
+                lambda a: {"command": a.get("command", ""), "timeout": a.get("timeout", 30)},
+            ),
             "take_screenshot": ("screen_capture", lambda a: {"save_path": a.get("save_path", "~/Desktop")}),
             "clipboard_read": ("clipboard", lambda a: {"action": "read"}),
             "clipboard_write": ("clipboard", lambda a: {"text": a.get("text", ""), "action": "write"}),
-            "send_notification": ("notification", lambda a: {"title": a.get("title", "Fusion-Cowork"), "message": a.get("message", "")}),
+            "send_notification": (
+                "notification",
+                lambda a: {"title": a.get("title", "Fusion-Cowork"), "message": a.get("message", "")},
+            ),
             "launch_app": ("app_lifecycle", lambda a: {"app_name": a.get("app_name", ""), "action": "launch"}),
             "web_search": ("web_search", lambda a: {"query": a.get("query", "")}),
             "classify_files": ("ai_classify", lambda a: {"files": [], "source_path": a.get("path", "~/Desktop")}),
@@ -242,19 +251,18 @@ class MCPToolRegistry:
         """执行工具: 映射到 NodeRegistry 节点 / SkillRegistry 技能。"""
         if tool_name == "skill_list":
             from ..skills import SkillRegistry, register_builtin_skills
+
             registry = SkillRegistry()
             register_builtin_skills(registry)
             skills = registry.list_skills()
             return {
-                "skills": [
-                    {"name": s.name, "description": s.description, "category": s.category}
-                    for s in skills
-                ],
+                "skills": [{"name": s.name, "description": s.description, "category": s.category} for s in skills],
                 "count": len(skills),
             }
 
         if tool_name == "skill_run":
             from ..skills import SkillRegistry, register_builtin_skills
+
             registry = SkillRegistry()
             register_builtin_skills(registry)
             skill_name = args.get("name", "")
@@ -276,25 +284,37 @@ class MCPToolRegistry:
                 logger.warning(f"MCP 工具 '{tool_name}' (node={node_name}) 被权限拒绝")
                 if self._hook_manager:
                     from ..engine.hooks import HookEvent
-                    await self._hook_manager.fire(HookEvent.PERMISSION_REQUEST, {
-                        "tool_name": tool_name, "node_name": node_name,
-                        "params": node_params, "allowed": False,
-                    })
+
+                    await self._hook_manager.fire(
+                        HookEvent.PERMISSION_REQUEST,
+                        {
+                            "tool_name": tool_name,
+                            "node_name": node_name,
+                            "params": node_params,
+                            "allowed": False,
+                        },
+                    )
                 return {"error": f"权限拒绝: {node_name}", "status": "denied"}
 
         # Hook: PRE_NODE_EXECUTE
         if self._hook_manager:
             from ..engine.hooks import HookEvent
-            hctx = await self._hook_manager.fire(HookEvent.PRE_NODE_EXECUTE, {
-                "tool_name": tool_name, "node_name": node_name,
-                "input_data": node_params,
-            })
+
+            hctx = await self._hook_manager.fire(
+                HookEvent.PRE_NODE_EXECUTE,
+                {
+                    "tool_name": tool_name,
+                    "node_name": node_name,
+                    "input_data": node_params,
+                },
+            )
             if hctx and hctx.cancelled:
                 return {"error": f"Hook取消: {node_name}", "status": "cancelled"}
             if hctx and hctx.modified_data and "input_data" in hctx.modified_data:
                 node_params = hctx.modified_data["input_data"]
 
         from ..engine.node import NodeConfig, NodeRegistry
+
         node = NodeRegistry.create(node_name, config=NodeConfig(params=node_params))
         if not node:
             return {"error": f"节点创建失败: {node_name}"}
@@ -304,10 +324,15 @@ class MCPToolRegistry:
         # Hook: POST_NODE_EXECUTE
         if self._hook_manager:
             from ..engine.hooks import HookEvent
-            await self._hook_manager.fire(HookEvent.POST_NODE_EXECUTE, {
-                "tool_name": tool_name, "node_name": node_name,
-                "result": result,
-            })
+
+            await self._hook_manager.fire(
+                HookEvent.POST_NODE_EXECUTE,
+                {
+                    "tool_name": tool_name,
+                    "node_name": node_name,
+                    "result": result,
+                },
+            )
 
         return {
             "status": result.status.value,
@@ -330,8 +355,7 @@ class MCPServer:
         await server.serve_http(port=11438)
     """
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 11438,
-                 permission_manager=None, hook_manager=None):
+    def __init__(self, host: str = "127.0.0.1", port: int = 11438, permission_manager=None, hook_manager=None):
         self.host = host
         self.port = port
         self._registry = MCPToolRegistry(
@@ -344,6 +368,7 @@ class MCPServer:
         """启动 stdio 传输 (供 Claude Code 通过 MCP 协议调用)。"""
         self._registry.register_tools()
         from .mcp_transport import StdioTransport
+
         transport = StdioTransport(self._registry)
         logger.info("MCP 服务器启动 (stdio 模式)")
         await transport.run()
@@ -353,8 +378,10 @@ class MCPServer:
         self._registry.register_tools()
         try:
             from .mcp_http import create_http_app
+
             app = create_http_app(self._registry, event_emitter=event_emitter)
             import uvicorn
+
             logger.info(f"MCP 服务器启动 (HTTP 模式): {self.host}:{self.port}")
             config = uvicorn.Config(app, host=self.host, port=self.port, log_level="info")
             server = uvicorn.Server(config)

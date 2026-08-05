@@ -264,6 +264,7 @@ class CDPScreenshotNode(_CDPNodeBase):
             await client.disconnect()
             if save_path:
                 from pathlib import Path
+
                 p = Path(save_path).expanduser()
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_bytes(png_bytes)

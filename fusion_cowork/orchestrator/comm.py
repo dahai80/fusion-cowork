@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AgentMessage:
     """Agent 间消息。"""
+
     msg_id: str
     sender: str
     receiver: str  # "*" = 广播

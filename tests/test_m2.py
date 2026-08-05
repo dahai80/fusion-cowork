@@ -1,4 +1,5 @@
 """M2 里程碑测试 — 权限模型、Hook系统、会话持久化、流式事件。"""
+
 import asyncio
 import os
 import tempfile
@@ -28,6 +29,7 @@ from fusion_cowork.engine.workflow import (
 )
 
 # ── 权限模型 ──
+
 
 class TestPermissionLevel:
     def test_levels_exist(self):
@@ -104,14 +106,21 @@ class TestPermissionManager:
 
 # ── Hook 系统 ──
 
+
 class TestHookEvent:
     def test_all_events(self):
         expected = [
-            "PRE_NODE_EXECUTE", "POST_NODE_EXECUTE",
-            "WORKFLOW_START", "WORKFLOW_END", "WORKFLOW_CANCEL",
-            "PERMISSION_REQUEST", "CONFIG_CHANGE",
-            "AGENT_START", "AGENT_STOP",
-            "NOTIFICATION", "NODE_ERROR",
+            "PRE_NODE_EXECUTE",
+            "POST_NODE_EXECUTE",
+            "WORKFLOW_START",
+            "WORKFLOW_END",
+            "WORKFLOW_CANCEL",
+            "PERMISSION_REQUEST",
+            "CONFIG_CHANGE",
+            "AGENT_START",
+            "AGENT_STOP",
+            "NOTIFICATION",
+            "NODE_ERROR",
         ]
         for name in expected:
             assert hasattr(HookEvent, name)
@@ -135,9 +144,11 @@ class TestHookManager:
     async def test_register_and_fire(self):
         hm = HookManager()
         received = []
+
         async def handler(ctx):
             received.append(ctx.data)
             return ctx
+
         hm.register(HookEvent.WORKFLOW_START, handler)
         await hm.fire(HookEvent.WORKFLOW_START, {"name": "test"})
         assert len(received) == 1
@@ -146,9 +157,11 @@ class TestHookManager:
     @pytest.mark.asyncio
     async def test_cancel_in_handler(self):
         hm = HookManager()
+
         async def handler(ctx):
             ctx.cancel()
             return ctx
+
         hm.register(HookEvent.PRE_NODE_EXECUTE, handler)
         ctx = await hm.fire(HookEvent.PRE_NODE_EXECUTE, {})
         assert ctx.cancelled
@@ -164,9 +177,11 @@ class TestHookManager:
     async def test_unregister(self):
         hm = HookManager()
         called = []
+
         async def handler(ctx):
             called.append(1)
             return ctx
+
         hm.register(HookEvent.WORKFLOW_END, handler)
         hm.unregister(HookEvent.WORKFLOW_END, handler)
         await hm.fire(HookEvent.WORKFLOW_END, {})
@@ -174,6 +189,7 @@ class TestHookManager:
 
 
 # ── 会话持久化 ──
+
 
 class TestSession:
     def test_auto_id(self):
@@ -251,6 +267,7 @@ class TestSessionStore:
 
 # ── 流式事件 ──
 
+
 class TestWorkflowEvent:
     def test_auto_fields(self):
         e = WorkflowEvent(event_type="node_start")
@@ -303,6 +320,7 @@ class TestEventEmitter:
 
 # ── WorkflowEngine 集成 ──
 
+
 class _OkNode(BaseNode):
     name = "ok_node"
     display_name = "OK Node"
@@ -323,11 +341,17 @@ class TestWorkflowEngineM2:
         engine = WorkflowEngine(permission_manager=pm, hook_manager=hm)
 
         events = []
+
         async def capture(ctx):
             events.append(ctx.event.value)
             return ctx
-        for evt in [HookEvent.WORKFLOW_START, HookEvent.WORKFLOW_END,
-                     HookEvent.PRE_NODE_EXECUTE, HookEvent.POST_NODE_EXECUTE]:
+
+        for evt in [
+            HookEvent.WORKFLOW_START,
+            HookEvent.WORKFLOW_END,
+            HookEvent.PRE_NODE_EXECUTE,
+            HookEvent.POST_NODE_EXECUTE,
+        ]:
             hm.register(evt, capture)
 
         wf = Workflow(name="hook_test", workflow_id="wf_m2")
@@ -372,6 +396,7 @@ class TestWorkflowEngineM2:
         async def cancel_handler(ctx):
             ctx.cancel()
             return ctx
+
         hm.register(HookEvent.PRE_NODE_EXECUTE, cancel_handler)
 
         wf = Workflow(name="cancel_test", workflow_id="wf_cancel")

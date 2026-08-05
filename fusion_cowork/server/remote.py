@@ -107,6 +107,7 @@ class RemoteControlServer:
 
     async def _get_status(self) -> Dict[str, Any]:
         from fusion_cowork.engine.node import NodeRegistry
+
         nodes = NodeRegistry.list()
         return {
             "status": "running",
@@ -117,20 +118,25 @@ class RemoteControlServer:
 
     def _list_nodes(self) -> List[Dict[str, Any]]:
         from fusion_cowork.engine.node import NodeRegistry
+
         return NodeRegistry.list()
 
     def _list_templates(self) -> List[Dict[str, Any]]:
         try:
             from fusion_cowork.templates import TemplateManager
+
             mgr = TemplateManager()
             templates = mgr.list_templates()
-            return [{"id": t.get("id", ""), "name": t.get("name", ""), "category": t.get("category", "")} for t in templates]
+            return [
+                {"id": t.get("id", ""), "name": t.get("name", ""), "category": t.get("category", "")} for t in templates
+            ]
         except Exception as e:
             logger.warning(f"list_templates failed: {e}")
             return []
 
     async def _submit_workflow(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from fusion_cowork.engine import Workflow, WorkflowEngine
+
         workflow_data = params.get("workflow", {})
         try:
             workflow = Workflow.from_dict(workflow_data)
@@ -147,21 +153,26 @@ class RemoteControlServer:
     async def _run_workflow_background(self, task_id: str, engine, workflow, input_data: Dict):
         try:
             result = await engine.execute(workflow, input_data)
-            await self._broadcast({
-                "event": "task_completed",
-                "task_id": task_id,
-                "status": result.status.value if hasattr(result, "status") else "completed",
-            })
+            await self._broadcast(
+                {
+                    "event": "task_completed",
+                    "task_id": task_id,
+                    "status": result.status.value if hasattr(result, "status") else "completed",
+                }
+            )
         except Exception as e:
             logger.error(f"Workflow {task_id} failed: {e}")
-            await self._broadcast({
-                "event": "task_failed",
-                "task_id": task_id,
-                "error": str(e),
-            })
+            await self._broadcast(
+                {
+                    "event": "task_failed",
+                    "task_id": task_id,
+                    "error": str(e),
+                }
+            )
 
     async def _run_template(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from fusion_cowork.templates import TemplateManager
+
         template_id = params.get("template_id", "")
         try:
             mgr = TemplateManager()
@@ -179,6 +190,7 @@ class RemoteControlServer:
     def _list_sessions(self) -> List[Dict[str, Any]]:
         try:
             from fusion_cowork.engine.session import SessionStore
+
             store = SessionStore()
             sessions = store.list_sessions()
             return [{"id": s.id, "status": s.status, "workflow_name": s.workflow_name} for s in sessions]

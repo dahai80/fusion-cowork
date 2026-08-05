@@ -21,10 +21,15 @@ logger = logging.getLogger(__name__)
 _PERMISSIONS_DIR = os.path.expanduser("~/.fusion-cowork")
 _PERMISSIONS_FILE = os.path.join(_PERMISSIONS_DIR, "permissions.json")
 
-HIGH_RISK_NODES = frozenset({
-    "shell_exec", "python_repl", "file_delete",
-    "apply_edit", "browser_automate",
-})
+HIGH_RISK_NODES = frozenset(
+    {
+        "shell_exec",
+        "python_repl",
+        "file_delete",
+        "apply_edit",
+        "browser_automate",
+    }
+)
 
 
 class PermissionLevel(Enum):
@@ -79,9 +84,15 @@ class PermissionManager:
         # Hook: PERMISSION_REQUEST
         if self._hook_manager:
             from .hooks import HookEvent
-            ctx = await self._hook_manager.fire(HookEvent.PERMISSION_REQUEST, {
-                "tool_name": tool_name, "action": action, "params": params or {},
-            })
+
+            ctx = await self._hook_manager.fire(
+                HookEvent.PERMISSION_REQUEST,
+                {
+                    "tool_name": tool_name,
+                    "action": action,
+                    "params": params or {},
+                },
+            )
             if ctx and ctx.cancelled:
                 logger.info(f"权限被 Hook 拒绝: {tool_name}")
                 return False
@@ -127,6 +138,7 @@ class PermissionManager:
 
     def request_approval(self, tool_name: str, params: Dict[str, Any] = None) -> str:
         import uuid
+
         req_id = f"perm_{uuid.uuid4().hex[:8]}"
         self._pending_approvals[req_id] = Permission(tool_name=tool_name, allowed=False, scope="*")
         logger.info(f"权限请求: {req_id} → {tool_name}")
@@ -144,10 +156,7 @@ class PermissionManager:
         os.makedirs(os.path.dirname(target), exist_ok=True)
         data = {
             "level": self.level.value,
-            "rules": [
-                {"tool_name": r.tool_name, "allowed": r.allowed, "scope": r.scope}
-                for r in self.rules
-            ],
+            "rules": [{"tool_name": r.tool_name, "allowed": r.allowed, "scope": r.scope} for r in self.rules],
         }
         with open(target, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -181,8 +190,5 @@ class PermissionManager:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "level": self.level.value,
-            "rules": [
-                {"tool_name": r.tool_name, "allowed": r.allowed, "scope": r.scope}
-                for r in self.rules
-            ],
+            "rules": [{"tool_name": r.tool_name, "allowed": r.allowed, "scope": r.scope} for r in self.rules],
         }

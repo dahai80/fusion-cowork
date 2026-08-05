@@ -126,7 +126,9 @@ class BrowserClient:
         try:
             result = subprocess.run(
                 ["pgrep", "-f", "FusionBrowser"],
-                capture_output=True, text=True, timeout=2,
+                capture_output=True,
+                text=True,
+                timeout=2,
             )
             return result.returncode == 0
         except Exception:
@@ -165,7 +167,8 @@ class BrowserManager:
             result = subprocess.run(
                 ["swift", "build", "-c", "release"],
                 cwd=str(browser_dir),
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
                 timeout=300,
             )
             if result.returncode == 0:
@@ -182,6 +185,7 @@ class BrowserManager:
 @register_node
 class BrowserOpenNode(BaseNode):
     """浏览器打开节点 — 在浏览器中打开指定 URL。"""
+
     name = "browser_open"
     display_name = "浏览器打开"
     category = NodeCategory.TOOL
@@ -240,6 +244,7 @@ class BrowserOpenNode(BaseNode):
 @register_node
 class BrowserExtractNode(BaseNode):
     """浏览器内容提取节点 — 从网页提取文本/HTML。"""
+
     name = "browser_extract"
     display_name = "浏览器提取"
     category = NodeCategory.TOOL
@@ -303,6 +308,7 @@ class BrowserExtractNode(BaseNode):
 @register_node
 class BrowserAutomateNode(BaseNode):
     """浏览器自动化节点 — 自动点击、输入、截图。"""
+
     name = "browser_automate"
     display_name = "浏览器自动化"
     category = NodeCategory.TOOL

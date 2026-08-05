@@ -35,6 +35,7 @@ from fusion_cowork.engine.workflow import Edge, Workflow, WorkflowEngine, Workfl
 
 # ── 测试用 Mock 节点 ──
 
+
 @register_node
 class MockSuccessNode(BaseNode):
     name = "mock_success"
@@ -72,6 +73,7 @@ class MockFailNode(BaseNode):
 @register_node
 class MockTransformNode(BaseNode):
     """测试用：转换输入数据。"""
+
     name = "mock_transform"
     display_name = "Mock 转换"
     category = NodeCategory.IO
@@ -97,6 +99,7 @@ class MockTransformNode(BaseNode):
 
 
 # ── NodeRegistry 测试 ──
+
 
 class TestNodeRegistry:
     def test_register_and_get(self):
@@ -147,6 +150,7 @@ class TestNodeRegistry:
 
 
 # ── BaseNode 测试 ──
+
 
 class TestBaseNode:
     def test_node_initialization(self):
@@ -208,6 +212,7 @@ class TestBaseNode:
 
 
 # ── Workflow 测试 ──
+
 
 class TestWorkflow:
     def test_create_workflow(self):
@@ -337,6 +342,7 @@ class TestWorkflow:
 
 # ── WorkflowEngine 测试 ──
 
+
 class TestWorkflowEngine:
     @pytest.mark.asyncio
     async def test_execute_simple_workflow(self):
@@ -440,6 +446,7 @@ class TestWorkflowEngine:
 
 # ── 节点配置测试 ──
 
+
 class TestNodeConfig:
     def test_config_defaults(self):
         cfg = NodeConfig()
@@ -457,6 +464,7 @@ class TestNodeConfig:
 
 # ── 文件 IO 测试 ──
 
+
 class TestFileIONodes:
     @pytest.mark.asyncio
     async def test_file_input_dir(self, tmp_path):
@@ -466,11 +474,16 @@ class TestFileIONodes:
         (tmp_path / "test2.pdf").write_text("world")
         (tmp_path / "test3.py").write_text("print('hi')")
 
-        node = NodeRegistry.create("file_input", config=NodeConfig(params={
-            "path": str(tmp_path),
-            "recursive": False,
-            "file_patterns": "*",
-        }))
+        node = NodeRegistry.create(
+            "file_input",
+            config=NodeConfig(
+                params={
+                    "path": str(tmp_path),
+                    "recursive": False,
+                    "file_patterns": "*",
+                }
+            ),
+        )
         assert node is not None
 
         result = await node.execute({})
@@ -483,10 +496,15 @@ class TestFileIONodes:
         (tmp_path / "test1.txt").write_text("hello")
         (tmp_path / "test2.pdf").write_text("world")
 
-        node = NodeRegistry.create("file_input", config=NodeConfig(params={
-            "path": str(tmp_path),
-            "file_patterns": "*.txt",
-        }))
+        node = NodeRegistry.create(
+            "file_input",
+            config=NodeConfig(
+                params={
+                    "path": str(tmp_path),
+                    "file_patterns": "*.txt",
+                }
+            ),
+        )
         assert node is not None
 
         result = await node.execute({})
@@ -496,11 +514,16 @@ class TestFileIONodes:
     @pytest.mark.asyncio
     async def test_file_output_json(self, tmp_path):
         output_file = tmp_path / "output"
-        node = NodeRegistry.create("file_output", config=NodeConfig(params={
-            "output_path": str(output_file),
-            "file_name": "test_output",
-            "format": "json",
-        }))
+        node = NodeRegistry.create(
+            "file_output",
+            config=NodeConfig(
+                params={
+                    "output_path": str(output_file),
+                    "file_name": "test_output",
+                    "format": "json",
+                }
+            ),
+        )
         assert node is not None
 
         result = await node.execute({"data": {"key": "value", "count": 42}})
@@ -510,13 +533,19 @@ class TestFileIONodes:
 
 # ── 逻辑节点测试 ──
 
+
 class TestLogicNodes:
     @pytest.mark.asyncio
     async def test_filter_node(self):
-        node = NodeRegistry.create("filter", config=NodeConfig(params={
-            "filter_type": "extension",
-            "filter_value": ".txt,.md",
-        }))
+        node = NodeRegistry.create(
+            "filter",
+            config=NodeConfig(
+                params={
+                    "filter_type": "extension",
+                    "filter_value": ".txt,.md",
+                }
+            ),
+        )
         assert node is not None
 
         files = ["a.txt", "b.pdf", "c.md", "d.jpg"]
@@ -527,11 +556,16 @@ class TestLogicNodes:
 
     @pytest.mark.asyncio
     async def test_filter_invert(self):
-        node = NodeRegistry.create("filter", config=NodeConfig(params={
-            "filter_type": "extension",
-            "filter_value": ".txt",
-            "invert": True,
-        }))
+        node = NodeRegistry.create(
+            "filter",
+            config=NodeConfig(
+                params={
+                    "filter_type": "extension",
+                    "filter_value": ".txt",
+                    "invert": True,
+                }
+            ),
+        )
         files = ["a.txt", "b.pdf", "c.md"]
         result = await node.execute({"data": files})
         assert result.status == NodeStatus.SUCCESS
@@ -540,9 +574,14 @@ class TestLogicNodes:
 
     @pytest.mark.asyncio
     async def test_loop_node(self):
-        node = NodeRegistry.create("loop", config=NodeConfig(params={
-            "operation": "passthrough",
-        }))
+        node = NodeRegistry.create(
+            "loop",
+            config=NodeConfig(
+                params={
+                    "operation": "passthrough",
+                }
+            ),
+        )
         result = await node.execute({"items": [1, 2, 3, 4, 5]})
         assert result.status == NodeStatus.SUCCESS
         assert result.data["total"] == 5
@@ -550,9 +589,14 @@ class TestLogicNodes:
 
     @pytest.mark.asyncio
     async def test_merge_concat(self):
-        node = NodeRegistry.create("merge", config=NodeConfig(params={
-            "merge_mode": "concat",
-        }))
+        node = NodeRegistry.create(
+            "merge",
+            config=NodeConfig(
+                params={
+                    "merge_mode": "concat",
+                }
+            ),
+        )
         result = await node.execute({"data_1": [1, 2], "data_2": [3, 4]})
         assert result.status == NodeStatus.SUCCESS
         assert result.data["merged"] == [1, 2, 3, 4]
@@ -560,9 +604,11 @@ class TestLogicNodes:
 
 # ── 模板测试 ──
 
+
 class TestTemplateManager:
     def test_list_templates(self):
         from fusion_cowork.templates import TemplateManager
+
         mgr = TemplateManager()
         templates = mgr.list_templates()
         assert len(templates) > 0
@@ -570,6 +616,7 @@ class TestTemplateManager:
 
     def test_get_template(self):
         from fusion_cowork.templates import TemplateManager
+
         mgr = TemplateManager()
         tpl = mgr.get_template("desktop_daily_cleanup")
         assert tpl is not None
@@ -577,11 +624,13 @@ class TestTemplateManager:
 
     def test_template_not_found(self):
         from fusion_cowork.templates import TemplateManager
+
         mgr = TemplateManager()
         assert mgr.get_template("non_existent") is None
 
     def test_template_to_workflow(self):
         from fusion_cowork.templates import TemplateManager
+
         mgr = TemplateManager()
         wf = mgr.template_to_workflow("desktop_daily_cleanup")
         assert wf is not None
@@ -590,18 +639,21 @@ class TestTemplateManager:
 
     def test_get_categories(self):
         from fusion_cowork.templates import TemplateManager
+
         mgr = TemplateManager()
         categories = mgr.get_categories()
         assert len(categories) > 0
 
     def test_search_templates(self):
         from fusion_cowork.templates import TemplateManager
+
         mgr = TemplateManager()
         results = mgr.search_templates("桌面")
         assert len(results) > 0
 
 
 # ── 工作流序列化测试 ──
+
 
 class TestWorkflowSerialization:
     def test_save_and_load_json(self, tmp_path):
@@ -642,6 +694,7 @@ class TestWorkflowSerialization:
 
 # ── 节点注册表清理测试 ──
 
+
 class TestNodeRegistryCleanup:
     def test_unregister(self):
         # 保存注册表状态，避免破坏其他测试
@@ -656,12 +709,18 @@ class TestNodeRegistryCleanup:
 
 # ── macOS 节点测试（基础功能） ──
 
+
 class TestMacOSNodes:
     @pytest.mark.asyncio
     async def test_file_classifier(self):
-        node = NodeRegistry.create("file_classifier", config=NodeConfig(params={
-            "move_to_subdirs": False,
-        }))
+        node = NodeRegistry.create(
+            "file_classifier",
+            config=NodeConfig(
+                params={
+                    "move_to_subdirs": False,
+                }
+            ),
+        )
         assert node is not None
 
         # 使用临时文件
@@ -682,12 +741,17 @@ class TestMacOSNodes:
 
     @pytest.mark.asyncio
     async def test_file_batch_rename_dry_run(self):
-        node = NodeRegistry.create("file_batch_rename", config=NodeConfig(params={
-            "pattern": "test_{index}",
-            "start_index": 1,
-            "padding": 3,
-            "dry_run": True,
-        }))
+        node = NodeRegistry.create(
+            "file_batch_rename",
+            config=NodeConfig(
+                params={
+                    "pattern": "test_{index}",
+                    "start_index": 1,
+                    "padding": 3,
+                    "dry_run": True,
+                }
+            ),
+        )
         assert node is not None
 
         with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
@@ -704,12 +768,17 @@ class TestMacOSNodes:
 
     @pytest.mark.asyncio
     async def test_disk_cleaner_dry_run(self):
-        node = NodeRegistry.create("disk_cleaner", config=NodeConfig(params={
-            "clean_pycache": True,
-            "clean_ds_store": True,
-            "dry_run": True,
-            "max_depth": 2,
-        }))
+        node = NodeRegistry.create(
+            "disk_cleaner",
+            config=NodeConfig(
+                params={
+                    "clean_pycache": True,
+                    "clean_ds_store": True,
+                    "dry_run": True,
+                    "max_depth": 2,
+                }
+            ),
+        )
         assert node is not None
 
         result = await node.execute({"target_path": tempfile.gettempdir()})
@@ -719,10 +788,12 @@ class TestMacOSNodes:
 
 # ── AI 客户端测试 ──
 
+
 class TestAIClient:
     @pytest.mark.asyncio
     async def test_mlx_client_health_check(self):
         from fusion_cowork.ai import FusionMLXClient
+
         client = FusionMLXClient(base_url="http://localhost:18000/v1")  # 使用非标准端口避免冲突
         try:
             health = await client.health()
@@ -733,12 +804,14 @@ class TestAIClient:
 
     def test_llm_response_dataclass(self):
         from fusion_cowork.ai import LLMResponse
+
         resp = LLMResponse(content="Hello", tool_calls=[], finish_reason="stop")
         assert resp.content == "Hello"
         assert resp.finish_reason == "stop"
 
 
 # ── 参数类型强制转换测试（吸纳自 Squish _coerce_* 机制） ──
+
 
 class TestTypeCoercion:
     """测试参数类型强制转换（整合自 Squish tool_registry.py 的 _coerce_* 函数族）。"""
@@ -810,14 +883,20 @@ class TestTypeCoercion:
 
 # ── 工具节点测试（吸纳自 Squish 内置工具集） ──
 
+
 class TestToolNodes:
     @pytest.mark.asyncio
     async def test_shell_exec_success(self):
-        node = NodeRegistry.create("shell_exec", config=NodeConfig(params={
-            "command": "echo 'hello world'",
-            "timeout": 5,
-            "capture_output": True,
-        }))
+        node = NodeRegistry.create(
+            "shell_exec",
+            config=NodeConfig(
+                params={
+                    "command": "echo 'hello world'",
+                    "timeout": 5,
+                    "capture_output": True,
+                }
+            ),
+        )
         assert node is not None
         result = await node.execute({})
         assert result.status == NodeStatus.SUCCESS
@@ -825,20 +904,30 @@ class TestToolNodes:
 
     @pytest.mark.asyncio
     async def test_shell_exec_fail(self):
-        node = NodeRegistry.create("shell_exec", config=NodeConfig(params={
-            "command": "exit 1",
-            "timeout": 5,
-        }))
+        node = NodeRegistry.create(
+            "shell_exec",
+            config=NodeConfig(
+                params={
+                    "command": "exit 1",
+                    "timeout": 5,
+                }
+            ),
+        )
         assert node is not None
         result = await node.execute({})
         assert result.status == NodeStatus.FAILED
 
     @pytest.mark.asyncio
     async def test_python_repl_simple(self):
-        node = NodeRegistry.create("python_repl", config=NodeConfig(params={
-            "code": "1 + 1",
-            "timeout": 5,
-        }))
+        node = NodeRegistry.create(
+            "python_repl",
+            config=NodeConfig(
+                params={
+                    "code": "1 + 1",
+                    "timeout": 5,
+                }
+            ),
+        )
         assert node is not None
         result = await node.execute({})
         assert result.status == NodeStatus.SUCCESS
@@ -846,21 +935,31 @@ class TestToolNodes:
 
     @pytest.mark.asyncio
     async def test_python_repl_with_vars(self):
-        node = NodeRegistry.create("python_repl", config=NodeConfig(params={
-            "code": "x + y",
-            "variables": {"x": 10, "y": 20},
-            "timeout": 5,
-        }))
+        node = NodeRegistry.create(
+            "python_repl",
+            config=NodeConfig(
+                params={
+                    "code": "x + y",
+                    "variables": {"x": 10, "y": 20},
+                    "timeout": 5,
+                }
+            ),
+        )
         assert node is not None
         result = await node.execute({})
         assert result.status == NodeStatus.SUCCESS
 
     @pytest.mark.asyncio
     async def test_python_repl_error(self):
-        node = NodeRegistry.create("python_repl", config=NodeConfig(params={
-            "code": "1/0",
-            "timeout": 5,
-        }))
+        node = NodeRegistry.create(
+            "python_repl",
+            config=NodeConfig(
+                params={
+                    "code": "1/0",
+                    "timeout": 5,
+                }
+            ),
+        )
         assert node is not None
         result = await node.execute({})
         assert result.status == NodeStatus.FAILED
@@ -872,12 +971,17 @@ class TestToolNodes:
             tmp_path = f.name
 
         try:
-            node = NodeRegistry.create("apply_edit", config=NodeConfig(params={
-                "file_path": tmp_path,
-                "old_text": "hello",
-                "new_text": "hi",
-                "dry_run": True,
-            }))
+            node = NodeRegistry.create(
+                "apply_edit",
+                config=NodeConfig(
+                    params={
+                        "file_path": tmp_path,
+                        "old_text": "hello",
+                        "new_text": "hi",
+                        "dry_run": True,
+                    }
+                ),
+            )
             assert node is not None
             result = await node.execute({})
             assert result.status == NodeStatus.SUCCESS
@@ -892,13 +996,18 @@ class TestToolNodes:
             tmp_path = f.name
 
         try:
-            node = NodeRegistry.create("apply_edit", config=NodeConfig(params={
-                "file_path": tmp_path,
-                "old_text": "old",
-                "new_text": "new",
-                "dry_run": False,
-                "create_backup": False,
-            }))
+            node = NodeRegistry.create(
+                "apply_edit",
+                config=NodeConfig(
+                    params={
+                        "file_path": tmp_path,
+                        "old_text": "old",
+                        "new_text": "new",
+                        "dry_run": False,
+                        "create_backup": False,
+                    }
+                ),
+            )
             assert node is not None
             result = await node.execute({})
             assert result.status == NodeStatus.SUCCESS
@@ -911,6 +1020,7 @@ class TestToolNodes:
 
 
 # ── 别名解析测试（吸纳自 Squish tool_name_map.py） ──
+
 
 class TestNodeAliases:
     def test_register_alias(self):
@@ -940,39 +1050,47 @@ class TestNodeAliases:
 
 # ── Lazy Import 测试（吸纳自 Squish __getattr__ 机制） ──
 
+
 class TestLazyImport:
     def test_lazy_import_workflow(self):
         import fusion_cowork
+
         wf = fusion_cowork.Workflow(name="延迟导入测试")
         assert wf.name == "延迟导入测试"
 
     def test_lazy_import_node(self):
         import fusion_cowork
+
         node = fusion_cowork.DesktopCleanNode()
         assert node.name == "desktop_clean"
 
     def test_lazy_import_ai(self):
         import fusion_cowork
+
         client = fusion_cowork.FusionMLXClient()
         assert client is not None
 
     def test_lazy_import_tool_node(self):
         import fusion_cowork
+
         node = fusion_cowork.ShellExecNode()
         assert node.name == "shell_exec"
 
     def test_lazy_import_template(self):
         import fusion_cowork
+
         mgr = fusion_cowork.TemplateManager()
         assert mgr is not None
 
     def test_lazy_import_nonexistent(self):
         import fusion_cowork
+
         with pytest.raises(AttributeError):
             _ = fusion_cowork.NonExistentName
 
     def test_lazy_import_cached(self):
         import fusion_cowork
+
         # 第二次访问应使用缓存
         wf1 = fusion_cowork.Workflow
         wf2 = fusion_cowork.Workflow

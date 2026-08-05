@@ -22,16 +22,18 @@ logger = logging.getLogger(__name__)
 
 class AgentRole(Enum):
     """Agent 角色。"""
-    PLANNER = "planner"          # 任务规划
-    EXECUTOR = "executor"        # 任务执行
-    ANALYZER = "analyzer"        # 结果分析
-    VALIDATOR = "validator"      # 结果验证
+
+    PLANNER = "planner"  # 任务规划
+    EXECUTOR = "executor"  # 任务执行
+    ANALYZER = "analyzer"  # 结果分析
+    VALIDATOR = "validator"  # 结果验证
     COORDINATOR = "coordinator"  # 协调
 
 
 @dataclass
 class Agent:
     """Agent 定义。"""
+
     agent_id: str
     name: str
     role: AgentRole
@@ -49,6 +51,7 @@ class Agent:
 @dataclass
 class AgentTask:
     """Agent 任务定义。"""
+
     task_id: str
     agent_id: str
     parent_task: str = ""
@@ -65,6 +68,7 @@ class AgentTask:
 @dataclass
 class OrchestrationPlan:
     """编排计划。"""
+
     plan_id: str
     workflow_name: str
     tasks: List[AgentTask] = field(default_factory=list)
@@ -101,22 +105,62 @@ class AgentOrchestrator:
             self._message_bus = AgentMessageBus()
 
         default_agents = [
-            Agent(agent_id="planner", name="规划者", role=AgentRole.PLANNER,
-                  description="任务规划与分解", capabilities=["plan", "decompose"]),
-            Agent(agent_id="coordinator", name="协调者", role=AgentRole.COORDINATOR,
-                  description="协调子任务分发", capabilities=["coordinate", "dispatch"]),
-            Agent(agent_id="executor_node", name="节点执行者", role=AgentRole.EXECUTOR,
-                  description="执行 NodeRegistry 节点", capabilities=["node_exec"]),
-            Agent(agent_id="executor_workflow", name="工作流执行者", role=AgentRole.EXECUTOR,
-                  description="执行工作流模板", capabilities=["workflow_exec"]),
-            Agent(agent_id="executor_mlx", name="AI 执行者", role=AgentRole.EXECUTOR,
-                  description="调用 MLX AI 服务", capabilities=["mlx_chat", "mlx_classify", "mlx_summarize"]),
-            Agent(agent_id="executor_shell", name="命令执行者", role=AgentRole.EXECUTOR,
-                  description="执行 Shell 命令", capabilities=["shell_exec"]),
-            Agent(agent_id="analyzer", name="分析者", role=AgentRole.ANALYZER,
-                  description="结果分析与总结", capabilities=["analyze", "summarize"]),
-            Agent(agent_id="validator", name="验证者", role=AgentRole.VALIDATOR,
-                  description="结果验证与质量检查", capabilities=["validate", "check"]),
+            Agent(
+                agent_id="planner",
+                name="规划者",
+                role=AgentRole.PLANNER,
+                description="任务规划与分解",
+                capabilities=["plan", "decompose"],
+            ),
+            Agent(
+                agent_id="coordinator",
+                name="协调者",
+                role=AgentRole.COORDINATOR,
+                description="协调子任务分发",
+                capabilities=["coordinate", "dispatch"],
+            ),
+            Agent(
+                agent_id="executor_node",
+                name="节点执行者",
+                role=AgentRole.EXECUTOR,
+                description="执行 NodeRegistry 节点",
+                capabilities=["node_exec"],
+            ),
+            Agent(
+                agent_id="executor_workflow",
+                name="工作流执行者",
+                role=AgentRole.EXECUTOR,
+                description="执行工作流模板",
+                capabilities=["workflow_exec"],
+            ),
+            Agent(
+                agent_id="executor_mlx",
+                name="AI 执行者",
+                role=AgentRole.EXECUTOR,
+                description="调用 MLX AI 服务",
+                capabilities=["mlx_chat", "mlx_classify", "mlx_summarize"],
+            ),
+            Agent(
+                agent_id="executor_shell",
+                name="命令执行者",
+                role=AgentRole.EXECUTOR,
+                description="执行 Shell 命令",
+                capabilities=["shell_exec"],
+            ),
+            Agent(
+                agent_id="analyzer",
+                name="分析者",
+                role=AgentRole.ANALYZER,
+                description="结果分析与总结",
+                capabilities=["analyze", "summarize"],
+            ),
+            Agent(
+                agent_id="validator",
+                name="验证者",
+                role=AgentRole.VALIDATOR,
+                description="结果验证与质量检查",
+                capabilities=["validate", "check"],
+            ),
         ]
 
         for agent in default_agents:
@@ -327,6 +371,7 @@ class AgentOrchestrator:
         else:
             # 无执行器时尝试默认执行器
             from .executors import DEFAULT_EXECUTORS
+
             fallback = DEFAULT_EXECUTORS.get("executor_node")
             if fallback:
                 try:
@@ -364,8 +409,10 @@ class AgentOrchestrator:
         if executors:
             for i, executor in enumerate(executors[:3]):
                 self.add_task(
-                    plan.plan_id, executor.agent_id,
-                    f"执行任务 {i+1}", input_data,
+                    plan.plan_id,
+                    executor.agent_id,
+                    f"执行任务 {i + 1}",
+                    input_data,
                     depends_on=[plan_task.task_id] if plan_task else [],
                 )
 
@@ -401,6 +448,7 @@ class AgentOrchestrator:
 
         if not self._message_bus:
             from .comm import AgentMessageBus
+
             self._message_bus = AgentMessageBus()
 
         for agent_id, agent in self._agents.items():

@@ -58,16 +58,18 @@ class AgentStudioClient:
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.PoolTimeout) as e:
                 last_exc = e
                 if attempt < self._max_retries:
-                    logger.warning(f"AgentStudio {method} {path} attempt {attempt+1} failed: {e}")
+                    logger.warning(f"AgentStudio {method} {path} attempt {attempt + 1} failed: {e}")
                     import asyncio
+
                     await asyncio.sleep(self._retry_delay)
                 else:
-                    logger.error(f"AgentStudio {method} {path} failed after {attempt+1} attempts")
+                    logger.error(f"AgentStudio {method} {path} failed after {attempt + 1} attempts")
             except httpx.HTTPStatusError as e:
                 if e.response.status_code in (429, 502, 503, 504) and attempt < self._max_retries:
                     last_exc = e
                     logger.warning(f"AgentStudio HTTP {e.response.status_code}, retrying")
                     import asyncio
+
                     await asyncio.sleep(self._retry_delay)
                 else:
                     raise

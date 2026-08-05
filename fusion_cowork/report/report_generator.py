@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ReportConfig:
     """报告配置。"""
+
     title: str = "Fusion-Cowork 自动化报告"
     author: str = "Fusion-Cowork"
     include_timeline: bool = True
@@ -61,7 +62,9 @@ class ReportGenerator:
         lines.append(f"**状态**: {self._status_icon(execution.status)} {execution.status.value}")
         lines.append(f"**开始时间**: {datetime.fromtimestamp(execution.started_at).strftime('%Y-%m-%d %H:%M:%S')}")
         if execution.completed_at:
-            lines.append(f"**完成时间**: {datetime.fromtimestamp(execution.completed_at).strftime('%Y-%m-%d %H:%M:%S')}")
+            lines.append(
+                f"**完成时间**: {datetime.fromtimestamp(execution.completed_at).strftime('%Y-%m-%d %H:%M:%S')}"
+            )
             lines.append(f"**总耗时**: {execution.total_time:.2f}s")
         if execution.error:
             lines.append(f"**错误**: {execution.error}")
@@ -79,7 +82,9 @@ class ReportGenerator:
             for step in execution.steps:
                 icon = self._status_icon(step.status)
                 summary = (step.summary[:50] + "...") if len(step.summary) > 50 else step.summary
-                lines.append(f"| {step.node_display_name} | {icon} {step.status.value} | {step.execution_time:.2f}s | {summary} |")
+                lines.append(
+                    f"| {step.node_display_name} | {icon} {step.status.value} | {step.execution_time:.2f}s | {summary} |"
+                )
             lines.append()
 
         # 统计数据
@@ -105,7 +110,9 @@ class ReportGenerator:
         html_lines = ["<!DOCTYPE html><html><head><meta charset='utf-8'>"]
         html_lines.append(f"<title>{html_mod.escape(self.config.title)}</title>")
         html_lines.append("<style>")
-        html_lines.append("body { font-family: -apple-system, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; line-height: 1.6; }")
+        html_lines.append(
+            "body { font-family: -apple-system, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; line-height: 1.6; }"
+        )
         html_lines.append("h1 { color: #1a1a2e; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; }")
         html_lines.append("h2 { color: #16213e; margin-top: 30px; }")
         html_lines.append("table { border-collapse: collapse; width: 100%; margin: 10px 0; }")
@@ -115,20 +122,26 @@ class ReportGenerator:
         html_lines.append("</style></head><body>")
         html_lines.append(f"<h1>{html_mod.escape(self.config.title)}</h1>")
         html_lines.append(f"<p><strong>工作流:</strong> {html_mod.escape(execution.workflow_name)}</p>")
-        html_lines.append(f"<p><strong>状态:</strong> <span class='{execution.status.value}'>{execution.status.value}</span></p>")
+        html_lines.append(
+            f"<p><strong>状态:</strong> <span class='{execution.status.value}'>{execution.status.value}</span></p>"
+        )
         html_lines.append(f"<p><strong>耗时:</strong> {execution.total_time:.2f}s</p>")
 
         if execution.steps:
             html_lines.append("<h2>执行步骤</h2>")
             html_lines.append("<table><tr><th>节点</th><th>状态</th><th>耗时</th><th>摘要</th></tr>")
             for step in execution.steps:
-                html_lines.append(f"<tr><td>{html_mod.escape(step.node_display_name)}</td>"
-                                f"<td class='{step.status.value}'>{step.status.value}</td>"
-                                f"<td>{step.execution_time:.2f}s</td>"
-                                f"<td>{html_mod.escape(step.summary[:80])}</td></tr>")
+                html_lines.append(
+                    f"<tr><td>{html_mod.escape(step.node_display_name)}</td>"
+                    f"<td class='{step.status.value}'>{step.status.value}</td>"
+                    f"<td>{step.execution_time:.2f}s</td>"
+                    f"<td>{html_mod.escape(step.summary[:80])}</td></tr>"
+                )
             html_lines.append("</table>")
 
-        html_lines.append(f"<p><em>由 Fusion-Cowork 于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 自动生成</em></p>")
+        html_lines.append(
+            f"<p><em>由 Fusion-Cowork 于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 自动生成</em></p>"
+        )
         html_lines.append("</body></html>")
         return "\n".join(html_lines)
 
@@ -212,4 +225,4 @@ class ReportGenerator:
             "pending": "⏳",
             "cancelled": "⏹️",
         }
-        return icons.get(status.value if hasattr(status, 'value') else str(status), "❓")
+        return icons.get(status.value if hasattr(status, "value") else str(status), "❓")

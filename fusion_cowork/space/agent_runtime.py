@@ -105,6 +105,7 @@ class SpaceAgentRuntime:
             config = agent_def.get("config", {})
             if isinstance(config, str):
                 import json
+
                 try:
                     config = json.loads(config)
                 except (json.JSONDecodeError, TypeError):
@@ -162,6 +163,7 @@ class SpaceAgentRuntime:
         orchestrator: Any,
     ) -> int:
         from ..orchestrator.orchestrator import Agent, AgentRole
+
         agents = await self.list_agents(space_id)
         registered = 0
         for agent_def in agents:

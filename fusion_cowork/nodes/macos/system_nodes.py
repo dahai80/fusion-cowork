@@ -81,26 +81,64 @@ def _get_file_type_category(path: Path) -> str:
     """根据文件类型返回分类目录名。"""
     ext = path.suffix.lower()
     # 图片
-    if ext in {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg', '.webp', '.ico', '.tiff', '.heic', '.raw'}:
+    if ext in {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".ico", ".tiff", ".heic", ".raw"}:
         return "图片"
     # 文档
-    if ext in {'.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.md', '.txt', '.rtf', '.csv', '.numbers', '.pages', '.key'}:
+    if ext in {
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".ppt",
+        ".pptx",
+        ".md",
+        ".txt",
+        ".rtf",
+        ".csv",
+        ".numbers",
+        ".pages",
+        ".key",
+    }:
         return "文档"
     # 视频
-    if ext in {'.mp4', '.mov', '.avi', '.mkv', '.wmv', '.flv', '.webm', '.m4v', '.mpeg'}:
+    if ext in {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".mpeg"}:
         return "视频"
     # 音频
-    if ext in {'.mp3', '.wav', '.aac', '.flac', '.ogg', '.m4a', '.wma'}:
+    if ext in {".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a", ".wma"}:
         return "音频"
     # 压缩包
-    if ext in {'.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.dmg', '.iso'}:
+    if ext in {".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".dmg", ".iso"}:
         return "压缩包"
     # 代码
-    if ext in {'.py', '.js', '.ts', '.jsx', '.tsx', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.swift',
-               '.rb', '.php', '.sh', '.bash', '.zsh', '.yml', '.yaml', '.json', '.xml', '.toml', '.sql'}:
+    if ext in {
+        ".py",
+        ".js",
+        ".ts",
+        ".jsx",
+        ".tsx",
+        ".go",
+        ".rs",
+        ".java",
+        ".c",
+        ".cpp",
+        ".h",
+        ".swift",
+        ".rb",
+        ".php",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".yml",
+        ".yaml",
+        ".json",
+        ".xml",
+        ".toml",
+        ".sql",
+    }:
         return "代码"
     # 可执行
-    if ext in {'.app', '.dmg', '.pkg', '.command'} or os.access(str(path), os.X_OK):
+    if ext in {".app", ".dmg", ".pkg", ".command"} or os.access(str(path), os.X_OK):
         return "应用"
     return "其他"
 
@@ -114,6 +152,7 @@ class DesktopCleanNode(BaseNode):
     - 按日期归档
     - 清理过期文件
     """
+
     name = "desktop_clean"
     display_name = "桌面清理"
     category = NodeCategory.MACOS_SYSTEM
@@ -251,6 +290,7 @@ class DownloadOrganizerNode(BaseNode):
     - 智能去重
     - 清理过期文件
     """
+
     name = "download_organizer"
     display_name = "下载文件夹整理"
     category = NodeCategory.MACOS_SYSTEM
@@ -401,6 +441,7 @@ class FileClassifierNode(BaseNode):
     与 AIClassifyNode 不同，本节点仅基于文件名和扩展名进行分类，
     不调用 AI，速度更快。
     """
+
     name = "file_classifier"
     display_name = "文件分类器"
     category = NodeCategory.FILE_OPERATION
@@ -425,7 +466,7 @@ class FileClassifierNode(BaseNode):
                 "target_base": {"type": "string", "default": ""},
                 "custom_mapping": {
                     "type": "string",
-                    "description": "自定义扩展名映射 JSON (如: {\".mp3\": \"音乐\"})",
+                    "description": '自定义扩展名映射 JSON (如: {".mp3": "音乐"})',
                     "default": "",
                 },
                 "dry_run": {"type": "boolean", "default": False},
@@ -456,6 +497,7 @@ class FileClassifierNode(BaseNode):
         if custom_map_str:
             try:
                 import json
+
                 custom_mapping = json.loads(custom_map_str)
             except Exception as e:
                 logger.warning(f"自定义映射解析失败: {e}")
@@ -524,6 +566,7 @@ class FileBatchRenameNode(BaseNode):
 
     支持格式化模板、序号、日期等模式。
     """
+
     name = "file_batch_rename"
     display_name = "批量重命名"
     category = NodeCategory.FILE_OPERATION
@@ -644,6 +687,7 @@ class DiskCleanerNode(BaseNode):
 
     安全清理 macOS 系统垃圾文件，仅处理用户目录下的安全文件。
     """
+
     name = "disk_cleaner"
     display_name = "磁盘清理"
     category = NodeCategory.MACOS_SYSTEM
@@ -749,7 +793,9 @@ class DiskCleanerNode(BaseNode):
             p = Path(path_str).expanduser()
             if p.exists():
                 try:
-                    total_size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) if p.is_dir() else p.stat().st_size
+                    total_size = (
+                        sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) if p.is_dir() else p.stat().st_size
+                    )
                     file_info = {
                         "name": p.name,
                         "path": str(p),
@@ -774,9 +820,15 @@ class DiskCleanerNode(BaseNode):
                 except Exception as e:
                     logger.debug(f"跳过 {label} {p}: {e}")
 
-        total_freed = sum(f.get("size", 0) for f in cleaned_files if "delete" in f.get("action", "") or "clean" in f.get("action", "") or "would" in f.get("action", ""))
+        total_freed = sum(
+            f.get("size", 0)
+            for f in cleaned_files
+            if "delete" in f.get("action", "") or "clean" in f.get("action", "") or "would" in f.get("action", "")
+        )
 
-        summary = f"{'预览' if dry_run else '清理'}完成: 发现 {len(cleaned_files)} 项，可释放 {_file_size_str(total_freed)}"
+        summary = (
+            f"{'预览' if dry_run else '清理'}完成: 发现 {len(cleaned_files)} 项，可释放 {_file_size_str(total_freed)}"
+        )
         if not dry_run:
             summary = f"清理完成: 处理 {len(cleaned_files)} 项，释放 {_file_size_str(total_freed)}"
 
@@ -798,6 +850,7 @@ class FileWatcherNode(BaseNode):
 
     使用 watchdog 库监听文件系统的创建、修改、删除事件。
     """
+
     name = "file_watcher"
     display_name = "文件监听"
     category = NodeCategory.MACOS_SYSTEM
@@ -863,25 +916,33 @@ class FileWatcherNode(BaseNode):
             class DeskEventHandler(FileSystemEventHandler):
                 def on_created(self, event):
                     if not event.is_directory:
-                        events.append({
-                            "type": "created",
-                            "path": event.src_path,
-                            "name": Path(event.src_path).name,
-                        })
+                        events.append(
+                            {
+                                "type": "created",
+                                "path": event.src_path,
+                                "name": Path(event.src_path).name,
+                            }
+                        )
+
                 def on_modified(self, event):
                     if not event.is_directory and params.get("watch_for_modification", False):
-                        events.append({
-                            "type": "modified",
-                            "path": event.src_path,
-                            "name": Path(event.src_path).name,
-                        })
+                        events.append(
+                            {
+                                "type": "modified",
+                                "path": event.src_path,
+                                "name": Path(event.src_path).name,
+                            }
+                        )
+
                 def on_deleted(self, event):
                     if not event.is_directory and params.get("watch_for_deletion", False):
-                        events.append({
-                            "type": "deleted",
-                            "path": event.src_path,
-                            "name": Path(event.src_path).name,
-                        })
+                        events.append(
+                            {
+                                "type": "deleted",
+                                "path": event.src_path,
+                                "name": Path(event.src_path).name,
+                            }
+                        )
 
             event_handler = DeskEventHandler()
             observer = Observer()
@@ -981,7 +1042,9 @@ class FileCopyNode(BaseNode):
                 target = dst / f"{stem}_{int(time.time())}{target.suffix}"
             try:
                 if src.is_file():
-                    shutil.copy2(str(src), str(target)) if params.get("preserve_metadata", True) else shutil.copy(str(src), str(target))
+                    shutil.copy2(str(src), str(target)) if params.get("preserve_metadata", True) else shutil.copy(
+                        str(src), str(target)
+                    )
                 else:
                     shutil.copytree(str(src), str(target), dirs_exist_ok=True)
                 copied.append({"source": str(src), "destination": str(target), "name": src.name})
@@ -1132,6 +1195,7 @@ class FileDeleteNode(BaseNode):
 @register_node
 class FileFindNode(BaseNode):
     """文件查找节点 — 按条件递归查找文件。"""
+
     name = "file_find"
     display_name = "文件查找"
     category = NodeCategory.FILE_OPERATION
@@ -1151,7 +1215,11 @@ class FileFindNode(BaseNode):
         return {
             "type": "object",
             "properties": {
-                "patterns": {"type": "string", "description": "文件模式，逗号分隔，如: *.pdf,*.docx,*.md", "default": "*"},
+                "patterns": {
+                    "type": "string",
+                    "description": "文件模式，逗号分隔，如: *.pdf,*.docx,*.md",
+                    "default": "*",
+                },
                 "min_size": {"type": "integer", "default": 0, "description": "最小文件大小(字节)"},
                 "max_size": {"type": "integer", "default": 0, "description": "最大文件大小(字节)"},
                 "max_depth": {"type": "integer", "default": 10, "description": "最大递归深度"},
@@ -1179,6 +1247,7 @@ class FileFindNode(BaseNode):
         include_hidden = params.get("include_hidden", False)
 
         import fnmatch
+
         files = []
         for root, dirs, filenames in os.walk(str(path)):
             if not include_hidden:
@@ -1220,6 +1289,7 @@ class ScreenCaptureNode(BaseNode):
     对标 Claude Cowork 的屏幕查看能力。
     支持全屏、选区、窗口截图，可结合 fusion-mlx 进行图像分析。
     """
+
     name = "screen_capture"
     display_name = "桌面截图"
     category = NodeCategory.MACOS_SYSTEM
@@ -1305,9 +1375,12 @@ class ScreenCaptureNode(BaseNode):
 
             # 获取图片尺寸
             import subprocess
+
             size_result = subprocess.run(
                 ["sips", "-g", "pixelWidth", "-g", "pixelHeight", str(file_path)],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             width = 0
             height = 0
@@ -1351,6 +1424,7 @@ class ScreenCaptureNode(BaseNode):
     async def _analyze_screenshot(self, image_path: str) -> str:
         """使用 fusion-mlx 分析截图内容。"""
         from ...ai import FusionMLXClient
+
         client = FusionMLXClient()
         try:
             response = await client.chat(
@@ -1373,6 +1447,7 @@ class ClipboardNode(BaseNode):
     对标 Claude Cowork 的剪贴板操作能力。
     支持文本和文件路径的读写。
     """
+
     name = "clipboard"
     display_name = "剪贴板"
     category = NodeCategory.MACOS_SYSTEM
@@ -1474,6 +1549,7 @@ class NotificationNode(BaseNode):
     对标 Claude Cowork 的通知能力。
     使用 osascript 发送 macOS Notification Center 通知。
     """
+
     name = "notification"
     display_name = "系统通知"
     category = NodeCategory.MACOS_SYSTEM
@@ -1522,7 +1598,7 @@ class NotificationNode(BaseNode):
         msg_escaped = message.replace('"', '\\"')
         sub_escaped = subtitle.replace('"', '\\"')
 
-        _sound_cmd = "sound name \"default\"" if sound else ""
+        _sound_cmd = 'sound name "default"' if sound else ""
 
         script = f'display notification "{msg_escaped}" with title "{title_escaped}"'
         if subtitle:
@@ -1560,6 +1636,7 @@ class AppLifecycleNode(BaseNode):
     对标 Claude Cowork 的桌面应用控制能力。
     使用 AppleScript 控制 macOS 应用。
     """
+
     name = "app_lifecycle"
     display_name = "应用控制"
     category = NodeCategory.MACOS_SYSTEM
@@ -1685,6 +1762,7 @@ class OCRNode(BaseNode):
     对标 Claude Cowork 的屏幕文字读取能力。
     使用 macOS 原生 Vision 框架或 fusion-mlx 进行 OCR。
     """
+
     name = "ocr"
     display_name = "OCR 文字识别"
     category = NodeCategory.AI_PROCESSING
@@ -1725,15 +1803,11 @@ class OCRNode(BaseNode):
         method = params.get("method", "native")
 
         if not image_path:
-            return NodeResult(
-                status=NodeStatus.FAILED, error="未指定图片路径", summary="未指定图片"
-            )
+            return NodeResult(status=NodeStatus.FAILED, error="未指定图片路径", summary="未指定图片")
 
         path = Path(image_path).expanduser()
         if not path.exists():
-            return NodeResult(
-                status=NodeStatus.FAILED, error=f"文件不存在: {image_path}", summary="文件不存在"
-            )
+            return NodeResult(status=NodeStatus.FAILED, error=f"文件不存在: {image_path}", summary="文件不存在")
 
         try:
             if method == "native":
@@ -1761,8 +1835,7 @@ class OCRNode(BaseNode):
         # 尝试使用 Shortcuts 的 OCR 功能
         try:
             proc = await asyncio.create_subprocess_shell(
-                f"shortcuts run 'Extract Text from Image' -i '{path}' 2>/dev/null || "
-                f"echo 'OCR not available'",
+                f"shortcuts run 'Extract Text from Image' -i '{path}' 2>/dev/null || echo 'OCR not available'",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 timeout=15,
@@ -1779,6 +1852,7 @@ class OCRNode(BaseNode):
     async def _ocr_mlx(self, path: Path) -> str:
         """使用 fusion-mlx 视觉模型进行 OCR。"""
         from ...ai import FusionMLXClient
+
         client = FusionMLXClient()
         try:
             response = await client.chat(

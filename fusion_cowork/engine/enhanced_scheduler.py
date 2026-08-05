@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TaskExecution:
     """任务执行记录。"""
+
     task_id: str
     task_name: str
     workflow_id: str
@@ -39,6 +40,7 @@ class TaskExecution:
 @dataclass
 class TaskDependency:
     """任务依赖关系。"""
+
     task_id: str
     depends_on: List[str] = field(default_factory=list)
     parallel_with: List[str] = field(default_factory=list)
@@ -57,9 +59,7 @@ class EnhancedScheduler:
 
     def __init__(self, scheduler: TaskScheduler, store_path: str = ""):
         self._scheduler = scheduler
-        self._store_path = store_path or str(
-            Path.home() / ".fusion-cowork" / "scheduler_history.json"
-        )
+        self._store_path = store_path or str(Path.home() / ".fusion-cowork" / "scheduler_history.json")
         self._executions: List[TaskExecution] = []
         self._dependencies: Dict[str, TaskDependency] = {}
         self._load_history()
@@ -109,10 +109,7 @@ class EnhancedScheduler:
         start_ts = start.timestamp()
         end_ts = end.timestamp()
 
-        month_executions = [
-            e for e in self._executions
-            if start_ts <= e.started_at < end_ts
-        ]
+        month_executions = [e for e in self._executions if start_ts <= e.started_at < end_ts]
 
         # 按日期分组
         days = {}
@@ -121,11 +118,13 @@ class EnhancedScheduler:
             if day not in days:
                 days[day] = {"total": 0, "success": 0, "failed": 0, "tasks": []}
             days[day]["total"] += 1
-            days[day]["tasks"].append({
-                "name": e.task_name,
-                "status": e.status,
-                "time": datetime.fromtimestamp(e.started_at).strftime("%H:%M"),
-            })
+            days[day]["tasks"].append(
+                {
+                    "name": e.task_name,
+                    "status": e.status,
+                    "time": datetime.fromtimestamp(e.started_at).strftime("%H:%M"),
+                }
+            )
             if e.status == "completed":
                 days[day]["success"] += 1
             elif e.status == "failed":
@@ -148,9 +147,8 @@ class EnhancedScheduler:
         recent = [e for e in self._executions if e.started_at > cutoff]
 
         total_tokens = sum(e.tokens_used for e in recent)
-        avg_duration = (
-            sum(e.duration_ms for e in recent if e.duration_ms > 0) /
-            max(len([e for e in recent if e.duration_ms > 0]), 1)
+        avg_duration = sum(e.duration_ms for e in recent if e.duration_ms > 0) / max(
+            len([e for e in recent if e.duration_ms > 0]), 1
         )
 
         # 按任务名分组
@@ -189,11 +187,13 @@ class EnhancedScheduler:
 
         for task_id, dep in self._dependencies.items():
             task = self._scheduler.get_task(task_id)
-            nodes.append({
-                "id": task_id,
-                "label": task.name if task else task_id,
-                "status": task.status.value if task else "unknown",
-            })
+            nodes.append(
+                {
+                    "id": task_id,
+                    "label": task.name if task else task_id,
+                    "status": task.status.value if task else "unknown",
+                }
+            )
             for parent in dep.depends_on:
                 edges.append({"from": parent, "to": task_id})
 

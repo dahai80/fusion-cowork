@@ -31,6 +31,7 @@ class AIClassifyNode(BaseNode):
     调用 fusion-mlx 的 chat 接口，分析文件内容后返回分类标签。
     支持按文件类型、主题、项目等多维度分类。
     """
+
     name = "ai_classify"
     display_name = "AI 文件分类"
     category = NodeCategory.AI_PROCESSING
@@ -110,7 +111,7 @@ class AIClassifyNode(BaseNode):
 
         # 分批处理文件
         classified_files = []
-        batches = [files[i:i + max_per_batch] for i in range(0, len(files), max_per_batch)]
+        batches = [files[i : i + max_per_batch] for i in range(0, len(files), max_per_batch)]
 
         for batch_idx, batch in enumerate(batches):
             # 构建文件信息
@@ -137,7 +138,10 @@ class AIClassifyNode(BaseNode):
 
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"请为以下文件分类:\n{json.dumps(file_info, ensure_ascii=False, indent=2)}"},
+                {
+                    "role": "user",
+                    "content": f"请为以下文件分类:\n{json.dumps(file_info, ensure_ascii=False, indent=2)}",
+                },
             ]
 
             try:
@@ -157,13 +161,15 @@ class AIClassifyNode(BaseNode):
                 for f in batch:
                     path = Path(f) if isinstance(f, str) else Path(f.get("path", ""))
                     ext = path.suffix.lower().lstrip(".") or "unknown"
-                    classified_files.append({
-                        "file_name": path.name,
-                        "file_path": str(path),
-                        "category": f"{ext}_files",
-                        "confidence": 0.3,
-                        "reason": "AI 分类失败，使用扩展名兜底",
-                    })
+                    classified_files.append(
+                        {
+                            "file_name": path.name,
+                            "file_path": str(path),
+                            "category": f"{ext}_files",
+                            "confidence": 0.3,
+                            "reason": "AI 分类失败，使用扩展名兜底",
+                        }
+                    )
 
         return NodeResult(
             status=NodeStatus.SUCCESS,
@@ -210,6 +216,7 @@ class AISummarizeNode(BaseNode):
 
     调用 fusion-mlx 的 chat 接口进行文档理解与摘要生成。
     """
+
     name = "ai_summarize"
     display_name = "AI 文档摘要"
     category = NodeCategory.AI_PROCESSING
@@ -282,11 +289,13 @@ class AISummarizeNode(BaseNode):
                 content = path.read_text(encoding="utf-8", errors="ignore")[:max_chars]
             except Exception as e:
                 logger.warning(f"读取文件失败 {path}: {e}")
-                summaries.append({
-                    "file_name": path.name,
-                    "file_path": str(path),
-                    "error": str(e),
-                })
+                summaries.append(
+                    {
+                        "file_name": path.name,
+                        "file_path": str(path),
+                        "error": str(e),
+                    }
+                )
                 continue
 
             # 构建摘要提示
@@ -314,13 +323,15 @@ class AISummarizeNode(BaseNode):
 
             except Exception as e:
                 logger.error(f"摘要生成失败 {path.name}: {e}")
-                summaries.append({
-                    "file_name": path.name,
-                    "file_path": str(path),
-                    "summary": f"[摘要生成失败: {e}]",
-                    "keywords": [],
-                    "conclusions": [],
-                })
+                summaries.append(
+                    {
+                        "file_name": path.name,
+                        "file_path": str(path),
+                        "summary": f"[摘要生成失败: {e}]",
+                        "keywords": [],
+                        "conclusions": [],
+                    }
+                )
 
         # 生成汇总报告
         report = ""
@@ -369,6 +380,7 @@ class AIGenerateNameNode(BaseNode):
 
     调用 fusion-mlx 的 chat 接口理解文件内容后生成有意义的文件名。
     """
+
     name = "ai_generate_name"
     display_name = "AI 智能重命名"
     category = NodeCategory.AI_PROCESSING
@@ -447,7 +459,10 @@ class AIGenerateNameNode(BaseNode):
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"请为以下文件生成新名称:\n{json.dumps(file_info, ensure_ascii=False, indent=2)}"},
+            {
+                "role": "user",
+                "content": f"请为以下文件生成新名称:\n{json.dumps(file_info, ensure_ascii=False, indent=2)}",
+            },
         ]
 
         try:
@@ -503,10 +518,12 @@ class AIGenerateNameNode(BaseNode):
         for i, f in enumerate(files):
             path = Path(f) if isinstance(f, str) else Path(f.get("path", ""))
             _ext = path.suffix.lower()
-            results.append({
-                "file_name": path.name,
-                "file_path": str(path),
-                "new_name": f"file_{i+1:03d}",
-                "reason": "AI 重命名解析失败，使用序号兜底",
-            })
+            results.append(
+                {
+                    "file_name": path.name,
+                    "file_path": str(path),
+                    "new_name": f"file_{i + 1:03d}",
+                    "reason": "AI 重命名解析失败，使用序号兜底",
+                }
+            )
         return results

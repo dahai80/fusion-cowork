@@ -3,7 +3,7 @@
 All AI inference requests go through this client to fusion-mlx OpenAI-compatible API.
 No direct MLX or mlx-lm imports; HTTP only.
 
-Default: http://localhost:11432/v1 (fusion-mlx netlayer port)
+Default: http://localhost:11434/v1 (fusion-mlx direct port, per FUSION_MLX_API_KEY dispatch §4 P4)
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MLX_PORT = 11432
+DEFAULT_MLX_PORT = 11434
 DEFAULT_MLX_BASE_URL = f"http://localhost:{DEFAULT_MLX_PORT}/v1"
 MAX_RETRIES = 2
 RETRY_DELAY = 1.0
@@ -30,10 +30,12 @@ class LLMResponse:
     content: str
     tool_calls: list[dict] = field(default_factory=list)
     finish_reason: str = "stop"
-    usage: dict = field(default_factory=lambda: {
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-    })
+    usage: dict = field(
+        default_factory=lambda: {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+        }
+    )
 
 
 @dataclass
@@ -56,8 +58,12 @@ class FusionMLXClient:
     ):
         self.base_url = base_url.rstrip("/")
         if not api_key:
-            api_key = os.environ.get("FUSION_MLX_API_KEY", "local")
+            api_key = os.environ.get("FUSION_MLX_API_KEY", "")
         self.api_key = api_key
+        if not self.api_key:
+            logger.warning(
+                "FUSION_MLX_API_KEY 未设置: MLX 调用将无鉴权, 可能被上游 401 拒绝 (请 export FUSION_MLX_API_KEY=<key>)"
+            )
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -315,6 +321,7 @@ class KBClient:
         file_name: str | None = None,
     ) -> dict[str, Any]:
         import os as _os
+
         name = file_name or _os.path.basename(file_path)
         with open(file_path, "rb") as f:
             resp = await self.client.post(

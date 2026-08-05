@@ -103,6 +103,7 @@ class NLWorkflowGenerator:
             for key, value in context.items():
                 if isinstance(value, (list, dict)):
                     import json
+
                     ctx_parts.append(f"{key}: {json.dumps(value, ensure_ascii=False)[:500]}")
                 else:
                     ctx_parts.append(f"{key}: {value}")
@@ -171,8 +172,8 @@ class NLWorkflowGenerator:
             {
                 "role": "system",
                 "content": "你是一个桌面自动化助手。根据用户的需求，推荐最合适的自动化模板。"
-                           "返回 JSON 数组，每项包含 name, description, match_score。"
-                           "只返回 JSON。"
+                "返回 JSON 数组，每项包含 name, description, match_score。"
+                "只返回 JSON。",
             },
             {"role": "user", "content": user_input},
         ]

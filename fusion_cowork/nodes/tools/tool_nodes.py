@@ -26,21 +26,42 @@ from ...engine.node import (
 logger = logging.getLogger(__name__)
 
 # 命令沙箱 — 黑名单/白名单
-_SHELL_BLACKLIST = frozenset({
-    "rm -rf /", "mkfs", "dd if=", ":(){ :|:& };:",
-    "shutdown", "reboot", "halt", "poweroff",
-    "launchctl unload", "csrutil disable",
-})
+_SHELL_BLACKLIST = frozenset(
+    {
+        "rm -rf /",
+        "mkfs",
+        "dd if=",
+        ":(){ :|:& };:",
+        "shutdown",
+        "reboot",
+        "halt",
+        "poweroff",
+        "launchctl unload",
+        "csrutil disable",
+    }
+)
 
-_SHELL_BLACKLIST_PREFIXES = frozenset({
-    "rm -rf /", "rm -r /", "rm -f /",
-})
+_SHELL_BLACKLIST_PREFIXES = frozenset(
+    {
+        "rm -rf /",
+        "rm -r /",
+        "rm -f /",
+    }
+)
 
-_PYTHON_BLACKLIST_IMPORTS = frozenset({
-    "ctypes", "multiprocessing", "subprocess",
-    "socketserver", "http.server", "xmlrpc",
-    "asyncio.subprocess", "os.system", "os.popen",
-})
+_PYTHON_BLACKLIST_IMPORTS = frozenset(
+    {
+        "ctypes",
+        "multiprocessing",
+        "subprocess",
+        "socketserver",
+        "http.server",
+        "xmlrpc",
+        "asyncio.subprocess",
+        "os.system",
+        "os.popen",
+    }
+)
 
 
 def _check_shell_command(command: str) -> Optional[str]:
@@ -56,6 +77,7 @@ def _check_shell_command(command: str) -> Optional[str]:
 
 def _check_python_code(code: str) -> Optional[str]:
     import re
+
     for mod in _PYTHON_BLACKLIST_IMPORTS:
         pattern = rf"\bimport\s+{re.escape(mod)}\b|\bfrom\s+{re.escape(mod)}\b"
         if re.search(pattern, code):
@@ -76,6 +98,7 @@ class ShellExecNode(BaseNode):
     吸纳自 Squish 的 squish_run_shell 工具。
     通过 subprocess 安全执行，支持超时和输出捕获。
     """
+
     name = "shell_exec"
     display_name = "Shell 命令执行"
     category = NodeCategory.TOOL
@@ -161,9 +184,7 @@ class ShellExecNode(BaseNode):
             )
 
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=timeout
-                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             except TimeoutError:
                 proc.kill()
                 await proc.wait()
@@ -211,6 +232,7 @@ class PythonREPLNode(BaseNode):
     吸纳自 Squish 的 squish_python_repl 工具。
     在隔离的子进程中执行，限制资源使用。
     """
+
     name = "python_repl"
     display_name = "Python REPL"
     category = NodeCategory.TOOL
@@ -284,22 +306,26 @@ class PythonREPLNode(BaseNode):
         if variables:
             script_lines.append("")
 
-        script_lines.extend([
-            "try:",
-            "    _result = eval(sys.stdin.read())",
-            "    print(json.dumps({'result': repr(_result), 'type': type(_result).__name__}))",
-            "except SyntaxError:",
-            "    exec(sys.stdin.read())",
-            "    print(json.dumps({'result': 'executed', 'type': 'NoneType'}))",
-            "except Exception as e:",
-            "    print(json.dumps({'error': str(e), 'type': type(e).__name__}))",
-        ])
+        script_lines.extend(
+            [
+                "try:",
+                "    _result = eval(sys.stdin.read())",
+                "    print(json.dumps({'result': repr(_result), 'type': type(_result).__name__}))",
+                "except SyntaxError:",
+                "    exec(sys.stdin.read())",
+                "    print(json.dumps({'result': 'executed', 'type': 'NoneType'}))",
+                "except Exception as e:",
+                "    print(json.dumps({'error': str(e), 'type': type(e).__name__}))",
+            ]
+        )
 
         script = "\n".join(script_lines)
 
         try:
             proc = await asyncio.create_subprocess_exec(
-                sys.executable, "-c", script,
+                sys.executable,
+                "-c",
+                script,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -360,6 +386,7 @@ class WebSearchNode(BaseNode):
     吸纳自 Squish 的 squish_web_search 工具。
     通过 DuckDuckGo Lite 接口实现，无需 API Key。
     """
+
     name = "web_search"
     display_name = "Web 搜索"
     category = NodeCategory.TOOL
@@ -414,6 +441,7 @@ class WebSearchNode(BaseNode):
                 resp.raise_for_status()
 
                 import re
+
                 html = resp.text
 
                 # 解析结果
@@ -431,17 +459,18 @@ class WebSearchNode(BaseNode):
                 snippets = snippet_pattern.findall(html)
 
                 import html as html_mod
+
                 for i, (url, title) in enumerate(links[:max_results]):
                     snippet = ""
                     if i < len(snippets):
-                        snippet = html_mod.unescape(
-                            re.sub(r'<[^>]+>', '', snippets[i]).strip()
-                        )
-                    results.append({
-                        "title": html_mod.unescape(re.sub(r'<[^>]+>', '', title).strip()),
-                        "url": url,
-                        "snippet": snippet,
-                    })
+                        snippet = html_mod.unescape(re.sub(r"<[^>]+>", "", snippets[i]).strip())
+                    results.append(
+                        {
+                            "title": html_mod.unescape(re.sub(r"<[^>]+>", "", title).strip()),
+                            "url": url,
+                            "snippet": snippet,
+                        }
+                    )
 
             return NodeResult(
                 status=NodeStatus.SUCCESS if results else NodeStatus.FAILED,
@@ -474,6 +503,7 @@ class FetchURLNode(BaseNode):
     吸纳自 Squish 的 squish_fetch_url 工具。
     支持 HTTP/HTTPS，自动转换 HTML 为文本。
     """
+
     name = "fetch_url"
     display_name = "获取网页"
     category = NodeCategory.TOOL
@@ -530,10 +560,13 @@ class FetchURLNode(BaseNode):
             import httpx
 
             async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-                resp = await client.get(url, headers={
-                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                                  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0",
-                })
+                resp = await client.get(
+                    url,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0",
+                    },
+                )
                 resp.raise_for_status()
 
                 content_type = resp.headers.get("content-type", "")
@@ -541,12 +574,13 @@ class FetchURLNode(BaseNode):
                 # 根据内容类型处理
                 if "text/html" in content_type and extract_text:
                     import re
+
                     html = resp.text
                     # 简单的 HTML 转文本
-                    text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
-                    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
-                    text = re.sub(r'<[^>]+>', ' ', text)
-                    text = re.sub(r'\s+', ' ', text).strip()
+                    text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL)
+                    text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
+                    text = re.sub(r"<[^>]+>", " ", text)
+                    text = re.sub(r"\s+", " ", text).strip()
                     content = text[:max_chars]
                 elif "application/json" in content_type:
                     content = json.dumps(resp.json(), ensure_ascii=False, indent=2)[:max_chars]
@@ -585,6 +619,7 @@ class ApplyEditNode(BaseNode):
     吸纳自 Squish 的 squish_apply_edit 工具。
     支持精确查找替换和正则替换。
     """
+
     name = "apply_edit"
     display_name = "文件编辑"
     category = NodeCategory.TOOL
@@ -649,6 +684,7 @@ class ApplyEditNode(BaseNode):
 
             if use_regex:
                 import re
+
                 new_content, count = re.subn(old_text, new_text, content)
             else:
                 count = content.count(old_text)
