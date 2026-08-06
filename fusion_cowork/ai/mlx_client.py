@@ -238,9 +238,9 @@ class FusionMLXClient:
 
 
 class KBClient:
-    """Fusion-KB HTTP client for knowledge base operations.
+    """Fusion-RAG HTTP client for knowledge base operations.
 
-    Default: http://localhost:11436 (fusion-kb default port)
+    Default: http://localhost:11436 (fusion-rag default port)
     """
 
     def __init__(
