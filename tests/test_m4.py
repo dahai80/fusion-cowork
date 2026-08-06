@@ -182,6 +182,105 @@ class TestDeskRPCConstructor:
         assert len(rpc._handlers) >= 20
 
 
+# ── DeskRPC nodes 序列化 (issue #40) ──
+
+
+class TestDeskRPCNodesSerialization:
+    """regression #40: desk.nodes.list / categories 曾返回 0 bytes (NodeCategory 不可序列化)。"""
+
+    @pytest.mark.asyncio
+    async def test_nodes_list_json_serializable(self):
+        # 确保节点模块已注册
+        import fusion_cowork.nodes.ai
+        import fusion_cowork.nodes.io
+        import fusion_cowork.nodes.logic
+        import fusion_cowork.nodes.macos
+        import fusion_cowork.nodes.tools  # noqa: F401
+
+        rpc = DeskRPCServer()
+        result = await rpc._handle_nodes_list({})
+        assert result["count"] >= 1
+        # 关键: 整个 result 必须可 JSON 序列化 (否则 _write_response 抛异常 → 0 bytes)
+        serialized = json.dumps(result, ensure_ascii=False)
+        decoded = json.loads(serialized)
+        assert decoded["count"] == result["count"]
+        for node in decoded["nodes"]:
+            assert isinstance(node["category"], str)
+
+    @pytest.mark.asyncio
+    async def test_nodes_categories_json_serializable(self):
+        import fusion_cowork.nodes.ai
+        import fusion_cowork.nodes.io
+        import fusion_cowork.nodes.logic
+        import fusion_cowork.nodes.macos
+        import fusion_cowork.nodes.tools  # noqa: F401
+
+        rpc = DeskRPCServer()
+        result = await rpc._handle_nodes_categories({})
+        assert result["count"] >= 1
+        serialized = json.dumps(result, ensure_ascii=False)
+        decoded = json.loads(serialized)
+        assert decoded["count"] == result["count"]
+        for cat in decoded["categories"]:
+            assert isinstance(cat, str)
+            assert isinstance(decoded["categories"][cat], int)
+
+    @pytest.mark.asyncio
+    async def test_nodes_info_json_serializable(self):
+        import fusion_cowork.nodes.io  # noqa: F401
+
+        rpc = DeskRPCServer()
+        # 取一个已注册节点名
+        name = next(iter(NodeRegistry._registry.keys()))
+        result = await rpc._handle_nodes_info({"name": name})
+        assert "error" not in result
+        serialized = json.dumps(result, ensure_ascii=False)
+        decoded = json.loads(serialized)
+        assert isinstance(decoded["category"], str)
+
+    @pytest.mark.asyncio
+    async def test_nodes_list_empty_registry_returns_empty(self):
+        rpc = DeskRPCServer()
+        saved = dict(NodeRegistry._registry)
+        try:
+            NodeRegistry._registry.clear()
+            result = await rpc._handle_nodes_list({})
+            assert result == {"nodes": [], "count": 0}
+            # 空结果也必须可序列化
+            json.dumps(result)
+        finally:
+            NodeRegistry._registry.update(saved)
+
+    async def test_write_response_serialization_failure_sends_error_frame(self):
+        """_write_response 遇不可序列化对象时应降级错误帧, 不静默断连。"""
+
+        rpc = DeskRPCServer()
+
+        class FakeWriter:
+            def __init__(self):
+                self.chunks = []
+
+            def write(self, data):
+                self.chunks.append(data)
+
+            async def drain(self):
+                return
+
+            def get_extra_info(self, name):
+                return None
+
+        writer = FakeWriter()
+        # 含 Enum 的 dict 不可 JSON 序列化
+        bad = {"jsonrpc": "2.0", "id": 1, "result": {"cat": NodeStatus.SUCCESS}}
+        await rpc._write_response(writer, bad)
+        payload = b"".join(writer.chunks)
+        assert len(payload) > 0
+        frame = json.loads(payload.decode("utf-8"))
+        assert frame["jsonrpc"] == "2.0"
+        assert "error" in frame
+        assert frame["error"]["code"] == -32603
+
+
 # ── CLI 权限命令 ──
 
 

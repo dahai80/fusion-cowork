@@ -267,8 +267,18 @@ class DeskRPCServer:
             }
 
     async def _write_response(self, writer: asyncio.StreamWriter, response: Dict[str, Any]) -> None:
-        """写入 JSON-RPC 响应。"""
-        data = json.dumps(response, ensure_ascii=False) + "\n"
+        """写入 JSON-RPC 响应 — 序列化失败时降级为错误帧，避免静默断连 (0 bytes)。"""
+        try:
+            data = json.dumps(response, ensure_ascii=False) + "\n"
+        except (TypeError, ValueError) as e:
+            logger.error(f"Desk RPC 响应序列化失败, 降级错误帧: {e} | response={response!r}")
+            req_id = response.get("id") if isinstance(response, dict) else None
+            fallback = {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32603, "message": f"Response serialization failed: {e}"},
+            }
+            data = json.dumps(fallback, ensure_ascii=False) + "\n"
         writer.write(data.encode("utf-8"))
         await writer.drain()
 
@@ -283,10 +293,12 @@ class DeskRPCServer:
         nodes = []
         for name, cls in NodeRegistry._registry.items():
             doc = getattr(cls, "__doc__", "") or ""
+            cat = getattr(cls, "category", None)
+            cat_value = cat.value if hasattr(cat, "value") else (cat or "unknown")
             nodes.append(
                 {
                     "name": name,
-                    "category": getattr(cls, "category", "unknown"),
+                    "category": cat_value,
                     "description": doc.strip()[:100],
                 }
             )
@@ -300,9 +312,11 @@ class DeskRPCServer:
         if not cls:
             return {"error": f"节点未注册: {name}"}
         doc = getattr(cls, "__doc__", "") or ""
+        cat = getattr(cls, "category", None)
+        cat_value = cat.value if hasattr(cat, "value") else (cat or "unknown")
         return {
             "name": name,
-            "category": getattr(cls, "category", "unknown"),
+            "category": cat_value,
             "description": doc.strip(),
             "params_schema": getattr(cls, "params_schema", {}),
         }
@@ -328,8 +342,9 @@ class DeskRPCServer:
 
         categories: Dict[str, int] = {}
         for name, cls in NodeRegistry._registry.items():
-            cat = getattr(cls, "category", "unknown")
-            categories[cat] = categories.get(cat, 0) + 1
+            cat = getattr(cls, "category", None)
+            cat_value = cat.value if hasattr(cat, "value") else (cat or "unknown")
+            categories[cat_value] = categories.get(cat_value, 0) + 1
         return {"categories": categories, "count": len(categories)}
 
     async def _handle_workflow_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
