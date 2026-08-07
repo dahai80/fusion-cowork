@@ -103,6 +103,10 @@ NODE_NAME_ALIASES: dict[str, str] = {
     "键盘输入": "keyboard_type",
     "键盘快捷键": "keyboard_shortcut",
     "Computer Use": "computer_use_loop",
+    # Fusion 生态互通
+    "微调": "fusion_trainer",
+    "模型微调": "fusion_trainer",
+    "训练模型": "fusion_trainer",
 }
 
 # ── Lazy Import 注册表（吸纳自 Squish 的 __getattr__ 机制） ──
