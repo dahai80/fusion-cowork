@@ -112,13 +112,19 @@ fusion-cowork desk rpc
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `FUSION_MLX_API_KEY` | `local` | fusion-mlx API 密钥（需匹配 `~/.fusion-mlx/settings.json` 中 `auth.api_key`） |
+| `FUSION_MLX_API_KEY` | `local` | **fusion-gateway 客户端 api key**（取自 fusion-gateway `config.yaml` 中 `auth.api_keys[].key`）。**不是** fusion-mlx `settings.json` 的 `auth.api_key` —— gateway 与 mlx 是两套独立鉴权。 |
 | `FUSION_MLX_URL` | `http://localhost:11432/v1` | fusion-mlx 基础 URL (经 fusion-gateway netlayer) |
 | `FUSION_RAG_URL` | `http://localhost:11436` | fusion-rag (fusion-kb) 基础 URL |
 
+> **鉴权说明**: fusion-cowork 通过 fusion-gateway(:11432) 调 fusion-mlx,存在**两套独立鉴权**:
+> 1. **gateway client key** —— 客户端请求 gateway 时用,即本变量 `FUSION_MLX_API_KEY`(取自 gateway `config.yaml` 的 `auth.api_keys[].key`)
+> 2. **mlx backend key** —— gateway 转发到 mlx 时用,配置在 gateway `config.yaml` 的 `backends.fusion-mlx.api_key`,客户端无需关心
+>
+> 常见 401 错误:把 mlx 的 key 填进了 `FUSION_MLX_API_KEY`。应填 gateway 的 client key。
+
 ```bash
-# 示例：设置 API 密钥
-export FUSION_MLX_API_KEY="your-api-key-here"
+# 示例：设置 API 密钥为 fusion-gateway 的 client key（来自 config.yaml 的 auth.api_keys）
+export FUSION_MLX_API_KEY="fg-admin-key"
 fusion-cowork desk rpc
 
 # 会话管理
@@ -593,6 +599,12 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] P1: CDP `list_network_requests`/`list_console_messages` 落地后台 reader loop 真实事件缓冲 (原 `return []` 桩)
 - [x] P2: 文档计数漂移修正 (节点 33→47 / 6→7 分类, MCP 15→16, Hook 11→14, SpaceAPI 18→25)
 - [x] 测试: 2 个 P0 多模态回归用例, 全套 579 passed, ruff 0 issues
+
+#### V0.2.10 (补丁) — 鉴权对接文档修正 (#46)
+- [x] 修正 `FUSION_MLX_API_KEY` 说明: 应为 fusion-gateway client key, 非 mlx backend key (两套独立鉴权)
+- [x] README/README_CN 新增双鉴权说明 + 401 排错指引
+- [x] `FusionMLXClient.chat()` 401/403 错误增加可操作提示 (引导检查 key 来源)
+- [x] 测试: 579 passed, ruff 0 issues
 
 #### V0.1.9 (补丁)
 - [x] 从 git 追踪中移除本地文档（6 个文件 → .gitignore）
