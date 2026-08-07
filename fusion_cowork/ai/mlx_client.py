@@ -138,6 +138,13 @@ class FusionMLXClient:
                     logger.warning(f"chat() HTTP {e.response.status_code}, retrying in {self.retry_delay}s")
                     await asyncio.sleep(self.retry_delay)
                 else:
+                    if e.response.status_code in (401, 403):
+                        logger.error(
+                            f"chat() 鉴权失败 HTTP {e.response.status_code}: "
+                            "FUSION_MLX_API_KEY 应为 fusion-gateway 的 client api key "
+                            "(config.yaml 中 auth.api_keys[].key), 而非 fusion-mlx "
+                            "settings.json 的 auth.api_key; 两者是独立鉴权"
+                        )
                     raise
         raise last_exc
 
