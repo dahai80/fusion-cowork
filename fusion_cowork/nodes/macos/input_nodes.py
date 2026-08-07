@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import os
 from typing import Any, Dict, List, Tuple
 
 from ...engine.node import (
@@ -128,7 +129,15 @@ def _applescript_click(x: int, y: int, button: str = "left", click_count: int = 
 
 
 def _applescript_move(x: int, y: int) -> Tuple[int, str]:
-    return 0, ""
+    # System Events 无原生鼠标移动命令; 尝试 cliclick (Homebrew 常装), 不可用则明确告警
+    script = f'do shell script "/usr/bin/env cliclick m:{x},{y}"'
+    rc, out = _run_osascript(script)
+    if rc != 0:
+        logger.warning(
+            f"_applescript_move: cliclick 不可用 (rc={rc}, out={out!r}); "
+            "无 pyobjc 时鼠标移动需安装 cliclick (brew install cliclick)"
+        )
+    return rc, out
 
 
 def _applescript_type(text: str) -> Tuple[int, str]:
@@ -163,6 +172,24 @@ def _applescript_keystroke(key: str, modifiers: List[str] = None) -> Tuple[int, 
     end tell
     '''
     return _run_osascript(script)
+
+
+def _screenshot_to_data_url(path: str) -> str:
+    # 读截图文件并编码为 data URL, 供 OpenAI vision 格式传给大模型
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    ext = os.path.splitext(path)[1].lower().lstrip(".")
+    mime = "image/png" if ext in ("png", "") else f"image/{ext}"
+    return f"data:{mime};base64,{b64}"
+
+
+def _build_vision_user_content(text: str, image_path: str) -> list:
+    # 构造 OpenAI 多模态 content: 文本 + 截图 data URL
+    # FusionMLXClient.chat 透传 messages 到 /v1/chat/completions, MLX 后端支持则见图像, 不支持则见文本
+    return [
+        {"type": "text", "text": text},
+        {"type": "image_url", "image_url": {"url": _screenshot_to_data_url(image_path)}},
+    ]
 
 
 _KEY_MAP = {
@@ -476,11 +503,16 @@ class ComputerUseLoopNode(BaseNode):
             )
 
             try:
+                content = _build_vision_user_content(prompt, screenshot_path)
                 response = await client.chat(
                     model=model,
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=[{"role": "user", "content": content}],
                 )
-                ai_text = response.get("content", "") if isinstance(response, dict) else str(response)
+                ai_text = (
+                    response.content
+                    if hasattr(response, "content")
+                    else (response.get("content", "") if isinstance(response, dict) else str(response))
+                )
             except Exception as e:
                 logger.warning(f"AI 分析失败: {e}")
                 actions_log.append({"step": step + 1, "action": "ai_analyze", "status": "failed", "error": str(e)})

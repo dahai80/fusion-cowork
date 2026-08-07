@@ -579,3 +579,73 @@ class TestLazyImportsM4:
 
         assert NODE_NAME_ALIASES.get("鼠标移动") == "mouse_move"
         assert NODE_NAME_ALIASES.get("Computer Use") == "computer_use_loop"
+
+
+class TestComputerUseVisionP0:
+    # P0 回归: ComputerUseLoopNode 必须把截图以 image_url 多模态格式传给模型, 而非纯文本
+
+    def test_build_vision_user_content_multimodal(self, tmp_path):
+        from fusion_cowork.nodes.macos.input_nodes import _build_vision_user_content
+
+        img = tmp_path / "shot.png"
+        img.write_bytes(b"\x89PNG\r\n\x1a\nfake-png-bytes")
+        content = _build_vision_user_content("分析截图", str(img))
+
+        assert isinstance(content, list)
+        assert len(content) == 2
+        assert content[0]["type"] == "text"
+        assert content[0]["text"] == "分析截图"
+        assert content[1]["type"] == "image_url"
+        url = content[1]["image_url"]["url"]
+        assert url.startswith("data:image/png;base64,")
+
+    @pytest.mark.asyncio
+    async def test_computer_use_loop_sends_image_to_model(self, tmp_path, monkeypatch):
+        from fusion_cowork.ai.mlx_client import LLMResponse
+        from fusion_cowork.engine.node import NodeConfig
+        from fusion_cowork.nodes.macos.input_nodes import ComputerUseLoopNode
+
+        # 伪截图文件
+        shot = tmp_path / "cap.png"
+        shot.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+
+        captured_messages = []
+
+        class FakeCapture:
+            def __init__(self, config=None):
+                pass
+
+            async def execute(self, inputs):
+                return NodeResult(
+                    status=NodeStatus.SUCCESS,
+                    data={"path": str(shot)},
+                )
+
+        class FakeClient:
+            async def chat(self, model, messages, **kwargs):
+                captured_messages.append(messages)
+                return LLMResponse(content="DONE")
+
+        def fake_capture_factory(config=None):
+            return FakeCapture()
+
+        # ComputerUseLoopNode 在 execute 内做局部 import: from ...ai import FusionMLXClient
+        # 和 from .system_nodes import ScreenCaptureNode, 故 patch 源模块
+        import fusion_cowork.ai as ai_mod
+        import fusion_cowork.nodes.macos.system_nodes as sys_mod
+
+        monkeypatch.setattr(ai_mod, "FusionMLXClient", FakeClient, raising=False)
+        monkeypatch.setattr(sys_mod, "ScreenCaptureNode", fake_capture_factory, raising=False)
+
+        node = ComputerUseLoopNode(config=NodeConfig(params={"task": "打开 Safari", "max_steps": 1, "step_delay": 0}))
+        result = await node.execute({})
+
+        assert result.status == NodeStatus.SUCCESS
+        assert len(captured_messages) == 1
+        user_msg = captured_messages[0][0]
+        assert user_msg["role"] == "user"
+        content = user_msg["content"]
+        assert isinstance(content, list), "P0 回归: content 必须是多模态列表, 不能是纯文本"
+        types = [c["type"] for c in content]
+        assert "image_url" in types, "P0 回归: 截图必须以 image_url 传给模型"
+        assert "text" in types

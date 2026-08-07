@@ -1424,14 +1424,16 @@ class ScreenCaptureNode(BaseNode):
     async def _analyze_screenshot(self, image_path: str) -> str:
         """使用 fusion-mlx 分析截图内容。"""
         from ...ai import FusionMLXClient
+        from .input_nodes import _build_vision_user_content
 
         client = FusionMLXClient()
         try:
+            content = _build_vision_user_content("分析这张截图, 描述你看到了什么。", image_path)
             response = await client.chat(
                 model="qwen3.5-9b",
                 messages=[
                     {"role": "system", "content": "你是一个图像分析助手。分析截图内容并描述你看到了什么。"},
-                    {"role": "user", "content": f"分析这张截图: {image_path}"},
+                    {"role": "user", "content": content},
                 ],
                 max_tokens=1024,
             )

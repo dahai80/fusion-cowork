@@ -216,7 +216,7 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 ├─────────────────────────────────────────────────────┤
 │                 Workflow Engine Layer                  │
 │   WorkflowEngine  │  TaskScheduler  │  NodeRegistry   │
-│   (DAG, n8n-inspired) │  (APScheduler) │  (28 nodes)   │
+│   (DAG, n8n-inspired) │  (APScheduler) │  (47 nodes)   │
 ├─────────────────────────────────────────────────────┤
 │                   AI Capability Layer                  │
 │   FusionMLXClient  │  NLWorkflowGenerator             │
@@ -235,18 +235,18 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 └─────────────────────────────────────────────────────┘
 ```
 
-### Node Types (33 nodes built-in)
+### Node Types (47 nodes built-in, 7 categories)
 
 | Category | Count | Nodes |
 |----------|-------|-------|
-| `macos_system` | 15 | Desktop Clean, Download Organizer, Disk Cleaner, File Watcher, File Classifier, Batch Rename, Copy, Move, Delete, Find, **Mouse Move, Mouse Click, Keyboard Type, Keyboard Shortcut, Computer Use Loop** 🆕 |
-| `ai_processing` | 4 | AI Classify, AI Summarize, AI Generate Name, **OCR** 🆕 |
-| `tool` | 5 | Shell Exec, Python REPL, Web Search, Fetch URL, Apply Edit |
-| `browser` | 3 | Browser Open, Browser Extract, Browser Automate |
-| `cdp` | 10 | CDP Navigate, Snapshot, Click, Fill, Fill Form, Screenshot, Evaluate, Emulate, Network, Console |
+| `macos_system` | 13 | Desktop Clean, Download Organizer, Disk Cleaner, File Watcher, Screen Capture, Clipboard, Notification, App Lifecycle, OCR, **Mouse Move, Mouse Click, Keyboard Type, Keyboard Shortcut, Computer Use Loop** 🆕 |
+| `ai_processing` | 4 | AI Classify, AI Summarize, AI Generate Name, AI Vision Analyze |
+| `tool` | 9 | Shell Exec, Python REPL, Web Search, Fetch URL, Apply Edit, Browser Open, Browser Extract, Browser Automate, Trainer Node |
+| `file_operation` | 6 | File Classifier, Batch Rename, Copy, Move, Delete, Find |
 | `io` | 2 | File Input, File Output |
 | `logic` | 3 | Filter, Loop, Merge |
-| **Claude Cowork parity** | **6** | **Screen Capture, Clipboard, Notification, App Lifecycle, OCR, MCP Server** |
+| `fusion_ecosystem` | 1 | Trainer (Fusion-Trainer 互通) |
+| **CDP browser nodes** | **10** | CDP Navigate, Snapshot, Click, Fill, Fill Form, Screenshot, Evaluate, Emulate, Network, Console (`tool` 分类下注册) |
 
 ### Claude Cowork Parity (V0.2) 🆕
 
@@ -257,7 +257,7 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 | System notifications | ✅ | `NotificationNode` — macOS Notification Center |
 | macOS app lifecycle | ✅ | `AppLifecycleNode` — launch/quit/activate/list |
 | OCR / screen text recognition | ✅ | `OCRNode` — Vision + fusion-mlx |
-| MCP protocol server | ✅ | `MCPServer` — 15 tools for Claude Desktop/Code |
+| MCP protocol server | ✅ | `MCPServer` — 16 tools for Claude Desktop/Code |
 
 ### Ecosystem Integration
 
@@ -496,14 +496,14 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] System notifications (macOS Notification Center)
 - [x] macOS app lifecycle (launch/quit/activate/list)
 - [x] OCR text recognition (Vision + fusion-mlx)
-- [x] MCP server mode (15 tools for Claude Desktop/Code)
+- [x] MCP server mode (16 tools for Claude Desktop/Code)
 
 ### V0.3 ✅
 - [x] Industry-specific templates (design/dev/data/ops — 10 templates)
 - [x] Multi-agent orchestration (agent registration, task decomposition, parallel execution)
 - [x] Cross-device collaboration (WebSocket sync, device discovery, workflow sharing)
 - [x] Permission model (MANUAL/AUTO/PLAN/BYPASS — 4-tier, high-risk node approval)
-- [x] Hook system (11 event types — pre/post node, workflow lifecycle, permission intercept)
+- [x] Hook system (14 event types — pre/post node, workflow lifecycle, permission intercept, session, pre-compact)
 - [x] Session persistence (SQLite — save/resume/fork workflows, auto-cleanup)
 - [x] Streaming events (EventEmitter — pub/sub, SSE push, buffer replay)
 - [x] MCP stdio transport (JSON-RPC 2.0 over stdin/stdout for Claude Code)
@@ -551,7 +551,7 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 ### V0.7.1 ✅ (M7 — Shared Conversation + KB Binding)
 - [x] SpaceChatService — shared context + Agent reply + streaming (SSE)
 - [x] SpaceKBService — fusion-kb binding + document management + RAG search/query
-- [x] SpaceAPI — 18 REST endpoints + SSE event stream (`/spaces/{id}/stream`)
+- [x] SpaceAPI — 25 REST endpoints + SSE event stream (`/spaces/{id}/stream`)
 - [x] FusionMLXClient enhancements — port fix (11432 via gateway) + retry on transient errors + stream robustness
 - [x] KBClient completion — create_kb/delete_kb/upload_file/list_documents
 - [x] SharedContext — workflow node access to space messages + KB search/query
@@ -585,6 +585,14 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] 29 new tests (18 artifact + 11 FSB, 519 total)
 
 ### Patch Releases
+
+#### V0.2.9 (Patch) — 商用问题修复
+- [x] P0: Computer Use 循环截图以 `image_url` 多模态格式传入模型 (原盲调用, 致盲修复)
+- [x] P0: `ScreenCaptureNode` 视觉分析复用同一多模态通道
+- [x] P1: `_applescript_move` 缺 cliclick 时明确告警 (替代静默失败)
+- [x] P1: CDP `list_network_requests`/`list_console_messages` 落地后台 reader loop 真实事件缓冲 (原 `return []` 桩)
+- [x] P2: 文档计数漂移修正 (节点 33→47 / 6→7 分类, MCP 15→16, Hook 11→14, SpaceAPI 18→25)
+- [x] 测试: 2 个 P0 多模态回归用例, 全套 579 passed, ruff 0 issues
 
 #### V0.1.9 (Patch)
 - [x] Remove local-only docs from git tracking (6 files → .gitignore)
