@@ -274,18 +274,18 @@ do_doctor() {
         printf "${YELLOW}!${NC} Socket: %s (not active)\n" "${SOCK_FILE}"
     fi
 
-    # Check fusion-mlx
-    if curl -sf http://127.0.0.1:11434/v1/models >/dev/null 2>&1; then
-        printf "${GREEN}✓${NC} Fusion-MLX: reachable on port 11434\n"
+    # Check fusion-gateway (netlayer, 反代 fusion-mlx)
+    if curl -sf http://127.0.0.1:11432/v1/models >/dev/null 2>&1; then
+        printf "${GREEN}✓${NC} Fusion-Gateway: reachable on port 11432 (netlayer → fusion-mlx)\n"
     else
-        printf "${YELLOW}!${NC} Fusion-MLX: not reachable on port 11434\n"
+        printf "${YELLOW}!${NC} Fusion-Gateway: not reachable on port 11432 (netlayer → fusion-mlx)\n"
     fi
 
-    # Check fusion-kb
+    # Check fusion-rag
     if curl -sf http://127.0.0.1:11436/health >/dev/null 2>&1; then
-        printf "${GREEN}✓${NC} Fusion-KB: reachable on port 11436\n"
+        printf "${GREEN}✓${NC} Fusion-RAG: reachable on port 11436\n"
     else
-        printf "${YELLOW}!${NC} Fusion-KB: not reachable on port 11436\n"
+        printf "${YELLOW}!${NC} Fusion-RAG: not reachable on port 11436\n"
     fi
 
     # Check disk

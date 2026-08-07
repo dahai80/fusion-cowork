@@ -62,7 +62,7 @@ class ConfigCenter:
             "engine.retry_delay": 1.0,
             "engine.timeout": 300,
             "engine.concurrency": 4,
-            "ai.base_url": "http://localhost:11434",
+            "ai.base_url": "http://localhost:11432",
             "ai.model": "default",
             "ai.temperature": 0.7,
             "ai.max_tokens": 2048,

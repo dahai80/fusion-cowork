@@ -3,7 +3,7 @@
 All AI inference requests go through this client to fusion-mlx OpenAI-compatible API.
 No direct MLX or mlx-lm imports; HTTP only.
 
-Default: http://localhost:11434/v1 (fusion-mlx direct port, per FUSION_MLX_API_KEY dispatch §4 P4)
+Default: http://localhost:11432/v1 (fusion-gateway netlayer port, per netlayer-compliance-plan §方案B)
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MLX_PORT = 11434
+DEFAULT_MLX_PORT = 11432
 DEFAULT_MLX_BASE_URL = f"http://localhost:{DEFAULT_MLX_PORT}/v1"
 MAX_RETRIES = 2
 RETRY_DELAY = 1.0
