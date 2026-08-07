@@ -216,7 +216,7 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 ├─────────────────────────────────────────────────────┤
 │                  流程引擎层                             │
 │   WorkflowEngine  │  TaskScheduler  │  NodeRegistry   │
-│   (DAG, n8n 启发)  │  (APScheduler)  │  (28 个节点)    │
+│   (DAG, n8n 启发)  │  (APScheduler)  │  (47 个节点)    │
 ├─────────────────────────────────────────────────────┤
 │                   AI 能力层                             │
 │   FusionMLXClient  │  NLWorkflowGenerator             │
@@ -235,18 +235,18 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 └─────────────────────────────────────────────────────┘
 ```
 
-### 节点类型（33 个内置节点）
+### 节点类型（47 个内置节点，7 大分类）
 
 | 分类 | 数量 | 节点 |
 |------|------|------|
-| `macos_system` | 15 | 桌面清理、下载整理、磁盘清理、文件监听、文件分类、批量重命名、复制、移动、删除、查找、**鼠标移动、鼠标点击、键盘输入、键盘快捷键、Computer Use 循环** 🆕 |
-| `ai_processing` | 4 | AI 分类、AI 摘要、AI 重命名、**OCR** 🆕 |
-| `tool` | 5 | Shell 命令、Python REPL、Web 搜索、获取网页、文件编辑 |
-| `browser` | 3 | 浏览器打开、浏览器提取、浏览器自动化 |
-| `cdp` | 10 | CDP 导航、快照、点击、填写、批量填写、截图、执行JS、模拟设备、网络、控制台 |
+| `macos_system` | 13 | 桌面清理、下载整理、磁盘清理、文件监听、屏幕截图、剪贴板、通知、应用生命周期、OCR、**鼠标移动、鼠标点击、键盘输入、键盘快捷键、Computer Use 循环** 🆕 |
+| `ai_processing` | 4 | AI 分类、AI 摘要、AI 重命名、AI 视觉分析 |
+| `tool` | 9 | Shell 命令、Python REPL、Web 搜索、获取网页、文件编辑、浏览器打开、浏览器提取、浏览器自动化、Trainer 节点 |
+| `file_operation` | 6 | 文件分类、批量重命名、复制、移动、删除、查找 |
 | `io` | 2 | 文件输入、文件输出 |
 | `logic` | 3 | 条件过滤、循环处理、数据合并 |
-| **Claude Cowork 对等** | **6** | **屏幕截图、剪贴板、通知、应用生命周期、OCR、MCP 服务** |
+| `fusion_ecosystem` | 1 | Trainer（Fusion-Trainer 互通） |
+| **CDP 浏览器节点** | **10** | CDP 导航、快照、点击、填写、批量填写、截图、执行JS、模拟设备、网络、控制台（注册在 `tool` 分类下） |
 
 ### Claude Cowork 对等能力 (V0.2) 🆕
 
@@ -257,7 +257,7 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 | 系统通知 | ✅ | `NotificationNode` — macOS 通知中心 |
 | macOS 应用生命周期 | ✅ | `AppLifecycleNode` — 启动/退出/激活/列表 |
 | OCR / 屏幕文字识别 | ✅ | `OCRNode` — Vision + fusion-mlx |
-| MCP 协议服务 | ✅ | `MCPServer` — 15 个工具供 Claude Desktop/Code 调用 |
+| MCP 协议服务 | ✅ | `MCPServer` — 16 个工具供 Claude Desktop/Code 调用 |
 
 ### 生态互通
 
@@ -496,14 +496,14 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] 系统通知（macOS 通知中心）
 - [x] macOS 应用生命周期（启动/退出/激活/列表）
 - [x] OCR 文字识别（Vision + fusion-mlx）
-- [x] MCP 服务模式（15 个工具供 Claude Desktop/Code 调用）
+- [x] MCP 服务模式（16 个工具供 Claude Desktop/Code 调用）
 
 ### V0.3 ✅
 - [x] 行业自动化模板（设计/开发/数据/运维 — 10 个模板）
 - [x] 多智能体联动（注册、任务分解、并行执行）
 - [x] 跨设备协同（WebSocket 同步、设备发现、工作流共享）
 - [x] 权限模型 (MANUAL/AUTO/PLAN/BYPASS — 4级权限，高风险节点审批)
-- [x] Hook 系统 (11 种事件类型 — 节点执行前后、工作流生命周期、权限拦截)
+- [x] Hook 系统 (14 种事件类型 — 节点执行前后、工作流生命周期、权限拦截、会话起止、压缩前)
 - [x] 会话持久化 (SQLite — 保存/恢复/分叉工作流，自动清理)
 - [x] 流式事件 (EventEmitter — 发布订阅、SSE 推送、缓冲回放)
 - [x] MCP stdio 传输 (stdin/stdout JSON-RPC 2.0，供 Claude Code 集成)
@@ -551,7 +551,7 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 ### V0.7.1 ✅ (M7 — 共享对话 + 知识库绑定)
 - [x] SpaceChatService — 共享上下文 + Agent 回复 + 流式推理 (SSE)
 - [x] SpaceKBService — fusion-kb 绑定 + 文档管理 + RAG 搜索/查询
-- [x] SpaceAPI — 18 个 REST 端点 + SSE 事件流 (`/spaces/{id}/stream`)
+- [x] SpaceAPI — 25 个 REST 端点 + SSE 事件流 (`/spaces/{id}/stream`)
 - [x] FusionMLXClient 增强 — 端口修正 (11432 经 gateway) + 瞬态错误重试 + 流式健壮性
 - [x] KBClient 完善 — create_kb/delete_kb/upload_file/list_documents
 - [x] SharedContext — 工作流节点访问空间消息 + KB 搜索/查询
@@ -585,6 +585,14 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] 29 项新测试 (18 artifact + 11 FSB, 总计 519)
 
 ### 补丁版本
+
+#### V0.2.9 (补丁) — 商用问题修复
+- [x] P0: Computer Use 循环截图以 `image_url` 多模态格式传入模型 (原盲调用, 致盲修复)
+- [x] P0: `ScreenCaptureNode` 视觉分析复用同一多模态通道
+- [x] P1: `_applescript_move` 缺 cliclick 时明确告警 (替代静默失败)
+- [x] P1: CDP `list_network_requests`/`list_console_messages` 落地后台 reader loop 真实事件缓冲 (原 `return []` 桩)
+- [x] P2: 文档计数漂移修正 (节点 33→47 / 6→7 分类, MCP 15→16, Hook 11→14, SpaceAPI 18→25)
+- [x] 测试: 2 个 P0 多模态回归用例, 全套 579 passed, ruff 0 issues
 
 #### V0.1.9 (补丁)
 - [x] 从 git 追踪中移除本地文档（6 个文件 → .gitignore）

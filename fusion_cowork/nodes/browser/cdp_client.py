@@ -29,6 +29,12 @@ class CDPClient:
         self._ws = None
         self._msg_id = 0
         self._connected = False
+        self._reader_task: asyncio.Task | None = None
+        self._pending: Dict[int, asyncio.Future] = {}
+        self._network_buffer: List[Dict[str, Any]] = []
+        self._console_buffer: List[Dict[str, Any]] = []
+        self._network_enabled = False
+        self._console_enabled = False
 
     async def connect(self) -> None:
         if not HAS_HTTPX or not HAS_WEBSOCKETS:
@@ -37,7 +43,41 @@ class CDPClient:
         ws_url = await self._get_ws_url()
         self._ws = await websockets.connect(ws_url, max_size=10 * 1024 * 1024)
         self._connected = True
+        self._reader_task = asyncio.create_task(self._reader_loop())
         logger.info(f"CDP 已连接: {ws_url}")
+
+    async def _reader_loop(self) -> None:
+        # 后台读取 WS: 无 id 的消息分发到事件缓冲, 有 id 的消息匹配 pending future
+        try:
+            while self._connected and self._ws is not None:
+                raw = await self._ws.recv()
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                msg_id = data.get("id")
+                if msg_id is not None and msg_id in self._pending:
+                    fut = self._pending.pop(msg_id)
+                    if not fut.done():
+                        fut.set_result(data)
+                else:
+                    self._dispatch_event(data)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning(f"CDP reader_loop 退出: {e}")
+
+    def _dispatch_event(self, data: Dict[str, Any]) -> None:
+        method = data.get("method", "")
+        params = data.get("params", {})
+        if method.startswith("Network."):
+            self._network_buffer.append({"method": method, **params})
+            if len(self._network_buffer) > 1000:
+                self._network_buffer = self._network_buffer[-1000:]
+        elif method == "Runtime.consoleAPICalled":
+            self._console_buffer.append({"method": method, **params})
+            if len(self._console_buffer) > 500:
+                self._console_buffer = self._console_buffer[-500:]
 
     async def _get_ws_url(self) -> str:
         async with httpx.AsyncClient() as client:
@@ -53,10 +93,18 @@ class CDPClient:
             return ws_url
 
     async def disconnect(self) -> None:
+        if self._reader_task:
+            self._reader_task.cancel()
+            try:
+                await self._reader_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._reader_task = None
         if self._ws:
             await self._ws.close()
             self._ws = None
         self._connected = False
+        self._pending.clear()
         logger.info("CDP 已断开")
 
     async def send(
@@ -69,14 +117,17 @@ class CDPClient:
         if not self._connected or self._ws is None:
             raise RuntimeError("CDP 未连接")
         self._msg_id += 1
-        msg = {"id": self._msg_id, "method": method, "params": params or {}}
+        msg_id = self._msg_id
+        msg = {"id": msg_id, "method": method, "params": params or {}}
+        loop = asyncio.get_event_loop()
+        fut: asyncio.Future = loop.create_future()
+        self._pending[msg_id] = fut
         await self._ws.send(json.dumps(msg))
-        for _ in range(max_retries):
-            raw = await asyncio.wait_for(self._ws.recv(), timeout=timeout)
-            data = json.loads(raw)
-            if data.get("id") == self._msg_id:
-                return data
-        raise RuntimeError(f"CDP send() 超过最大重试次数 ({max_retries}): method={method}")
+        try:
+            return await asyncio.wait_for(fut, timeout=timeout)
+        except TimeoutError:
+            self._pending.pop(msg_id, None)
+            raise RuntimeError(f"CDP send() 超时 ({timeout}s): method={method}") from None
 
     @property
     def connected(self) -> bool:
@@ -186,10 +237,27 @@ class CDPClient:
         )
         logger.info(f"CDP 模拟视口: {width}x{height}")
 
+    async def enable_network(self) -> None:
+        if not self._network_enabled:
+            await self.send("Network.enable")
+            self._network_enabled = True
+            self._network_buffer.clear()
+            logger.info("CDP Network 事件监听已启用")
+
+    async def enable_console(self) -> None:
+        if not self._console_enabled:
+            await self.send("Runtime.enable")
+            self._console_enabled = True
+            self._console_buffer.clear()
+            logger.info("CDP Runtime 控制台监听已启用")
+
     async def list_network_requests(self) -> List[Dict[str, Any]]:
-        logger.info("CDP 网络请求查询 (需要事件监听)")
-        return []
+        await self.enable_network()
+        # 短暂等待以采集最新事件
+        await asyncio.sleep(0.1)
+        return list(self._network_buffer)
 
     async def list_console_messages(self) -> List[Dict[str, Any]]:
-        logger.info("CDP 控制台消息查询 (需要事件监听)")
-        return []
+        await self.enable_console()
+        await asyncio.sleep(0.1)
+        return list(self._console_buffer)
