@@ -7,10 +7,9 @@
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Dict
+from typing import Any, Dict
 
-if TYPE_CHECKING:
-    from .mcp_server import MCPToolRegistry
+from .mcp_server import MCPToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +133,7 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
         委托给 fusion-plugins-ecosystem.MCPHandler, 供 fusion-studio 插件生态面板调用。
         仅路由 plugins/* 方法, 其余返回 -32601。
         """
-        from .rpc_bridge import dispatch_rpc, is_plugins_available
+        from .rpc_bridge import dispatch_rpc
 
         try:
             body = await request.json()
@@ -142,20 +141,6 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
             return JSONResponse(
                 {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}},
                 status_code=400,
-            )
-
-        if not is_plugins_available():
-            req_id = body.get("id") if isinstance(body, dict) else None
-            return JSONResponse(
-                {
-                    "jsonrpc": "2.0",
-                    "id": req_id,
-                    "error": {
-                        "code": -32603,
-                        "message": "plugins runtime 未安装: pip install fusion-plugins-ecosystem",
-                    },
-                },
-                status_code=500,
             )
 
         response = await dispatch_rpc(body)
