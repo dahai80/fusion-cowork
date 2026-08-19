@@ -592,6 +592,15 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 
 ### 补丁版本
 
+#### V0.2.11 (补丁) — /rpc 端点托管 + plugins/* 委托 (#48)
+- [x] 新增 `server/rpc_bridge.py` — 托管 `/rpc` JSON-RPC 端点, 委托 15 个 `plugins/*` 方法给 fusion-plugins-ecosystem `MCPHandler`
+- [x] `mcp_http.py` 新增 `/rpc` 路由 (POST), 仅路由 `plugins/*`, 其余返回 -32601
+- [x] `DeskRuntime` 注入 `NodeRegistry` + `TaskScheduler` + `FusionMLXClient`, Studio 可发现 cowork 节点
+- [x] 依赖缺失降级: `fusion-plugins-ecosystem` 未安装时 `/rpc` 返回 -32603 + 安装提示 (新增 `[plugins]` extra)
+- [x] Bug fix: `desk_rpc._handle_health` 硬编码 `version: "0.3.0"` → 动态读取 `__version__` (版本漂移修复)
+- [x] Bug fix: `mcp_http.py` 移除 `from __future__ import annotations` — FastAPI 0.139 下 `Request` 注解字符串化导致路由 422
+- [x] 测试: 13 个 `/rpc` + `rpc_bridge` 用例, 全套 592 passed, ruff 0 issues
+
 #### V0.2.9 (补丁) — 商用问题修复
 - [x] P0: Computer Use 循环截图以 `image_url` 多模态格式传入模型 (原盲调用, 致盲修复)
 - [x] P0: `ScreenCaptureNode` 视觉分析复用同一多模态通道

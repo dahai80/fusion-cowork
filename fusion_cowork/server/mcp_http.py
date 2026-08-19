@@ -4,8 +4,6 @@
 客户端通过 POST /mcp 发送 JSON-RPC 请求，通过 GET /sse 接收推送通知。
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -128,6 +126,43 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
                 {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error"}},
                 status_code=500,
             )
+
+    @app.post("/rpc")
+    async def rpc_endpoint(request: Request):
+        """JSON-RPC 2.0 端点 — 托管 plugins/* 方法 (issue #48)。
+
+        委托给 fusion-plugins-ecosystem.MCPHandler, 供 fusion-studio 插件生态面板调用。
+        仅路由 plugins/* 方法, 其余返回 -32601。
+        """
+        from .rpc_bridge import dispatch_rpc, is_plugins_available
+
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            return JSONResponse(
+                {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}},
+                status_code=400,
+            )
+
+        if not is_plugins_available():
+            req_id = body.get("id") if isinstance(body, dict) else None
+            return JSONResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {
+                        "code": -32603,
+                        "message": "plugins runtime 未安装: pip install fusion-plugins-ecosystem",
+                    },
+                },
+                status_code=500,
+            )
+
+        response = await dispatch_rpc(body)
+        status = 200
+        if isinstance(response, dict) and "error" in response:
+            status = 500
+        return JSONResponse(response, status_code=status)
 
     @app.get("/sse")
     async def sse_endpoint(request: Request):
