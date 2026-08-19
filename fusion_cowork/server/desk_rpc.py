@@ -285,7 +285,9 @@ class DeskRPCServer:
     # ── 方法实现 ──
 
     async def _handle_health(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        return {"status": "ok", "service": "fusion-cowork", "version": "0.3.0"}
+        from .. import __version__
+
+        return {"status": "ok", "service": "fusion-cowork", "version": __version__}
 
     async def _handle_nodes_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..engine.node import NodeRegistry

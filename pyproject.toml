@@ -1,6 +1,6 @@
 [project]
 name = "fusion-cowork"
-version = "0.2.10"
+version = "0.2.11"
 description = "Fusion-Cowork — macOS 原生、本地优先、零代码桌面智能自动化平台"
 authors = [
     { name = "Fusion-MLX Team" },
@@ -34,8 +34,11 @@ test = [
     "fastapi>=0.104.0",
     "httpx>=0.27.0",
 ]
+plugins = [
+    "fusion-plugins-ecosystem>=0.3.3",
+]
 dev = [
-    "fusion-cowork[test,web]",
+    "fusion-cowork[test,web,plugins]",
 ]
 
 [project.scripts]
