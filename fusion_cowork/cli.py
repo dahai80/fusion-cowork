@@ -874,15 +874,26 @@ def desk():
 
 @desk.command("rpc")
 @click.option("--sock", "-s", default="/tmp/fusion-cowork.sock", help="UDS 路径")
-def desk_rpc(sock: str):
-    """启动 Desk RPC 服务 — 供 Fusion-Studio 调用。"""
+@click.option("--http-port", default=11438, show_default=True, help="HTTP 端口 (/rpc /health /mcp /sse); 0=不启动 HTTP")
+def desk_rpc(sock: str, http_port: int):
+    """启动 Desk RPC 服务 — 供 Fusion-Studio 调用。
+
+    默认同时启动 UDS (desk.*) + HTTP (/rpc /health /mcp /sse) 双通道。
+    HTTP 通道承载 fusion-studio PluginBridge 的 plugins/* 集成面板 (issue #48)。
+    --http-port 0 可禁用 HTTP (仅 UDS)。
+    """
     from .server.desk_rpc import DeskRPCServer
 
     rpc = DeskRPCServer(sock_path=sock)
 
     async def _run():
         await rpc.start()
-        console.print_success(f"Desk RPC 服务已启动: {sock}")
+        console.print_success(f"Desk RPC 服务已启动 (UDS): {sock}")
+
+        http_task = None
+        if http_port > 0:
+            http_task = asyncio.create_task(_serve_http(http_port))
+
         console.print_info("等待 Fusion-Studio 连接... (Ctrl+C 停止)")
         try:
             while True:
@@ -890,7 +901,27 @@ def desk_rpc(sock: str):
         except asyncio.CancelledError:
             pass
         finally:
+            if http_task and not http_task.done():
+                http_task.cancel()
+                try:
+                    await http_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             await rpc.stop()
+
+    async def _serve_http(port: int):
+        try:
+            from .nodes import import_all_nodes
+            from .server.mcp_server import MCPServer
+
+            import_all_nodes()
+            mcp = MCPServer(host="127.0.0.1", port=port)
+            console.print_success(f"Desk HTTP 服务已启动: 127.0.0.1:{port} (/rpc /health /mcp /sse)")
+            await mcp.serve_http()
+        except ImportError:
+            console.print_warning("HTTP 通道未启动 (缺 [web] 依赖): pip install fusion-cowork[web]; 仅 UDS 可用")
+        except Exception as e:
+            console.print_warning(f"HTTP 通道启动失败 ({e}); 仅 UDS 可用")
 
     try:
         asyncio.run(_run())

@@ -592,6 +592,15 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 
 ### Patch Releases
 
+#### V0.2.12 (Patch) — 服务可用性审计修复 (Studio 集成)
+- [x] **节点注册缺口**: 新增 `nodes/__init__.py::import_all_nodes()` 显式导入 9 个节点模块 (触发 `@register_node`); `DeskRPCServer.start()` + `desk rpc` CLI 调用之。历史 bug: 服务端仅 cli.py 副作用导入的 macos+browser 注册, `desk.nodes.list` 仅 33/47 节点可见 → 现 47/47
+- [x] **节点列表字段不全**: `desk_rpc._handle_nodes_list` 委托 `NodeRegistry.list()` 返回 7 字段 (`name/display_name/category/description/icon/default_label/params_schema`); 原 3 字段取自 `__doc__`, Studio 无法渲染参数表单
+- [x] **HTTP 通道默认未启**: `desk rpc` CLI 新增 `--http-port` (默认 11438), 默认并发启动 HTTP (`/rpc /health /mcp /sse`), 承载 Studio PluginBridge `plugins/*` 集成面板; `--http-port 0` 可禁用
+- [x] **HTTP 版本漂移**: `mcp_http.py` `SERVER_VERSION` 硬编码 "0.1.0" → 动态读取 `__version__` (`/health` 返回真实版本)
+- [x] **start.sh venv 指向错误**: 硬编码 `${PROJ_DIR}/.venv` (stale editable install `fusion_cowork-0.1.3`, 缺 plugins) → 优先 monorepo 根 `.venv` (`/Users/dahai/fusion/.venv`, 含 cowork 0.2.12 + plugins 0.3.3), 仅独立部署时回退本地。修复 `/rpc plugins.*` 一律 -32603
+- [x] **doctor 健康检查增强**: 新增 HTTP 11438/health 探活 + fusion-plugins-ecosystem 可用性检查 (缺则明确提示安装命令)
+- [x] 测试: 全套 593 passed (Py3.14), ruff 0 issues; UDS `desk.nodes.list` 实测 47 节点/7 字段, HTTP `/rpc plugins.ping` 实测 `{pong:true}`
+
 #### V0.2.11 (Patch) — /rpc 端点托管 + plugins/* 委托 (#48)
 - [x] 新增 `server/rpc_bridge.py` — 托管 `/rpc` JSON-RPC 端点, 委托 15 个 `plugins/*` 方法给 fusion-plugins-ecosystem `MCPHandler`
 - [x] `mcp_http.py` 新增 `/rpc` 路由 (POST), 仅路由 `plugins/*`, 其余返回 -32601

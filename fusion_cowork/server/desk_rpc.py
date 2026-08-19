@@ -182,6 +182,10 @@ class DeskRPCServer:
 
     async def start(self) -> None:
         """启动 RPC 服务端。"""
+        from ..nodes import import_all_nodes
+
+        import_all_nodes()
+
         if os.path.exists(self._sock_path):
             os.unlink(self._sock_path)
 
@@ -292,18 +296,13 @@ class DeskRPCServer:
     async def _handle_nodes_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..engine.node import NodeRegistry
 
-        nodes = []
-        for name, cls in NodeRegistry._registry.items():
-            doc = getattr(cls, "__doc__", "") or ""
-            cat = getattr(cls, "category", None)
-            cat_value = cat.value if hasattr(cat, "value") else (cat or "unknown")
-            nodes.append(
-                {
-                    "name": name,
-                    "category": cat_value,
-                    "description": doc.strip()[:100],
-                }
-            )
+        category = params.get("category")
+        cat_filter = None
+        if category:
+            from ..engine.node import NodeCategory
+
+            cat_filter = NodeCategory(category) if category in {c.value for c in NodeCategory} else None
+        nodes = NodeRegistry.list(category=cat_filter)
         return {"nodes": nodes, "count": len(nodes)}
 
     async def _handle_nodes_info(self, params: Dict[str, Any]) -> Dict[str, Any]:

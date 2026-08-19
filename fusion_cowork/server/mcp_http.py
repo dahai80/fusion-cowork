@@ -9,13 +9,13 @@ import json
 import logging
 from typing import Any, Dict
 
+from .. import __version__ as SERVER_VERSION
 from .mcp_server import MCPToolRegistry
 
 logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "fusion-cowork"
-SERVER_VERSION = "0.1.0"
 
 
 def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
