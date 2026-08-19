@@ -4,7 +4,17 @@
 set -euo pipefail
 
 PROJ_DIR="$(cd "$(dirname "$0")" && pwd)"
-VENV="${PROJ_DIR}/.venv"
+# Monorepo 根 .venv 是 27 个 fusion-* 子项目的共享环境 (见 fusion/CLAUDE.md),
+# fusion-cowork + fusion-plugins-ecosystem 均安装于此。优先使用根 venv, 仅在
+# 独立部署 (无上层 monorepo) 时回退到本目录 .venv。历史 bug: 硬编码本地 .venv
+# 导致服务跑在 stale editable install (fusion_cowork-0.1.3) 且缺 plugins, /rpc
+# plugins.* 一律 -32603。
+ROOT_VENV="$(cd "${PROJ_DIR}/.." 2>/dev/null && pwd)/.venv"
+if [[ -f "${ROOT_VENV}/bin/activate" ]]; then
+    VENV="${ROOT_VENV}"
+else
+    VENV="${PROJ_DIR}/.venv"
+fi
 ACTIVATE="${VENV}/bin/activate"
 LOG_DIR="${PROJ_DIR}/logs"
 PID_FILE="${PROJ_DIR}/.fusion-cowork.pid"
@@ -286,6 +296,24 @@ do_doctor() {
         printf "${GREEN}✓${NC} Fusion-RAG: reachable on port 11436\n"
     else
         printf "${YELLOW}!${NC} Fusion-RAG: not reachable on port 11436\n"
+    fi
+
+    # Check HTTP channel (desk rpc 默认并发 HTTP :11438, 承载 /rpc plugins/* 集成面板)
+    local http_ver
+    http_ver=$(curl -sf http://127.0.0.1:11438/health 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','?'))" 2>/dev/null || echo "")
+    if [[ -n "${http_ver}" && "${http_ver}" != "?" ]]; then
+        printf "${GREEN}✓${NC} HTTP channel: 11438/health (v%s, /rpc /mcp /sse)\n" "${http_ver}"
+    else
+        printf "${YELLOW}!${NC} HTTP channel: 11438/health not reachable (desk rpc 需 [web] 依赖)\n"
+    fi
+
+    # Check plugins runtime (fusion-plugins-ecosystem, /rpc plugins.* 前置依赖)
+    if "${VENV}/bin/python" -c "import fusion_plugins_ecosystem" 2>/dev/null; then
+        local pver
+        pver=$("${VENV}/bin/python" -c "import fusion_plugins_ecosystem as m; print(getattr(m,'__version__','?'))" 2>/dev/null || echo "?")
+        printf "${GREEN}✓${NC} Plugins runtime: fusion-plugins-ecosystem %s\n" "${pver}"
+    else
+        printf "${RED}✗${NC} Plugins runtime: fusion-plugins-ecosystem 未安装 (/rpc plugins.* 将 -32603; pip install -e ../fusion-plugins-ecosystem)\n"
     fi
 
     # Check disk
