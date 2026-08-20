@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.2.13"
+__version__ = "0.2.14"
 __app_name__ = "Fusion-Cowork"
 
 # ── 节点工具名称映射表（吸纳自 Squish tool_name_map.py） ──
@@ -294,6 +294,17 @@ _LAZY_IMPORTS: dict[str, str] = {
     "ReviewReport": "fusion_cowork.review",
     "LENS_DEFINITIONS": "fusion_cowork.review",
     "run_ultra_review": "fusion_cowork.review",
+    # V0.2.14 交互式 Agent Loop
+    "AgentLoop": "fusion_cowork.agent_loop",
+    "AgentAction": "fusion_cowork.agent_loop",
+    "AgentTurn": "fusion_cowork.agent_loop",
+    "AgentLoopResult": "fusion_cowork.agent_loop",
+    "run_agent_loop": "fusion_cowork.agent_loop",
+    # V0.2.14 实时 presence + 光标
+    "PresenceManager": "fusion_cowork.space",
+    "PresenceState": "fusion_cowork.space",
+    # V0.2.14 协作层 WS 双向
+    "CollabHub": "fusion_cowork.server.collab_ws",
 }
 
 _lazy_cache: dict[str, object] = {}

@@ -52,7 +52,9 @@ class RemoteControlServer:
             ssl=ssl_context,
         )
         scheme = "wss" if ssl_context else "ws"
-        logger.info(f"RemoteControlServer started on {scheme}://{self.host}:{self.port}/control (tls={bool(ssl_context)})")
+        logger.info(
+            f"RemoteControlServer started on {scheme}://{self.host}:{self.port}/control (tls={bool(ssl_context)})"
+        )
 
     def _build_ssl_context(self):
         """构造 TLS ssl_context — P2-10。仅当 tls_cert/tls_key 提供时启用。"""

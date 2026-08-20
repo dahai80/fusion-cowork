@@ -152,10 +152,7 @@ class TrainerNode(BaseNode):
             logger.error(f"fusion-trainer CLI 未找到: {bin_path}")
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=(
-                    f"fusion-trainer CLI 未找到: {bin_path}"
-                    "（请安装 fusion-trainer 或设置 FUSION_TRAINER_BIN）"
-                ),
+                error=(f"fusion-trainer CLI 未找到: {bin_path}（请安装 fusion-trainer 或设置 FUSION_TRAINER_BIN）"),
                 summary="CLI 缺失",
             )
 
@@ -177,9 +174,7 @@ class TrainerNode(BaseNode):
 
             try:
                 if timeout and timeout > 0:
-                    stdout_b, stderr_b = await asyncio.wait_for(
-                        proc.communicate(), timeout=timeout
-                    )
+                    stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
                 else:
                     stdout_b, stderr_b = await proc.communicate()
             except TimeoutError:
@@ -209,10 +204,7 @@ class TrainerNode(BaseNode):
                     "model": model,
                 },
                 error=None if return_code == 0 else f"fusion-trainer 退出码 {return_code}",
-                summary=(
-                    f"微调{'成功' if return_code == 0 else '失败'} "
-                    f"(method={method}, 返回码={return_code})"
-                ),
+                summary=(f"微调{'成功' if return_code == 0 else '失败'} (method={method}, 返回码={return_code})"),
             )
 
         except Exception as e:

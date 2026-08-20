@@ -221,8 +221,7 @@ class SessionStore:
     def list_resumable(self, limit: int = 20) -> List[Session]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM sessions WHERE status IN ('paused','failed','running') "
-                "ORDER BY updated_at DESC LIMIT ?",
+                "SELECT * FROM sessions WHERE status IN ('paused','failed','running') ORDER BY updated_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         logger.info(f"list_resumable: {len(rows)} 条可恢复会话")

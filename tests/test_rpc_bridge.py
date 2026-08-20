@@ -102,7 +102,15 @@ async def test_dispatch_rpc_plugins_config_get():
     assert resp["id"] == 5
     cfg = resp["result"]
     # Studio 7 字段投影
-    for key in ("sandbox_mode", "auto_update", "max_concurrent_plugins", "log_level", "token_budget", "vram_limit_mb", "mcp_enabled"):
+    for key in (
+        "sandbox_mode",
+        "auto_update",
+        "max_concurrent_plugins",
+        "log_level",
+        "token_budget",
+        "vram_limit_mb",
+        "mcp_enabled",
+    ):
         assert key in cfg
 
 

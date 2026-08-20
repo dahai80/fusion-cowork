@@ -45,6 +45,10 @@ class DeskRPCServer:
         self._hook_manager = hook_manager
         self._space_store = space_store
         self._orchestrator = None
+        self._presence_manager = None
+        self._collab_hub = None
+        self._collab_sessions: Dict[str, Dict[str, Any]] = {}
+        self._collab_queues: Dict[str, asyncio.Queue] = {}
         self._register_handlers()
 
     def _register_handlers(self) -> None:
@@ -108,6 +112,17 @@ class DeskRPCServer:
             "desk.space.member.list": self._handle_space_member_list,
             "desk.space.member.remove": self._handle_space_member_remove,
             "desk.space.member.update_role": self._handle_space_member_update_role,
+            # 协作空间 - Presence + 光标
+            "desk.space.presence.heartbeat": self._handle_space_presence_heartbeat,
+            "desk.space.presence.cursor": self._handle_space_presence_cursor,
+            "desk.space.presence.list": self._handle_space_presence_list,
+            "desk.space.presence.remove": self._handle_space_presence_remove,
+            # 协作空间 - WS 双向 (轮询桥接, 供非 WS 主机)
+            "desk.space.collab.join": self._handle_space_collab_join,
+            "desk.space.collab.send": self._handle_space_collab_send,
+            "desk.space.collab.cursor": self._handle_space_collab_cursor,
+            "desk.space.collab.poll": self._handle_space_collab_poll,
+            "desk.space.collab.leave": self._handle_space_collab_leave,
             # 协作空间 - 对话
             "desk.space.chat.send": self._handle_space_chat_send,
             "desk.space.chat.list": self._handle_space_chat_list,
@@ -875,6 +890,129 @@ class DeskRPCServer:
             return member.to_dict()
         except (PermissionError, ValueError) as e:
             return {"error": str(e)}
+
+    def _get_presence_manager(self):
+        if self._presence_manager is None:
+            from fusion_cowork.space import PresenceManager
+
+            self._presence_manager = PresenceManager(event_emitter=self._event_emitter)
+        return self._presence_manager
+
+    async def _handle_space_presence_heartbeat(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        pm = self._get_presence_manager()
+        st = pm.heartbeat(
+            params.get("space_id", ""),
+            params.get("user_id", ""),
+            display_name=params.get("display_name", ""),
+            extras=params.get("extras"),
+        )
+        return st.to_dict()
+
+    async def _handle_space_presence_cursor(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        pm = self._get_presence_manager()
+        st = pm.set_cursor(
+            params.get("space_id", ""),
+            params.get("user_id", ""),
+            float(params.get("x", 0)),
+            float(params.get("y", 0)),
+            target=params.get("target", ""),
+        )
+        return st.to_dict()
+
+    async def _handle_space_presence_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        pm = self._get_presence_manager()
+        states = pm.list_present(params.get("space_id", ""))
+        return {"members": [s.to_dict() for s in states], "count": len(states)}
+
+    async def _handle_space_presence_remove(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        pm = self._get_presence_manager()
+        removed = pm.remove(params.get("space_id", ""), params.get("user_id", ""))
+        return {"removed": removed}
+
+    def _get_collab_hub(self):
+        if self._collab_hub is None:
+            from fusion_cowork.server.collab_ws import CollabHub
+
+            self._collab_hub = CollabHub(presence_manager=self._get_presence_manager())
+        return self._collab_hub
+
+    def _mock_ws_for(self, session_id: str):
+        queue = self._collab_queues.setdefault(session_id, asyncio.Queue(maxsize=500))
+
+        class _MockWS:
+            async def send(self, payload):
+                try:
+                    await queue.put_nowait(payload)
+                except asyncio.QueueFull:
+                    logger.warning(f"collab 会话 {session_id} 队列已满, 丢弃")
+
+        return _MockWS(), queue
+
+    async def _handle_space_collab_join(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        import uuid as _uuid
+
+        hub = self._get_collab_hub()
+        space_id = params.get("space_id", "")
+        user_id = params.get("user_id", "")
+        display_name = params.get("display_name", "")
+        session_id = params.get("session_id") or f"sess_{_uuid.uuid4().hex[:8]}"
+        ws, _ = self._mock_ws_for(session_id)
+        result = await hub.join(ws, space_id, user_id, display_name=display_name)
+        self._collab_sessions[session_id] = {"space_id": space_id, "user_id": user_id, "ws": ws}
+        result["session_id"] = session_id
+        return result
+
+    async def _handle_space_collab_send(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        hub = self._get_collab_hub()
+        session_id = params.get("session_id", "")
+        sess = self._collab_sessions.get(session_id)
+        if not sess:
+            return {"error": "会话不存在, 请先 collab.join"}
+        raw = json.dumps(
+            {"type": "chat_send", "content": params.get("content", ""), "msg_id": params.get("msg_id", "")},
+            ensure_ascii=False,
+        )
+        return await hub.handle_message(sess["ws"], raw)
+
+    async def _handle_space_collab_cursor(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        hub = self._get_collab_hub()
+        session_id = params.get("session_id", "")
+        sess = self._collab_sessions.get(session_id)
+        if not sess:
+            return {"error": "会话不存在, 请先 collab.join"}
+        raw = json.dumps(
+            {
+                "type": "cursor_move",
+                "x": params.get("x", 0),
+                "y": params.get("y", 0),
+                "target": params.get("target", ""),
+            },
+            ensure_ascii=False,
+        )
+        return await hub.handle_message(sess["ws"], raw)
+
+    async def _handle_space_collab_poll(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        session_id = params.get("session_id", "")
+        if session_id not in self._collab_queues:
+            return {"events": []}
+        queue = self._collab_queues[session_id]
+        events = []
+        while not queue.empty():
+            try:
+                events.append(json.loads(queue.get_nowait()))
+            except (asyncio.QueueEmpty, json.JSONDecodeError):
+                break
+        return {"events": events}
+
+    async def _handle_space_collab_leave(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        hub = self._get_collab_hub()
+        session_id = params.get("session_id", "")
+        sess = self._collab_sessions.pop(session_id, None)
+        self._collab_queues.pop(session_id, None)
+        if not sess:
+            return {"removed": False}
+        await hub.leave(sess["ws"])
+        return {"removed": True}
 
     async def _handle_space_chat_send(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:

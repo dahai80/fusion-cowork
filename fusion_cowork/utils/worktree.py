@@ -139,13 +139,13 @@ class WorktreeManager:
             if line.startswith("worktree "):
                 if cur:
                     worktrees.append(self._porcelain_to_wt(cur))
-                cur = {"path": line[len("worktree "):]}
+                cur = {"path": line[len("worktree ") :]}
             elif cur is None:
                 continue
             elif line.startswith("HEAD "):
-                cur["head"] = line[len("HEAD "):]
+                cur["head"] = line[len("HEAD ") :]
             elif line.startswith("branch "):
-                cur["branch"] = line[len("branch "):]
+                cur["branch"] = line[len("branch ") :]
             elif line == "":
                 if cur:
                     worktrees.append(self._porcelain_to_wt(cur))

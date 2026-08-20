@@ -262,7 +262,11 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
             _sessions[session_id] = {"initialized": False}
         elif session_id not in _sessions:
             return JSONResponse(
-                {"jsonrpc": "2.0", "id": body.get("id"), "error": {"code": -32000, "message": "Bad Request: missing or invalid session"}},
+                {
+                    "jsonrpc": "2.0",
+                    "id": body.get("id"),
+                    "error": {"code": -32000, "message": "Bad Request: missing or invalid session"},
+                },
                 status_code=400,
             )
 
@@ -281,10 +285,17 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
         if not handler:
             if req_id is not None:
                 return JSONResponse(
-                    {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"Method not found: {method}"}},
+                    {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "error": {"code": -32601, "message": f"Method not found: {method}"},
+                    },
                     status_code=200,
                 )
-            return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32601, "message": "Method not found"}}, status_code=200)
+            return JSONResponse(
+                {"jsonrpc": "2.0", "id": None, "error": {"code": -32601, "message": "Method not found"}},
+                status_code=200,
+            )
 
         if method not in ("initialize", "ping") and not sess.get("initialized"):
             return JSONResponse(

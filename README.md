@@ -207,6 +207,19 @@ fusion-cowork remote attach my-session --url wss://host:11439/control --token my
 # 技能持久化 + 用户自写 skill 包 — V0.2.13
 fusion-cowork skill save /my-cleanup ~/skills/my-cleanup.json
 fusion-cowork skill load ~/skills/my-cleanup.json
+
+# 交互式对话 Agent Loop (白话→自主拆解多步→观察→决策→行动) — V0.2.14
+fusion-cowork agent-loop run "整理下载目录里近 7 天的截图归档到桌面"
+fusion-cowork agent-loop chat            # REPL 模式, 中途可 stop 叫停 / 补一句再续
+
+# 实时光标 + 成员 presence/online_status — V0.2.14
+curl -X POST localhost:8000/spaces/s1/presence/heartbeat -d '{"user_id":"u1"}'
+curl -X POST localhost:8000/spaces/s1/presence/cursor -d '{"user_id":"u1","x":120,"y":80,"target":"art1"}'
+curl localhost:8000/spaces/s1/presence
+
+# 协作层 WebSocket 双向 (聊天/光标/presence 实时广播) — V0.2.14
+fusion-cowork collab serve --port 11439
+# 或 FastAPI WS 端点: ws://host:8000/spaces/{space_id}/ws (hello: {"user_id":..,"display_name":..})
 ```
 
 ---
@@ -621,6 +634,12 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] 29 new tests (18 artifact + 11 FSB, 519 total)
 
 ### Patch Releases
+
+#### V0.2.14 (Patch) — 协作实时能力补齐 (Agent Loop + presence + WS 双向)
+- [x] **交互式对话 Agent Loop** — 新增 `agent_loop/` 包: LLM 逐轮决策 (RUN_NODE/REPLY/ASK/DONE) → NodeRegistry.create + resolve_alias 执行节点 → 观察结果回注入消息历史 → 循环至 DONE/max_steps; `interrupt()` 叫停 + `supplement()` 中途补一句再续; `agent-loop run/chat` CLI; 12 tests
+- [x] **实时光标 + 成员 presence/online_status** — 新增 `space/presence.py`: 内存 `{space:{user:PresenceState}}`, 心跳时间戳判在线/离线 (60s 超时), 光标 (x,y,target) + EventEmitter 广播; REST 端点 (heartbeat/cursor/list/remove) + `desk.space.presence.*` RPC; 10 tests
+- [x] **协作层 WebSocket 双向** — 新增 `server/collab_ws.py` `CollabHub`: 按 space_id 分房间, WS 连接绑定 (space_id,user_id); 入站 chat_send/cursor_move/presence/ping/leave → 出站广播 (排除发送者); 集成 SpaceChatService 持久化 + PresenceManager; FastAPI WS 端点 `/spaces/{id}/ws` + `desk.space.collab.*` RPC 轮询桥 + `collab serve` 独立 WS 服务; 13 tests
+- [x] 测试: 668 passed / 1 skipped (Py3.14), ruff 0 issues
 
 #### V0.2.13 (Patch) — Capability Parity Stage-3 (审计缺口补齐)
 - [x] **P2-5 移动推送通知** — 新增 `notification/` 包: Bark / ntfy 双 provider + 本地 osascript 降级; `PushNode` 工作流节点 + `push send/config` CLI; ConfigCenter 持久化配置

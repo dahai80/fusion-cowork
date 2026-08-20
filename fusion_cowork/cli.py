@@ -192,7 +192,13 @@ console = RichConsole()
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="详细输出")
 @click.option("--log-file", default="", help="日志文件路径")
-@click.option("--max-budget-usd", "max_budget_usd", default=0.0, type=float, help="Token 预算上限 (USD), 超限中止 LLM 调用 (0=不限)")
+@click.option(
+    "--max-budget-usd",
+    "max_budget_usd",
+    default=0.0,
+    type=float,
+    help="Token 预算上限 (USD), 超限中止 LLM 调用 (0=不限)",
+)
 @click.version_option(version=__version__, prog_name=__app_name__)
 def cli(verbose: bool, log_file: str, max_budget_usd: float):
     """Fusion-Cowork — macOS 原生、纯本地离线、零代码桌面智能自动化平台。
@@ -923,7 +929,13 @@ def mcp():
 
 
 @mcp.command("serve")
-@click.option("--transport", "-t", type=click.Choice(["stdio", "http", "streamable"]), default="stdio", help="传输模式 (stdio/http/streamable)")
+@click.option(
+    "--transport",
+    "-t",
+    type=click.Choice(["stdio", "http", "streamable"]),
+    default="stdio",
+    help="传输模式 (stdio/http/streamable)",
+)
 @click.option("--host", "-h", default="127.0.0.1", help="HTTP 监听地址")
 @click.option("--port", "-p", default=11438, type=int, help="HTTP 监听端口")
 def mcp_serve(transport: str, host: str, port: int):
@@ -1259,7 +1271,12 @@ def plugin_uninstall(name: str):
 
 
 @plugin.command("import-claude-desktop")
-@click.option("--config", "config_path", default="", help="claude_desktop_config.json 路径 (默认 ~/Library/Application Support/Claude/)")
+@click.option(
+    "--config",
+    "config_path",
+    default="",
+    help="claude_desktop_config.json 路径 (默认 ~/Library/Application Support/Claude/)",
+)
 def plugin_import_claude_desktop(config_path: str):
     """从 Claude Desktop 配置导入 MCP server 为插件。"""
     from .plugins import PluginLoader
@@ -1926,13 +1943,26 @@ def push_send(title: str, message: str, provider: str, url: str, token: str, sou
     """发送移动推送通知。"""
     from .notification import push as do_push
 
-    result = asyncio.run(do_push(title, message, provider=provider, url=url, token=token, sound=sound, priority=priority, group=group))
+    result = asyncio.run(
+        do_push(title, message, provider=provider, url=url, token=token, sound=sound, priority=priority, group=group)
+    )
     if result.success:
         tag = " (降级本地)" if result.degraded else ""
         console.print_success(f"✅ 推送成功 via {result.provider}{tag}")
     else:
         console.print_error(f"❌ 推送失败: {result.error}")
-    click.echo(json.dumps({"success": result.success, "provider": result.provider, "degraded": result.degraded, "response": result.response}, indent=2, ensure_ascii=False))
+    click.echo(
+        json.dumps(
+            {
+                "success": result.success,
+                "provider": result.provider,
+                "degraded": result.degraded,
+                "response": result.response,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
 
 
 @push.command("config")
@@ -2059,9 +2089,7 @@ def review_run(paths, model: str, lens, use_diff: bool, output: str):
 
     lenses = list(lens) if lens else None
     console.print_header(f"🔎 UltraReview: {len(targets)} 个目标")
-    report = asyncio.run(
-        run_ultra_review(targets, model=model, mlx_client=_get_mlx_client(), lenses=lenses)
-    )
+    report = asyncio.run(run_ultra_review(targets, model=model, mlx_client=_get_mlx_client(), lenses=lenses))
     if report.error and not report.files_reviewed:
         console.print_error(f"❌ 审查失败: {report.error}")
         return
@@ -2094,6 +2122,116 @@ def _format_review_report(report) -> str:
     lines.append("")
     lines.append(report.summary)
     return "\n".join(lines)
+
+
+# ── Schema 结构化输出命令 ──
+
+
+@cli.group("agent-loop")
+def agent_loop():
+    """交互式对话 Agent Loop — 白话自主拆解多步, 逐步观察决策行动。"""
+    pass
+
+
+@agent_loop.command("run")
+@click.argument("prompt")
+@click.option("--model", "-m", default="", help="fusion-mlx 模型 (空则自动)")
+@click.option("--max-steps", default=20, help="最大循环步数")
+def agent_loop_run(prompt: str, model: str, max_steps: int):
+    """运行交互式 agent loop (单轮)。"""
+    from .agent_loop import AgentLoop
+    from .nodes import import_all_nodes
+
+    import_all_nodes()
+
+    loop = AgentLoop(mlx_client=_get_mlx_client(), model=model, max_steps=max_steps, on_turn=_print_agent_turn)
+    console.print_header(f"🤖 Agent Loop (max {max_steps} 步)")
+    result = asyncio.run(loop.run(prompt))
+    if result.degraded:
+        console.print_warning("⚠️  LLM 不可用, 降级模式")
+    if result.interrupted:
+        console.print_warning("⚠️  被用户叫停")
+    console.print_info(f"完成={result.completed} 步数={len(result.turns)}")
+
+
+def _print_agent_turn(turn):
+    if turn.role == "user" and turn.content.startswith("[补充]"):
+        console.print_info(turn.content)
+        return
+    if turn.role == "user":
+        return
+    if turn.action is None:
+        console.print_info(turn.content)
+        return
+    console.print_info(f"[{turn.action.type}] {turn.action.message}")
+    if turn.action.node:
+        click.echo(f"    节点: {turn.action.node} | 参数: {json.dumps(turn.action.params, ensure_ascii=False)}")
+    if turn.observation:
+        click.echo(f"    观察: {turn.observation[:200]}")
+
+
+@agent_loop.command("chat")
+@click.option("--model", "-m", default="", help="fusion-mlx 模型 (空则自动)")
+@click.option("--max-steps", default=20, help="单轮最大循环步数")
+def agent_loop_chat(model: str, max_steps: int):
+    """交互式多轮对话 agent loop (REPL, 输入 quit 退出)。"""
+    from .agent_loop import AgentLoop
+    from .nodes import import_all_nodes
+
+    import_all_nodes()
+
+    loop = AgentLoop(mlx_client=_get_mlx_client(), model=model, max_steps=max_steps, on_turn=_print_agent_turn)
+    console.print_header("🤖 Agent Loop 对话模式 (输入 quit 退出, stop 叫停当前轮)")
+    while True:
+        try:
+            line = input("你> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            click.echo("\n再见")
+            break
+        if not line:
+            continue
+        if line.lower() == "quit":
+            click.echo("再见")
+            break
+        if line.lower() == "stop":
+            loop.interrupt()
+            continue
+        result = asyncio.run(loop.run(line))
+        if result.degraded:
+            console.print_warning("⚠️  LLM 不可用, 降级模式")
+        console.print_info(f"  完成={result.completed} 步数={len(result.turns)}")
+
+
+# ── Schema 结构化输出命令 ──
+
+
+@cli.group("collab")
+def collab():
+    """协作层 WebSocket 双向通道 — 实时聊天/光标/presence。"""
+    pass
+
+
+@collab.command("serve")
+@click.option("--host", default="127.0.0.1", help="监听地址")
+@click.option("--port", default=11439, help="监听端口")
+def collab_serve(host: str, port: int):
+    """启动协作 WS 服务 (阻塞)。"""
+    from .server.collab_ws import CollabHub
+
+    async def _run():
+        hub = CollabHub()
+        server = await hub.serve_ws(host=host, port=port)
+        console.print_success(f"✅ 协作 WS 服务: ws://{host}:{port} (Ctrl+C 退出)")
+        try:
+            await asyncio.Future()
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        click.echo("\n停止")
 
 
 # ── Schema 结构化输出命令 ──
