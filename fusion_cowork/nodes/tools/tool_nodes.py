@@ -175,6 +175,17 @@ class ShellExecNode(BaseNode):
         capture = params.get("capture_output", True)
         use_shell = params.get("shell", True)
 
+        from ...security import get_scoped_folder_manager
+
+        scope = get_scoped_folder_manager()
+        if workdir and not scope.ensure_allowed(workdir):
+            logger.warning(f"ShellExec workdir 越界被沙箱拒绝: {workdir}")
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"沙箱拒绝越界工作目录: {workdir}",
+                summary="沙箱拦截 workdir",
+            )
+
         try:
             proc = await asyncio.create_subprocess_shell(
                 command if use_shell else shlex.split(command),
@@ -734,3 +745,282 @@ class ApplyEditNode(BaseNode):
                 error=f"编辑失败: {e}",
                 summary="编辑失败",
             )
+
+
+@register_node
+class WorktreeNode(BaseNode):
+    """Git Worktree 隔离节点 — P2-1。
+
+    在独立 git worktree 中执行命令, 不污染主工作区。
+    支持 create/exec/remove 三种 action。
+    """
+
+    name = "worktree"
+    display_name = "Worktree 隔离"
+    category = NodeCategory.TOOL
+    description = "git worktree 隔离工作树: 创建/执行/删除"
+    icon = "🌿"
+    default_label = "Worktree"
+
+    inputs = [
+        {"key": "command", "label": "命令", "type": "string"},
+    ]
+    outputs = [
+        {"key": "result", "label": "结果", "type": "object"},
+    ]
+
+    def get_params_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["create", "exec", "remove", "list"],
+                    "description": "操作类型",
+                    "default": "exec",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "worktree 名称",
+                },
+                "branch": {
+                    "type": "string",
+                    "description": "checkout 已有分支 (空则新建 worktree/<name>)",
+                    "default": "",
+                },
+                "command": {
+                    "type": "string",
+                    "description": "exec 动作: 在 worktree 内执行的命令",
+                    "default": "",
+                },
+                "repo_root": {
+                    "type": "string",
+                    "description": "git 仓库根 (空则自动检测)",
+                    "default": "",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "exec 超时 (秒)",
+                    "default": 30,
+                },
+            },
+            "required": ["action", "name"],
+        }
+
+    async def execute(self, inputs: Dict[str, Any]) -> NodeResult:
+        from ...utils.worktree import WorktreeManager
+
+        params = self.config.params
+        schema = self.get_params_schema()
+        params = coerce_params(params, schema)
+
+        action = params.get("action", "exec")
+        name = inputs.get("name", params.get("name", ""))
+        repo_root = params.get("repo_root", "")
+        mgr = WorktreeManager(repo_root=repo_root)
+
+        if action == "create":
+            if not name:
+                return NodeResult(status=NodeStatus.FAILED, error="缺少 worktree name", summary="参数缺失")
+            wt = mgr.create(name, branch=params.get("branch", ""))
+            if not wt:
+                return NodeResult(status=NodeStatus.FAILED, error="worktree 创建失败", summary="创建失败")
+            return NodeResult(
+                status=NodeStatus.SUCCESS,
+                data=wt.to_dict(),
+                summary=f"worktree 已创建: {name} ({wt.branch})",
+            )
+        elif action == "list":
+            wts = mgr.list_worktrees()
+            return NodeResult(
+                status=NodeStatus.SUCCESS,
+                data={"worktrees": [w.to_dict() for w in wts], "count": len(wts)},
+                summary=f"共 {len(wts)} 个 worktree",
+            )
+        elif action == "remove":
+            if not name:
+                return NodeResult(status=NodeStatus.FAILED, error="缺少 worktree name", summary="参数缺失")
+            if not mgr.get(name):
+                for w in mgr.list_worktrees():
+                    if Path(w.path).name == name:
+                        mgr._worktrees[name] = w
+                        break
+            ok = mgr.remove(name, force=True)
+            return NodeResult(
+                status=NodeStatus.SUCCESS if ok else NodeStatus.FAILED,
+                data={"removed": ok, "name": name},
+                summary=f"worktree 删除: {name} ({'成功' if ok else '失败'})",
+            )
+        elif action == "exec":
+            if not name:
+                return NodeResult(status=NodeStatus.FAILED, error="缺少 worktree name", summary="参数缺失")
+            # 若未登记则尝试登记现有 worktree (按名称匹配路径末段)
+            if not mgr.get(name):
+                for w in mgr.list_worktrees():
+                    if Path(w.path).name == name:
+                        mgr._worktrees[name] = w
+                        break
+            command = inputs.get("command", params.get("command", ""))
+            if not command:
+                return NodeResult(status=NodeStatus.FAILED, error="缺少 command", summary="参数缺失")
+            result = await mgr.exec_in(name, command, timeout=params.get("timeout", 30))
+            if "error" in result:
+                return NodeResult(status=NodeStatus.FAILED, error=result["error"], data=result, summary="执行失败")
+            return NodeResult(
+                status=NodeStatus.SUCCESS if result.get("return_code", 1) == 0 else NodeStatus.FAILED,
+                data=result,
+                summary=f"worktree exec rc={result.get('return_code')}",
+            )
+        return NodeResult(status=NodeStatus.FAILED, error=f"未知 action: {action}", summary="参数错误")
+
+
+@register_node
+class LSPNode(BaseNode):
+    """LSP 代码智能节点 — P2-3。
+
+    经 LSP 客户端查询 definition/references/hover/completion。
+    """
+
+    name = "lsp"
+    display_name = "LSP 代码智能"
+    category = NodeCategory.TOOL
+    description = "LSP 查询: 定义/引用/悬停/补全"
+    icon = "🔍"
+    default_label = "LSP 查询"
+
+    inputs = [
+        {"key": "path", "label": "文件路径", "type": "string"},
+        {"key": "line", "label": "行 (0-based)", "type": "integer"},
+        {"key": "character", "label": "列 (0-based)", "type": "integer"},
+    ]
+    outputs = [
+        {"key": "result", "label": "结果", "type": "object"},
+    ]
+
+    def get_params_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["definition", "references", "hover", "completion"],
+                    "description": "查询类型",
+                    "default": "hover",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "目标文件绝对路径",
+                },
+                "line": {
+                    "type": "integer",
+                    "description": "行 (0-based)",
+                    "default": 0,
+                },
+                "character": {
+                    "type": "integer",
+                    "description": "列 (0-based)",
+                    "default": 0,
+                },
+                "root": {
+                    "type": "string",
+                    "description": "LSP workspace 根 (空则取文件所在目录)",
+                    "default": "",
+                },
+            },
+            "required": ["action", "path"],
+        }
+
+    async def execute(self, inputs: Dict[str, Any]) -> NodeResult:
+        from ...code import query as lsp_query
+
+        params = self.config.params
+        schema = self.get_params_schema()
+        params = coerce_params(params, schema)
+
+        action = params.get("action", "hover")
+        path = inputs.get("path", params.get("path", ""))
+        if not path:
+            return NodeResult(status=NodeStatus.FAILED, error="缺少 path", summary="参数缺失")
+        line = int(inputs.get("line", params.get("line", 0)))
+        character = int(inputs.get("character", params.get("character", 0)))
+        root = params.get("root", "")
+        result = await lsp_query(action, path, line, character, root=root)
+        if "error" in result:
+            return NodeResult(status=NodeStatus.FAILED, error=result["error"], data=result, summary="LSP 查询失败")
+        return NodeResult(status=NodeStatus.SUCCESS, data=result, summary=f"LSP {action} OK")
+
+
+@register_node
+class PushNode(BaseNode):
+    """移动推送通知节点 — P2-5。
+
+    跨平台移动推送 (Bark/ntfy), 未配置时降级本地 macOS 通知。
+    """
+
+    name = "push"
+    display_name = "移动推送"
+    category = NodeCategory.TOOL
+    description = "移动推送通知 (Bark/ntfy/本地降级)"
+    icon = "📱"
+    default_label = "移动推送"
+
+    inputs = [
+        {"key": "title", "label": "标题", "type": "string"},
+        {"key": "message", "label": "内容", "type": "string"},
+    ]
+    outputs = [
+        {"key": "result", "label": "推送结果", "type": "object"},
+    ]
+
+    def get_params_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "type": "string",
+                    "enum": ["auto", "bark", "ntfy", "local"],
+                    "default": "auto",
+                    "description": "推送渠道 (auto 按 url 自动判定)",
+                },
+                "url": {"type": "string", "default": "", "description": "Bark/ntfy server URL"},
+                "token": {"type": "string", "default": "", "description": "Bark device key / ntfy topic"},
+                "sound": {"type": "string", "default": "", "description": "提示音 (Bark)"},
+                "priority": {"type": "string", "default": "", "description": "优先级 (ntfy: 1-5)"},
+                "group": {"type": "string", "default": "", "description": "分组"},
+            },
+        }
+
+    async def execute(self, inputs: Dict[str, Any]) -> NodeResult:
+        from ...notification import push as push_send
+
+        params = self.config.params
+        schema = self.get_params_schema()
+        params = coerce_params(params, schema)
+
+        title = inputs.get("title", "Fusion-Cowork")
+        message = inputs.get("message", "")
+        if not message:
+            return NodeResult(status=NodeStatus.FAILED, error="推送内容不能为空", summary="未指定内容")
+
+        result = await push_send(
+            title,
+            message,
+            provider=params.get("provider", "auto"),
+            url=params.get("url", ""),
+            token=params.get("token", ""),
+            sound=params.get("sound", ""),
+            priority=params.get("priority", ""),
+            group=params.get("group", ""),
+        )
+        data = {
+            "success": result.success,
+            "provider": result.provider,
+            "degraded": result.degraded,
+            "response": result.response,
+            "error": result.error,
+        }
+        if result.success:
+            tag = " (降级本地)" if result.degraded else ""
+            return NodeResult(status=NodeStatus.SUCCESS, data=data, summary=f"推送成功 via {result.provider}{tag}")
+        return NodeResult(status=NodeStatus.FAILED, error=result.error, data=data, summary="推送失败")
+

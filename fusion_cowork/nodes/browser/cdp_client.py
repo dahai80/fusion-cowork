@@ -261,3 +261,133 @@ class CDPClient:
         await self.enable_console()
         await asyncio.sleep(0.1)
         return list(self._console_buffer)
+
+    async def list_pages(self) -> List[Dict[str, Any]]:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"http://{self.host}:{self.port}/json")
+            resp.raise_for_status()
+            targets = resp.json()
+        pages = [t for t in targets if t.get("type") == "page"]
+        logger.info(f"CDP 页面列表: {len(pages)} 个")
+        return pages
+
+    async def new_page(self, url: str = "about:blank") -> Dict[str, Any]:
+        async with httpx.AsyncClient() as client:
+            resp = await client.put(f"http://{self.host}:{self.port}/json/new?{url}")
+            resp.raise_for_status()
+            target = resp.json()
+        logger.info(f"CDP 新页面: {target.get('id', '?')} -> {url}")
+        return target
+
+    async def close_page(self, target_id: str) -> bool:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"http://{self.host}:{self.port}/json/close/{target_id}")
+            ok = resp.status_code == 200
+        logger.info(f"CDP 关闭页面: {target_id} ok={ok}")
+        return ok
+
+    async def select_page(self, target_id: str) -> None:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"http://{self.host}:{self.port}/json")
+            resp.raise_for_status()
+            targets = resp.json()
+        target = next((t for t in targets if t.get("id") == target_id), None)
+        if not target:
+            raise RuntimeError(f"页面不存在: {target_id}")
+        ws_url = target.get("webSocketDebuggerUrl")
+        if not ws_url:
+            raise RuntimeError("无法获取目标 WebSocket URL")
+        if self._ws:
+            await self._ws.close()
+            self._ws = None
+        self._ws = await websockets.connect(ws_url, max_size=10 * 1024 * 1024)
+        logger.info(f"CDP 切换页面: {target_id}")
+
+    async def resize_page(self, width: int, height: int) -> None:
+        await self.send("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False})
+        logger.info(f"CDP 调整窗口: {width}x{height}")
+
+    async def mouse_move(self, x: float, y: float) -> None:
+        await self.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y})
+        logger.info(f"CDP 鼠标移动: x={x:.0f}, y={y:.0f}")
+
+    async def hover(self, backend_node_id: int) -> bool:
+        try:
+            resolve = await self.send("DOM.resolveNode", {"backendNodeId": backend_node_id})
+            obj_id = resolve.get("result", {}).get("object", {}).get("objectId")
+            if not obj_id:
+                return False
+            box = await self.send("DOM.getBoxModel", {"objectId": obj_id})
+            content = box.get("result", {}).get("model", {}).get("content", [])
+            if len(content) < 8:
+                return False
+            x = (content[0] + content[2] + content[4] + content[6]) / 4
+            y = (content[1] + content[3] + content[5] + content[7]) / 4
+            await self.mouse_move(x, y)
+            logger.info(f"CDP 悬停: node={backend_node_id}")
+            return True
+        except Exception as e:
+            logger.error(f"CDP 悬停失败: {e}")
+            return False
+
+    async def drag(self, start_x: float, start_y: float, end_x: float, end_y: float) -> None:
+        for kind in ("mousePressed", "mouseMoved", "mouseReleased"):
+            await self.send("Input.dispatchMouseEvent", {"type": kind, "x": start_x if kind == "mousePressed" else end_x, "y": start_y if kind == "mousePressed" else end_y, "button": "left", "clickCount": 1})
+        logger.info(f"CDP 拖拽: ({start_x:.0f},{start_y:.0f}) -> ({end_x:.0f},{end_y:.0f})")
+
+    async def type_text(self, text: str) -> None:
+        await self.send("Input.insertText", {"text": text})
+        logger.info(f"CDP 输入文本: {text[:30]}")
+
+    async def press_key(self, key: str) -> None:
+        await self.send("Input.dispatchKeyEvent", {"type": "keyDown", "key": key})
+        await self.send("Input.dispatchKeyEvent", {"type": "keyUp", "key": key})
+        logger.info(f"CDP 按键: {key}")
+
+    async def wait_for_function(self, expression: str, timeout: float = 30.0, polling: int = 500) -> Dict[str, Any]:
+        await self.send("Runtime.enable")
+        result = await self.send("Runtime.evaluate", {"expression": f"new Promise((resolve)=>{{const t=setInterval(()=>{{try{{if({expression}){{clearInterval(t);resolve(true);}}}}catch(e){{}}}}, {polling});setTimeout(()=>{{clearInterval(t);resolve(false);}}, {int(timeout*1000)});}})", "awaitPromise": True, "returnByValue": True}, timeout=timeout)
+        value = result.get("result", {}).get("result", {}).get("value", False)
+        logger.info(f"CDP 等待条件: ok={value}")
+        return {"success": bool(value)}
+
+    async def handle_dialog(self, accept: bool = True, prompt_text: str = "") -> None:
+        await self.send("Page.handleJavaScriptDialog", {"accept": accept, "promptText": prompt_text})
+        logger.info(f"CDP 处理对话框: accept={accept}")
+
+    async def upload_file(self, selector: str, file_path: str) -> bool:
+        try:
+            doc = await self.send("DOM.getDocument")
+            root_id = doc.get("result", {}).get("root", {}).get("nodeId", 0)
+            query = await self.send("DOM.querySelector", {"nodeId": root_id, "selector": selector})
+            node_id = query.get("result", {}).get("nodeId", 0)
+            if node_id == 0:
+                return False
+            await self.send("DOM.setFileInputFiles", {"nodeId": node_id, "files": [file_path]})
+            logger.info(f"CDP 上传文件: {file_path} -> {selector}")
+            return True
+        except Exception as e:
+            logger.error(f"CDP 上传失败: {e}")
+            return False
+
+    async def take_heapsnapshot(self) -> str:
+        result = await self.send("HeapProfiler.takeHeapSnapshot", {"reportProgress": False})
+        logger.info("CDP 堆快照已采集")
+        return json.dumps(result.get("result", {}))
+
+    async def performance_trace_start(self, categories: str = "blink,devtools,cc,gpu,v8") -> None:
+        await self.send("Performance.enable")
+        await self.send("Tracing.start", {"traceConfig": {"includedCategories": categories.split(","), "excludedCategories": []}})
+        logger.info(f"CDP 性能追踪启动: {categories}")
+
+    async def performance_trace_stop(self) -> Dict[str, Any]:
+        await self.send("Tracing.end")
+        metrics = await self.send("Performance.getMetrics")
+        logger.info("CDP 性能追踪停止")
+        return metrics.get("result", {})
+
+    async def lighthouse_audit(self) -> Dict[str, Any]:
+        logger.warning("CDP lighthouse 非 CDP 原生能力 — 返回性能指标替代 (需独立 lighthouse 进程)")
+        await self.send("Performance.enable")
+        metrics = await self.send("Performance.getMetrics")
+        return metrics.get("result", {})

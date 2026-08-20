@@ -4,6 +4,7 @@ import importlib
 import importlib.util
 import logging
 import shutil
+import sys
 import zipfile
 from pathlib import Path
 from typing import Dict, List
@@ -55,6 +56,31 @@ class PluginLoader:
             logger.error(f"插件入口文件不存在: {entry_file}")
             return []
 
+        if manifest.sandbox:
+            import asyncio as _asyncio
+
+            from .sandbox import PluginSandbox, SandboxStatus
+
+            sandbox = PluginSandbox()
+            logger.info(f"插件 {name} 标记 sandbox=true，执行预检 (rlimit 子进程)")
+            try:
+                loop = _asyncio.new_event_loop()
+                pre = loop.run_until_complete(
+                    sandbox.execute(
+                        plugin_name=name,
+                        command=sys.executable,
+                        args=[str(entry_file)],
+                    )
+                )
+                loop.close()
+            except Exception as pe:
+                logger.error(f"插件 {name} 沙箱预检异常: {pe}")
+                return []
+            if pre.status != SandboxStatus.STOPPED:
+                logger.error(f"插件 {name} 沙箱预检失败: status={pre.status} exit={pre.exit_code} err={pre.error}")
+                return []
+            logger.info(f"插件 {name} 沙箱预检通过")
+
         module_name = f"fusion_cowork_plugin_{name}"
         try:
             spec = importlib.util.spec_from_file_location(module_name, str(entry_file))
@@ -105,6 +131,8 @@ class PluginLoader:
         return True
 
     def install(self, path: str) -> bool:
+        if path.startswith("http://") or path.startswith("https://"):
+            return self._install_url(path)
         src = Path(path).expanduser().resolve()
         if not src.exists():
             logger.error(f"安装源不存在: {path}")
@@ -116,6 +144,36 @@ class PluginLoader:
             return self._install_dir(src)
         else:
             logger.error(f"不支持的安装源类型: {path}")
+            return False
+
+    def _install_url(self, url: str) -> bool:
+        import tempfile
+
+        try:
+            import httpx
+        except ImportError:
+            logger.error("安装 URL 插件需要 httpx (pip install httpx)")
+            return False
+        try:
+            logger.info(f"从 URL 下载插件: {url}")
+            with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+                resp = client.get(url)
+                resp.raise_for_status()
+            if not url.lower().endswith(".zip"):
+                logger.error(f"URL 插件仅支持 .zip: {url}")
+                return False
+            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+                tmp.write(resp.content)
+                tmp_path = Path(tmp.name)
+            try:
+                return self._install_zip(tmp_path)
+            finally:
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
+        except Exception as e:
+            logger.error(f"URL 插件安装失败: {e}")
             return False
 
     def _install_zip(self, zip_path: Path) -> bool:
@@ -174,3 +232,53 @@ class PluginLoader:
 
     def is_loaded(self, name: str) -> bool:
         return name in self._loaded
+
+    def import_from_claude_desktop(self, config_path: str = "") -> List[str]:
+        """从 Claude Desktop 配置导入 MCP server — P2-8。
+
+        读取 claude_desktop_config.json 的 mcpServers, 每个 server 写为 cowork 插件
+        manifest (external MCP server, 不加载节点, 记录 command/args/env 供 MCP client 调用)。
+        返回导入的插件名列表。
+        """
+        import json
+        import os
+
+        if not config_path:
+            config_path = os.path.expanduser("~/Library/Application Support/Claude/claude_desktop_config.json")
+        cfg = Path(config_path)
+        if not cfg.exists():
+            logger.warning(f"Claude Desktop 配置不存在: {cfg}")
+            return []
+        try:
+            data = json.loads(cfg.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            logger.error(f"Claude Desktop 配置解析失败: {e}")
+            return []
+        servers = data.get("mcpServers", {})
+        if not servers:
+            logger.info("Claude Desktop 配置无 mcpServers")
+            return []
+        imported = []
+        for name, spec in servers.items():
+            spec = spec or {}
+            manifest = PluginManifest(
+                name=f"mcp_{name}",
+                version="0.1.0",
+                description=f"Imported from Claude Desktop: {name}",
+                author="claude-desktop-import",
+                nodes=[],
+                dependencies=[],
+                entry_point="external_mcp",
+                sandbox=False,
+            )
+            target = self._plugins_dir / manifest.name
+            target.mkdir(parents=True, exist_ok=True)
+            (target / "manifest.json").write_text(json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+            # 记录 MCP server spec 供运行时 MCP client 拉起
+            (target / "mcp_server.json").write_text(
+                json.dumps({"command": spec.get("command", ""), "args": spec.get("args", []), "env": spec.get("env", {})}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            imported.append(manifest.name)
+            logger.info(f"已从 Claude Desktop 导入 MCP server: {name} -> {manifest.name}")
+        return imported

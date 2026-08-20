@@ -390,6 +390,23 @@ class MCPServer:
             logger.error("HTTP 模式需要 [web] 依赖: pip install fusion-cowork[web]")
             raise
 
+    async def serve_streamable_http(self, event_emitter=None) -> None:
+        """启动 Streamable HTTP 传输 (MCP 2025-03-26, 需 [web] 依赖)。"""
+        self._registry.register_tools()
+        try:
+            from .mcp_http import create_streamable_app
+
+            app = create_streamable_app(self._registry, event_emitter=event_emitter)
+            import uvicorn
+
+            logger.info(f"MCP 服务器启动 (Streamable HTTP 模式): {self.host}:{self.port}")
+            config = uvicorn.Config(app, host=self.host, port=self.port, log_level="info")
+            server = uvicorn.Server(config)
+            await server.serve()
+        except ImportError:
+            logger.error("Streamable HTTP 模式需要 [web] 依赖: pip install fusion-cowork[web]")
+            raise
+
     async def start(self) -> None:
         """兼容旧接口 — 默认启动 stdio 模式。"""
         await self.serve_stdio()

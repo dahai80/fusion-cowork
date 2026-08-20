@@ -201,6 +201,33 @@ class SessionStore:
             logger.debug(f"Session 删除: {session_id}")
         return deleted
 
+    def resume(self, session_id: str) -> Optional[Dict[str, Any]]:
+        session = self.get(session_id)
+        if not session:
+            logger.warning(f"resume 失败: 会话不存在 {session_id}")
+            return None
+        if session.status in ("completed", "cancelled"):
+            logger.info(f"resume: 会话已终态 ({session.status}), 返回快照供重放")
+        logger.info(f"Session resume: {session_id} status={session.status} steps={len(session.steps_snapshot)}")
+        return {
+            "session": self.to_dict(session),
+            "workflow_id": session.workflow_id,
+            "workflow_name": session.workflow_name,
+            "initial_input": session.initial_input,
+            "steps_snapshot": session.steps_snapshot,
+            "execution_id": session.execution_id,
+        }
+
+    def list_resumable(self, limit: int = 20) -> List[Session]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM sessions WHERE status IN ('paused','failed','running') "
+                "ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        logger.info(f"list_resumable: {len(rows)} 条可恢复会话")
+        return [self._row_to_session(r) for r in rows]
+
     def cleanup_expired(self, expire_days: int = SESSION_EXPIRE_DAYS) -> int:
         cutoff = time.time() - expire_days * 86400
         with self._connect() as conn:

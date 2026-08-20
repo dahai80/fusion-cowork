@@ -83,6 +83,8 @@ class CrossDeviceSync:
         self._message_handlers: Dict[str, List[Callable]] = {}
         self._running = False
         self._server: Optional[asyncio.AbstractServer] = None
+        self._ws_server = None
+        self._ws_clients: set = set()
 
     def register_device(self, device: Device) -> None:
         """注册设备。"""
@@ -229,13 +231,57 @@ class CrossDeviceSync:
     # ── 生命周期 ──
 
     async def start(self) -> None:
-        """启动同步服务。"""
+        """启动同步服务 — 监听 WebSocket 接收入站连接。"""
         self._running = True
         logger.info(f"跨设备同步启动: {self.host}:{self.port}")
+        try:
+            import websockets
+
+            async def _ws_handler(websocket):
+                self._ws_clients.add(websocket)
+                remote = websocket.remote_address if hasattr(websocket, "remote_address") else "?"
+                logger.info(f"WS 设备连入: {remote}")
+                try:
+                    async for raw in websocket:
+                        try:
+                            data = json.loads(raw)
+                            msg = SyncMessage(
+                                msg_id=data.get("msg_id", f"msg_{uuid.uuid4().hex[:8]}"),
+                                msg_type=data.get("msg_type", "unknown"),
+                                sender=data.get("sender", "remote"),
+                                receiver=data.get("receiver", self.device_id),
+                                payload=data.get("payload", {}),
+                                timestamp=data.get("timestamp", time.time()),
+                            )
+                            handlers = self._message_handlers.get(msg.msg_type, [])
+                            for h in handlers:
+                                try:
+                                    res = h(msg)
+                                    if asyncio.iscoroutine(res):
+                                        await res
+                                except Exception as he:
+                                    logger.error(f"WS 消息处理器异常: {he}")
+                        except (json.JSONDecodeError, KeyError) as je:
+                            logger.warning(f"WS 消息解析失败: {je}")
+                except Exception as e:
+                    logger.debug(f"WS 连接结束: {e}")
+                finally:
+                    self._ws_clients.discard(websocket)
+
+            self._ws_server = await websockets.serve(_ws_handler, self.host, self.port)
+            logger.info(f"WebSocket 同步服务监听: ws://{self.host}:{self.port}")
+        except ImportError:
+            logger.warning("websockets 库未安装 (pip install websockets), WS 入站监听降级关闭")
+        except OSError as oe:
+            logger.error(f"WebSocket 监听启动失败: {oe}")
 
     async def stop(self) -> None:
         """停止同步服务。"""
         self._running = False
+        if self._ws_server:
+            self._ws_server.close()
+            await self._ws_server.wait_closed()
+            self._ws_server = None
         if self._server:
             self._server.close()
             await self._server.wait_closed()

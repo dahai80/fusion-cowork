@@ -373,7 +373,7 @@ class NodeRegistry:
             target_name: 目标节点名称
         """
         if target_name not in cls._registry:
-            logger.warning(f"别名 '{alias}' → '{target_name}' 目标节点未注册")
+            logger.debug(f"别名 '{alias}' → '{target_name}' 目标节点未注册 (节点导入后自动解析)")
         cls._name_aliases[alias] = target_name
         logger.debug(f"注册别名: {alias} → {target_name}")
 

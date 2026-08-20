@@ -1154,8 +1154,16 @@ class FileDeleteNode(BaseNode):
         dry_run = params.get("dry_run", True)
 
         deleted = []
+        from ...security import get_scoped_folder_manager
+
+        scope = get_scoped_folder_manager()
         for f in files:
             path = Path(f) if isinstance(f, str) else Path(f.get("path", ""))
+            if not scope.ensure_allowed(path):
+                return NodeResult(
+                    status=NodeStatus.FAILED,
+                    error=f"沙箱拒绝越界删除: {path}",
+                )
             if not path.exists():
                 continue
 

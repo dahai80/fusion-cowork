@@ -77,11 +77,12 @@ CREATE TABLE IF NOT EXISTS space_messages (
 
 CREATE TABLE IF NOT EXISTS space_comments (
     id TEXT PRIMARY KEY,
-    space_id TEXT NOT NULL,
-    target_type TEXT NOT NULL DEFAULT '',
-    target_id TEXT NOT NULL DEFAULT '',
-    user_id TEXT NOT NULL DEFAULT '',
+    space_id TEXT NOT NULL DEFAULT '',
+    message_id TEXT NOT NULL DEFAULT '',
+    author_id TEXT NOT NULL DEFAULT '',
+    author_name TEXT NOT NULL DEFAULT '',
     content TEXT NOT NULL DEFAULT '',
+    thread_id TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
 
@@ -597,18 +598,26 @@ class SpaceStore:
 
     # ── Comment CRUD ──
 
-    async def add_comment(self, message_id: str, author_id: str, author_name: str, content: str) -> str:
+    async def add_comment(
+        self,
+        message_id: str,
+        author_id: str,
+        author_name: str,
+        content: str,
+        space_id: str = "",
+        thread_id: str = "",
+    ) -> str:
         import uuid
 
         comment_id = f"cmt_{uuid.uuid4().hex[:8]}"
         db = await self._ensure_db()
         await db.execute(
-            "INSERT INTO space_comments (id, message_id, author_id, author_name, "
-            "content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (comment_id, message_id, author_id, author_name, content, datetime.now().isoformat()),
+            "INSERT INTO space_comments (id, space_id, message_id, author_id, author_name, "
+            "content, thread_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (comment_id, space_id, message_id, author_id, author_name, content, thread_id, datetime.now().isoformat()),
         )
         await db.commit()
-        logger.info(f"SpaceStore.add_comment id={comment_id}")
+        logger.info(f"SpaceStore.add_comment id={comment_id} thread={thread_id or '-'}")
         return comment_id
 
     async def list_comments(self, message_id: str) -> List[Dict[str, Any]]:
