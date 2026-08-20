@@ -38,7 +38,9 @@ class BudgetTracker:
 
     _lock = threading.Lock()
 
-    def __init__(self, max_budget_usd: float = 0.0, enforce: bool = False, pricing: Optional[Dict[str, Dict[str, float]]] = None):
+    def __init__(
+        self, max_budget_usd: float = 0.0, enforce: bool = False, pricing: Optional[Dict[str, Dict[str, float]]] = None
+    ):
         self._max_budget_usd = float(max_budget_usd)
         self._enforce = enforce and self._max_budget_usd > 0
         self._pricing = pricing or _DEFAULT_PRICING
@@ -70,7 +72,9 @@ class BudgetTracker:
         completion_t = int(usage.get("completion_tokens", 0))
         total_t = int(usage.get("total_tokens", prompt_t + completion_t))
         price = self._pricing.get(model, self._pricing["default"])
-        cost = (prompt_t / 1_000_000.0) * price.get("input", 0.0) + (completion_t / 1_000_000.0) * price.get("output", 0.0)
+        cost = (prompt_t / 1_000_000.0) * price.get("input", 0.0) + (completion_t / 1_000_000.0) * price.get(
+            "output", 0.0
+        )
         with self._lock:
             self._record.prompt_tokens += prompt_t
             self._record.completion_tokens += completion_t
@@ -79,9 +83,13 @@ class BudgetTracker:
             self._record.calls += 1
             over = self._enforce and self._record.cost_usd >= self._max_budget_usd
         if over:
-            logger.warning(f"预算超限: ${self._record.cost_usd:.6f} >= ${self._max_budget_usd:.4f} (calls={self._record.calls})")
+            logger.warning(
+                f"预算超限: ${self._record.cost_usd:.6f} >= ${self._max_budget_usd:.4f} (calls={self._record.calls})"
+            )
             return False
-        logger.debug(f"预算记账: +{total_t}t +${cost:.6f} (累计 ${self._record.cost_usd:.6f}/{self._max_budget_usd:.4f})")
+        logger.debug(
+            f"预算记账: +{total_t}t +${cost:.6f} (累计 ${self._record.cost_usd:.6f}/{self._max_budget_usd:.4f})"
+        )
         return True
 
     def to_dict(self) -> Dict:

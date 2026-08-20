@@ -172,9 +172,7 @@ async def dispatch_rpc(request: Dict[str, Any]) -> Dict[str, Any]:
             "id": request_id,
             "error": {
                 "code": -32603,
-                "message": (
-                    "plugins runtime 未安装: pip install fusion-plugins-ecosystem"
-                ),
+                "message": ("plugins runtime 未安装: pip install fusion-plugins-ecosystem"),
             },
         }
 

@@ -273,10 +273,16 @@ class PluginLoader:
             )
             target = self._plugins_dir / manifest.name
             target.mkdir(parents=True, exist_ok=True)
-            (target / "manifest.json").write_text(json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+            (target / "manifest.json").write_text(
+                json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+            )
             # 记录 MCP server spec 供运行时 MCP client 拉起
             (target / "mcp_server.json").write_text(
-                json.dumps({"command": spec.get("command", ""), "args": spec.get("args", []), "env": spec.get("env", {})}, ensure_ascii=False, indent=2),
+                json.dumps(
+                    {"command": spec.get("command", ""), "args": spec.get("args", []), "env": spec.get("env", {})},
+                    ensure_ascii=False,
+                    indent=2,
+                ),
                 encoding="utf-8",
             )
             imported.append(manifest.name)

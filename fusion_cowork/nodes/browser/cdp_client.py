@@ -304,7 +304,10 @@ class CDPClient:
         logger.info(f"CDP 切换页面: {target_id}")
 
     async def resize_page(self, width: int, height: int) -> None:
-        await self.send("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False})
+        await self.send(
+            "Emulation.setDeviceMetricsOverride",
+            {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False},
+        )
         logger.info(f"CDP 调整窗口: {width}x{height}")
 
     async def mouse_move(self, x: float, y: float) -> None:
@@ -332,7 +335,16 @@ class CDPClient:
 
     async def drag(self, start_x: float, start_y: float, end_x: float, end_y: float) -> None:
         for kind in ("mousePressed", "mouseMoved", "mouseReleased"):
-            await self.send("Input.dispatchMouseEvent", {"type": kind, "x": start_x if kind == "mousePressed" else end_x, "y": start_y if kind == "mousePressed" else end_y, "button": "left", "clickCount": 1})
+            await self.send(
+                "Input.dispatchMouseEvent",
+                {
+                    "type": kind,
+                    "x": start_x if kind == "mousePressed" else end_x,
+                    "y": start_y if kind == "mousePressed" else end_y,
+                    "button": "left",
+                    "clickCount": 1,
+                },
+            )
         logger.info(f"CDP 拖拽: ({start_x:.0f},{start_y:.0f}) -> ({end_x:.0f},{end_y:.0f})")
 
     async def type_text(self, text: str) -> None:
@@ -346,7 +358,15 @@ class CDPClient:
 
     async def wait_for_function(self, expression: str, timeout: float = 30.0, polling: int = 500) -> Dict[str, Any]:
         await self.send("Runtime.enable")
-        result = await self.send("Runtime.evaluate", {"expression": f"new Promise((resolve)=>{{const t=setInterval(()=>{{try{{if({expression}){{clearInterval(t);resolve(true);}}}}catch(e){{}}}}, {polling});setTimeout(()=>{{clearInterval(t);resolve(false);}}, {int(timeout*1000)});}})", "awaitPromise": True, "returnByValue": True}, timeout=timeout)
+        result = await self.send(
+            "Runtime.evaluate",
+            {
+                "expression": f"new Promise((resolve)=>{{const t=setInterval(()=>{{try{{if({expression}){{clearInterval(t);resolve(true);}}}}catch(e){{}}}}, {polling});setTimeout(()=>{{clearInterval(t);resolve(false);}}, {int(timeout * 1000)});}})",
+                "awaitPromise": True,
+                "returnByValue": True,
+            },
+            timeout=timeout,
+        )
         value = result.get("result", {}).get("result", {}).get("value", False)
         logger.info(f"CDP 等待条件: ok={value}")
         return {"success": bool(value)}
@@ -377,7 +397,9 @@ class CDPClient:
 
     async def performance_trace_start(self, categories: str = "blink,devtools,cc,gpu,v8") -> None:
         await self.send("Performance.enable")
-        await self.send("Tracing.start", {"traceConfig": {"includedCategories": categories.split(","), "excludedCategories": []}})
+        await self.send(
+            "Tracing.start", {"traceConfig": {"includedCategories": categories.split(","), "excludedCategories": []}}
+        )
         logger.info(f"CDP 性能追踪启动: {categories}")
 
     async def performance_trace_stop(self) -> Dict[str, Any]:

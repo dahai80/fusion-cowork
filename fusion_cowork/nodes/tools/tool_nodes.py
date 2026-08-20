@@ -1023,4 +1023,3 @@ class PushNode(BaseNode):
             tag = " (降级本地)" if result.degraded else ""
             return NodeResult(status=NodeStatus.SUCCESS, data=data, summary=f"推送成功 via {result.provider}{tag}")
         return NodeResult(status=NodeStatus.FAILED, error=result.error, data=data, summary="推送失败")
-

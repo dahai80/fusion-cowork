@@ -32,6 +32,7 @@ from .models import (
     SpaceStatus,
 )
 from .permission import SpacePermission
+from .presence import PresenceManager, PresenceState
 from .service import SpaceService
 from .shared_context import SharedContext, extract_shared_context, inject_shared_context
 from .store import SpaceStore
@@ -41,6 +42,8 @@ __all__ = [
     "ModuleRegistry",
     "NotificationService",
     "PeerInfo",
+    "PresenceManager",
+    "PresenceState",
     "SharedContext",
     "Space",
     "SpaceAgentRuntime",

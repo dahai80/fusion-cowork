@@ -28,7 +28,7 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 
 logger = logging.getLogger(__name__)
@@ -41,10 +41,15 @@ def create_space_api(
     kb_svc,
     event_emitter=None,
     agent_runtime=None,
+    presence_manager=None,
 ):
 
     app = FastAPI(title="Fusion-Cowork Space API", version="0.8.0")
     _event_emitter = event_emitter
+
+    from .presence import PresenceManager
+
+    _presence = presence_manager or PresenceManager(event_emitter=event_emitter)
 
     # ── Space CRUD ──
 
@@ -155,6 +160,40 @@ def create_space_api(
                     yield "event: ping\ndata: \n\n"
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    # ── Presence + Cursor ──
+
+    @app.post("/spaces/{space_id}/presence/heartbeat")
+    async def presence_heartbeat(space_id: str, request: Request):
+        body = await request.json()
+        st = _presence.heartbeat(
+            space_id,
+            body.get("user_id", ""),
+            display_name=body.get("display_name", ""),
+            extras=body.get("extras"),
+        )
+        return JSONResponse(st.to_dict())
+
+    @app.post("/spaces/{space_id}/presence/cursor")
+    async def presence_cursor(space_id: str, request: Request):
+        body = await request.json()
+        st = _presence.set_cursor(
+            space_id,
+            body.get("user_id", ""),
+            float(body.get("x", 0)),
+            float(body.get("y", 0)),
+            target=body.get("target", ""),
+        )
+        return JSONResponse(st.to_dict())
+
+    @app.get("/spaces/{space_id}/presence")
+    async def presence_list(space_id: str):
+        return JSONResponse([s.to_dict() for s in _presence.list_present(space_id)])
+
+    @app.delete("/spaces/{space_id}/presence/{user_id}")
+    async def presence_remove(space_id: str, user_id: str):
+        removed = _presence.remove(space_id, user_id)
+        return JSONResponse({"removed": removed})
 
     # ── Knowledge Base ──
 
@@ -281,5 +320,31 @@ def create_space_api(
     @app.get("/health")
     async def health():
         return {"status": "ok", "service": "fusion-cowork-space"}
+
+    # ── WebSocket 双向协作通道 ──
+
+    from ..server.collab_ws import CollabHub
+
+    _collab_hub = CollabHub(chat_svc=chat_svc, presence_manager=_presence)
+
+    @app.websocket("/spaces/{space_id}/ws")
+    async def collab_ws(websocket: WebSocket, space_id: str):
+        await websocket.accept()
+        try:
+            hello = await websocket.receive_json()
+            user_id = hello.get("user_id", "")
+            display_name = hello.get("display_name", "")
+            await _collab_hub.join(websocket, space_id, user_id, display_name=display_name)
+            await websocket.send_json({"type": "joined", "space_id": space_id, "user_id": user_id})
+            while True:
+                raw = await websocket.receive_text()
+                result = await _collab_hub.handle_message(websocket, raw)
+                if result is not None:
+                    await websocket.send_json(result)
+        except WebSocketDisconnect:
+            await _collab_hub.leave(websocket)
+        except Exception as e:
+            logger.warning(f"WS 异常: {e}")
+            await _collab_hub.leave(websocket)
 
     return app

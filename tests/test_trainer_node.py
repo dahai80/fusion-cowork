@@ -102,9 +102,7 @@ async def test_missing_model_fails():
 async def test_unsupported_method_fails():
     node = TrainerNode(
         node_id="t1",
-        config=NodeConfig(
-            params={"dataset": "/d.jsonl", "model": "m", "method": "dpo"}
-        ),
+        config=NodeConfig(params={"dataset": "/d.jsonl", "model": "m", "method": "dpo"}),
     )
     result = await node.execute({})
     assert result.status == NodeStatus.FAILED
@@ -117,9 +115,7 @@ async def test_missing_bin_fails_visibly():
     # bin 不存在时应 fail-visible，不真正 spawn 子进程
     node = TrainerNode(
         node_id="t1",
-        config=NodeConfig(
-            params={"dataset": "/d.jsonl", "model": "m", "method": "sft"}
-        ),
+        config=NodeConfig(params={"dataset": "/d.jsonl", "model": "m", "method": "sft"}),
     )
     result = await node.execute({})
     assert result.status == NodeStatus.FAILED
@@ -131,9 +127,7 @@ async def test_missing_bin_fails_visibly():
 async def test_grpo_missing_bin_fails_visibly():
     node = TrainerNode(
         node_id="t1",
-        config=NodeConfig(
-            params={"dataset": "/d.jsonl", "model": "m", "method": "grpo"}
-        ),
+        config=NodeConfig(params={"dataset": "/d.jsonl", "model": "m", "method": "grpo"}),
     )
     result = await node.execute({})
     assert result.status == NodeStatus.FAILED

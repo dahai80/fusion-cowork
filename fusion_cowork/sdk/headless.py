@@ -157,7 +157,10 @@ class HeadlessRunner:
 
         self._engine.on_progress(_on_step)
 
-        yield {"type": "workflow_start", "nodes": [n.get("id", str(i)) for i, n in enumerate(workflow_def.get("nodes", []))]}
+        yield {
+            "type": "workflow_start",
+            "nodes": [n.get("id", str(i)) for i, n in enumerate(workflow_def.get("nodes", []))],
+        }
         try:
             exec_task = asyncio.ensure_future(self._engine.execute(wf))
             # 边执行边吐帧, 直到执行结束
