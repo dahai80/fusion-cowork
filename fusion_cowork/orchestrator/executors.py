@@ -91,9 +91,10 @@ class MLXExecutor:
             return {"error": "缺少 prompt 参数"}
 
         try:
-            from ..ai import FusionMLXClient
+            from ..ai import FusionMLXClient, get_budget_tracker
 
             client = FusionMLXClient()
+            budget = get_budget_tracker()
 
             if task_type == "chat":
                 result = await client.chat(prompt)
@@ -106,6 +107,13 @@ class MLXExecutor:
                 result = await client.summarize(prompt)
             else:
                 result = await client.chat(prompt)
+
+            usage = getattr(result, "usage", None) or {}
+            if usage:
+                ok = budget.record_usage(usage)
+                if not ok:
+                    logger.warning(f"MLXExecutor 预算超限, 中止任务: budget={budget.to_dict()}")
+                    return {"status": "failed", "error": "token 预算超限", "budget": budget.to_dict()}
 
             return {"status": "completed", "data": result}
         except Exception as e:

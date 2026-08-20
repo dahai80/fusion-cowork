@@ -177,6 +177,36 @@ fusion-cowork space knowledge status <space_id>
 fusion-cowork space knowledge upload <space_id> doc.pdf --operator user1
 fusion-cowork space knowledge search <space_id> "query text" --top-k 5
 fusion-cowork space knowledge unbind <space_id> --operator user1
+
+# Mobile push notification (Bark/ntfy/本地降级) — V0.2.13
+fusion-cowork push send "任务完成" "桌面清理已完成 12 个文件"
+fusion-cowork push config --bark-url https://api.day.app --ntfy-url https://ntfy.sh
+
+# Deep Research (多 Agent 研究) — V0.2.13
+fusion-cowork research run "对比 MLX 与 llama.cpp 在 Apple Silicon 上的推理性能" --depth 3 --max-sources 3
+
+# UltraReview (多 Agent 代码审查) — V0.2.13
+fusion-cowork review run fusion_cowork/engine/workflow.py --lens security --lens correctness
+fusion-cowork review run --diff          # 审查 git diff 变更集
+
+# LSP 代码智能 (定义/引用/悬停) — V0.2.13
+fusion-cowork lsp definition fusion_cowork/engine/workflow.py:120
+fusion-cowork lsp references fusion_cowork/engine/node.py NodeRegistry
+fusion-cowork lsp hover fusion_cowork/ai/mlx_client.py:45
+
+# Worktree (git 隔离执行) — V0.2.13
+fusion-cowork template run <id> --worktree
+
+# MCP 导入 (add-from-Claude-Desktop) — V0.2.13
+fusion-cowork mcp import ~/Library/Application\ Support/Claude/claude_desktop_config.json
+
+# 远程控制 TLS + 命名会话 attach — V0.2.13
+fusion-cowork remote serve --port 11439 --token mytoken --tls --tls-cert cert.pem --tls-key key.pem
+fusion-cowork remote attach my-session --url wss://host:11439/control --token mytoken
+
+# 技能持久化 + 用户自写 skill 包 — V0.2.13
+fusion-cowork skill save /my-cleanup ~/skills/my-cleanup.json
+fusion-cowork skill load ~/skills/my-cleanup.json
 ```
 
 ---
@@ -247,7 +277,7 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 |----------|-------|-------|
 | `macos_system` | 13 | Desktop Clean, Download Organizer, Disk Cleaner, File Watcher, Screen Capture, Clipboard, Notification, App Lifecycle, OCR, **Mouse Move, Mouse Click, Keyboard Type, Keyboard Shortcut, Computer Use Loop** 🆕 |
 | `ai_processing` | 4 | AI Classify, AI Summarize, AI Generate Name, AI Vision Analyze |
-| `tool` | 9 | Shell Exec, Python REPL, Web Search, Fetch URL, Apply Edit, Browser Open, Browser Extract, Browser Automate, Trainer Node |
+| `tool` | 10 | Shell Exec, Python REPL, Web Search, Fetch URL, Apply Edit, Browser Open, Browser Extract, Browser Automate, Trainer Node, **Push (移动推送)** 🆕 |
 | `file_operation` | 6 | File Classifier, Batch Rename, Copy, Move, Delete, Find |
 | `io` | 2 | File Input, File Output |
 | `logic` | 3 | Filter, Loop, Merge |
@@ -591,6 +621,18 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] 29 new tests (18 artifact + 11 FSB, 519 total)
 
 ### Patch Releases
+
+#### V0.2.13 (Patch) — Capability Parity Stage-3 (审计缺口补齐)
+- [x] **P2-5 移动推送通知** — 新增 `notification/` 包: Bark / ntfy 双 provider + 本地 osascript 降级; `PushNode` 工作流节点 + `push send/config` CLI; ConfigCenter 持久化配置
+- [x] **P2-6 Deep Research (多 Agent 研究)** — 新增 `research/` 包: LLM 规划分解子问题 → DuckDuckGo Lite 并行搜索 → 抓取摘要 → LLM 合成带引用报告; 全链路降级 (无 LLM → 原问题直搜 + 原始发现罗列); `research run` CLI
+- [x] **P2-7 UltraReview (多 Agent 代码审查)** — 新增 `review/` 包: 多视角 (security/correctness/style/tests) 并行 LLM 审查 → 去重 + severity 排序 → LLM 合成报告; 支持 git diff 变更集审查; 全链路降级 (无 LLM → 文件清单); `review run` CLI
+- [x] **P2-3 LSP 代码智能** — 定义/引用/悬停查询 (基于 tree-sitter / ripgrep 回退); `lsp` CLI 命令组
+- [x] **P2-1 Worktree 隔离执行** — `template run --worktree` 在独立 git worktree 执行工作流, 避免污染工作区
+- [x] **P2-8 add-from-Claude-Desktop MCP 导入** — 解析 Claude Desktop config.json, 导入 MCP server 配置; `mcp import` CLI
+- [x] **P2-10 远程控制 TLS + 命名会话 attach** — `remote serve --tls` 加密通道 + `remote attach <name>` 命名会话重连
+- [x] **P2-11 技能持久化 + 用户自写 skill 包** — `skill save/load` 持久化技能定义, 支持用户自定义 skill 包文件
+- [x] **P1-1 上游 (issue/PR)** — fusion-studio Chat/Cowork 首页 + 授权文件夹选择 (已提 issue+PR 给 fusion-studio, 本地落地 code)
+- [x] 测试: 633 passed / 1 skipped, ruff 0 issues
 
 #### V0.2.12 (Patch) — 服务可用性审计修复 (Studio 集成)
 - [x] **节点注册缺口**: 新增 `nodes/__init__.py::import_all_nodes()` 显式导入 9 个节点模块 (触发 `@register_node`); `DeskRPCServer.start()` + `desk rpc` CLI 调用之。历史 bug: 服务端仅 cli.py 副作用导入的 macos+browser 注册, `desk.nodes.list` 仅 33/47 节点可见 → 现 47/47

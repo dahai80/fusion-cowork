@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.2.12"
+__version__ = "0.2.13"
 __app_name__ = "Fusion-Cowork"
 
 # ── 节点工具名称映射表（吸纳自 Squish tool_name_map.py） ──
@@ -279,6 +279,21 @@ _LAZY_IMPORTS: dict[str, str] = {
     "TrajectoryWriter": "fusion_cowork.trajectory",
     "SpaceTrajectoryExporter": "fusion_cowork.trajectory",
     "SpaceMessageTrajectory": "fusion_cowork.trajectory",
+    # V0.2.13 移动推送通知
+    "PushConfig": "fusion_cowork.notification",
+    "PushResult": "fusion_cowork.notification",
+    "push": "fusion_cowork.notification",
+    "resolve_config": "fusion_cowork.notification",
+    # V0.2.13 Deep Research
+    "ResearchSubQuestion": "fusion_cowork.research",
+    "ResearchFinding": "fusion_cowork.research",
+    "ResearchReport": "fusion_cowork.research",
+    "run_deep_research": "fusion_cowork.research",
+    # V0.2.13 UltraReview
+    "ReviewFinding": "fusion_cowork.review",
+    "ReviewReport": "fusion_cowork.review",
+    "LENS_DEFINITIONS": "fusion_cowork.review",
+    "run_ultra_review": "fusion_cowork.review",
 }
 
 _lazy_cache: dict[str, object] = {}

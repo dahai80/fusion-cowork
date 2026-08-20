@@ -18,6 +18,7 @@ class PluginManifest:
     nodes: List[str] = field(default_factory=list)
     dependencies: List[str] = field(default_factory=list)
     entry_point: str = "plugin"
+    sandbox: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -28,6 +29,7 @@ class PluginManifest:
             "nodes": self.nodes,
             "dependencies": self.dependencies,
             "entry_point": self.entry_point,
+            "sandbox": self.sandbox,
         }
 
     @classmethod
@@ -40,6 +42,7 @@ class PluginManifest:
             nodes=data.get("nodes", []),
             dependencies=data.get("dependencies", []),
             entry_point=data.get("entry_point", "plugin"),
+            sandbox=bool(data.get("sandbox", False)),
         )
 
     @classmethod

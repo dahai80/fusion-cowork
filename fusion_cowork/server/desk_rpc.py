@@ -44,6 +44,7 @@ class DeskRPCServer:
         self._permission_manager = permission_manager
         self._hook_manager = hook_manager
         self._space_store = space_store
+        self._orchestrator = None
         self._register_handlers()
 
     def _register_handlers(self) -> None:
@@ -76,6 +77,8 @@ class DeskRPCServer:
             "desk.mlx.models": self._handle_mlx_models,
             # 系统
             "desk.system.info": self._handle_system_info,
+            "desk.system.set_scoped_folder": self._handle_set_scoped_folder,
+            "desk.system.scoped_folder": self._handle_get_scoped_folder,
             # 事件订阅
             "desk.events.subscribe": self._handle_events_subscribe,
             "desk.events.recent": self._handle_events_recent,
@@ -327,6 +330,11 @@ class DeskRPCServer:
 
         name = params.get("name", "")
         node_params = params.get("params", {})
+        if self._permission_manager:
+            allowed = await self._permission_manager.check(name, "execute", node_params)
+            if not allowed:
+                logger.warning(f"节点执行被权限拒绝: {name}")
+                return {"error": f"权限拒绝: {name}"}
         node = NodeRegistry.create(name, config=NodeConfig(params=node_params))
         if not node:
             return {"error": f"节点创建失败: {name}"}
@@ -366,7 +374,7 @@ class DeskRPCServer:
         return {"workflow": workflow.to_dict() if workflow else None}
 
     async def _handle_workflow_run(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        from ..engine import Workflow, WorkflowEngine
+        from ..engine import Workflow
 
         template_id = params.get("template_id", "")
         workflow_def = params.get("workflow", {})
@@ -381,7 +389,7 @@ class DeskRPCServer:
         if not workflow_def:
             return {"error": "workflow 或 template_id 必填"}
         wf = Workflow.from_dict(workflow_def)
-        engine = WorkflowEngine()
+        engine = self._get_engine()
         result = await engine.execute(wf)
         return {
             "id": result.id,
@@ -395,12 +403,11 @@ class DeskRPCServer:
         return {"status": "idle", "running_workflows": 0}
 
     async def _handle_workflow_cancel(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        from ..engine import WorkflowEngine
 
         execution_id = params.get("execution_id", "")
         if not execution_id:
             return {"error": "execution_id 不能为空"}
-        engine = WorkflowEngine()
+        engine = self._get_engine()
         engine.cancel(execution_id)
         return {"status": "cancelled", "execution_id": execution_id}
 
@@ -425,7 +432,7 @@ class DeskRPCServer:
         return template
 
     async def _handle_template_run(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        from ..engine import Workflow, WorkflowEngine
+        from ..engine import Workflow
         from ..templates import TemplateManager
 
         template_id = params.get("template_id", "")
@@ -436,7 +443,7 @@ class DeskRPCServer:
             return {"error": f"模板不存在: {template_id}"}
         wf_data = template.get("workflow", template)
         wf = Workflow.from_dict(wf_data)
-        engine = WorkflowEngine()
+        engine = self._get_engine()
         result = await engine.execute(wf)
         return {
             "status": result.status.value,
@@ -444,43 +451,58 @@ class DeskRPCServer:
             "summary": result.summary,
         }
 
-    async def _handle_agent_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _get_orchestrator(self):
         from ..orchestrator import AgentOrchestrator
 
-        orch = AgentOrchestrator()
+        if self._orchestrator is None:
+            self._orchestrator = AgentOrchestrator()
+            self._orchestrator.register_default_agents()
+            logger.info("DeskRPC 共享 AgentOrchestrator 已构建并注册默认 Agent")
+        return self._orchestrator
+
+    def _get_engine(self):
+        from ..engine import WorkflowEngine
+
+        return WorkflowEngine(
+            permission_manager=self._permission_manager,
+            hook_manager=self._hook_manager,
+            session_store=self._session_store,
+            event_emitter=self._event_emitter,
+        )
+
+    async def _handle_agent_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        orch = self._get_orchestrator()
         agents = [{"id": a.agent_id, "name": a.name, "role": a.role.value} for a in orch._agents.values()]
         return {"agents": agents, "count": len(agents)}
 
     async def _handle_agent_submit(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        from ..orchestrator import AgentOrchestrator
-
         task = params.get("task", "")
         if not task:
             return {"error": "task 不能为空"}
-        orch = AgentOrchestrator()
-        orch.register_default_agents()
+        orch = self._get_orchestrator()
         task_id = await orch.submit_task(task)
         return {"task_id": task_id}
 
     async def _handle_agent_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        from ..orchestrator import AgentOrchestrator
-
-        orch = AgentOrchestrator()
+        orch = self._get_orchestrator()
         task_id = params.get("task_id", "")
         t = orch.get_task(task_id)
         if t:
-            return {"task_id": task_id, "status": t.status.value, "result": t.result}
+            return {
+                "task_id": task_id,
+                "status": t.status,
+                "result": t.output_data,
+                "error": t.error,
+            }
         return {"status": "idle"}
 
     async def _handle_agent_cancel(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        from ..orchestrator import AgentOrchestrator
-
         task_id = params.get("task_id", "")
         if not task_id:
             return {"error": "task_id 不能为空"}
-        orch = AgentOrchestrator()
-        orch.cancel_task(task_id)
-        return {"status": "cancelled", "task_id": task_id}
+        orch = self._get_orchestrator()
+        ok = orch.cancel_task(task_id)
+        return {"status": "cancelled" if ok else "noop", "task_id": task_id}
 
     async def _handle_mlx_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..ai import FusionMLXClient
@@ -515,6 +537,34 @@ class DeskRPCServer:
             "memory_used_pct": psutil.virtual_memory().percent,
             "disk_free_gb": round(psutil.disk_usage("/").free / (1024**3), 1),
         }
+
+    async def _handle_set_scoped_folder(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """GUI 选定授权工作文件夹后下发 — P1-1 配套 (fusion-studio issue #202)。
+
+        params: {"folders": ["/abs/path", ...], "enforce": true}
+        设置 ScopedFolderManager 单例, enforce=True 时文件节点/ShellExec 强制校验越界。
+        """
+        from ..security import ScopedFolderManager, get_scoped_folder_manager, reset_scoped_folder_manager
+
+        folders = params.get("folders", [])
+        enforce = bool(params.get("enforce", True))
+        if not isinstance(folders, list) or not folders:
+            return {"error": "folders 必须为非空绝对路径列表"}
+        reset_scoped_folder_manager()
+        # 用指定 folders 重建单例 (from_config 走配置默认, 这里覆盖)
+        mgr = ScopedFolderManager(scoped_folders=[str(f) for f in folders], enforce=enforce)
+        import fusion_cowork.security.scoped_folder as _sf
+
+        _sf._default_manager = mgr
+        cur = get_scoped_folder_manager()
+        logger.info(f"set_scoped_folder: {len(cur.scopes)} 文件夹, enforce={cur.enforce}")
+        return {"set": True, "folders": [str(s) for s in cur.scopes], "enforce": cur.enforce}
+
+    async def _handle_get_scoped_folder(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        from ..security import get_scoped_folder_manager
+
+        mgr = get_scoped_folder_manager()
+        return {"folders": [str(s) for s in mgr.scopes], "enforce": mgr.enforce}
 
     async def _handle_events_subscribe(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._event_emitter:
@@ -1671,25 +1721,51 @@ class DeskRPCServer:
             return {"error": "SpaceStore 未配置"}
         space_id = params.get("space_id", "")
         snapshot_id = params.get("snapshot_id", "")
+        new_name = params.get("name", "")
+        operator_id = params.get("operator_id", "")
         try:
             src = await self._space_store.get_snapshot(space_id, snapshot_id)
             if not src:
                 return {"error": f"快照 {snapshot_id} 不存在"}
-            from fusion_cowork.space.models import SpaceSnapshot
+            if not operator_id:
+                sp = await self._space_store.get_space(space_id)
+                operator_id = sp.owner_id if sp else "local_user"
+            from fusion_cowork.space.models import Space, SpaceMessage
 
-            clone = SpaceSnapshot(
-                space_id=space_id,
-                name=f"{src.name} (clone)",
-                messages_count=src.messages_count,
-                agents_count=src.agents_count,
-                files_count=src.files_count,
-                workflows_count=src.workflows_count,
-                artifacts_count=src.artifacts_count,
-                snapshot_data=src.snapshot_data,
-                created_by=params.get("operator_id", "local_user"),
+            clone_space = Space(
+                name=new_name or f"{src.name} - 克隆空间",
+                description=f"由快照 {snapshot_id} 克隆",
+                owner_id=operator_id,
             )
-            result = await self._space_store.create_snapshot(clone)
-            return result.to_dict()
+            clone_space = await self._space_store.create_space(clone_space)
+            new_space_id = clone_space.id
+            logger.info(f"snapshot.clone 新建空间: {new_space_id} (源快照={snapshot_id})")
+
+            restored_msgs = 0
+            for msg_data in src.snapshot_data.get("messages", []):
+                m = SpaceMessage.from_dict(msg_data)
+                m.id = ""
+                m.space_id = new_space_id
+                await self._space_store.add_message(m)
+                restored_msgs += 1
+
+            restored_agents = 0
+            for agent_data in src.snapshot_data.get("agents", []):
+                agent_data = dict(agent_data)
+                agent_data.pop("id", None)
+                agent_data.pop("created_at", None)
+                agent_data["space_id"] = new_space_id
+                agent_data["created_by"] = operator_id
+                await self._space_store.add_agent(agent_data)
+                restored_agents += 1
+
+            return {
+                "cloned": True,
+                "new_space_id": new_space_id,
+                "source_snapshot_id": snapshot_id,
+                "messages_restored": restored_msgs,
+                "agents_restored": restored_agents,
+            }
         except Exception as e:
             logger.error(f"snapshot.clone failed: {e}")
             return {"error": str(e)}
@@ -1772,6 +1848,8 @@ class DeskRPCServer:
         author_id = params.get("author_id", "") or "local_user"
         author_name = params.get("author_name", "") or author_id
         content = params.get("content", "")
+        space_id = params.get("space_id", "")
+        thread_id = params.get("thread_id", "")
         if not message_id or not content:
             return {"error": "message_id 和 content 必填"}
         try:
@@ -1780,6 +1858,8 @@ class DeskRPCServer:
                 author_id,
                 author_name,
                 content,
+                space_id=space_id,
+                thread_id=thread_id,
             )
             return {"comment_id": comment_id}
         except Exception as e:
@@ -1837,7 +1917,6 @@ class DeskRPCServer:
     async def _handle_space_workflow_run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
-        from fusion_cowork.engine.workflow import WorkflowEngine
 
         artifact_id = params.get("artifact_id", "") or params.get("workflow_id", "")
         inputs = params.get("inputs", {})
@@ -1846,7 +1925,7 @@ class DeskRPCServer:
             if not artifact:
                 return {"error": f"工作流 {artifact_id} 不存在"}
             wf_data = json.loads(artifact.get("content", "{}"))
-            engine = WorkflowEngine()
+            engine = self._get_engine()
             wf = engine.create_workflow(
                 name=artifact.get("name", "workflow"),
                 nodes=wf_data.get("nodes", []),

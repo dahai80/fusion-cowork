@@ -76,6 +76,8 @@ class ConfigCenter:
             "plugin.dir": os.path.expanduser("~/.fusion-cowork/plugins"),
             "browser.enabled": True,
             "space.enabled": True,
+            "workspace.scoped_folder": "",
+            "workspace.enforce_scope": False,
         }
 
     @classmethod

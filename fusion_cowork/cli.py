@@ -25,8 +25,12 @@ import click
 from . import NODE_NAME_ALIASES, __app_name__, __version__
 from .ai import FusionMLXClient, NLWorkflowGenerator
 from .engine import (
+    EventEmitter,
+    HookManager,
     NodeConfig,
     NodeRegistry,
+    PermissionManager,
+    SessionStore,
     TaskScheduler,
     TaskStatus,
     Workflow,
@@ -51,12 +55,36 @@ _engine = None
 _scheduler = None
 _template_mgr = None
 _mlx_client = None
+_runtime = None
+
+
+def _build_runtime():
+    global _runtime
+    if _runtime is None:
+        permission_manager = PermissionManager()
+        hook_manager = HookManager()
+        session_store = SessionStore()
+        event_emitter = EventEmitter()
+        _runtime = {
+            "permission_manager": permission_manager,
+            "hook_manager": hook_manager,
+            "session_store": session_store,
+            "event_emitter": event_emitter,
+        }
+        logger.info("运行时管理器已构建: permission/hook/session/event")
+    return _runtime
 
 
 def _get_engine() -> WorkflowEngine:
     global _engine
     if _engine is None:
-        _engine = WorkflowEngine()
+        rt = _build_runtime()
+        _engine = WorkflowEngine(
+            permission_manager=rt["permission_manager"],
+            hook_manager=rt["hook_manager"],
+            session_store=rt["session_store"],
+            event_emitter=rt["event_emitter"],
+        )
     return _engine
 
 
@@ -164,14 +192,21 @@ console = RichConsole()
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="详细输出")
 @click.option("--log-file", default="", help="日志文件路径")
+@click.option("--max-budget-usd", "max_budget_usd", default=0.0, type=float, help="Token 预算上限 (USD), 超限中止 LLM 调用 (0=不限)")
 @click.version_option(version=__version__, prog_name=__app_name__)
-def cli(verbose: bool, log_file: str):
+def cli(verbose: bool, log_file: str, max_budget_usd: float):
     """Fusion-Cowork — macOS 原生、纯本地离线、零代码桌面智能自动化平台。
 
     让 Mac 自己干活，本地 AI 全自动桌面办公。
     """
     level = logging.DEBUG if verbose else logging.INFO
     setup_logger(level=level, log_file=log_file, verbose=verbose)
+
+    if max_budget_usd > 0:
+        from .ai import get_budget_tracker
+
+        get_budget_tracker(max_budget_usd=max_budget_usd, enforce=True)
+        logger.info(f"已启用 Token 预算上限: ${max_budget_usd:.4f}")
 
     # 注册工具名称别名（吸纳自 Squish tool_name_map.py 模式）
     _register_node_aliases()
@@ -376,6 +411,15 @@ def generate_workflow(prompt: str, model: str):
     示例: fusion-cowork ai generate "帮我把桌面所有 PDF 按主题分类归档"
     """
     asyncio.run(_async_generate(prompt, model))
+
+
+@ai.command("cost")
+def ai_cost():
+    """查看当前会话 Token 预算与成本记账。"""
+    from .ai import get_budget_tracker
+
+    budget = get_budget_tracker()
+    click.echo(json.dumps(budget.to_dict(), indent=2, ensure_ascii=False))
 
 
 async def _async_generate(prompt: str, model: str):
@@ -666,6 +710,38 @@ def system_info():
     click.echo(f"  内置模板: {len(templates)} 个")
 
 
+@system.command("scope")
+@click.argument("folders", required=False)
+@click.option("--enforce/--no-enforce", default=None, help="是否启用沙箱拦截")
+def system_scope(folders, enforce):
+    """查看或设置授权工作文件夹 (Scoped Folder) 沙箱。
+
+    \b
+    fusion-cowork system scope                          # 查看当前配置
+    fusion-cowork system scope ~/Cowork_Workspace       # 设置授权文件夹
+    fusion-cowork system scope ~/a,~/b --enforce        # 多文件夹 + 启用拦截
+    """
+    from .config_center import ConfigCenter
+    from .security import get_scoped_folder_manager, reset_scoped_folder_manager
+
+    cc = ConfigCenter.get_instance()
+    if folders is None and enforce is None:
+        cur = cc.get("workspace.scoped_folder", "")
+        enf = cc.get("workspace.enforce_scope", False)
+        console.print_info(f"授权文件夹: {cur or '(未设置)'}")
+        console.print_info(f"沙箱拦截: {'启用' if enf else '关闭'}")
+        return
+    if folders is not None:
+        cc.set("workspace.scoped_folder", folders)
+        console.print_result(f"授权文件夹已设置: {folders}")
+    if enforce is not None:
+        cc.set("workspace.enforce_scope", enforce)
+        console.print_result(f"沙箱拦截已{'启用' if enforce else '关闭'}")
+    reset_scoped_folder_manager()
+    mgr = get_scoped_folder_manager()
+    console.print_info(f"生效: enforce={mgr.enforce} scopes={[str(s) for s in mgr.scopes]}")
+
+
 @system.command("clean")
 @click.option("--dry-run", "-n", is_flag=True, default=True, help="预览模式")
 @click.option("--force", "-f", is_flag=True, help="强制清理")
@@ -847,17 +923,26 @@ def mcp():
 
 
 @mcp.command("serve")
-@click.option("--transport", "-t", type=click.Choice(["stdio", "http"]), default="stdio", help="传输模式 (stdio/http)")
+@click.option("--transport", "-t", type=click.Choice(["stdio", "http", "streamable"]), default="stdio", help="传输模式 (stdio/http/streamable)")
 @click.option("--host", "-h", default="127.0.0.1", help="HTTP 监听地址")
 @click.option("--port", "-p", default=11438, type=int, help="HTTP 监听端口")
 def mcp_serve(transport: str, host: str, port: int):
     """启动 MCP 服务 — 供 Claude Code / Claude Desktop 调用。"""
     from .server.mcp_server import MCPServer
 
-    server = MCPServer(host=host, port=port)
+    rt = _build_runtime()
+    server = MCPServer(
+        host=host,
+        port=port,
+        permission_manager=rt["permission_manager"],
+        hook_manager=rt["hook_manager"],
+    )
     if transport == "stdio":
         console.print_info("MCP 服务启动 (stdio 模式) — 等待 Claude Code 连接...")
         asyncio.run(server.serve_stdio())
+    elif transport == "streamable":
+        console.print_info(f"MCP 服务启动 (Streamable HTTP 2025-03-26 模式) — {host}:{port}")
+        asyncio.run(server.serve_streamable_http())
     else:
         console.print_info(f"MCP 服务启动 (HTTP 模式) — {host}:{port}")
         asyncio.run(server.serve_http())
@@ -884,7 +969,14 @@ def desk_rpc(sock: str, http_port: int):
     """
     from .server.desk_rpc import DeskRPCServer
 
-    rpc = DeskRPCServer(sock_path=sock)
+    rt = _build_runtime()
+    rpc = DeskRPCServer(
+        sock_path=sock,
+        event_emitter=rt["event_emitter"],
+        session_store=rt["session_store"],
+        permission_manager=rt["permission_manager"],
+        hook_manager=rt["hook_manager"],
+    )
 
     async def _run():
         await rpc.start()
@@ -915,7 +1007,13 @@ def desk_rpc(sock: str, http_port: int):
             from .server.mcp_server import MCPServer
 
             import_all_nodes()
-            mcp = MCPServer(host="127.0.0.1", port=port)
+            rt = _build_runtime()
+            mcp = MCPServer(
+                host="127.0.0.1",
+                port=port,
+                permission_manager=rt["permission_manager"],
+                hook_manager=rt["hook_manager"],
+            )
             console.print_success(f"Desk HTTP 服务已启动: 127.0.0.1:{port} (/rpc /health /mcp /sse)")
             await mcp.serve_http()
         except ImportError:
@@ -966,6 +1064,35 @@ def session_show(session_id):
         console.print_error(f"会话不存在: {session_id}")
         return
     console.print_result(json.dumps(store.to_dict(s), indent=2, ensure_ascii=False))
+
+
+@session.command("resumable")
+@click.option("--limit", "-n", default=20, help="返回数量")
+def session_resumable(limit):
+    """列出可恢复的会话 (paused/failed/running)。"""
+    from fusion_cowork.engine.session import SessionStore
+
+    store = SessionStore()
+    sessions = store.list_resumable(limit=limit)
+    if not sessions:
+        console.print_info("没有可恢复的会话")
+        return
+    for s in sessions:
+        console.print_result(f"{s.id}  {s.status:10s}  {s.workflow_name:20s}  steps={len(s.steps_snapshot)}")
+
+
+@session.command("resume")
+@click.argument("session_id")
+def session_resume(session_id):
+    """恢复会话 — 加载快照供重放/续跑。"""
+    from fusion_cowork.engine.session import SessionStore
+
+    store = SessionStore()
+    payload = store.resume(session_id)
+    if not payload:
+        console.print_error(f"恢复失败: {session_id}")
+        return
+    console.print_result(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 @session.command("fork")
@@ -1100,16 +1227,18 @@ def plugin_list():
 
 
 @plugin.command("install")
-@click.argument("path", type=click.Path(exists=True))
+@click.argument("path")
 def plugin_install(path: str):
-    """从目录或 zip 安装插件。"""
+    """从目录、zip 或 URL (http(s)://...zip) 安装插件。"""
     from .plugins import PluginLoader
 
     loader = PluginLoader()
     try:
-        manifest = loader.install(path)
-        console.print_success(f"已安装插件: {manifest.name} v{manifest.version}")
-        console.print_info(f"节点: {', '.join(manifest.nodes)}")
+        ok = loader.install(path)
+        if ok:
+            console.print_success(f"已安装插件: {path}")
+        else:
+            console.print_error(f"安装失败: {path}")
     except Exception as e:
         console.print_error(f"安装失败: {e}")
 
@@ -1127,6 +1256,25 @@ def plugin_uninstall(name: str):
         console.print_success(f"已卸载插件: {name}")
     except Exception as e:
         console.print_error(f"卸载失败: {e}")
+
+
+@plugin.command("import-claude-desktop")
+@click.option("--config", "config_path", default="", help="claude_desktop_config.json 路径 (默认 ~/Library/Application Support/Claude/)")
+def plugin_import_claude_desktop(config_path: str):
+    """从 Claude Desktop 配置导入 MCP server 为插件。"""
+    from .plugins import PluginLoader
+
+    loader = PluginLoader()
+    try:
+        imported = loader.import_from_claude_desktop(config_path)
+        if imported:
+            console.print_success(f"已从 Claude Desktop 导入 {len(imported)} 个 MCP server:")
+            for name in imported:
+                console.print_info(f"  - {name}")
+        else:
+            console.print_warning("未发现可导入的 MCP server (配置不存在或 mcpServers 为空)")
+    except Exception as e:
+        console.print_error(f"导入失败: {e}")
 
 
 @plugin.command("load")
@@ -1167,10 +1315,14 @@ def skill():
 
 
 def _get_skill_registry():
-    from .skills import SkillRegistry, register_builtin_skills
+    from .skills import SkillRegistry, register_builtin_skills, register_user_packs
 
     registry = SkillRegistry()
     register_builtin_skills(registry)
+    try:
+        register_user_packs(registry)
+    except Exception as e:
+        console.print_warning(f"用户 skill 包加载失败: {e}")
     return registry
 
 
@@ -1223,6 +1375,71 @@ def skill_search(query: str):
         return
     for s in results:
         click.echo(f"  {s.name}: {s.description}")
+
+
+@skill.command("create")
+@click.option("--name", required=True, help="技能名 (如 /my-skill)")
+@click.option("--description", "-d", default="", help="技能描述")
+@click.option("--category", "-c", default="custom", help="分类")
+@click.option("--type", "stype", type=click.Choice(["workflow", "node", "script"]), default="node", help="handler 类型")
+@click.option("--template-id", default="", help="workflow 类型: 模板 id")
+@click.option("--node", default="", help="node 类型: 节点名")
+@click.option("--params", default="{}", help="node 类型: 参数 JSON")
+@click.option("--script", default="", help="script 类型: 脚本文件名 (相对包目录)")
+@click.option("--aliases", default="", help="别名, 逗号分隔")
+def skill_create(name, description, category, stype, template_id, node, params, script, aliases):
+    """创建用户自写 skill 包 (持久化到 ~/.fusion-cowork/skills)。"""
+    from .skills import SkillPack, save_skill_pack
+
+    try:
+        params_dict = json.loads(params) if params else {}
+    except json.JSONDecodeError as e:
+        console.print_error(f"参数 JSON 解析失败: {e}")
+        return
+    pack = SkillPack(
+        name=name,
+        description=description,
+        category=category,
+        type=stype,
+        template_id=template_id,
+        node=node,
+        params=params_dict,
+        script=script,
+        aliases=[a.strip() for a in aliases.split(",") if a.strip()],
+    )
+    try:
+        pdir = save_skill_pack(pack)
+        console.print_success(f"skill 包已创建: {name} -> {pdir}")
+    except Exception as e:
+        console.print_error(f"skill 包创建失败: {e}")
+
+
+@skill.command("list-packs")
+def skill_list_packs():
+    """列出磁盘上的用户 skill 包。"""
+    from .skills import list_skill_packs
+
+    packs = list_skill_packs()
+    if not packs:
+        console.print_info("没有用户 skill 包")
+        return
+    console.print_header(f"用户 skill 包 ({len(packs)} 个)")
+    rows = []
+    for p in packs:
+        rows.append([p.name, p.type, p.description[:40], ", ".join(p.aliases) or "-"])
+    console.print_table(["名称", "类型", "描述", "别名"], rows)
+
+
+@skill.command("delete-pack")
+@click.argument("name")
+def skill_delete_pack(name: str):
+    """删除用户 skill 包。"""
+    from .skills import delete_skill_pack
+
+    if delete_skill_pack(name):
+        console.print_success(f"skill 包已删除: {name}")
+    else:
+        console.print_error(f"skill 包不存在: {name}")
 
 
 # ── CDP 命令 ──
@@ -1448,17 +1665,22 @@ def remote():
 @click.option("--host", "-h", default="127.0.0.1", help="监听地址")
 @click.option("--port", "-p", default=11439, type=int, help="监听端口")
 @click.option("--token", "-t", default="", help="认证令牌 (空则无认证)")
-def remote_serve(host: str, port: int, token: str):
-    """启动远程控制服务。"""
+@click.option("--tls-cert", default="", help="TLS 证书路径 (PEM), 启用 wss://")
+@click.option("--tls-key", default="", help="TLS 私钥路径 (PEM)")
+def remote_serve(host: str, port: int, token: str, tls_cert: str, tls_key: str):
+    """启动远程控制服务 (可选 TLS)。"""
     from .server.remote import RemoteControlServer
 
-    server = RemoteControlServer(host=host, port=port, token=token or None)
+    server = RemoteControlServer(host=host, port=port, token=token or None, tls_cert=tls_cert, tls_key=tls_key)
 
     async def _run():
         await server.start()
-        console.print_success(f"远程控制服务已启动: ws://{host}:{port}/control")
+        scheme = "wss" if (tls_cert and tls_key) else "ws"
+        console.print_success(f"远程控制服务已启动: {scheme}://{host}:{port}/control")
         if token:
             console.print_info(f"认证令牌: {token}")
+        if tls_cert and tls_key:
+            console.print_info(f"TLS 已启用: cert={tls_cert}")
         console.print_info("等待远程连接... (Ctrl+C 停止)")
         try:
             while True:
@@ -1523,6 +1745,355 @@ def remote_submit(workflow_file: str, url: str, token: str):
         asyncio.run(_run())
     except Exception as e:
         console.print_error(f"提交失败: {e}")
+
+
+# ── Worktree git 隔离命令 ──
+
+
+@cli.group("worktree")
+def worktree():
+    """Worktree — git 工作树隔离执行。"""
+    pass
+
+
+@worktree.command("create")
+@click.argument("name")
+@click.option("--branch", "-b", default="", help="checkout 已有分支 (空则新建 worktree/<name>)")
+@click.option("--repo-root", "-r", default="", help="git 仓库根 (空则自动检测)")
+def worktree_create(name: str, branch: str, repo_root: str):
+    """创建隔离工作树。"""
+    from .utils.worktree import WorktreeManager
+
+    mgr = WorktreeManager(repo_root=repo_root)
+    wt = mgr.create(name, branch=branch)
+    if not wt:
+        console.print_error(f"worktree 创建失败: {name}")
+        return
+    console.print_success(f"worktree 已创建: {name}")
+    click.echo(json.dumps(wt.to_dict(), indent=2, ensure_ascii=False))
+
+
+@worktree.command("list")
+@click.option("--repo-root", "-r", default="", help="git 仓库根 (空则自动检测)")
+def worktree_list(repo_root: str):
+    """列出所有工作树。"""
+    from .utils.worktree import WorktreeManager
+
+    mgr = WorktreeManager(repo_root=repo_root)
+    wts = mgr.list_worktrees()
+    console.print_header(f"Worktree 列表 ({len(wts)} 个)")
+    rows = [[w.path, w.branch, w.head[:8]] for w in wts]
+    console.print_table(["路径", "分支", "HEAD"], rows)
+
+
+@worktree.command("exec")
+@click.argument("name")
+@click.argument("command")
+@click.option("--repo-root", "-r", default="", help="git 仓库根 (空则自动检测)")
+@click.option("--timeout", "-t", default=30, type=int, help="超时 (秒)")
+def worktree_exec(name: str, command: str, repo_root: str, timeout: int):
+    """在隔离工作树内执行命令。"""
+    from .utils.worktree import WorktreeManager
+
+    mgr = WorktreeManager(repo_root=repo_root)
+    # 按名称匹配登记现有 worktree
+    if not mgr.get(name):
+        for w in mgr.list_worktrees():
+            if Path(w.path).name == name:
+                mgr._worktrees[name] = w
+                break
+
+    async def _run():
+        return await mgr.exec_in(name, command, timeout=timeout)
+
+    try:
+        result = asyncio.run(_run())
+        if "error" in result:
+            console.print_error(result["error"])
+            return
+        console.print_success(f"rc={result.get('return_code')} @ {result.get('path')}")
+        if result.get("stdout"):
+            click.echo(result["stdout"], nl=False)
+        if result.get("stderr"):
+            click.echo(result["stderr"], nl=False, err=True)
+    except Exception as e:
+        console.print_error(f"执行失败: {e}")
+
+
+@worktree.command("remove")
+@click.argument("name")
+@click.option("--repo-root", "-r", default="", help="git 仓库根 (空则自动检测)")
+@click.option("--force", "-f", is_flag=True, help="强制删除")
+def worktree_remove(name: str, repo_root: str, force: bool):
+    """删除隔离工作树。"""
+    from .utils.worktree import WorktreeManager
+
+    mgr = WorktreeManager(repo_root=repo_root)
+    if not mgr.get(name):
+        for w in mgr.list_worktrees():
+            if Path(w.path).name == name:
+                mgr._worktrees[name] = w
+                break
+    if mgr.remove(name, force=force):
+        console.print_success(f"worktree 已删除: {name}")
+    else:
+        console.print_error(f"worktree 删除失败: {name}")
+
+
+# ── LSP 代码智能命令 ──
+
+
+@cli.group("lsp")
+def lsp():
+    """LSP — 代码智能 (定义/引用/悬停/补全)。"""
+    pass
+
+
+def _lsp_query_common(action: str, path: str, line: int, character: int, root: str):
+    from .code import query as lsp_query
+
+    try:
+        result = asyncio.run(lsp_query(action, path, line, character, root=root))
+    except Exception as e:
+        console.print_error(f"LSP 查询失败: {e}")
+        return
+    if "error" in result:
+        console.print_error(result["error"])
+        return
+    console.print_success(f"LSP {action} 结果:")
+    click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+@lsp.command("definition")
+@click.argument("path")
+@click.argument("line", type=int)
+@click.argument("character", type=int)
+@click.option("--root", "-r", default="", help="LSP workspace 根 (空则取文件目录)")
+def lsp_definition(path: str, line: int, character: int, root: str):
+    """查询定义位置。"""
+    _lsp_query_common("definition", path, line, character, root)
+
+
+@lsp.command("references")
+@click.argument("path")
+@click.argument("line", type=int)
+@click.argument("character", type=int)
+@click.option("--root", "-r", default="", help="LSP workspace 根 (空则取文件目录)")
+def lsp_references(path: str, line: int, character: int, root: str):
+    """查询引用位置。"""
+    _lsp_query_common("references", path, line, character, root)
+
+
+@lsp.command("hover")
+@click.argument("path")
+@click.argument("line", type=int)
+@click.argument("character", type=int)
+@click.option("--root", "-r", default="", help="LSP workspace 根 (空则取文件目录)")
+def lsp_hover(path: str, line: int, character: int, root: str):
+    """查询悬停信息。"""
+    _lsp_query_common("hover", path, line, character, root)
+
+
+@lsp.command("completion")
+@click.argument("path")
+@click.argument("line", type=int)
+@click.argument("character", type=int)
+@click.option("--root", "-r", default="", help="LSP workspace 根 (空则取文件目录)")
+def lsp_completion(path: str, line: int, character: int, root: str):
+    """查询补全项。"""
+    _lsp_query_common("completion", path, line, character, root)
+
+
+# ── 移动推送命令 ──
+
+
+@cli.group("push")
+def push():
+    """移动推送 — Bark/ntfy 跨平台通知 (未配置降级本地)。"""
+    pass
+
+
+@push.command("send")
+@click.argument("title")
+@click.argument("message")
+@click.option("--provider", "-p", type=click.Choice(["auto", "bark", "ntfy", "local"]), default="auto", help="推送渠道")
+@click.option("--url", "-u", default="", help="Bark/ntfy server URL")
+@click.option("--token", "-t", default="", help="Bark device key / ntfy topic")
+@click.option("--sound", default="", help="提示音 (Bark)")
+@click.option("--priority", default="", help="优先级 (ntfy 1-5)")
+@click.option("--group", default="", help="分组")
+def push_send(title: str, message: str, provider: str, url: str, token: str, sound: str, priority: str, group: str):
+    """发送移动推送通知。"""
+    from .notification import push as do_push
+
+    result = asyncio.run(do_push(title, message, provider=provider, url=url, token=token, sound=sound, priority=priority, group=group))
+    if result.success:
+        tag = " (降级本地)" if result.degraded else ""
+        console.print_success(f"✅ 推送成功 via {result.provider}{tag}")
+    else:
+        console.print_error(f"❌ 推送失败: {result.error}")
+    click.echo(json.dumps({"success": result.success, "provider": result.provider, "degraded": result.degraded, "response": result.response}, indent=2, ensure_ascii=False))
+
+
+@push.command("config")
+@click.option("--bark-url", default=None, help="Bark server URL (如 https://api.day.app)")
+@click.option("--ntfy-url", default=None, help="ntfy server URL (如 https://ntfy.sh)")
+@click.option("--ntfy-token", default=None, help="ntfy topic / token")
+@click.option("--sound", default=None, help="默认提示音")
+@click.option("--priority", default=None, help="默认优先级")
+def push_config(bark_url, ntfy_url, ntfy_token, sound, priority):
+    """查看或设置推送渠道配置 (持久化到 ConfigCenter)。"""
+    from .config_center import ConfigCenter
+
+    cc = ConfigCenter.get_instance()
+    if all(v is None for v in (bark_url, ntfy_url, ntfy_token, sound, priority)):
+        console.print_info(f"Bark URL: {cc.get('push.bark_url', '(未设置)')}")
+        console.print_info(f"ntfy URL: {cc.get('push.ntfy_url', '(未设置)')}")
+        console.print_info(f"ntfy Token: {cc.get('push.ntfy_token', '(未设置)')}")
+        console.print_info(f"提示音: {cc.get('push.sound', '(未设置)')}")
+        console.print_info(f"优先级: {cc.get('push.priority', '(未设置)')}")
+        return
+    if bark_url is not None:
+        cc.set("push.bark_url", bark_url)
+        console.print_result(f"Bark URL 已设置: {bark_url}")
+    if ntfy_url is not None:
+        cc.set("push.ntfy_url", ntfy_url)
+        console.print_result(f"ntfy URL 已设置: {ntfy_url}")
+    if ntfy_token is not None:
+        cc.set("push.ntfy_token", ntfy_token)
+        console.print_result(f"ntfy Token 已设置: {ntfy_token}")
+    if sound is not None:
+        cc.set("push.sound", sound)
+    if priority is not None:
+        cc.set("push.priority", priority)
+
+
+# ── 深度研究命令 ──
+
+
+@cli.group("research")
+def research():
+    """深度研究 — 多 Agent 研究 (规划→搜索→合成)。"""
+    pass
+
+
+@research.command("run")
+@click.argument("question")
+@click.option("--depth", "-d", type=int, default=3, help="子问题数量 (规划深度)")
+@click.option("--max-sources", "-s", type=int, default=3, help="每子问题最大来源数")
+@click.option("--model", "-m", default="", help="fusion-mlx 模型 (空则自动)")
+@click.option("--output", "-o", default="", help="输出 Markdown 文件路径 (空则打印)")
+def research_run(question: str, depth: int, max_sources: int, model: str, output: str):
+    """运行深度研究, 产出带引用的研究报告。"""
+    from .research import run_deep_research
+
+    console.print_header(f"🔍 深度研究: {question}")
+    report = asyncio.run(
+        run_deep_research(question, depth=depth, max_sources=max_sources, model=model, mlx_client=_get_mlx_client())
+    )
+    if report.error and not report.findings:
+        console.print_error(f"❌ 研究失败: {report.error}")
+        return
+    if report.degraded:
+        console.print_warning("⚠️  LLM 不可用, 使用降级模式 (原始发现汇总)")
+    console.print_info(f"子问题: {len(report.sub_questions)} | 来源: {report.sources_used}")
+
+    md = _format_research_report(report)
+    if output:
+        Path(output).write_text(md, encoding="utf-8")
+        console.print_success(f"✅ 报告已写入: {output}")
+    else:
+        click.echo(md)
+
+
+def _format_research_report(report) -> str:
+    lines = [f"# 深度研究报告: {report.question}", ""]
+    if report.sub_questions:
+        lines.append("## 研究子问题")
+        for i, sq in enumerate(report.sub_questions, 1):
+            lines.append(f"{i}. {sq.question}")
+            if sq.rationale:
+                lines.append(f"   _{sq.rationale}_")
+        lines.append("")
+    lines.append("## 研究报告")
+    lines.append("")
+    lines.append(report.synthesis)
+    lines.append("")
+    if report.findings:
+        lines.append("## 引用来源")
+        for i, f in enumerate(report.findings, 1):
+            lines.append(f"[{i}] {f.title} — {f.url}")
+    return "\n".join(lines)
+
+
+# ── 多 Agent 代码审查命令 ──
+
+
+@cli.group("review")
+def review():
+    """UltraReview — 多 Agent 代码审查 (安全/正确性/风格/测试)。"""
+    pass
+
+
+@review.command("run")
+@click.argument("paths", nargs=-1)
+@click.option("--model", "-m", default="", help="fusion-mlx 模型 (空则自动)")
+@click.option("--lens", "-l", multiple=True, help="审查视角 (security/correctness/style/tests, 可多次)")
+@click.option("--diff", "use_diff", is_flag=True, help="审查 git diff 变更文件 (忽略 paths)")
+@click.option("--output", "-o", default="", help="输出 Markdown 文件路径 (空则打印)")
+def review_run(paths, model: str, lens, use_diff: bool, output: str):
+    """运行多视角代码审查。"""
+    from .review import run_ultra_review
+    from .review.ultra_review import collect_git_diff_files
+
+    targets = list(paths)
+    if use_diff:
+        targets = collect_git_diff_files()
+        if not targets:
+            console.print_warning("⚠️  git diff 无变更 .py 文件")
+            return
+        console.print_info(f"审查 git diff 变更: {len(targets)} 个文件")
+    if not targets:
+        console.print_error("❌ 未指定审查目标 (paths 或 --diff)")
+        return
+
+    lenses = list(lens) if lens else None
+    console.print_header(f"🔎 UltraReview: {len(targets)} 个目标")
+    report = asyncio.run(
+        run_ultra_review(targets, model=model, mlx_client=_get_mlx_client(), lenses=lenses)
+    )
+    if report.error and not report.files_reviewed:
+        console.print_error(f"❌ 审查失败: {report.error}")
+        return
+    if report.degraded:
+        console.print_warning("⚠️  LLM 不可用, 使用降级模式 (文件清单)")
+    console.print_info(f"审查文件: {len(report.files_reviewed)} | 发现: {len(report.findings)}")
+
+    md = _format_review_report(report)
+    if output:
+        Path(output).write_text(md, encoding="utf-8")
+        console.print_success(f"✅ 报告已写入: {output}")
+    else:
+        click.echo(md)
+
+
+def _format_review_report(report) -> str:
+    lines = ["# UltraReview 代码审查报告", "", f"目标: {report.target}", ""]
+    if report.files_reviewed:
+        lines.append("## 审查文件")
+        for p in report.files_reviewed:
+            lines.append(f"- {p}")
+        lines.append("")
+    if report.findings:
+        lines.append("## 发现问题")
+        for i, f in enumerate(report.findings, 1):
+            lines.append(f"{i}. **[{f.severity.upper()}]** {f.file}:{f.line} — {f.message}  ")
+            lines.append(f"   _视角: {f.lens} | 类别: {f.category}_")
+        lines.append("")
+    lines.append("## 审查总结")
+    lines.append("")
+    lines.append(report.summary)
+    return "\n".join(lines)
 
 
 # ── Schema 结构化输出命令 ──

@@ -600,6 +600,30 @@ class WorkflowEngine:
                     node_results[node_id] = result
                     passed_data[node_id] = result.data or {}
 
+                    # 结构化输出校验 (P1-9) — 节点声明 schema 时强制校验
+                    if result.schema and result.status == NodeStatus.SUCCESS:
+                        try:
+                            if not result.validate():
+                                logger.warning(f"节点 '{node.name}' 输出未通过 schema 校验")
+                                result.error = f"输出未通过结构化 schema 校验: {node.name}"
+                                result.status = NodeStatus.FAILED
+                                step.status = NodeStatus.FAILED
+                                step.error = result.error
+                                if not node.config.continue_on_error:
+                                    execution.status = WorkflowStatus.FAILED
+                                    execution.error = result.error
+                                    break
+                        except Exception as ve:
+                            logger.error(f"节点 '{node.name}' schema 校验异常: {ve}")
+                            result.error = f"schema 校验异常: {ve}"
+                            result.status = NodeStatus.FAILED
+                            step.status = NodeStatus.FAILED
+                            step.error = result.error
+                            if not node.config.continue_on_error:
+                                execution.status = WorkflowStatus.FAILED
+                                execution.error = result.error
+                                break
+
                     # 通知进度
                     self._notify_progress(execution, step)
 

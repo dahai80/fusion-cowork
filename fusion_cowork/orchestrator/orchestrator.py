@@ -218,10 +218,40 @@ class AgentOrchestrator:
                 task.status = "failed"
                 logger.error(f"提交任务执行异常: {e}")
         else:
-            task.output_data = {"status": "simulated", "input": task.input_data}
-            task.status = "completed"
+            node_executor = self._executors.get("executor_node")
+            if node_executor:
+                try:
+                    if asyncio.iscoroutinefunction(node_executor):
+                        result = await node_executor(task.input_data)
+                    else:
+                        result = node_executor(task.input_data)
+                    task.output_data = result if isinstance(result, dict) else {"result": result}
+                    task.status = "completed"
+                except Exception as e:
+                    task.error = str(e)
+                    task.status = "failed"
+                    logger.error(f"提交任务降级 executor_node 执行异常: {e}")
+            else:
+                task.error = f"无可用执行器: agent_id={task.agent_id}"
+                task.output_data = {"status": "no_executor", "agent_id": task.agent_id, "input": task.input_data}
+                task.status = "failed"
+                logger.error(f"任务无执行器且无降级路径: {task.task_id} agent_id={task.agent_id}")
 
         task.completed_at = time.time()
+
+    def cancel_task(self, task_id: str) -> bool:
+        task = self._tasks.get(task_id)
+        if not task:
+            logger.warning(f"取消任务失败: 任务不存在 {task_id}")
+            return False
+        if task.status in ("completed", "failed", "cancelled"):
+            logger.info(f"任务已终态，不可取消: {task_id} status={task.status}")
+            return False
+        task.status = "cancelled"
+        task.error = "用户取消"
+        task.completed_at = time.time()
+        logger.info(f"任务已取消: {task_id}")
+        return True
 
     def register_agent(self, agent: Agent) -> None:
         """注册 Agent。"""
