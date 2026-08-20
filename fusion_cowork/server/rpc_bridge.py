@@ -40,6 +40,8 @@ PLUGINS_METHODS = frozenset(
 
 _HANDLER: Optional[Any] = None
 _DESK_RUNTIME: Optional[Any] = None
+_LIFECYCLE: Optional[Any] = None
+_DEFAULTS_MOUNTED: bool = False
 
 
 def _build_desk_runtime() -> Any:
@@ -71,19 +73,62 @@ def get_plugins_handler() -> Any:
 
     返回 fusion-plugins-ecosystem.MCPHandler 实例。
     依赖缺失时抛 ImportError, 由调用方转 JSON-RPC 错误。
+
+    构造时 register_builtin() 注册内置插件 (caveman_compress 等),
+    使 plugins/list 可发现。default_mounted 插件的 enable 延迟到
+    首次 dispatch_rpc (见 _mount_defaults), 因 enable 是 async。
     """
-    global _HANDLER, _DESK_RUNTIME
+    global _HANDLER, _DESK_RUNTIME, _LIFECYCLE
     if _HANDLER is not None:
         return _HANDLER
 
+    from fusion_plugins_ecosystem.config import EcosystemConfig
     from fusion_plugins_ecosystem.jsonrpc import MCPHandler
+    from fusion_plugins_ecosystem.lifecycle import PluginLifecycle
     from fusion_plugins_ecosystem.registry import PluginRegistry
 
+    config = EcosystemConfig()
     _DESK_RUNTIME = _build_desk_runtime()
     registry = PluginRegistry(desk=_DESK_RUNTIME)
-    _HANDLER = MCPHandler(registry=registry, desk=_DESK_RUNTIME)
-    logger.info("rpc_bridge: MCPHandler 已构造 (plugins/* 委托就绪)")
+    registry.register_builtin()
+    _LIFECYCLE = PluginLifecycle(registry)
+    _HANDLER = MCPHandler(
+        registry=registry,
+        desk=_DESK_RUNTIME,
+        lifecycle=_LIFECYCLE,
+        config=config,
+    )
+    builtin_count = len(registry.list())
+    logger.info(
+        "rpc_bridge: MCPHandler 已构造 (plugins/* 委托就绪, 内置 %d 个)",
+        builtin_count,
+    )
     return _HANDLER
+
+
+async def _mount_defaults() -> None:
+    """首次 dispatch 时懒触发: enable 所有 default_mounted 插件。
+
+    MCP 语义要求 tools/list 暴露的工具可直接调用, 但 lifecycle.execute
+    门控 state==ENABLED。register_builtin 仅注册不 enable, 故默认插件
+    (caveman_compress) 需显式 load+enable。config.default_mount_compressor
+    关闭时跳过。
+    """
+    global _DEFAULTS_MOUNTED
+    if _DEFAULTS_MOUNTED or _LIFECYCLE is None or _HANDLER is None:
+        return
+    _DEFAULTS_MOUNTED = True
+    config = _HANDLER.config
+    if not getattr(config, "default_mount_compressor", False):
+        return
+    registry = _HANDLER.registry
+    for manifest in registry.default_mounted():
+        if manifest.id not in _LIFECYCLE._instances:
+            try:
+                await _LIFECYCLE.enable(manifest.id)
+                logger.info("rpc_bridge: auto-mount %s 已启用", manifest.id)
+            except Exception as e:
+                logger.warning("rpc_bridge: auto-mount %s 失败: %s", manifest.id, e)
 
 
 def is_plugins_available() -> bool:
@@ -132,6 +177,9 @@ async def dispatch_rpc(request: Dict[str, Any]) -> Dict[str, Any]:
                 ),
             },
         }
+
+    # 首次 dispatch 懒触发默认插件挂载 (caveman_compress 等), 使 tools/call 可调
+    await _mount_defaults()
 
     try:
         response = await handler.handle(request)

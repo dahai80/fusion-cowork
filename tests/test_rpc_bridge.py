@@ -76,6 +76,22 @@ async def test_dispatch_rpc_plugins_list():
     assert resp["id"] == 4
     assert "plugins" in resp["result"]
     assert isinstance(resp["result"]["plugins"], list)
+    # issue #52: register_builtin 后内置插件可发现 (非空)
+    assert len(resp["result"]["plugins"]) > 0
+    ids = {p["id"] for p in resp["result"]["plugins"]}
+    assert "caveman_compress" in ids
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not is_plugins_available(), reason="需要 fusion-plugins-ecosystem")
+async def test_dispatch_rpc_auto_mount_defaults():
+    # issue #52: 首次 dispatch 后 default_mounted 插件应已 enable,
+    # state.get 返回 enabled (而非 disabled/unknown)
+    resp = await dispatch_rpc(
+        {"jsonrpc": "2.0", "id": 6, "method": "plugins/state.get", "params": {"plugin_id": "caveman_compress"}}
+    )
+    assert resp["jsonrpc"] == "2.0"
+    assert resp["result"]["state"] == "enabled"
 
 
 @pytest.mark.asyncio
