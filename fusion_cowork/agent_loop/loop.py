@@ -130,6 +130,9 @@ class AgentLoop:
 
             turn = AgentTurn(role="assistant", content=action.message, action=action)
             result.turns.append(turn)
+            self._messages.append(
+                {"role": "assistant", "content": json.dumps(_action_to_dict(action), ensure_ascii=False)}
+            )
 
             if action.type == "DONE":
                 result.completed = True
@@ -145,9 +148,6 @@ class AgentLoop:
             if action.type == "RUN_NODE":
                 observation = await self._execute_node(action)
                 turn.observation = observation
-                self._messages.append(
-                    {"role": "assistant", "content": json.dumps(_action_to_dict(action), ensure_ascii=False)}
-                )
                 self._messages.append({"role": "system", "content": f"[节点观察] {observation}"})
                 if self._on_turn:
                     self._on_turn(turn)

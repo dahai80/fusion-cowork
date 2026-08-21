@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.2.14"
+__version__ = "0.2.15"
 __app_name__ = "Fusion-Cowork"
 
 # ── 节点工具名称映射表（吸纳自 Squish tool_name_map.py） ──
@@ -203,6 +203,8 @@ _LAZY_IMPORTS: dict[str, str] = {
     # M3 插件系统
     "PluginManifest": "fusion_cowork.plugins.manifest",
     "PluginLoader": "fusion_cowork.plugins.loader",
+    "SandboxedNode": "fusion_cowork.plugins.loader",
+    "make_sandboxed_node_class": "fusion_cowork.plugins.loader",
     # M3 技能机制
     "Skill": "fusion_cowork.skills.registry",
     "SkillRegistry": "fusion_cowork.skills.registry",

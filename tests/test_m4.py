@@ -466,6 +466,94 @@ class TestRemoteControlClient:
             await client._request("status")
 
 
+# ── P2-10: TLS + 命名会话 attach ──
+
+
+class TestRemoteControlTLS:
+    def test_build_ssl_context_no_cert_returns_none(self):
+        server = RemoteControlServer()
+        assert server._build_ssl_context() is None
+
+    def test_build_ssl_context_bad_cert_degrades_to_none(self, tmp_path):
+        cert = tmp_path / "cert.pem"
+        key = tmp_path / "key.pem"
+        cert.write_text("not a cert")
+        key.write_text("not a key")
+        server = RemoteControlServer(tls_cert=str(cert), tls_key=str(key))
+        # 加载失败 → 降级明文, 返回 None (不抛)
+        assert server._build_ssl_context() is None
+
+    def test_build_ssl_context_valid_cert_returns_context(self, tmp_path):
+        import subprocess
+
+        cert = tmp_path / "cert.pem"
+        key = tmp_path / "key.pem"
+        # 生成自签名证书 (仅测试用)
+        subprocess.run(
+            [
+                "openssl",
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                str(key),
+                "-out",
+                str(cert),
+                "-days",
+                "1",
+                "-nodes",
+                "-subj",
+                "/CN=localhost",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        server = RemoteControlServer(tls_cert=str(cert), tls_key=str(key))
+        ctx = server._build_ssl_context()
+        import ssl
+
+        assert isinstance(ctx, ssl.SSLContext)
+        assert ctx.minimum_version == ssl.TLSVersion.TLSv1_2
+
+
+class TestRemoteControlAttachSession:
+    @pytest.mark.asyncio
+    async def test_attach_missing_session_id(self):
+        server = RemoteControlServer()
+        result = await server._attach_session("c1", "")
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_attach_nonexistent_session(self, monkeypatch, tmp_path):
+        import fusion_cowork.engine.session as session_mod
+
+        monkeypatch.setattr(session_mod, "DEFAULT_DB_PATH", str(tmp_path / "s.db"))
+        server = RemoteControlServer()
+        result = await server._attach_session("c1", "sess_does_not_exist")
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_attach_existing_session_returns_snapshot(self, monkeypatch, tmp_path):
+        import fusion_cowork.engine.session as session_mod
+
+        db_path = str(tmp_path / "s.db")
+        monkeypatch.setattr(session_mod, "DEFAULT_DB_PATH", db_path)
+        store = session_mod.SessionStore()
+        sess = session_mod.Session(workflow_name="wf-attach", status="running")
+        sess.steps_snapshot = [{"node": "file_input", "status": "success"}]
+        store.save(sess)
+
+        server = RemoteControlServer()
+        result = await server._attach_session("c1", sess.id)
+        assert result.get("attached") is True
+        assert result["session_id"] == sess.id
+        assert result["status"] == "running"
+        assert result["workflow_name"] == "wf-attach"
+        assert len(result["steps_snapshot"]) == 1
+        assert server._session_attachments[sess.id] == "c1"
+
+
 # ── M4: 结构化输出 ──
 
 

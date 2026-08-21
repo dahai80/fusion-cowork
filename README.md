@@ -391,6 +391,7 @@ Plugin system allows extending Fusion-Cowork with custom nodes:
     "description": "Custom nodes",
     "nodes": ["my_custom_node"],
     "entry_point": "plugin",
+    "sandbox": true
 }
 ```
 
@@ -399,6 +400,8 @@ Plugin system allows extending Fusion-Cowork with custom nodes:
 fusion-cowork plugin install /path/to/plugin_dir
 fusion-cowork plugin install /path/to/plugin.zip
 ```
+
+**Plugin sandbox runtime isolation (v0.2.15, P1-6):** When `manifest.sandbox == true`, plugin code never runs in the main process. `PluginLoader._load_sandboxed()` spawns a `sandbox_runner` subprocess to introspect node metadata, registers `SandboxedNode` wrapper subclasses in-process, and delegates every `execute()` back to the subprocess (rlimit CPU/memory/NPROC/FSIZE + timeout). The main process never calls `importlib.exec_module` on the plugin. `sandbox == false` keeps the legacy in-process load path (backward compatible).
 
 ### Skill Mechanism 🆕 (M3)
 
@@ -634,6 +637,14 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] 29 new tests (18 artifact + 11 FSB, 519 total)
 
 ### Patch Releases
+
+#### V0.2.15 (Patch) — 审计缺口补齐 Stage-1 + Stage-2 (文件沙箱 + 断点续跑 + 插件进程外隔离 + P2 测试补齐)
+- [x] **P0-2 授权工作文件夹沙箱** — `security/scoped_folder.py` `ScopedFolderManager.ensure_allowed()` (resolve + relative_to 边界检查) 注入 6 个文件节点 (FileInput/Output/Copy/Move/Find/Delete + BatchRename) + ShellExec; 越界读/写拒绝或跳过
+- [x] **P1-2 断点续跑** — `WorkflowEngine.execute(resume_steps=...)`: seed 已完成步骤 output_data → 跳过重跑 (SKIPPED); CLI `workflow/template run --resume <session_id>` 经 `SessionStore.resume()` 取快照; 修复 session steps_snapshot 丢 output_data bug; 3 回归测试
+- [x] **P1-6 插件沙箱进程外隔离** — `sandbox=true` 插件走 `sandbox_runner` 子进程 introspect + `SandboxedNode` 包装子类 (`make_sandboxed_node_class` 动态生成), `execute()` 回子进程运行 (rlimit CPU/内存/NPROC/FSIZE + 超时); 主进程永不 `exec_module` 插件代码; 4 测试
+- [x] **P2-9 MCP Streamable HTTP 测试补齐** — `tests/test_mcp_streamable.py` 覆盖 2025-03-26 spec 全链路: initialize 建 Mcp-Session-Id / notifications/initialized 202 / 未初始化拦截 (-32002) / tools/list / tools/call / Accept: text/event-stream → SSE 流 / DELETE 终止会话 / health; 12 测试
+- [x] **P2-10 远程控制 TLS + attach 修复与测试** — 修复 `remote.py::_attach_session` 误调 `store.get_session()` (SessionStore 无此方法, 永抛异常 → attach 恒失败) → 改为 `store.get()`; 新增 TLS 测试 (无证书 None / 坏证书降级 None / openssl 自签名 → SSLContext TLSv1.2+) + attach 测试 (缺 session_id / 不存在 / 命中返回快照+绑定); 6 测试
+- [x] 测试: 695 passed / 1 skipped (Py3.14), ruff 0 issues
 
 #### V0.2.14 (Patch) — 协作实时能力补齐 (Agent Loop + presence + WS 双向)
 - [x] **交互式对话 Agent Loop** — 新增 `agent_loop/` 包: LLM 逐轮决策 (RUN_NODE/REPLY/ASK/DONE) → NodeRegistry.create + resolve_alias 执行节点 → 观察结果回注入消息历史 → 循环至 DONE/max_steps; `interrupt()` 叫停 + `supplement()` 中途补一句再续; `agent-loop run/chat` CLI; 12 tests

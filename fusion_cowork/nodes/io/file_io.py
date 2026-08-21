@@ -70,6 +70,16 @@ class FileInputNode(BaseNode):
         if not path.exists():
             return NodeResult(status=NodeStatus.FAILED, error=f"路径不存在: {input_path}")
 
+        from ...security import get_scoped_folder_manager
+
+        scope = get_scoped_folder_manager()
+        if not scope.ensure_allowed(path):
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"沙箱拒绝越界读取: {path}",
+                summary="授权文件夹外路径被拦截",
+            )
+
         recursive = params.get("recursive", True)
         patterns = [p.strip() for p in params.get("file_patterns", "*").split(",") if p.strip()]
         max_files = params.get("max_files", 5000)
@@ -174,6 +184,17 @@ class FileOutputNode(BaseNode):
         overwrite = params.get("overwrite", False)
 
         out_dir = Path(output_path).expanduser()
+
+        from ...security import get_scoped_folder_manager
+
+        scope = get_scoped_folder_manager()
+        if not scope.ensure_allowed(out_dir):
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"沙箱拒绝越界写入: {out_dir}",
+                summary="授权文件夹外路径被拦截",
+            )
+
         out_dir.mkdir(parents=True, exist_ok=True)
 
         import time
@@ -187,6 +208,13 @@ class FileOutputNode(BaseNode):
         out_path = out_dir / f"{actual_name}{ext}"
         if out_path.exists() and not overwrite:
             out_path = out_dir / f"{actual_name}_{int(time.time())}{ext}"
+
+        if not scope.ensure_allowed(out_path):
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"沙箱拒绝越界写入: {out_path}",
+                summary="授权文件夹外路径被拦截",
+            )
 
         try:
             if fmt == "json":

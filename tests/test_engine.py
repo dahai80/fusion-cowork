@@ -413,6 +413,61 @@ class TestWorkflowEngine:
         assert n2_step.node_id == "n2"
 
     @pytest.mark.asyncio
+    async def test_execute_resume_skips_completed(self):
+        # P1-2 断点续跑: resume_steps 中已成功节点跳过重跑, 下游用缓存输出
+        wf = Workflow(name="断点续跑")
+        wf.add_node(MockTransformNode(node_id="n1", config=NodeConfig(params={"prefix": "resume_"})))
+        wf.add_node(MockSuccessNode(node_id="n2"))
+        wf.connect("n1", "n2")
+
+        # n1 的快照: 已成功, output_data 是缓存输出 (模拟之前执行结果)
+        resume_steps = [
+            {
+                "node_id": "n1",
+                "node_name": "mock_transform",
+                "node_display_name": "Mock 转换",
+                "status": "success",
+                "output_data": {"transformed": "resume_CACHED_OUTPUT"},
+                "summary": "恢复自快照",
+            }
+        ]
+
+        engine = WorkflowEngine()
+        execution = await engine.execute(wf, resume_steps=resume_steps)
+
+        assert execution.status == WorkflowStatus.SUCCESS
+        assert len(execution.steps) == 2
+        # n1 跳过, 状态 SKIPPED
+        assert execution.steps[0].node_id == "n1"
+        assert execution.steps[0].status == NodeStatus.SKIPPED
+        assert execution.steps[0].summary == "恢复自快照, 跳过重跑"
+        # n2 实际执行, 收到 n1 的缓存输出作为输入
+        assert execution.steps[1].node_id == "n2"
+        assert execution.steps[1].status == NodeStatus.SUCCESS
+        assert execution.steps[1].input_data.get("transformed") == "resume_CACHED_OUTPUT"
+
+    @pytest.mark.asyncio
+    async def test_execute_resume_partial_snapshot(self):
+        # P1-2: resume_steps 含非 success 步骤, 仅恢复成功节点
+        wf = Workflow(name="部分快照续跑")
+        wf.add_node(MockSuccessNode(node_id="n1"))
+        wf.add_node(MockSuccessNode(node_id="n2"))
+        wf.connect("n1", "n2")
+
+        resume_steps = [
+            {"node_id": "n1", "status": "success", "output_data": {"result": "ok"}},
+            {"node_id": "n2", "status": "failed", "output_data": {}},
+        ]
+
+        engine = WorkflowEngine()
+        execution = await engine.execute(wf, resume_steps=resume_steps)
+
+        assert execution.status == WorkflowStatus.SUCCESS
+        # n1 跳过 (success 快照), n2 重跑 (failed 快照不计入已完成)
+        assert execution.steps[0].status == NodeStatus.SKIPPED
+        assert execution.steps[1].status == NodeStatus.SUCCESS
+
+    @pytest.mark.asyncio
     async def test_cancel_execution(self):
         wf = Workflow(name="可取消")
         wf.add_node(MockSuccessNode(node_id="n1"))

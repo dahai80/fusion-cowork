@@ -335,7 +335,6 @@ def create_space_api(
             user_id = hello.get("user_id", "")
             display_name = hello.get("display_name", "")
             await _collab_hub.join(websocket, space_id, user_id, display_name=display_name)
-            await websocket.send_json({"type": "joined", "space_id": space_id, "user_id": user_id})
             while True:
                 raw = await websocket.receive_text()
                 result = await _collab_hub.handle_message(websocket, raw)
