@@ -24,6 +24,20 @@ DEFAULT_MLX_BASE_URL = f"http://localhost:{DEFAULT_MLX_PORT}/v1"
 MAX_RETRIES = 2
 RETRY_DELAY = 1.0
 
+# fusion-core 基础设施采纳 (路径B, issue #58): 借 with_retry+连接池, 保自建客户端业务层。
+# in-tree 包本地装了就用 (重试统一+指标上报+LRU池), CI 未装则 fallback 原手写重试 (零功能退化)。
+_HAS_FUSION_CORE = False
+_with_retry = None
+_get_async_client = None
+try:
+    from fusion_core.http_client import get_async_client as _get_async_client
+    from fusion_core.http_client import with_retry as _with_retry
+
+    _HAS_FUSION_CORE = True
+    logger.info("fusion_core.http_client available, FusionMLXClient 借 with_retry+连接池 (路径B)")
+except ImportError:
+    logger.info("fusion_core 不可用, FusionMLXClient 回退手写重试 (path B fallback)")
+
 
 @dataclass
 class LLMResponse:
@@ -79,6 +93,17 @@ class FusionMLXClient:
             )
         return self._client
 
+    def _core_client(self) -> httpx.AsyncClient:
+        # 路径B: fusion-core 连接池 (per-loop+base_url LRU, 上限8, 自动驱逐).
+        # fallback: 自建单实例 client (保向后兼容, CI 无 fusion-core 时走此).
+        if _HAS_FUSION_CORE:
+            return _get_async_client(
+                self.base_url,
+                timeout=self.timeout,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+            )
+        return self.client
+
     async def close(self) -> None:
         if self._client:
             await self._client.aclose()
@@ -111,6 +136,9 @@ class FusionMLXClient:
             payload["tools"] = tools
         payload.update(kwargs)
 
+        if _HAS_FUSION_CORE:
+            return await self._chat_core(payload, model)
+
         last_exc = None
         for attempt in range(self.max_retries + 1):
             try:
@@ -119,12 +147,7 @@ class FusionMLXClient:
                 data = resp.json()
                 choice = data["choices"][0]
                 message = choice.get("message", {})
-                return LLMResponse(
-                    content=message.get("content", ""),
-                    tool_calls=message.get("tool_calls", []),
-                    finish_reason=choice.get("finish_reason", "stop"),
-                    usage=data.get("usage", {}),
-                )
+                return self._build_llm_response(message, choice, data, model)
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.PoolTimeout) as e:
                 last_exc = e
                 if attempt < self.max_retries:
@@ -147,6 +170,44 @@ class FusionMLXClient:
                         )
                     raise
         raise last_exc
+
+    async def _chat_core(self, payload: dict, model: str) -> LLMResponse:
+        # 路径B: fusion-core with_retry 统一重试 (429/500/502/503/504 + 瞬态异常, jitter退避)
+        # + 指标上报 (gateway /metrics 可聚合). 鉴权401/403 hint 保留.
+        client = self._core_client()
+
+        async def _do_post() -> httpx.Response:
+            return await client.post("/chat/completions", json=payload)
+
+        try:
+            resp = await _with_retry(_do_post, retries=self.max_retries, initial_backoff=self.retry_delay)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (401, 403):
+                logger.error(
+                    f"chat() 鉴权失败 HTTP {e.response.status_code}: "
+                    "FUSION_MLX_API_KEY 应为 fusion-gateway 的 client api key "
+                    "(config.yaml 中 auth.api_keys[].key), 而非 fusion-mlx "
+                    "settings.json 的 auth.api_key; 两者是独立鉴权"
+                )
+            raise
+        data = resp.json()
+        choice = data["choices"][0]
+        message = choice.get("message", {})
+        return self._build_llm_response(message, choice, data, model)
+
+    def _build_llm_response(self, message: dict, choice: dict, data: dict, model: str) -> LLMResponse:
+        # D-H3 静默失败守卫: 成功路径 content 空 → 显式标记 (非抛错, 保调用方字段判定语义, 18调用方零改).
+        content = message.get("content", "")
+        finish_reason = choice.get("finish_reason", "stop")
+        if not content.strip() and not message.get("tool_calls"):
+            logger.warning(f"chat() 模型返回空 content (model={model}, finish_reason={finish_reason})")
+            finish_reason = "empty_content"
+        return LLMResponse(
+            content=content,
+            tool_calls=message.get("tool_calls", []),
+            finish_reason=finish_reason,
+            usage=data.get("usage", {}),
+        )
 
     async def stream_chat(
         self,
@@ -208,7 +269,7 @@ class FusionMLXClient:
             "model": model,
             "input": text,
         }
-        resp = await self.client.post("/embeddings", json=payload)
+        resp = await self._core_client().post("/embeddings", json=payload)
         resp.raise_for_status()
         data = resp.json()
 
@@ -221,7 +282,7 @@ class FusionMLXClient:
 
     async def list_models(self) -> list[dict[str, Any]]:
         """List available models from fusion-mlx."""
-        resp = await self.client.get("/models")
+        resp = await self._core_client().get("/models")
         resp.raise_for_status()
         data = resp.json()
         return data.get("data", [])

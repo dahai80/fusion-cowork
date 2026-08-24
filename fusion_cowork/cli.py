@@ -511,7 +511,7 @@ async def _async_ai_status():
             pass
     else:
         console.print_warning("⚠️  fusion-mlx: 未运行")
-        click.echo("   启动: 请启动 fusion-mlx 服务 (默认端口 8000)")
+        click.echo("   启动: 请启动 fusion-mlx 服务 (引擎 11434, 网关 11432)")
 
     # 检查融合 KB
     from .ai import KBClient

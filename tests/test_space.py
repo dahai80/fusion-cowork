@@ -992,11 +992,19 @@ class TestFusionMLXClientEnhancements:
     async def test_chat_retry_on_connect_error(self):
         import httpx
 
+        import fusion_cowork.ai.mlx_client as mc
         from fusion_cowork.ai.mlx_client import FusionMLXClient
 
-        client = FusionMLXClient(base_url="http://localhost:19999/v1", max_retries=1, retry_delay=0.01)
-        with pytest.raises(httpx.ConnectError):
-            await client.chat(model="test", messages=[{"role": "user", "content": "hi"}])
+        # force fallback 走手写重试 (连真实无服务端口), 免 path B 激活态走 _chat_core→_get_async_client
+        # 在 CI 无 fusion-core 时 _get_async_client=None 会抛 TypeError 非 ConnectError.
+        saved_flag = mc._HAS_FUSION_CORE
+        mc._HAS_FUSION_CORE = False
+        try:
+            client = FusionMLXClient(base_url="http://localhost:19999/v1", max_retries=1, retry_delay=0.01)
+            with pytest.raises(httpx.ConnectError):
+                await client.chat(model="test", messages=[{"role": "user", "content": "hi"}])
+        finally:
+            mc._HAS_FUSION_CORE = saved_flag
 
     @pytest.mark.asyncio
     async def test_stream_chat_retry_on_connect_error(self):
@@ -1023,44 +1031,57 @@ class TestFusionMLXClientEnhancements:
     async def test_chat_no_retry_on_400(self):
         import httpx
 
+        import fusion_cowork.ai.mlx_client as mc
         from fusion_cowork.ai.mlx_client import FusionMLXClient
 
-        client = FusionMLXClient(max_retries=2, retry_delay=0.01)
-        mock_resp = MagicMock()
-        mock_resp.status_code = 400
-        mock_resp.text = "Bad Request"
-        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError("400", request=MagicMock(), response=mock_resp)
-        client._client = MagicMock()
-        client._client.post = AsyncMock(return_value=mock_resp)
-        with pytest.raises(httpx.HTTPStatusError):
-            await client.chat(model="test", messages=[{"role": "user", "content": "hi"}])
-        assert client._client.post.call_count == 1
+        # 手写重试路径只在 fallback 态触发 (path B 激活态走 fusion_core.with_retry, 另测于 test_fusion_core_pathb.py)
+        saved_flag = mc._HAS_FUSION_CORE
+        mc._HAS_FUSION_CORE = False
+        try:
+            client = FusionMLXClient(max_retries=2, retry_delay=0.01)
+            mock_resp = MagicMock()
+            mock_resp.status_code = 400
+            mock_resp.text = "Bad Request"
+            mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError("400", request=MagicMock(), response=mock_resp)
+            client._client = MagicMock()
+            client._client.post = AsyncMock(return_value=mock_resp)
+            with pytest.raises(httpx.HTTPStatusError):
+                await client.chat(model="test", messages=[{"role": "user", "content": "hi"}])
+            assert client._client.post.call_count == 1
+        finally:
+            mc._HAS_FUSION_CORE = saved_flag
 
     @pytest.mark.asyncio
     async def test_chat_retries_on_503(self):
         import httpx
 
+        import fusion_cowork.ai.mlx_client as mc
         from fusion_cowork.ai.mlx_client import FusionMLXClient
 
-        client = FusionMLXClient(max_retries=2, retry_delay=0.01)
-        mock_resp_503 = MagicMock()
-        mock_resp_503.status_code = 503
-        mock_resp_503.text = "Service Unavailable"
-        mock_resp_503.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "503", request=MagicMock(), response=mock_resp_503
-        )
-        mock_ok = MagicMock()
-        mock_ok.status_code = 200
-        mock_ok.raise_for_status = MagicMock()
-        mock_ok.json.return_value = {
-            "choices": [{"message": {"content": "hello"}, "finish_reason": "stop"}],
-            "usage": {},
-        }
-        client._client = MagicMock()
-        client._client.post = AsyncMock(side_effect=[mock_resp_503, mock_ok])
-        result = await client.chat(model="test", messages=[{"role": "user", "content": "hi"}])
-        assert result.content == "hello"
-        assert client._client.post.call_count == 2
+        saved_flag = mc._HAS_FUSION_CORE
+        mc._HAS_FUSION_CORE = False
+        try:
+            client = FusionMLXClient(max_retries=2, retry_delay=0.01)
+            mock_resp_503 = MagicMock()
+            mock_resp_503.status_code = 503
+            mock_resp_503.text = "Service Unavailable"
+            mock_resp_503.raise_for_status.side_effect = httpx.HTTPStatusError(
+                "503", request=MagicMock(), response=mock_resp_503
+            )
+            mock_ok = MagicMock()
+            mock_ok.status_code = 200
+            mock_ok.raise_for_status = MagicMock()
+            mock_ok.json.return_value = {
+                "choices": [{"message": {"content": "hello"}, "finish_reason": "stop"}],
+                "usage": {},
+            }
+            client._client = MagicMock()
+            client._client.post = AsyncMock(side_effect=[mock_resp_503, mock_ok])
+            result = await client.chat(model="test", messages=[{"role": "user", "content": "hi"}])
+            assert result.content == "hello"
+            assert client._client.post.call_count == 2
+        finally:
+            mc._HAS_FUSION_CORE = saved_flag
 
 
 class TestSharedContext:
