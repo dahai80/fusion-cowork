@@ -163,7 +163,9 @@ async def dispatch_rpc(request: Dict[str, Any]) -> Dict[str, Any]:
     request_id = request.get("id")
     method = request.get("method", "")
 
-    if method not in PLUGINS_METHODS and not method.startswith("plugins."):
+    # LO-10: 显式分发 — 白名单方法或 plugins/* 前缀走校验+dispatch, 其余 -32601
+    is_plugins_method = method in PLUGINS_METHODS or method.startswith("plugins/")
+    if not is_plugins_method:
         return {
             "jsonrpc": "2.0",
             "id": request_id,

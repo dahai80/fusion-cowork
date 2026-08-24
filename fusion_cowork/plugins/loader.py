@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -84,12 +85,33 @@ class SandboxedNode(BaseNode):
 
             sandbox = PluginSandbox()
 
+        # LO-7: 从节点 meta 读 manifest.timeout_seconds 覆盖沙箱默认超时 (>0 才覆盖)
+        call_limits = None
+        meta = getattr(type(self), "_sandbox_meta", {}) or {}
+        meta_timeout = float(meta.get("timeout_seconds", 0.0) or 0.0)
+        if meta_timeout > 0:
+            from .sandbox import ResourceLimits
+
+            base = sandbox.limits
+            call_limits = ResourceLimits(
+                max_cpu_seconds=base.max_cpu_seconds,
+                max_memory_mb=base.max_memory_mb,
+                max_output_bytes=base.max_output_bytes,
+                max_processes=base.max_processes,
+                max_file_size_mb=base.max_file_size_mb,
+                timeout_seconds=meta_timeout,
+                heartbeat_interval=base.heartbeat_interval,
+                max_heartbeat_misses=base.max_heartbeat_misses,
+            )
+            logger.info(f"沙箱节点 {self._class_name} 超时覆盖: {meta_timeout}s (manifest 声明)")
+
         try:
             res = await sandbox.execute(
                 plugin_name=f"sandbox_node:{self._class_name}",
                 command=sys.executable,
                 args=[runner_path],
                 stdin_data=req,
+                limits=call_limits,
             )
         except Exception as e:
             logger.error(f"沙箱节点执行异常 {self._class_name}: {e}")
@@ -101,7 +123,19 @@ class SandboxedNode(BaseNode):
 
         out = res.stdout or ""
         idx = out.find(_RESULT_MARKER)
-        payload_str = out[idx + len(_RESULT_MARKER) :].strip() if idx >= 0 else out.strip()
+        if idx < 0:
+            # LO-5: 无结果帧标记 → 子进程未输出约定结果, 不把整 stdout 当 payload
+            stdout_tail = out[-256:]
+            logger.error(
+                f"沙箱节点 {self._class_name} 未输出结果帧 (marker 缺失); "
+                f"stdout尾={stdout_tail!r} stderr={(res.stderr or '')[-256:]!r}"
+            )
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error="子进程未输出结果帧 (缺少 RESULT_MARKER)",
+                summary=f"沙箱返回无标记输出 rc={res.exit_code}",
+            )
+        payload_str = out[idx + len(_RESULT_MARKER) :].strip()
         try:
             payload = json.loads(payload_str)
         except json.JSONDecodeError as e:
@@ -139,7 +173,24 @@ def make_sandboxed_node_class(meta: Dict[str, Any], sandbox: Any) -> type[BaseNo
     """为单个插件节点生成沙箱包装子类 — P1-6。
 
     子类固定类级 name/display_name/category 等元数据, 满足 NodeRegistry 注册需求。
+    LO-6: 未知 meta 键记 warning (不静默吞), 便于插件清单字段错拼写暴露。
     """
+    _EXPECTED_META = {
+        "class_name",
+        "name",
+        "display_name",
+        "category",
+        "description",
+        "icon",
+        "default_label",
+        "entry_file",
+        "params_schema",
+        "timeout_seconds",
+    }
+    unknown = set(meta.keys()) - _EXPECTED_META
+    if unknown:
+        logger.warning(f"沙箱插件节点 meta 含未知键: {sorted(unknown)} (将被忽略)")
+
     cat_raw = meta.get("category", "tool")
     try:
         category = NodeCategory(cat_raw)
@@ -322,6 +373,8 @@ class PluginLoader:
         registered = []
         for meta in node_metas:
             meta["entry_file"] = str(entry_file)
+            # LO-7: 透传 manifest.timeout_seconds 到节点 meta, execute 时覆盖沙箱默认超时
+            meta["timeout_seconds"] = manifest.timeout_seconds
             wrapper_cls = make_sandboxed_node_class(meta, sandbox)
             _sandboxed_factory(wrapper_cls)
             NodeRegistry.register(wrapper_cls)
@@ -393,17 +446,40 @@ class PluginLoader:
         except ImportError:
             logger.error("安装 URL 插件需要 httpx (pip install httpx)")
             return False
+        # MD-16: 仅允许 https, 拒 http (防中间人篡改插件包)
+        if not url.lower().startswith("https://"):
+            logger.error(f"URL 插件仅允许 https://: {url} (拒 http 防篡改)")
+            return False
+        if not url.lower().endswith(".zip"):
+            logger.error(f"URL 插件仅支持 .zip: {url}")
+            return False
+        _MAX_DOWNLOAD = 50 * 1024 * 1024  # 50 MiB 上限, 防超大包耗尽内存
         try:
             logger.info(f"从 URL 下载插件: {url}")
-            with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+            tmp_path = Path(tempfile.mktemp(suffix=".zip"))
+            downloaded = 0
+            sha = hashlib.sha256()
+            with httpx.Client(timeout=60.0, follow_redirects=False) as client:
                 resp = client.get(url)
+                # MD-16: 显式拒重定向 (防开放重定向到内网/恶意源); 客户端须用直链
+                if resp.is_redirect:
+                    logger.error(f"URL 插件拒重定向: {url} -> {resp.headers.get('location', '?')}")
+                    return False
                 resp.raise_for_status()
-            if not url.lower().endswith(".zip"):
-                logger.error(f"URL 插件仅支持 .zip: {url}")
-                return False
-            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
-                tmp.write(resp.content)
-                tmp_path = Path(tmp.name)
+                with open(tmp_path, "wb") as f:
+                    for chunk in resp.iter_bytes(chunk_size=65536):
+                        downloaded += len(chunk)
+                        if downloaded > _MAX_DOWNLOAD:
+                            logger.error(f"URL 插件超大小上限 {_MAX_DOWNLOAD} 字节, 中止下载: {url}")
+                            f.close()
+                            try:
+                                tmp_path.unlink()
+                            except OSError:
+                                pass
+                            return False
+                        sha.update(chunk)
+                        f.write(chunk)
+            logger.info(f"URL 插件下载完成: {downloaded} 字节, sha256={sha.hexdigest()[:16]}")
             try:
                 return self._install_zip(tmp_path)
             finally:
@@ -539,6 +615,16 @@ class PluginLoader:
         imported = []
         for name, spec in servers.items():
             spec = spec or {}
+            # MD-17: 校验 command — 非空 + 绝对路径或白名单可执行名, 拒盲信外部 spec
+            command = str(spec.get("command", "")).strip()
+            args = spec.get("args", [])
+            env = spec.get("env", {})
+            if not command:
+                logger.warning(f"跳过 Claude Desktop MCP server (command 为空): {name}")
+                continue
+            if not self._is_safe_mcp_command(command, args, env):
+                logger.warning(f"跳过 Claude Desktop MCP server (command 校验失败): {name} command={command!r}")
+                continue
             manifest = PluginManifest(
                 name=f"mcp_{name}",
                 version="0.1.0",
@@ -554,15 +640,56 @@ class PluginLoader:
             (target / "manifest.json").write_text(
                 json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
             )
-            # 记录 MCP server spec 供运行时 MCP client 拉起
+            # MD-17: 记录 source hash (command+args) 供运行时校验未被篡改
+            source_hash = hashlib.sha256(
+                json.dumps({"command": command, "args": args}, sort_keys=True).encode()
+            ).hexdigest()
             (target / "mcp_server.json").write_text(
                 json.dumps(
-                    {"command": spec.get("command", ""), "args": spec.get("args", []), "env": spec.get("env", {})},
+                    {
+                        "command": command,
+                        "args": args,
+                        "env": self._sanitize_mcp_env(env),
+                        "source_hash": source_hash,
+                    },
                     ensure_ascii=False,
                     indent=2,
                 ),
                 encoding="utf-8",
             )
             imported.append(manifest.name)
-            logger.info(f"已从 Claude Desktop 导入 MCP server: {name} -> {manifest.name}")
+            logger.info(
+                f"已从 Claude Desktop 导入 MCP server: {name} -> {manifest.name} source_hash={source_hash[:16]}"
+            )
         return imported
+
+    @staticmethod
+    def _is_safe_mcp_command(command: str, args: Any, env: Any) -> bool:
+        # MD-17: command 须非空且不含 shell 元字符; args 须为 list; 拒明显危险调用
+        if not isinstance(args, list):
+            return False
+        shell_meta = {";", "|", "&", "`", "$", "(", ")", ">", "<", "\n", "\r"}
+        if any(ch in command for ch in shell_meta):
+            return False
+        # 拒危险命令名 (防拉起任意进程)
+        dangerous = {"rm", "rmdir", "mkfs", "dd", "shred", "curl", "wget", "nc", "bash", "sh"}
+        base = Path(command).name
+        if base in dangerous:
+            return False
+        for a in args:
+            if not isinstance(a, (str, int, float, bool)):
+                return False
+            if isinstance(a, str) and any(ch in a for ch in shell_meta):
+                return False
+        return True
+
+    @staticmethod
+    def _sanitize_mcp_env(env: Any) -> Dict[str, str]:
+        # MD-17: env 仅保留字符串值, 拒非字符串/空键 (防注入畸形 env)
+        if not isinstance(env, dict):
+            return {}
+        safe: Dict[str, str] = {}
+        for k, v in env.items():
+            if isinstance(k, str) and k and isinstance(v, (str, int, float, bool)):
+                safe[k] = str(v)
+        return safe

@@ -31,6 +31,9 @@ _IDENTITY_FIELDS = frozenset({"operator_id", "user_id", "inviter_id", "author_id
 _MAX_B64_BYTES = 50 * 1024 * 1024
 _MAX_DECODED_BYTES = 25 * 1024 * 1024
 _MAX_SYNC_FILES = 50
+# MD-1: UDS 单行上限 1MiB + 读超时 5s, 防无 \n 长行 OOM; batch (数组请求) 显式拒 -32600
+_MAX_RPC_LINE = 1024 * 1024
+_RPC_READ_TIMEOUT = 5.0
 # HI-13: collab 消息内容上限 (16KiB), 防存储型 prompt 注入 + 撑爆 session 记录
 _MAX_COLLAB_CONTENT = 16 * 1024
 # HI-15: 文本知识库扩展名白名单 (KB 主要消费文本; 二进制需 allow_binary 单独路径)
@@ -300,10 +303,24 @@ class DeskRPCServer:
 
         try:
             while self._running:
-                line = await reader.readline()
-                if not line:
+                # MD-1: 有界读 — readuntil(\n) 限 _MAX_RPC_LINE, 超长拒 -32700, 超 5s 断
+                try:
+                    raw = await asyncio.wait_for(reader.readuntil(b"\n"), timeout=_RPC_READ_TIMEOUT)
+                except asyncio.IncompleteReadError:
                     break
-                line = line.strip()
+                except asyncio.LimitOverrunError:
+                    logger.warning("Desk RPC 行超 %d 字节上限, 拒绝并断开", _MAX_RPC_LINE)
+                    await self._write_response(
+                        writer,
+                        {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Request too large"}},
+                    )
+                    break
+                except TimeoutError:
+                    logger.warning("Desk RPC 读超时 %ss, 断开", _RPC_READ_TIMEOUT)
+                    break
+                if not raw:
+                    break
+                line = raw.strip()
                 if not line:
                     continue
 
@@ -321,7 +338,23 @@ class DeskRPCServer:
                     )
                     continue
 
+                # MD-1: JSON-RPC batch (数组) 显式拒 -32600, 不当 dict 分发
+                if isinstance(request, list):
+                    logger.warning("Desk RPC 拒绝 batch 请求 (数组, %d 元素)", len(request))
+                    await self._write_response(
+                        writer,
+                        {
+                            "jsonrpc": "2.0",
+                            "id": None,
+                            "error": {"code": -32600, "message": "Batch requests not supported"},
+                        },
+                    )
+                    continue
+
                 response = await self._dispatch(request)
+                # MD-1: 通知 (无 id) 不回响应 — JSON-RPC 2.0 规范
+                if response.get("id") is None and "id" not in request:
+                    continue
                 await self._write_response(writer, response)
         except Exception as e:
             logger.error(f"客户端处理异常: {e}")
@@ -2301,61 +2334,89 @@ class DeskRPCServer:
     # ── Space Workflow ──
 
     async def _handle_space_workflow_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        if not self._space_store:
-            return {"error": "SpaceStore 未配置"}
+        svc, err = self._get_artifact_svc()
+        if err:
+            return {"error": err}
         space_id = params.get("space_id", "")
+        user_id = params.get("operator_id", "") or params.get("user_id", "")
+        if not space_id:
+            return {"error": "space_id 必填"}
+        if not user_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            user_id = sp.owner_id if sp else "local_user"
         try:
-            workflows = await self._space_store.list_artifacts(space_id)
-            wf_list = [a for a in workflows if a.get("kind") == "workflow"]
-            return {"workflows": wf_list}
+            artifacts = await svc.list_artifacts(space_id, user_id, "workflow")
+            return {"workflows": artifacts}
+        except PermissionError as e:
+            return {"error": str(e)}
         except Exception as e:
+            logger.error(f"workflow.list failed: {e}")
             return self._internal_error(e)
 
     async def _handle_space_workflow_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        if not self._space_store:
-            return {"error": "SpaceStore 未配置"}
+        svc, err = self._get_artifact_svc()
+        if err:
+            return {"error": err}
         space_id = params.get("space_id", "")
         name = params.get("name", "")
         nodes = params.get("nodes", [])
         edges = params.get("edges", [])
         operator_id = params.get("operator_id", "")
+        if not space_id:
+            return {"error": "space_id 必填"}
         if not operator_id:
             sp = await self._space_store.get_space(space_id) if self._space_store else None
             operator_id = sp.owner_id if sp else "local_user"
         try:
-            artifact_id = await self._space_store.add_artifact(
-                {
-                    "space_id": space_id,
-                    "name": name,
-                    "kind": "workflow",
-                    "content": json.dumps({"nodes": nodes, "edges": edges}),
-                    "owner_id": operator_id,
-                }
+            result = await svc.create_artifact(
+                space_id=space_id,
+                owner_user_id=operator_id,
+                name=name,
+                artifact_type="workflow",
+                content=json.dumps({"nodes": nodes, "edges": edges}, ensure_ascii=False),
             )
-            return {"artifact_id": artifact_id, "name": name}
+            return {"artifact_id": result.get("id", ""), "name": name}
+        except PermissionError as e:
+            return {"error": str(e)}
         except Exception as e:
             logger.error(f"workflow.create failed: {e}")
             return self._internal_error(e)
 
     async def _handle_space_workflow_run(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        if not self._space_store:
-            return {"error": "SpaceStore 未配置"}
-
+        svc, err = self._get_artifact_svc()
+        if err:
+            return {"error": err}
+        space_id = params.get("space_id", "")
         artifact_id = params.get("artifact_id", "") or params.get("workflow_id", "")
+        operator_id = params.get("operator_id", "") or params.get("user_id", "")
         inputs = params.get("inputs", {})
+        if not all([space_id, artifact_id]):
+            return {"error": "space_id, artifact_id 必填"}
+        if not operator_id:
+            sp = await self._space_store.get_space(space_id) if self._space_store else None
+            operator_id = sp.owner_id if sp else "local_user"
         try:
-            artifact = await self._space_store.get_artifact(artifact_id)
+            artifact = await svc.get_artifact(space_id, artifact_id, operator_id)
             if not artifact:
                 return {"error": f"工作流 {artifact_id} 不存在"}
             wf_data = json.loads(artifact.get("content", "{}"))
+            wf_data.setdefault("name", artifact.get("name", "workflow"))
+            from ..engine.workflow import Workflow
+
+            wf = Workflow.from_dict(wf_data)
             engine = self._get_engine()
-            wf = engine.create_workflow(
-                name=artifact.get("name", "workflow"),
-                nodes=wf_data.get("nodes", []),
-                edges=wf_data.get("edges", []),
-            )
-            result = await engine.execute(wf, inputs=inputs)
-            return {"execution_id": result.get("execution_id", ""), "status": "completed", "result": result}
+            result = await engine.execute(wf, initial_input=inputs)
+            status_val = getattr(result, "status", "completed")
+            status_str = status_val.value if hasattr(status_val, "value") else str(status_val)
+            return {
+                "execution_id": getattr(result, "id", ""),
+                "status": status_str,
+                "error": getattr(result, "error", None),
+                "result_summary": getattr(result, "result_summary", ""),
+                "steps": [s.to_dict() for s in getattr(result, "steps", []) if hasattr(s, "to_dict")],
+            }
+        except PermissionError as e:
+            return {"error": str(e)}
         except Exception as e:
             logger.error(f"workflow.run failed: {e}")
             return self._internal_error(e)

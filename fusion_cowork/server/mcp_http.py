@@ -120,6 +120,14 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
                 status_code=400,
             )
 
+        # MD-1: JSON-RPC batch (数组) 显式拒 -32600
+        if isinstance(body, list):
+            logger.warning("MCP HTTP 拒绝 batch 请求 (%d 元素)", len(body))
+            return JSONResponse(
+                {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Batch requests not supported"}},
+                status_code=400,
+            )
+
         method = body.get("method", "")
         req_id = body.get("id")
         params = body.get("params", {})
@@ -153,14 +161,23 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
         except Exception as e:
             # HI-5: trace_id 入响应, 栈仅日志, 不泄 str(e) 给客户端
             trace_id = secrets.token_hex(8)
-            logger.error("MCP HTTP 处理异常 trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc())
+            logger.error(
+                "MCP HTTP 处理异常 trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc()
+            )
             if req_id is not None:
                 return JSONResponse(
-                    {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603, "message": "Internal error", "data": {"trace_id": trace_id}}},
+                    {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "error": {"code": -32603, "message": "Internal error", "data": {"trace_id": trace_id}},
+                    },
                     status_code=500,
                 )
             return JSONResponse(
-                {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error", "data": {"trace_id": trace_id}}},
+                {
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32603, "message": "Internal error", "data": {"trace_id": trace_id}},
+                },
                 status_code=500,
             )
 
@@ -181,6 +198,14 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
         except json.JSONDecodeError:
             return JSONResponse(
                 {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}},
+                status_code=400,
+            )
+
+        # MD-1: JSON-RPC batch 显式拒 -32600 (plugins/* 不支持 batch)
+        if isinstance(body, list):
+            logger.warning("MCP /rpc 拒绝 batch 请求 (%d 元素)", len(body))
+            return JSONResponse(
+                {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Batch requests not supported"}},
                 status_code=400,
             )
 
@@ -306,6 +331,14 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
                 status_code=400,
             )
 
+        # MD-1: JSON-RPC batch 显式拒 -32600 (streamable 单请求语义)
+        if isinstance(body, list):
+            logger.warning("MCP Streamable 拒绝 batch 请求 (%d 元素)", len(body))
+            return JSONResponse(
+                {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Batch requests not supported"}},
+                status_code=400,
+            )
+
         # initialize 必须建会话
         if body.get("method") == "initialize":
             session_id = _new_session_id()
@@ -367,9 +400,15 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
         except Exception as e:
             # HI-5: trace_id 入响应, 栈仅日志
             trace_id = secrets.token_hex(8)
-            logger.error("MCP Streamable 处理异常 trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc())
+            logger.error(
+                "MCP Streamable 处理异常 trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc()
+            )
             return JSONResponse(
-                {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603, "message": "Internal error", "data": {"trace_id": trace_id}}},
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32603, "message": "Internal error", "data": {"trace_id": trace_id}},
+                },
                 status_code=500,
             )
 

@@ -198,8 +198,11 @@ class HeadlessRunner:
     def _extract_final_output(self, result) -> Dict[str, Any]:
         """从执行结果提取最终输出 (最后成功节点 output_data)。"""
         try:
+            # LO-2: 原嵌套三元 `x == "success" if hasattr(...) else False` 优先级歧义;
+            # 拆为显式判定: 取 status 值, 字符串比较
             for step in reversed(result.steps):
-                if step.status.value == "success" if hasattr(step.status, "value") else False:
+                status_val = step.status.value if hasattr(step.status, "value") else str(step.status)
+                if status_val == "success":
                     return step.output_data or {}
             # 无成功节点: 取最后一个有 output_data 的
             for step in reversed(result.steps):

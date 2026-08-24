@@ -37,14 +37,9 @@ from .engine import (
     WorkflowEngine,
     WorkflowStatus,
 )
-from .nodes.browser import BrowserClient, BrowserManager
-from .nodes.macos.input_nodes import (
-    ComputerUseLoopNode,
-    KeyboardShortcutNode,
-    KeyboardTypeNode,
-    MouseClickNode,
-    MouseMoveNode,
-)
+
+# LO-3: nodes.browser/input_nodes 顶层 import 耦合 — 移入用到的命令函数内延迟导入,
+# 防 nodes.browser 将来拉缺失可选依赖致 import fusion_cowork.cli 全坏 (每个子命令挂)
 from .templates import TemplateManager
 from .utils.logger import setup_logger
 
@@ -122,11 +117,14 @@ def _cleanup_mlx_client():
     if _mlx_client is None:
         return
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(_mlx_client.close())
-        else:
-            loop.run_until_complete(_mlx_client.close())
+        # LO-1: asyncio.get_event_loop() py3.12 弃用且无 running loop 时报错;
+        # atexit 跑在主线程无 loop, 用 asyncio.run 起新 loop 跑 close coroutine
+        try:
+            asyncio.get_running_loop()
+            # 有 running loop (不应出现在 atexit, 但防御): 派 task 不阻塞
+            asyncio.ensure_future(_mlx_client.close())
+        except RuntimeError:
+            asyncio.run(_mlx_client.close())
     except Exception as e:
         logger.debug(f"清理 mlx_client 失败: {e}")
     finally:
@@ -864,6 +862,8 @@ def browser_start(build: bool):
 
 
 async def _async_browser_start(build: bool):
+    from .nodes.browser import BrowserManager
+
     console.print_header("🌐 Fusion 内嵌浏览器")
 
     if build:
@@ -892,6 +892,8 @@ def browser_build():
 
 
 async def _async_browser_build():
+    from .nodes.browser import BrowserManager
+
     console.print_header("🔨 构建 Fusion 内嵌浏览器")
     console.print_info("正在编译 Swift 原生浏览器...")
     if BrowserManager.build():
@@ -908,6 +910,8 @@ def browser_open(url: str):
 
 
 async def _async_browser_open(url: str):
+    from .nodes.browser import BrowserClient
+
     client = BrowserClient()
     try:
         _result = await client.open_url(url)
@@ -922,6 +926,8 @@ async def _async_browser_open(url: str):
 @browser.command("status")
 def browser_status():
     """检查浏览器状态。"""
+    from .nodes.browser import BrowserClient
+
     client = BrowserClient()
     if client.is_running():
         console.print_success("✅ 浏览器正在运行")
@@ -1633,6 +1639,8 @@ def computer_use():
 @click.option("--duration", "-d", default=0, type=float, help="移动持续时间 (秒)")
 def cu_move(x: int, y: int, duration: float):
     """移动鼠标到指定坐标。"""
+    from .nodes.macos.input_nodes import MouseMoveNode
+
     node = MouseMoveNode(config=NodeConfig(params={"x": x, "y": y, "duration": duration}))
     result = asyncio.run(node.execute({"x": x, "y": y}))
     if result.status.value == "success":
@@ -1648,6 +1656,8 @@ def cu_move(x: int, y: int, duration: float):
 @click.option("--count", "-c", type=int, default=1, help="点击次数")
 def cu_click(x, y, button, count):
     """鼠标点击。"""
+    from .nodes.macos.input_nodes import MouseClickNode
+
     params = {"button": button, "click_count": count}
     if x is not None and y is not None:
         params["x"] = x
@@ -1665,6 +1675,8 @@ def cu_click(x, y, button, count):
 @click.option("--delay", "-d", default=0, type=float, help="字符间延迟 (秒)")
 def cu_type(text: str, delay: float):
     """键盘输入文本。"""
+    from .nodes.macos.input_nodes import KeyboardTypeNode
+
     node = KeyboardTypeNode(config=NodeConfig(params={"text": text, "delay": delay}))
     result = asyncio.run(node.execute({"text": text}))
     if result.status.value == "success":
@@ -1678,6 +1690,8 @@ def cu_type(text: str, delay: float):
 @click.option("--modifiers", "-m", multiple=True, help="修饰键 (cmd/shift/ctrl/alt)")
 def cu_shortcut(key: str, modifiers):
     """键盘快捷键。"""
+    from .nodes.macos.input_nodes import KeyboardShortcutNode
+
     node = KeyboardShortcutNode(config=NodeConfig(params={"key": key, "modifiers": list(modifiers)}))
     result = asyncio.run(node.execute({"key": key}))
     if result.status.value == "success":
@@ -1693,6 +1707,8 @@ def cu_shortcut(key: str, modifiers):
 @click.option("--model", default="default", help="fusion-mlx 模型名")
 def cu_run(task: str, max_steps: int, step_delay: float, model: str):
     """执行 Computer Use 闭环任务。"""
+    from .nodes.macos.input_nodes import ComputerUseLoopNode
+
     node = ComputerUseLoopNode(
         config=NodeConfig(
             params={
@@ -2260,10 +2276,13 @@ def collab():
 @click.option("--port", default=11439, help="监听端口")
 def collab_serve(host: str, port: int):
     """启动协作 WS 服务 (阻塞)。"""
+    from .config_center import ConfigCenter
     from .server.collab_ws import CollabHub
 
+    auth_token = ConfigCenter.get_instance().get("collab.auth_token") or None
+
     async def _run():
-        hub = CollabHub()
+        hub = CollabHub(auth_token=auth_token)
         server = await hub.serve_ws(host=host, port=port)
         console.print_success(f"✅ 协作 WS 服务: ws://{host}:{port} (Ctrl+C 退出)")
         try:
