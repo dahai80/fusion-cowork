@@ -17,6 +17,7 @@ from fusion_cowork.engine.node import BaseNode, NodeConfig, NodeRegistry, NodeRe
 from fusion_cowork.engine.permission import PermissionLevel, PermissionManager
 from fusion_cowork.engine.session import SessionStore
 from fusion_cowork.engine.workflow import Workflow, WorkflowEngine, WorkflowStatus
+from fusion_cowork.plugins.manifest import PluginManifest
 from fusion_cowork.server.mcp_server import MCPServer, MCPToolRegistry
 
 
@@ -210,6 +211,39 @@ class TestWorkflowEngineSessionEvent:
             sessions = store.list_sessions(limit=1)
             assert len(sessions) == 1
             assert len(sessions[0].steps_snapshot) >= 1
+        finally:
+            os.unlink(db_path)
+
+    @pytest.mark.asyncio
+    async def test_session_resume_replays_from_snapshot(self):
+        # P1-2 端到端: 执行 → 快照含 output_data → resume 跳过已完成节点续跑
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            store = SessionStore(db_path=db_path)
+            engine = WorkflowEngine(session_store=store)
+            wf = Workflow(name="resume_e2e", workflow_id="wf_res1")
+            wf.add_node(_OkNode(node_id="n1"))
+            await engine.execute(wf)
+
+            sessions = store.list_sessions(limit=1)
+            assert len(sessions) == 1
+            # 快照步骤含 output_data (P1-2 修复)
+            snap = sessions[0].steps_snapshot
+            assert len(snap) >= 1
+            assert snap[0]["output_data"] == {"content": "ok"}
+
+            # resume 返回快照, 用作断点续跑输入
+            payload = store.resume(sessions[0].id)
+            assert payload is not None
+            assert payload["steps_snapshot"] == snap
+
+            # 用快照续跑: n1 应被跳过
+            wf2 = Workflow(name="resume_e2e", workflow_id="wf_res1")
+            wf2.add_node(_OkNode(node_id="n1"))
+            execution = await engine.execute(wf2, resume_steps=payload["steps_snapshot"])
+            assert execution.status == WorkflowStatus.SUCCESS
+            assert execution.steps[0].status == NodeStatus.SKIPPED
         finally:
             os.unlink(db_path)
 
@@ -408,6 +442,112 @@ class TestPluginLoader:
             ok = loader.uninstall("rm_plugin")
             assert ok is True
             assert not plugin_dir.exists()
+
+
+# ── P1-6 插件沙箱运行时隔离测试 ──
+
+_SANDBOX_PLUGIN_CODE = '''
+from fusion_cowork.engine.node import BaseNode, NodeCategory, NodeResult, NodeStatus, register_node
+
+@register_node
+class EchoNode(BaseNode):
+    name = "sbx_echo"
+    display_name = "Sbx Echo"
+    category = NodeCategory.TOOL
+    description = "echo with prefix"
+    icon = "🔁"
+    default_label = "回声"
+    def get_params_schema(self):
+        return {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
+    async def execute(self, inputs):
+        return NodeResult(
+            status=NodeStatus.SUCCESS,
+            data={"echo": "SBX:" + str(inputs.get("text", ""))},
+            summary="echoed",
+        )
+'''
+
+
+def _make_sandbox_plugin(tmp: str) -> Path:
+    pdir = Path(tmp) / "sbx_plugin"
+    pdir.mkdir()
+    (pdir / "plugin.py").write_text(_SANDBOX_PLUGIN_CODE)
+    manifest = PluginManifest(
+        name="sbx_plugin", version="0.1", description="d",
+        nodes=["sbx_echo"], entry_point="plugin", sandbox=True,
+    )
+    (pdir / "manifest.json").write_text(json.dumps(manifest.to_dict()))
+    return pdir
+
+
+class TestPluginSandboxIsolation:
+    def teardown_method(self, method):
+        NodeRegistry.unregister("sbx_echo")
+
+    def test_load_sandboxed_registers_wrapper_not_raw(self):
+        from fusion_cowork.plugins.loader import PluginLoader, SandboxedNode
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _make_sandbox_plugin(tmp)
+            loader = PluginLoader()
+            loader._plugins_dir = Path(tmp)
+            nodes = loader.load("sbx_plugin")
+            assert len(nodes) == 1
+            assert nodes[0].name == "sbx_echo"
+            assert issubclass(nodes[0], SandboxedNode)
+            assert nodes[0].__name__.startswith("SandboxedNode_")
+
+    def test_sandboxed_node_execute_runs_out_of_process(self):
+        from fusion_cowork.plugins.loader import PluginLoader
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _make_sandbox_plugin(tmp)
+            loader = PluginLoader()
+            loader._plugins_dir = Path(tmp)
+            loader.load("sbx_plugin")
+            cls = NodeRegistry.get("sbx_echo")
+            assert cls is not None
+            inst = cls(node_id="t1")
+            schema = inst.get_params_schema()
+            assert "text" in schema.get("properties", {})
+            res = asyncio.run(inst.execute({"text": "hello"}))
+            assert res.status == NodeStatus.SUCCESS
+            assert res.data == {"echo": "SBX:hello"}
+
+    def test_sandboxed_node_failure_propagates(self):
+        crash_code = _SANDBOX_PLUGIN_CODE.replace(
+            'return NodeResult(\n            status=NodeStatus.SUCCESS,\n            data={"echo": "SBX:" + str(inputs.get("text", ""))},\n            summary="echoed",\n        )',
+            'raise RuntimeError("plugin boom")',
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            pdir = Path(tmp) / "sbx_plugin"
+            pdir.mkdir()
+            (pdir / "plugin.py").write_text(crash_code)
+            manifest = PluginManifest(
+                name="sbx_plugin", version="0.1", description="d",
+                nodes=["sbx_echo"], entry_point="plugin", sandbox=True,
+            )
+            (pdir / "manifest.json").write_text(json.dumps(manifest.to_dict()))
+            from fusion_cowork.plugins.loader import PluginLoader
+
+            loader = PluginLoader()
+            loader._plugins_dir = Path(tmp)
+            nodes = loader.load("sbx_plugin")
+            assert len(nodes) == 1, "introspect should succeed even though execute crashes"
+            cls = NodeRegistry.get("sbx_echo")
+            inst = cls(node_id="t2")
+            res = asyncio.run(inst.execute({"text": "x"}))
+            assert res.status == NodeStatus.FAILED
+            assert "boom" in (res.error or "")
+            NodeRegistry.unregister("sbx_echo")
+
+    def test_sandboxed_node_empty_input_fails_gracefully(self):
+        from fusion_cowork.plugins.loader import SandboxedNode
+
+        node = SandboxedNode(node_id="empty", entry_file="", class_name="")
+        res = asyncio.run(node.execute({}))
+        assert res.status == NodeStatus.FAILED
+        assert "entry_file" in (res.error or "")
 
 
 # ── 技能机制测试 ──

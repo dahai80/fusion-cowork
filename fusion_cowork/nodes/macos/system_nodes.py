@@ -624,9 +624,16 @@ class FileBatchRenameNode(BaseNode):
         today = time.strftime("%Y%m%d")
         renamed = []
 
+        from ...security import get_scoped_folder_manager
+
+        scope = get_scoped_folder_manager()
+
         for i, f in enumerate(files):
             path = Path(f) if isinstance(f, str) else Path(f.get("path", ""))
             if not path.is_file():
+                continue
+            if not scope.ensure_allowed(path):
+                logger.warning(f"沙箱拒绝越界读取, 跳过: {path}")
                 continue
 
             index = start_index + i
@@ -657,6 +664,11 @@ class FileBatchRenameNode(BaseNode):
             }
 
             if not dry_run and str(new_path) != str(path):
+                if not scope.ensure_allowed(new_path):
+                    logger.warning(f"沙箱拒绝越界写入, 跳过: {new_path}")
+                    file_info["action"] = "sandbox_blocked"
+                    renamed.append(file_info)
+                    continue
                 try:
                     if new_path.exists():
                         counter = 1
@@ -1024,6 +1036,17 @@ class FileCopyNode(BaseNode):
             return NodeResult(status=NodeStatus.FAILED, error="缺少文件列表或目标目录")
 
         dst = Path(destination).expanduser()
+
+        from ...security import get_scoped_folder_manager
+
+        scope = get_scoped_folder_manager()
+        if not scope.ensure_allowed(dst):
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"沙箱拒绝越界写入: {dst}",
+                summary="授权文件夹外路径被拦截",
+            )
+
         dst.mkdir(parents=True, exist_ok=True)
 
         if params.get("create_subdir", True):
@@ -1036,10 +1059,16 @@ class FileCopyNode(BaseNode):
             src = Path(f) if isinstance(f, str) else Path(f.get("path", ""))
             if not src.exists():
                 continue
+            if not scope.ensure_allowed(src):
+                logger.warning(f"沙箱拒绝越界读取, 跳过: {src}")
+                continue
             target = dst / src.name
             if target.exists() and not params.get("overwrite", False):
                 stem = target.stem
                 target = dst / f"{stem}_{int(time.time())}{target.suffix}"
+            if not scope.ensure_allowed(target):
+                logger.warning(f"沙箱拒绝越界写入, 跳过: {target}")
+                continue
             try:
                 if src.is_file():
                     shutil.copy2(str(src), str(target)) if params.get("preserve_metadata", True) else shutil.copy(
@@ -1091,6 +1120,17 @@ class FileMoveNode(BaseNode):
             return NodeResult(status=NodeStatus.FAILED, error="缺少文件列表或目标目录")
 
         dst = Path(destination).expanduser()
+
+        from ...security import get_scoped_folder_manager
+
+        scope = get_scoped_folder_manager()
+        if not scope.ensure_allowed(dst):
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"沙箱拒绝越界写入: {dst}",
+                summary="授权文件夹外路径被拦截",
+            )
+
         dst.mkdir(parents=True, exist_ok=True)
 
         if params.get("create_subdir", True):
@@ -1102,10 +1142,16 @@ class FileMoveNode(BaseNode):
             src = Path(f) if isinstance(f, str) else Path(f.get("path", ""))
             if not src.exists():
                 continue
+            if not scope.ensure_allowed(src):
+                logger.warning(f"沙箱拒绝越界读取, 跳过: {src}")
+                continue
             target = dst / src.name
             if target.exists() and not params.get("overwrite", False):
                 stem = target.stem
                 target = dst / f"{stem}_{int(time.time())}{target.suffix}"
+            if not scope.ensure_allowed(target):
+                logger.warning(f"沙箱拒绝越界写入, 跳过: {target}")
+                continue
             try:
                 shutil.move(str(src), str(target))
                 moved.append({"source": str(src), "destination": str(target), "name": src.name})
@@ -1246,6 +1292,16 @@ class FileFindNode(BaseNode):
         path = Path(search_path).expanduser()
         if not path.exists():
             return NodeResult(status=NodeStatus.FAILED, error=f"路径不存在: {search_path}")
+
+        from ...security import get_scoped_folder_manager
+
+        scope = get_scoped_folder_manager()
+        if not scope.ensure_allowed(path):
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"沙箱拒绝越界读取: {path}",
+                summary="授权文件夹外路径被拦截",
+            )
 
         patterns = [p.strip() for p in params.get("patterns", "*").split(",") if p.strip()]
         min_size = params.get("min_size", 0)

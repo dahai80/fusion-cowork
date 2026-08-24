@@ -382,8 +382,13 @@ class WorkflowEngine:
         workflow: Workflow,
         initial_input: Optional[Dict[str, Any]] = None,
         execution_id: str = "",
+        resume_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> WorkflowExecution:
-        """执行工作流。"""
+        """执行工作流。
+
+        resume_steps: 断点续跑 — 已完成步骤的快照 (to_dict)。
+        命中节点跳过执行, 其 output_data 作为下游输入缓存, 从下一节点续跑。
+        """
         exec_id = execution_id or f"exec_{uuid.uuid4().hex[:12]}"
         execution = WorkflowExecution(
             id=exec_id,
@@ -448,6 +453,29 @@ class WorkflowEngine:
         node_results: Dict[str, NodeResult] = {}
         passed_data: Dict[str, Dict[str, Any]] = {}
 
+        # 断点续跑: 从已完成步骤快照恢复缓存 (P1-2)
+        completed_ids: set = set()
+        if resume_steps:
+            for sstep in resume_steps:
+                if not isinstance(sstep, dict):
+                    continue
+                s_status = str(sstep.get("status", "")).lower()
+                if s_status not in ("success", "completed"):
+                    continue
+                nid = sstep.get("node_id", "")
+                if not nid:
+                    continue
+                out = sstep.get("output_data") or {}
+                passed_data[nid] = dict(out) if isinstance(out, dict) else {}
+                node_results[nid] = NodeResult(
+                    status=NodeStatus.SUCCESS,
+                    data=passed_data[nid],
+                    summary=sstep.get("summary", "恢复自快照"),
+                )
+                completed_ids.add(nid)
+            if completed_ids:
+                logger.info(f"断点续跑: 恢复 {len(completed_ids)} 个已完成步骤, 跳过重跑")
+
         # 传递给起始节点的初始数据
         if initial_input:
             start_nodes = workflow.get_start_nodes()
@@ -479,6 +507,26 @@ class WorkflowEngine:
 
                 node = workflow.nodes.get(node_id)
                 if not node:
+                    continue
+
+                # 断点续跑: 已完成节点跳过执行 (P1-2)
+                if node_id in completed_ids:
+                    cached = node_results.get(node_id)
+                    skip_step = WorkflowStep(
+                        node_id=node_id,
+                        node_name=node.name,
+                        node_display_name=node.config.label or node.display_name,
+                        status=NodeStatus.SKIPPED,
+                        started_at=time.time(),
+                        input_data=passed_data.get(node_id, {}),
+                        output_data=cached.data if cached else {},
+                        summary="恢复自快照, 跳过重跑",
+                    )
+                    skip_step.completed_at = time.time()
+                    skip_step.execution_time = 0
+                    execution.steps.append(skip_step)
+                    self._notify_progress(execution, skip_step)
+                    logger.debug(f"断点续跑: 跳过节点 '{node.name}' (恢复自快照)")
                     continue
 
                 # 收集输入数据
@@ -734,10 +782,13 @@ class WorkflowEngine:
                     {
                         "node_id": s.node_id,
                         "node_name": s.node_name,
+                        "node_display_name": s.node_display_name,
                         "status": s.status.value if hasattr(s.status, "value") else s.status,
                         "execution_time": s.execution_time,
                         "error": s.error,
                         "summary": s.summary,
+                        "input_data": s.input_data,
+                        "output_data": s.output_data,
                     }
                     for s in execution.steps
                 ]

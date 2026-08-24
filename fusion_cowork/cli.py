@@ -65,13 +65,21 @@ def _build_runtime():
         hook_manager = HookManager()
         session_store = SessionStore()
         event_emitter = EventEmitter()
+        space_store = None
+        try:
+            from .space import SpaceStore
+
+            space_store = SpaceStore()
+        except Exception as e:
+            logger.warning(f"SpaceStore 构建失败 (desk.space.* 将不可用): {e}")
         _runtime = {
             "permission_manager": permission_manager,
             "hook_manager": hook_manager,
             "session_store": session_store,
             "event_emitter": event_emitter,
+            "space_store": space_store,
         }
-        logger.info("运行时管理器已构建: permission/hook/session/event")
+        logger.info("运行时管理器已构建: permission/hook/session/event/space")
     return _runtime
 
 
@@ -320,12 +328,16 @@ def show_template(template_id: str):
 @click.argument("template_id")
 @click.option("--dry-run", "-n", is_flag=True, help="预览模式")
 @click.option("--params", "-p", default="", help="覆盖参数 JSON")
-def run_template(template_id: str, dry_run: bool, params: str):
-    """运行模板。"""
-    asyncio.run(_async_run_template(template_id, dry_run, params))
+@click.option("--resume", "session_id", default="", help="断点续跑: 指定 session_id, 跳过已完成步骤从断点续跑")
+def run_template(template_id: str, dry_run: bool, params: str, session_id: str):
+    """运行模板。
+
+    --resume <session_id>: 从指定会话断点续跑 (跳过已完成节点)。
+    """
+    asyncio.run(_async_run_template(template_id, dry_run, params, session_id))
 
 
-async def _async_run_template(template_id: str, dry_run: bool, params_json: str):
+async def _async_run_template(template_id: str, dry_run: bool, params_json: str, resume_session_id: str = ""):
     console.print_header(f"🚀 运行模板: {template_id}")
 
     # 加载模板
@@ -365,9 +377,22 @@ async def _async_run_template(template_id: str, dry_run: bool, params_json: str)
         click.echo(f"  JSON: {wf.to_json()}")
         return
 
+    # 断点续跑: 加载已完成步骤快照 (P1-2)
+    resume_steps = None
+    if resume_session_id:
+        from fusion_cowork.engine.session import SessionStore
+
+        store = SessionStore()
+        payload = store.resume(resume_session_id)
+        if not payload:
+            console.print_error(f"恢复失败, 会话不存在: {resume_session_id}")
+            return
+        resume_steps = payload.get("steps_snapshot") or []
+        console.print_info(f"断点续跑: 从会话 {resume_session_id} 恢复 {len(resume_steps)} 步")
+
     # 执行工作流
     console.print_info("正在执行...")
-    execution = await _get_engine().execute(wf)
+    execution = await _get_engine().execute(wf, resume_steps=resume_steps)
 
     # 输出结果
     if execution.status == WorkflowStatus.SUCCESS:
@@ -512,12 +537,16 @@ def workflow():
 @workflow.command("run")
 @click.argument("workflow_file", type=click.Path(exists=True))
 @click.option("--dry-run", "-n", is_flag=True, help="预览模式")
-def run_workflow_file(workflow_file: str, dry_run: bool):
-    """从 JSON 文件加载并执行工作流。"""
-    asyncio.run(_async_run_workflow_file(workflow_file, dry_run))
+@click.option("--resume", "session_id", default="", help="断点续跑: 指定 session_id, 跳过已完成步骤从断点续跑")
+def run_workflow_file(workflow_file: str, dry_run: bool, session_id: str):
+    """从 JSON 文件加载并执行工作流。
+
+    --resume <session_id>: 从指定会话断点续跑 (跳过已完成节点)。
+    """
+    asyncio.run(_async_run_workflow_file(workflow_file, dry_run, session_id))
 
 
-async def _async_run_workflow_file(workflow_file: str, dry_run: bool):
+async def _async_run_workflow_file(workflow_file: str, dry_run: bool, resume_session_id: str = ""):
     console.print_header(f"🚀 执行工作流: {workflow_file}")
 
     try:
@@ -544,8 +573,21 @@ async def _async_run_workflow_file(workflow_file: str, dry_run: bool):
         console.print_success("预览模式，未实际执行")
         return
 
+    # 断点续跑: 加载已完成步骤快照 (P1-2)
+    resume_steps = None
+    if resume_session_id:
+        from fusion_cowork.engine.session import SessionStore
+
+        store = SessionStore()
+        payload = store.resume(resume_session_id)
+        if not payload:
+            console.print_error(f"恢复失败, 会话不存在: {resume_session_id}")
+            return
+        resume_steps = payload.get("steps_snapshot") or []
+        console.print_info(f"断点续跑: 从会话 {resume_session_id} 恢复 {len(resume_steps)} 步")
+
     console.print_info("正在执行...")
-    execution = await _get_engine().execute(wf)
+    execution = await _get_engine().execute(wf, resume_steps=resume_steps)
 
     if execution.status == WorkflowStatus.SUCCESS:
         console.print_success(f"✅ 执行成功! ({execution.total_time:.2f}s)")
@@ -949,15 +991,16 @@ def mcp_serve(transport: str, host: str, port: int):
         permission_manager=rt["permission_manager"],
         hook_manager=rt["hook_manager"],
     )
+    emitter = rt["event_emitter"]
     if transport == "stdio":
         console.print_info("MCP 服务启动 (stdio 模式) — 等待 Claude Code 连接...")
         asyncio.run(server.serve_stdio())
     elif transport == "streamable":
         console.print_info(f"MCP 服务启动 (Streamable HTTP 2025-03-26 模式) — {host}:{port}")
-        asyncio.run(server.serve_streamable_http())
+        asyncio.run(server.serve_streamable_http(event_emitter=emitter))
     else:
         console.print_info(f"MCP 服务启动 (HTTP 模式) — {host}:{port}")
-        asyncio.run(server.serve_http())
+        asyncio.run(server.serve_http(event_emitter=emitter))
 
 
 # ── Desk RPC 服务 ──
@@ -988,6 +1031,7 @@ def desk_rpc(sock: str, http_port: int):
         session_store=rt["session_store"],
         permission_manager=rt["permission_manager"],
         hook_manager=rt["hook_manager"],
+        space_store=rt["space_store"],
     )
 
     async def _run():
@@ -1027,7 +1071,7 @@ def desk_rpc(sock: str, http_port: int):
                 hook_manager=rt["hook_manager"],
             )
             console.print_success(f"Desk HTTP 服务已启动: 127.0.0.1:{port} (/rpc /health /mcp /sse)")
-            await mcp.serve_http()
+            await mcp.serve_http(event_emitter=rt["event_emitter"])
         except ImportError:
             console.print_warning("HTTP 通道未启动 (缺 [web] 依赖): pip install fusion-cowork[web]; 仅 UDS 可用")
         except Exception as e:

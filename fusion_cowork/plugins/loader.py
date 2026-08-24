@@ -1,18 +1,184 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import importlib.util
+import json
 import logging
 import shutil
 import sys
 import zipfile
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
-from ..engine.node import BaseNode, NodeRegistry
+from ..engine.node import BaseNode, NodeCategory, NodeConfig, NodeRegistry, NodeResult, NodeStatus
 from .manifest import PluginManifest
 
 logger = logging.getLogger(__name__)
+
+_RESULT_MARKER = "__SANDBOX_RESULT__"
+
+
+class SandboxedNode(BaseNode):
+    """沙箱节点包装器 — P1-6。
+
+    包装第三方插件节点: 节点元数据 (name/display_name/category/schema) 在主进程注册,
+    但 execute() 委托给 PluginSandbox 子进程执行, 插件代码不进主进程。
+
+    每个插件节点通过 make_sandboxed_node_class() 生成独立子类,
+    使类级 name/display_name 等元数据固定, 满足 NodeRegistry 按 name 注册的要求。
+    """
+
+    name = "sandboxed_node"
+    display_name = "沙箱插件节点"
+    category = NodeCategory.TOOL
+    description = "沙箱内执行的第三方插件节点"
+    icon = "📦"
+    default_label = "插件节点"
+
+    def __init__(
+        self,
+        node_id: str = "",
+        config: Optional[NodeConfig] = None,
+        *,
+        entry_file: str = "",
+        class_name: str = "",
+        sandbox: Optional[Any] = None,
+        params_schema: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(node_id=node_id, config=config)
+        self._entry_file = entry_file
+        self._class_name = class_name
+        self._sandbox = sandbox
+        self._params_schema = params_schema or {
+            "type": "object", "properties": {}, "required": [],
+        }
+
+    def get_params_schema(self) -> Dict[str, Any]:
+        return self._params_schema
+
+    async def execute(self, inputs: Dict[str, Any]) -> NodeResult:
+        if not self._entry_file or not self._class_name:
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error="沙箱节点缺少 entry_file/class_name",
+                summary="沙箱节点配置不完整",
+            )
+
+        runner_path = str(Path(__file__).parent / "sandbox_runner.py")
+        req = json.dumps(
+            {
+                "action": "run",
+                "entry_file": self._entry_file,
+                "class_name": self._class_name,
+                "inputs": inputs or {},
+            },
+            ensure_ascii=False,
+        )
+
+        sandbox = self._sandbox
+        if sandbox is None:
+            from .sandbox import PluginSandbox
+
+            sandbox = PluginSandbox()
+
+        try:
+            res = await sandbox.execute(
+                plugin_name=f"sandbox_node:{self._class_name}",
+                command=sys.executable,
+                args=[runner_path],
+                stdin_data=req,
+            )
+        except Exception as e:
+            logger.error(f"沙箱节点执行异常 {self._class_name}: {e}")
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"沙箱执行异常: {e}",
+                summary="沙箱子进程启动失败",
+            )
+
+        out = res.stdout or ""
+        idx = out.find(_RESULT_MARKER)
+        payload_str = out[idx + len(_RESULT_MARKER):].strip() if idx >= 0 else out.strip()
+        try:
+            payload = json.loads(payload_str)
+        except json.JSONDecodeError as e:
+            err_tail = (res.stderr or "")[-512:]
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"沙箱结果解析失败: {e}; stderr尾: {err_tail}",
+                summary="沙箱返回非 JSON",
+            )
+
+        if not payload.get("ok"):
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=str(payload.get("error", "未知沙箱错误")),
+                summary="沙箱内执行失败",
+            )
+
+        data = payload.get("data", {}) or {}
+        status_raw = str(data.get("status", "failed")).lower()
+        status = NodeStatus.SUCCESS if status_raw in ("success", "completed") else NodeStatus.FAILED
+        if res.status and res.status.value in ("timeout", "oom", "crashed"):
+            status = NodeStatus.FAILED
+        node_data = data.get("data") if isinstance(data.get("data"), dict) else data
+        return NodeResult(
+            status=status,
+            data=node_data,
+            error=data.get("error"),
+            execution_time=float(data.get("execution_time", res.cpu_time or 0.0)),
+            output_files=data.get("output_files", []),
+            summary=data.get("summary", "") or f"沙箱执行完成 rc={res.exit_code}",
+        )
+
+
+def make_sandboxed_node_class(meta: Dict[str, Any], sandbox: Any) -> type[BaseNode]:
+    """为单个插件节点生成沙箱包装子类 — P1-6。
+
+    子类固定类级 name/display_name/category 等元数据, 满足 NodeRegistry 注册需求。
+    """
+    cat_raw = meta.get("category", "tool")
+    try:
+        category = NodeCategory(cat_raw)
+    except ValueError:
+        category = NodeCategory.TOOL
+
+    cls = type(
+        f"SandboxedNode_{meta.get('class_name', 'Plugin')}",
+        (SandboxedNode,),
+        {
+            "name": meta.get("name", "sandboxed_node"),
+            "display_name": meta.get("display_name", "沙箱插件节点"),
+            "category": category,
+            "description": meta.get("description", "沙箱内执行的第三方插件节点"),
+            "icon": meta.get("icon", "📦"),
+            "default_label": meta.get("default_label", "插件节点"),
+        },
+    )
+    cls._sandbox_meta = meta  # type: ignore[attr-defined]
+    cls._sandbox_instance = sandbox  # type: ignore[attr-defined]
+    return cls
+
+
+def _sandboxed_factory(cls: type[BaseNode]):
+    """覆盖 __init__ 以注入 entry_file/class_name/sandbox/schema。"""
+    meta = getattr(cls, "_sandbox_meta", {})
+    sandbox = getattr(cls, "_sandbox_instance", None)
+
+    def __init__(self, node_id: str = "", config: Optional[NodeConfig] = None, **_kwargs):
+        SandboxedNode.__init__(
+            self,
+            node_id=node_id,
+            config=config,
+            entry_file=meta.get("entry_file", ""),
+            class_name=meta.get("class_name", ""),
+            sandbox=sandbox,
+            params_schema=meta.get("params_schema"),
+        )
+
+    cls.__init__ = __init__  # type: ignore[assignment]
+    return cls
 
 
 class PluginLoader:
@@ -23,6 +189,7 @@ class PluginLoader:
         self._plugins_dir.mkdir(parents=True, exist_ok=True)
         self._loaded: Dict[str, PluginManifest] = {}
         self._node_map: Dict[str, List[str]] = {}
+        self._sandboxes: Dict[str, Any] = {}
 
     def discover(self) -> List[PluginManifest]:
         manifests = []
@@ -57,29 +224,7 @@ class PluginLoader:
             return []
 
         if manifest.sandbox:
-            import asyncio as _asyncio
-
-            from .sandbox import PluginSandbox, SandboxStatus
-
-            sandbox = PluginSandbox()
-            logger.info(f"插件 {name} 标记 sandbox=true，执行预检 (rlimit 子进程)")
-            try:
-                loop = _asyncio.new_event_loop()
-                pre = loop.run_until_complete(
-                    sandbox.execute(
-                        plugin_name=name,
-                        command=sys.executable,
-                        args=[str(entry_file)],
-                    )
-                )
-                loop.close()
-            except Exception as pe:
-                logger.error(f"插件 {name} 沙箱预检异常: {pe}")
-                return []
-            if pre.status != SandboxStatus.STOPPED:
-                logger.error(f"插件 {name} 沙箱预检失败: status={pre.status} exit={pre.exit_code} err={pre.error}")
-                return []
-            logger.info(f"插件 {name} 沙箱预检通过")
+            return self._load_sandboxed(name, manifest, entry_file)
 
         module_name = f"fusion_cowork_plugin_{name}"
         try:
@@ -111,6 +256,72 @@ class PluginLoader:
         logger.info(f"插件 {name} 加载完成: {len(registered)} 个节点")
         return registered
 
+    def _load_sandboxed(self, name: str, manifest: PluginManifest, entry_file: Path) -> List[BaseNode]:
+        """沙箱加载路径 — P1-6: 插件代码不进主进程。
+
+        通过 sandbox_runner 子进程 introspect 发现节点元数据,
+        为每个节点生成 SandboxedNode 包装子类注册到主进程,
+        execute() 时再回子进程运行。主进程永不 exec_module 插件代码。
+        """
+        from .sandbox import PluginSandbox, SandboxStatus
+
+        sandbox = PluginSandbox()
+        runner_path = str(Path(__file__).parent / "sandbox_runner.py")
+        req = json.dumps(
+            {"action": "introspect", "entry_file": str(entry_file)},
+            ensure_ascii=False,
+        )
+        logger.info(f"插件 {name} sandbox=true, 子进程 introspect 节点元数据 (rlimit 隔离)")
+        try:
+            loop = asyncio.new_event_loop()
+            pre = loop.run_until_complete(
+                sandbox.execute(
+                    plugin_name=name,
+                    command=sys.executable,
+                    args=[runner_path],
+                    stdin_data=req,
+                )
+            )
+            loop.close()
+        except Exception as pe:
+            logger.error(f"插件 {name} 沙箱 introspect 异常: {pe}")
+            return []
+        if pre.status != SandboxStatus.STOPPED:
+            logger.error(f"插件 {name} 沙箱 introspect 失败: status={pre.status} err={pre.error}")
+            return []
+
+        out = pre.stdout or ""
+        idx = out.find(_RESULT_MARKER)
+        payload_str = out[idx + len(_RESULT_MARKER):].strip() if idx >= 0 else out.strip()
+        try:
+            payload = json.loads(payload_str)
+        except json.JSONDecodeError as e:
+            logger.error(f"插件 {name} introspect 结果解析失败: {e}; stderr={pre.stderr[-256:]}")
+            return []
+        if not payload.get("ok"):
+            logger.error(f"插件 {name} introspect 报错: {payload.get('error')}")
+            return []
+
+        node_metas = payload.get("data", {}).get("nodes", [])
+        if not node_metas:
+            logger.warning(f"插件 {name} sandbox 加载未发现节点")
+            return []
+
+        registered = []
+        for meta in node_metas:
+            meta["entry_file"] = str(entry_file)
+            wrapper_cls = make_sandboxed_node_class(meta, sandbox)
+            _sandboxed_factory(wrapper_cls)
+            NodeRegistry.register(wrapper_cls)
+            registered.append(wrapper_cls)
+            logger.info(f"注册沙箱插件节点: {wrapper_cls.name} ({wrapper_cls.__name__})")
+
+        self._loaded[name] = manifest
+        self._node_map[name] = [c.name for c in registered]
+        self._sandboxes[name] = sandbox
+        logger.info(f"插件 {name} 沙箱加载完成: {len(registered)} 个节点 (全程子进程隔离)")
+        return registered
+
     def load_all(self) -> Dict[str, List[BaseNode]]:
         results = {}
         for manifest in self.discover():
@@ -127,6 +338,7 @@ class PluginLoader:
             NodeRegistry.unregister(node_name)
             logger.info(f"注销插件节点: {node_name}")
         del self._loaded[name]
+        self._sandboxes.pop(name, None)
         logger.info(f"插件 {name} 已卸载")
         return True
 

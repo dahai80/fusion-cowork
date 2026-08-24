@@ -161,6 +161,34 @@ def test_run_agent_loop_helper():
     assert result.completed is True
 
 
+def test_agent_loop_reply_recorded_in_history():
+    client = MagicMock()
+    client.chat = AsyncMock(
+        side_effect=[
+            _llm_resp('{"type":"REPLY","message":"我先回你一句"}'),
+            _llm_resp('{"type":"DONE","message":"结束"}'),
+        ]
+    )
+    client.list_models = AsyncMock(return_value=[{"id": "m"}])
+    loop = AgentLoop(mlx_client=client, model="m", max_steps=5)
+    result = asyncio.run(loop.run("你好"))
+    assert result.completed is True
+    assistant_msgs = [m for m in loop._messages if m["role"] == "assistant"]
+    assert len(assistant_msgs) == 2
+    assert "我先回你一句" in assistant_msgs[0]["content"]
+
+
+def test_agent_loop_ask_recorded_in_history():
+    client = MagicMock()
+    client.chat = AsyncMock(side_effect=[_llm_resp('{"type":"ASK","message":"清理哪个目录?"}')])
+    client.list_models = AsyncMock(return_value=[{"id": "m"}])
+    loop = AgentLoop(mlx_client=client, model="m", max_steps=5)
+    asyncio.run(loop.run("清理目录"))
+    assistant_msgs = [m for m in loop._messages if m["role"] == "assistant"]
+    assert len(assistant_msgs) == 1
+    assert "清理哪个目录" in assistant_msgs[0]["content"]
+
+
 def test_agent_loop_max_steps_reached():
     client = MagicMock()
     client.chat = AsyncMock(

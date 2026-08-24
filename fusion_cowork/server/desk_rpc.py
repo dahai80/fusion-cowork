@@ -204,6 +204,11 @@ class DeskRPCServer:
 
         import_all_nodes()
 
+        if self._space_store is not None:
+            try:
+                await self._space_store.initialize()
+            except Exception as e:
+                logger.warning(f"SpaceStore 初始化失败 (desk.space.* 不可用): {e}")
         if os.path.exists(self._sock_path):
             os.unlink(self._sock_path)
 
@@ -220,6 +225,11 @@ class DeskRPCServer:
         if self._server:
             self._server.close()
             await self._server.wait_closed()
+        if self._space_store is not None:
+            try:
+                await self._space_store.close()
+            except Exception as e:
+                logger.debug(f"SpaceStore 关闭失败: {e}")
         if os.path.exists(self._sock_path):
             os.unlink(self._sock_path)
         logger.info("Desk RPC 服务停止")

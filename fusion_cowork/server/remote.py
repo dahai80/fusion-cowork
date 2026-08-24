@@ -243,7 +243,7 @@ class RemoteControlServer:
             from fusion_cowork.engine.session import SessionStore
 
             store = SessionStore()
-            session = store.get_session(session_id)
+            session = store.get(session_id)
             if not session:
                 return {"error": f"会话不存在: {session_id}"}
             self._session_attachments[session_id] = client_id
