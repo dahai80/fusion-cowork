@@ -605,6 +605,7 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] SpaceKBService — fusion-kb binding + document management + RAG search/query
 - [x] SpaceAPI — 25 REST endpoints + SSE event stream (`/spaces/{id}/stream`)
 - [x] FusionMLXClient enhancements — port fix (11432 via gateway) + retry on transient errors + stream robustness
+- [x] FusionMLXClient fusion-core 基础设施采纳 (路径B, issue #58) — 借 `fusion_core.http_client.with_retry`+连接池 (统一重试+指标上报+LRU池), 保自建客户端业务层, 18 调用方零改; 成功路径空 content D-H3 守卫 (`finish_reason=empty_content`); CI 无 fusion-core 时 fallback 手写重试
 - [x] KBClient completion — create_kb/delete_kb/upload_file/list_documents
 - [x] SharedContext — workflow node access to space messages + KB search/query
 - [x] CLI extensions — `space chat` interactive dialog + `space knowledge bind/status/upload/search/unbind`
