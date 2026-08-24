@@ -104,10 +104,8 @@ class TrajectoryRecorder:
         self._session_store = session_store
         self._session_id = session_id
         self._writer = TrajectoryWriter(trajectory_dir)
-        self._steps_snapshot: List[Dict[str, Any]] = []
-        self._execution_id = ""
-        self._workflow_id = ""
-        self._workflow_name = ""
+        # CR-12: 按 execution_id 命名空间, 防共享 HookManager 上并发执行互相覆盖快照/元数据
+        self._execs: Dict[str, Dict[str, Any]] = {}
         self._attached = False
 
     def attach(self) -> None:
@@ -155,11 +153,31 @@ class TrajectoryRecorder:
 
     async def _on_hook(self, evt: HookEvent, ctx: HookContext) -> None:
         data = ctx.data or {}
+        # CR-12: 每个执行独立状态槽, 按 execution_id 隔离 (并发执行互不覆盖)
+        exec_id = data.get("execution_id", "")
+        state = self._execs.get(exec_id)
         if evt == HookEvent.WORKFLOW_START:
-            self._execution_id = data.get("execution_id", "")
-            self._workflow_id = data.get("workflow_id", "")
-            self._workflow_name = data.get("workflow_name", "")
-            self._steps_snapshot = []
+            state = {
+                "execution_id": exec_id,
+                "workflow_id": data.get("workflow_id", ""),
+                "workflow_name": data.get("workflow_name", ""),
+                "steps_snapshot": [],
+            }
+            self._execs[exec_id] = state
+        if state is None:
+            # CR-12: exec_id 缺失 (如手动 fire POST_NODE 未带 execution_id) 时,
+            # 回退唯一活跃执行槽 (单并发常见), 避免步骤落入孤立临时槽永不回填
+            if not exec_id and len(self._execs) == 1:
+                state = next(iter(self._execs.values()))
+                exec_id = state["execution_id"]
+            else:
+                # 非 workflow 事件或未知 exec_id — 用临时槽, 不持久化回 _execs
+                state = {
+                    "execution_id": exec_id,
+                    "workflow_id": "",
+                    "workflow_name": "",
+                    "steps_snapshot": [],
+                }
         node_id = data.get("node_id", "")
         node_name = data.get("node_name", "")
         status = data.get("status", "")
@@ -172,7 +190,7 @@ class TrajectoryRecorder:
             error = getattr(result, "error", error)
             summary = getattr(result, "summary", summary)
         if evt == HookEvent.POST_NODE_EXECUTE and node_id:
-            self._steps_snapshot.append(
+            state["steps_snapshot"].append(
                 {
                     "node_id": node_id,
                     "node_name": node_name,
@@ -187,9 +205,9 @@ class TrajectoryRecorder:
         traj = TrajectoryEvent(
             ts=time.time(),
             event=evt.value,
-            execution_id=self._execution_id,
-            workflow_id=self._workflow_id,
-            workflow_name=self._workflow_name,
+            execution_id=state["execution_id"],
+            workflow_id=state["workflow_id"],
+            workflow_name=state["workflow_name"],
             session_id=self._session_id,
             node_id=node_id,
             node_name=node_name,
@@ -202,13 +220,23 @@ class TrajectoryRecorder:
             self._writer.write(traj)
         except Exception as e:
             logger.error(f"轨迹写入失败: {evt.value} -> {e}")
-        if evt == HookEvent.WORKFLOW_END and self._session_store and self._session_id:
-            try:
-                self._session_store.update_steps(self._session_id, self._steps_snapshot)
-                logger.info(f"steps_snapshot 回填: session={self._session_id} steps={len(self._steps_snapshot)}")
-            except Exception as e:
-                logger.error(f"steps_snapshot 回填失败: {e}")
+        if evt == HookEvent.WORKFLOW_END:
+            if self._session_store and self._session_id:
+                try:
+                    self._session_store.update_steps(self._session_id, state["steps_snapshot"])
+                    logger.info(
+                        f"steps_snapshot 回填: session={self._session_id} "
+                        f"exec={exec_id} steps={len(state['steps_snapshot'])}"
+                    )
+                except Exception as e:
+                    logger.error(f"steps_snapshot 回填失败: {e}")
+            # CR-12: 执行结束无条件清理状态槽防内存增长 (与 session_store 无关)
+            self._execs.pop(exec_id, None)
 
     @property
     def steps_snapshot(self) -> List[Dict[str, Any]]:
-        return list(self._steps_snapshot)
+        # CR-12: 无 exec_id 上下文时返回最后已知执行快照 (兼容旧调用)
+        if self._execs:
+            last = next(reversed(self._execs.values()))
+            return list(last["steps_snapshot"])
+        return []

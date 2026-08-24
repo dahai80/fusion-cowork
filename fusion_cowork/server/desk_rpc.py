@@ -633,7 +633,12 @@ class DeskRPCServer:
         from ..orchestrator import AgentOrchestrator
 
         if self._orchestrator is None:
-            self._orchestrator = AgentOrchestrator()
+            # HI-9: 注入父引擎运行时, 子工作流执行器受同一权限/ Hook 约束
+            self._orchestrator = AgentOrchestrator(
+                permission_manager=self._permission_manager,
+                hook_manager=self._hook_manager,
+                session_store=self._session_store,
+            )
             self._orchestrator.register_default_agents()
             logger.info("DeskRPC 共享 AgentOrchestrator 已构建并注册默认 Agent")
         return self._orchestrator
