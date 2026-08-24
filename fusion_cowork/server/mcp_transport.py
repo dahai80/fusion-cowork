@@ -9,7 +9,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import secrets
 import sys
+import traceback
 from typing import TYPE_CHECKING, Any, Callable, Dict
 
 if TYPE_CHECKING:
@@ -97,9 +99,11 @@ class StdioTransport:
             if req_id is not None:
                 await self._send_result(req_id, result)
         except Exception as e:
-            logger.error(f"处理 {method} 异常: {e}")
+            # HI-5: trace_id 入响应, 栈仅日志, 不泄 str(e) 给 MCP 客户端
+            trace_id = secrets.token_hex(8)
+            logger.error("MCP stdio 处理异常 trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc())
             if req_id is not None:
-                await self._send_error(req_id, -32603, f"Internal error: {e}")
+                await self._send_error(req_id, -32603, f"Internal error (trace_id={trace_id})")
 
     async def _handle_initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
         client_info = params.get("clientInfo", {})

@@ -7,6 +7,8 @@
 import asyncio
 import json
 import logging
+import secrets
+import traceback
 from typing import Any, Dict, Optional
 
 from .. import __version__ as SERVER_VERSION
@@ -149,14 +151,16 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
                 return JSONResponse({"jsonrpc": "2.0", "id": req_id, "result": result})
             return JSONResponse({"jsonrpc": "2.0", "result": result})
         except Exception as e:
-            logger.error(f"MCP HTTP 处理 {method} 异常: {e}")
+            # HI-5: trace_id 入响应, 栈仅日志, 不泄 str(e) 给客户端
+            trace_id = secrets.token_hex(8)
+            logger.error("MCP HTTP 处理异常 trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc())
             if req_id is not None:
                 return JSONResponse(
-                    {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603, "message": f"Internal error: {e}"}},
+                    {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603, "message": "Internal error", "data": {"trace_id": trace_id}}},
                     status_code=500,
                 )
             return JSONResponse(
-                {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error"}},
+                {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error", "data": {"trace_id": trace_id}}},
                 status_code=500,
             )
 
@@ -361,9 +365,11 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
                 return JSONResponse({"jsonrpc": "2.0", "id": req_id, "result": result}, headers=headers)
             return JSONResponse({"jsonrpc": "2.0", "result": {}}, headers=headers, status_code=202)
         except Exception as e:
-            logger.error(f"MCP Streamable 处理 {method} 异常: {e}")
+            # HI-5: trace_id 入响应, 栈仅日志
+            trace_id = secrets.token_hex(8)
+            logger.error("MCP Streamable 处理异常 trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc())
             return JSONResponse(
-                {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603, "message": f"Internal error: {e}"}},
+                {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603, "message": "Internal error", "data": {"trace_id": trace_id}}},
                 status_code=500,
             )
 

@@ -38,7 +38,8 @@ class Session:
 
     def __post_init__(self):
         if not self.id:
-            self.id = f"sess_{uuid.uuid4().hex[:12]}"
+            # HI-13: 128-bit session id (uuid4 hex 全长), 防 32/48 位可枚举
+            self.id = f"sess_{uuid.uuid4().hex}"
         now = time.time()
         if not self.created_at:
             self.created_at = now

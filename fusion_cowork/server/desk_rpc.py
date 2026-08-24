@@ -15,6 +15,8 @@ import asyncio
 import json
 import logging
 import os
+import secrets
+import traceback
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 
@@ -25,6 +27,38 @@ DEFAULT_SOCK_PATH = "/tmp/fusion-cowork.sock"
 _DEFAULT_PRINCIPAL = "local_user"
 _AUTH_TOKEN_KEY = "desk.auth_token"
 _IDENTITY_FIELDS = frozenset({"operator_id", "user_id", "inviter_id", "author_id", "owner_id", "from_user_id"})
+
+_MAX_B64_BYTES = 50 * 1024 * 1024
+_MAX_DECODED_BYTES = 25 * 1024 * 1024
+_MAX_SYNC_FILES = 50
+# HI-13: collab 消息内容上限 (16KiB), 防存储型 prompt 注入 + 撑爆 session 记录
+_MAX_COLLAB_CONTENT = 16 * 1024
+# HI-15: 文本知识库扩展名白名单 (KB 主要消费文本; 二进制需 allow_binary 单独路径)
+_TEXT_EXT_WHITELIST = frozenset(
+    {".txt", ".md", ".markdown", ".rst", ".json", ".yaml", ".yml", ".csv", ".html", ".htm", ".log", ".py", ".js", ".ts"}
+)
+
+
+def _secure_filename(name: str) -> str:
+    """HI-15: 净化文件名 — 取 basename, 剥路径穿越 (../), 拒空/纯点。
+    返回安全基名或空串 (调用方拒空)。"""
+    if not isinstance(name, str) or not name.strip():
+        return ""
+    base = os.path.basename(name.replace("\\", "/"))
+    base = base.strip().lstrip(".")
+    if not base or base in {".", ".."}:
+        return ""
+    # 拒残留分隔符 (basename 后仍含 / 说明异常)
+    if "/" in base or "\\" in base:
+        return ""
+    return base[:200]
+
+
+def _strip_control_chars(text: str) -> str:
+    """HI-13: 剥除 C0 控制字符 (保留 \\t \\n \\r), 防终端转义/隐藏指令注入。"""
+    if not isinstance(text, str):
+        return ""
+    return "".join(ch for ch in text if ch >= " " or ch in "\t\n\r")
 
 
 class DeskRPCServer:
@@ -327,11 +361,26 @@ class DeskRPCServer:
                 return {"jsonrpc": "2.0", "id": req_id, "result": result}
             return {"jsonrpc": "2.0", "result": result}
         except Exception as e:
-            logger.error(f"Desk RPC 处理 {method} 异常: {e}")
+            # HI-5: 对外仅 trace_id + 通用消息, 不泄内部栈/绝对路径/SQL 错误;
+            # 服务端详记 trace_id ↔ (method, params 摘要, 完整 traceback) 供排查
+            trace_id = secrets.token_hex(8)
+            param_keys = list(authed.keys()) if isinstance(authed, dict) else []
+            logger.error(
+                "Desk RPC 处理异常 trace_id=%s method=%s param_keys=%s err=%s\n%s",
+                trace_id,
+                method,
+                param_keys,
+                e,
+                traceback.format_exc(),
+            )
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
-                "error": {"code": -32603, "message": f"Internal error: {e}"},
+                "error": {
+                    "code": -32603,
+                    "message": "Internal error",
+                    "data": {"trace_id": trace_id},
+                },
             }
 
     def _authenticate(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -451,17 +500,32 @@ class DeskRPCServer:
         principal = params.get("__principal__", _DEFAULT_PRINCIPAL)
         return await self._require_space_access(space_id, principal, action)
 
+    def _internal_error(self, e: Exception, method: str = "") -> Dict[str, Any]:
+        """HI-5: handler 业务异常统一对外返回通用消息 + trace_id, 不泄 str(e) 内部细节
+        (绝对路径/SQL 列名/httpx URL); 服务端详记 trace_id↔(method, err, traceback)。"""
+        trace_id = secrets.token_hex(8)
+        logger.error(
+            "Desk RPC handler 异常 trace_id=%s method=%s err=%s\n%s",
+            trace_id,
+            method,
+            e,
+            traceback.format_exc(),
+        )
+        return {"error": "内部错误, 请联系管理员并提供 trace_id", "trace_id": trace_id}
+
     async def _write_response(self, writer: asyncio.StreamWriter, response: Dict[str, Any]) -> None:
         """写入 JSON-RPC 响应 — 序列化失败时降级为错误帧，避免静默断连 (0 bytes)。"""
         try:
             data = json.dumps(response, ensure_ascii=False) + "\n"
         except (TypeError, ValueError) as e:
-            logger.error(f"Desk RPC 响应序列化失败, 降级错误帧: {e} | response={response!r}")
+            # HI-5: 序列化失败只记顶层键名, 不记 response!r (含节点 data/文件内容/shell 输出)
+            resp_keys = list(response.keys()) if isinstance(response, dict) else type(response).__name__
+            logger.error("Desk RPC 响应序列化失败, 降级错误帧: %s | resp_keys=%s", e, resp_keys)
             req_id = response.get("id") if isinstance(response, dict) else None
             fallback = {
                 "jsonrpc": "2.0",
                 "id": req_id,
-                "error": {"code": -32603, "message": f"Response serialization failed: {e}"},
+                "error": {"code": -32603, "message": "Response serialization failed"},
             }
             data = json.dumps(fallback, ensure_ascii=False) + "\n"
         writer.write(data.encode("utf-8"))
@@ -847,7 +911,16 @@ class DeskRPCServer:
         if "steps" in updates:
             self._session_store.update_steps(session_id, updates["steps"])
         if "metadata" in updates:
-            session.metadata.update(updates["metadata"])
+            new_meta = updates["metadata"]
+            if not isinstance(new_meta, dict):
+                return {"error": "metadata 必须为对象"}
+            # HI-14: bound metadata 大小, 防客户端灌超大 dict 撑爆 session 记录
+            _MAX_META_BYTES = 64 * 1024
+            merged = dict(session.metadata)
+            merged.update(new_meta)
+            if len(json.dumps(merged, ensure_ascii=False)) > _MAX_META_BYTES:
+                return {"error": f"metadata 超 {_MAX_META_BYTES} 字节上限"}
+            session.metadata = merged
             self._session_store.save(session)
         session = self._session_store.get(session_id)
         return self._session_store.to_dict(session)
@@ -911,7 +984,7 @@ class DeskRPCServer:
             return sp.to_dict()
         except Exception as e:
             logger.error(f"space.create 失败: {e}")
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_space_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -945,7 +1018,19 @@ class DeskRPCServer:
         svc = SpaceService(self._space_store)
         space_id = params.get("space_id", "")
         updates = params.get("updates", {})
-        sp = await svc.update(space_id, **updates)
+        # HI-14: handler 层显式字段白名单, 拒 owner_id/status/kb_*/collab_mode/config
+        # (客户端经 **updates 可夺权或反归档)。store 层 CR-4 白名单含这些高危列,
+        # 此处再收紧到用户可改的业务字段。
+        _USER_EDITABLE = {"name", "description"}
+        cleaned = {}
+        for k, v in updates.items():
+            if k not in _USER_EDITABLE:
+                logger.warning("desk.space.update 拒非用户可编辑字段: %s", k)
+                continue
+            cleaned[k] = v
+        if not cleaned:
+            return {"error": "无可更新字段 (仅允许 name/description)"}
+        sp = await svc.update(space_id, **cleaned)
         if not sp:
             return {"error": f"空间不存在: {space_id}"}
         return sp.to_dict()
@@ -964,7 +1049,7 @@ class DeskRPCServer:
             return {"space_id": space_id, "archived": bool(result)}
         except Exception as e:
             logger.error(f"space.archive 失败: {e}")
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_space_delete(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -1117,16 +1202,21 @@ class DeskRPCServer:
         return _MockWS(), queue
 
     async def _handle_space_collab_join(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        import uuid as _uuid
+        import secrets as _secrets
 
         hub = self._get_collab_hub()
-        space_id = params.get("space_id", "")
-        user_id = params.get("user_id", "")
-        display_name = params.get("display_name", "")
-        session_id = params.get("session_id") or f"sess_{_uuid.uuid4().hex[:8]}"
+        # HI-13: principal 取认证身份, 不信 params.user_id (CR-5 同源); 128-bit 会话 id
+        authed = self._authenticate(params)
+        if "__auth_error__" in authed:
+            return authed["__auth_error__"]
+        principal = authed["__principal__"]
+        space_id = authed.get("space_id", "")
+        user_id = principal
+        display_name = authed.get("display_name", "")
+        session_id = authed.get("session_id") or f"sess_{_secrets.token_hex(16)}"
         ws, _ = self._mock_ws_for(session_id)
         result = await hub.join(ws, space_id, user_id, display_name=display_name)
-        self._collab_sessions[session_id] = {"space_id": space_id, "user_id": user_id, "ws": ws}
+        self._collab_sessions[session_id] = {"space_id": space_id, "user_id": user_id, "ws": ws, "principal": principal}
         result["session_id"] = session_id
         return result
 
@@ -1136,8 +1226,15 @@ class DeskRPCServer:
         sess = self._collab_sessions.get(session_id)
         if not sess:
             return {"error": "会话不存在, 请先 collab.join"}
+        # HI-13: content 限长 + 剥控制字符, 防 LLM 存储型 prompt 注入 / 撑爆记录
+        content = params.get("content", "")
+        if not isinstance(content, str):
+            return {"error": "content 必须为字符串"}
+        if len(content) > _MAX_COLLAB_CONTENT:
+            return {"error": f"消息超 {_MAX_COLLAB_CONTENT} 字符上限"}
+        content = _strip_control_chars(content)
         raw = json.dumps(
-            {"type": "chat_send", "content": params.get("content", ""), "msg_id": params.get("msg_id", "")},
+            {"type": "chat_send", "content": content, "msg_id": params.get("msg_id", "")},
             ensure_ascii=False,
         )
         return await hub.handle_message(sess["ws"], raw)
@@ -1220,7 +1317,7 @@ class DeskRPCServer:
             msgs = await chat_svc.list_messages(space_id, limit=limit, offset=offset)
             return {"messages": [m.to_dict() for m in msgs]}
         except Exception as e:
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_space_chat_context(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -1237,7 +1334,7 @@ class DeskRPCServer:
             msgs = await chat_svc.get_context(space_id, limit=limit)
             return {"messages": [m.to_dict() for m in msgs]}
         except Exception as e:
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_space_kb_bind(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -1269,7 +1366,7 @@ class DeskRPCServer:
         try:
             return await kb_svc.get_kb_status(space_id)
         except Exception as e:
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_space_kb_upload(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -1308,7 +1405,7 @@ class DeskRPCServer:
             results = await kb_svc.search(space_id, query, top_k=top_k)
             return {"results": results}
         except Exception as e:
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_space_kb_query(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -1326,7 +1423,7 @@ class DeskRPCServer:
             answer = await kb_svc.query(space_id, question, top_k=top_k)
             return {"answer": answer}
         except Exception as e:
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_space_kb_unbind(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -1360,7 +1457,7 @@ class DeskRPCServer:
             agents = await rt.list_agents(space_id)
             return {"agents": agents, "count": len(agents)}
         except Exception as e:
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_space_agent_add(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -1490,6 +1587,8 @@ class DeskRPCServer:
             return {"error": "space_id 必填"}
         if not files:
             return {"error": "files 不能为空"}
+        if not isinstance(files, list) or len(files) > _MAX_SYNC_FILES:
+            return {"error": f"files 须为列表且不超 {_MAX_SYNC_FILES} 个"}
         perm = SpacePermission(self._space_store)
         kb_client = KBClient()
         kb_svc = SpaceKBService(self._space_store, kb_client, perm)
@@ -1499,25 +1598,43 @@ class DeskRPCServer:
             name = f.get("name", "")
             content_b64 = f.get("content", "")
             folder = f.get("folder", "")
-            if not name or not content_b64:
-                errors.append({"name": name, "error": "name/content 缺失"})
+            # HI-15: 文件名净化 (拒路径穿越 ../../etc/cron.d/x)
+            safe_name = _secure_filename(name)
+            if not safe_name:
+                errors.append({"name": name, "error": "文件名非法或缺失"})
+                continue
+            if not content_b64 or not isinstance(content_b64, str):
+                errors.append({"name": safe_name, "error": "content 缺失"})
+                continue
+            # HI-15: base64 体积上限 (防 10GB base64 解 7.5GB)
+            if len(content_b64) > _MAX_B64_BYTES:
+                errors.append({"name": safe_name, "error": f"base64 超 {_MAX_B64_BYTES} 字节上限"})
+                continue
+            # HI-15: 扩展名白名单 (KB 消费文本; 非文本扩展名拒)
+            ext = os.path.splitext(safe_name)[1].lower()
+            if ext and ext not in _TEXT_EXT_WHITELIST:
+                errors.append({"name": safe_name, "error": f"非文本扩展名 {ext} 不受支持"})
                 continue
             try:
                 import base64
 
-                content_bytes = base64.b64decode(content_b64)
+                content_bytes = base64.b64decode(content_b64, validate=True)
+                # HI-15: 解码后体积上限
+                if len(content_bytes) > _MAX_DECODED_BYTES:
+                    errors.append({"name": safe_name, "error": f"解码后超 {_MAX_DECODED_BYTES} 字节上限"})
+                    continue
                 result = await kb_svc.upload_document(
                     space_id,
                     operator_id,
-                    name,
+                    safe_name,
                     content_bytes,
                     folder=folder,
                 )
-                synced.append({"name": name, "result": result})
+                synced.append({"name": safe_name, "result": result})
             except Exception as e:
-                logger.error(f"syncKnowledge: {name} failed: {e}")
-                errors.append({"name": name, "error": str(e)})
-        logger.info(f"desk.project.syncKnowledge space={space_id} synced={len(synced)} errors={len(errors)}")
+                logger.error("syncKnowledge: %s failed: %s", safe_name, e)
+                errors.append({"name": safe_name, "error": "上传失败", "trace_id": secrets.token_hex(8)})
+        logger.info("desk.project.syncKnowledge space=%s synced=%d errors=%d", space_id, len(synced), len(errors))
         return {"synced": synced, "errors": errors}
 
     async def _handle_project_import_snapshot(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -1701,7 +1818,7 @@ class DeskRPCServer:
             )
             return {"artifact": result}
         except PermissionError as e:
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_space_artifact_get(self, params: Dict[str, Any]) -> Dict[str, Any]:
         svc, err = self._get_artifact_svc()
@@ -1977,7 +2094,7 @@ class DeskRPCServer:
             return {"agent_id": agent_id, "updated": ok}
         except Exception as e:
             logger.error(f"agent.update failed: {e}")
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     # ── Snapshot ──
 
@@ -1989,7 +2106,7 @@ class DeskRPCServer:
             snapshots = await self._space_store.list_snapshots(space_id)
             return {"snapshots": [s.to_dict() for s in snapshots]}
         except Exception as e:
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_space_snapshot_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -2020,7 +2137,7 @@ class DeskRPCServer:
             return result.to_dict()
         except Exception as e:
             logger.error(f"snapshot.create failed: {e}")
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_space_snapshot_clone(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -2074,7 +2191,7 @@ class DeskRPCServer:
             }
         except Exception as e:
             logger.error(f"snapshot.clone failed: {e}")
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_space_snapshot_restore(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -2098,7 +2215,7 @@ class DeskRPCServer:
             return {"restored": restored, "snapshot_id": snapshot_id}
         except Exception as e:
             logger.error(f"snapshot.restore failed: {e}")
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_space_snapshot_delete(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -2109,7 +2226,7 @@ class DeskRPCServer:
             ok = await self._space_store.delete_snapshot(space_id, snapshot_id)
             return {"deleted": ok, "snapshot_id": snapshot_id}
         except Exception as e:
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     # ── Chat Stream ──
 
@@ -2169,7 +2286,7 @@ class DeskRPCServer:
             )
             return {"comment_id": comment_id}
         except Exception as e:
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_space_comment_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -2179,7 +2296,7 @@ class DeskRPCServer:
             comments = await self._space_store.list_comments(message_id)
             return {"comments": comments}
         except Exception as e:
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     # ── Space Workflow ──
 
@@ -2192,7 +2309,7 @@ class DeskRPCServer:
             wf_list = [a for a in workflows if a.get("kind") == "workflow"]
             return {"workflows": wf_list}
         except Exception as e:
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_space_workflow_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -2218,7 +2335,7 @@ class DeskRPCServer:
             return {"artifact_id": artifact_id, "name": name}
         except Exception as e:
             logger.error(f"workflow.create failed: {e}")
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_space_workflow_run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -2241,7 +2358,7 @@ class DeskRPCServer:
             return {"execution_id": result.get("execution_id", ""), "status": "completed", "result": result}
         except Exception as e:
             logger.error(f"workflow.run failed: {e}")
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     # ── Discovery ──
 
@@ -2276,7 +2393,7 @@ class DeskRPCServer:
             session_snaps = [s for s in snapshots if s.snapshot_data.get("session_id") == session_id]
             return {"snapshots": [s.to_dict() for s in session_snaps]}
         except Exception as e:
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_session_snapshot_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -2301,7 +2418,7 @@ class DeskRPCServer:
             return result.to_dict()
         except Exception as e:
             logger.error(f"session.snapshot_create failed: {e}")
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_session_snapshot_restore(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -2315,7 +2432,7 @@ class DeskRPCServer:
                 return {"error": f"快照 {snapshot_id} 不存在"}
             return {"restored": True, "snapshot_id": snapshot_id, "session_id": session_id}
         except Exception as e:
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_session_snapshot_fork(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -2338,7 +2455,7 @@ class DeskRPCServer:
             return result.to_dict()
         except Exception as e:
             logger.error(f"session.snapshot_fork failed: {e}")
-            return {"error": str(e)}
+            return self._internal_error(e)
 
     async def _handle_session_snapshot_delete(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
@@ -2349,4 +2466,4 @@ class DeskRPCServer:
             ok = await self._space_store.delete_snapshot(space_id, snapshot_id)
             return {"deleted": ok, "snapshot_id": snapshot_id}
         except Exception as e:
-            return {"error": str(e)}
+            return self._internal_error(e)
