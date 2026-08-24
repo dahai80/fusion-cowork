@@ -992,11 +992,19 @@ class TestFusionMLXClientEnhancements:
     async def test_chat_retry_on_connect_error(self):
         import httpx
 
+        import fusion_cowork.ai.mlx_client as mc
         from fusion_cowork.ai.mlx_client import FusionMLXClient
 
-        client = FusionMLXClient(base_url="http://localhost:19999/v1", max_retries=1, retry_delay=0.01)
-        with pytest.raises(httpx.ConnectError):
-            await client.chat(model="test", messages=[{"role": "user", "content": "hi"}])
+        # force fallback 走手写重试 (连真实无服务端口), 免 path B 激活态走 _chat_core→_get_async_client
+        # 在 CI 无 fusion-core 时 _get_async_client=None 会抛 TypeError 非 ConnectError.
+        saved_flag = mc._HAS_FUSION_CORE
+        mc._HAS_FUSION_CORE = False
+        try:
+            client = FusionMLXClient(base_url="http://localhost:19999/v1", max_retries=1, retry_delay=0.01)
+            with pytest.raises(httpx.ConnectError):
+                await client.chat(model="test", messages=[{"role": "user", "content": "hi"}])
+        finally:
+            mc._HAS_FUSION_CORE = saved_flag
 
     @pytest.mark.asyncio
     async def test_stream_chat_retry_on_connect_error(self):
