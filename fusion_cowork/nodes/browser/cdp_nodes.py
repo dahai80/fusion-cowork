@@ -22,7 +22,8 @@ class _CDPNodeBase(BaseNode):
     def _get_client(self, inputs: Dict[str, Any], params: Dict[str, Any]) -> CDPClient:
         host = params.get("host", "127.0.0.1")
         port = params.get("port", 9222)
-        client = CDPClient(host=host, port=int(port))
+        token = params.get("token") or None
+        client = CDPClient(host=host, port=int(port), token=token)
         return client
 
 
@@ -298,6 +299,11 @@ class CDPEvaluateNode(_CDPNodeBase):
                 "script": {"type": "string", "description": "JavaScript 代码"},
                 "host": {"type": "string", "default": "127.0.0.1"},
                 "port": {"type": "integer", "default": 9222},
+                "allow_js": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "CR-14: 显式确认放行任意 JS 执行 (高危)",
+                },
             },
             "required": ["script"],
         }
@@ -307,7 +313,16 @@ class CDPEvaluateNode(_CDPNodeBase):
         script = inputs.get("script", params.get("script", ""))
         if not script:
             return NodeResult(status=NodeStatus.FAILED, error="未指定 script")
+        # CR-14: 任意 JS 执行高危, 须显式 allow_js 确认 (Stage 3 将接 PermissionManager)
+        if not params.get("allow_js", False):
+            logger.error("cdp_evaluate 拒绝: 未设 allow_js=true (任意 JS 执行高危, 须显式确认)")
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error="CDP 执行 JS 被拒绝: 须显式确认 (allow_js=true) + 权限放行",
+                summary="CDP JS 执行未授权",
+            )
         client = self._get_client(inputs, params)
+        client.confirm_js_eval()
         try:
             await client.connect()
             value = await client.evaluate_js(script)

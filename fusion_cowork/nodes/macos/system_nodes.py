@@ -1415,16 +1415,17 @@ class ScreenCaptureNode(BaseNode):
         actual_name = file_name.replace("{date}", date_str)
         file_path = save_dir / f"{actual_name}.png"
 
-        # 使用 screencapture 命令
-        region_flag = ""
+        # 使用 screencapture 命令 (HI-11: exec 列表避免 shell 注入, file_path 经参数传递)
+        argv = ["screencapture", "-x"]
         if capture_type == "selection":
-            region_flag = "-i"  # 交互选择
+            argv.append("-i")  # 交互选择
         elif capture_type == "window":
-            region_flag = "-w"  # 窗口截图
+            argv.append("-w")  # 窗口截图
+        argv.append(str(file_path))
 
         try:
-            proc = await asyncio.create_subprocess_shell(
-                f"screencapture {region_flag} -x '{file_path}'",
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -1659,10 +1660,10 @@ class NotificationNode(BaseNode):
                 summary="未指定通知内容",
             )
 
-        # 转义 AppleScript 特殊字符
-        title_escaped = title.replace('"', '\\"')
-        msg_escaped = message.replace('"', '\\"')
-        sub_escaped = subtitle.replace('"', '\\"')
+        # 转义 AppleScript 特殊字符 (双引号) + shell 单引号 (防注入)
+        title_escaped = title.replace("\\", "\\\\").replace('"', '\\"')
+        msg_escaped = message.replace("\\", "\\\\").replace('"', '\\"')
+        sub_escaped = subtitle.replace("\\", "\\\\").replace('"', '\\"')
 
         _sound_cmd = 'sound name "default"' if sound else ""
 
@@ -1673,8 +1674,10 @@ class NotificationNode(BaseNode):
             script += ' sound name "default"'
 
         try:
+            # HI-11: shell 单引号转义 script (单引号内的 ' 需 break-quote: '\''), 避免注入
+            script_sh_escaped = script.replace("'", "'\"'\"'")
             proc = await asyncio.create_subprocess_shell(
-                f"osascript -e '{script}'",
+                f"osascript -e '{script_sh_escaped}'",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -1773,20 +1776,24 @@ class AppLifecycleNode(BaseNode):
                     summary="未指定应用",
                 )
 
+            # HI-11: app_name 转义 AppleScript 双引号 + 反斜杠, 防 AppleScript 注入
+            app_escaped = app_name.replace("\\", "\\\\").replace('"', '\\"')
             if action == "launch":
-                script = f'tell application "{app_name}" to launch'
+                script = f'tell application "{app_escaped}" to launch'
             elif action == "quit":
                 save = "saving yes" if save_windows else ""
-                script = f'tell application "{app_name}" to quit {save}'
+                script = f'tell application "{app_escaped}" to quit {save}'
             elif action == "activate":
-                script = f'tell application "{app_name}" to activate'
+                script = f'tell application "{app_escaped}" to activate'
             elif action == "check":
-                script = f'tell application "System Events" to (name of processes) contains "{app_name}"'
+                script = f'tell application "System Events" to (name of processes) contains "{app_escaped}"'
             else:
                 return NodeResult(status=NodeStatus.FAILED, error=f"未知操作: {action}", summary="未知操作")
 
+            # HI-11: shell 单引号转义 script (单引号内 ' → '"'"'), 避免命令注入
+            script_sh_escaped = script.replace("'", "'\"'\"'")
             proc = await asyncio.create_subprocess_shell(
-                f"osascript -e '{script}'",
+                f"osascript -e '{script_sh_escaped}'",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -1796,8 +1803,10 @@ class AppLifecycleNode(BaseNode):
             pid = 0
             if action in ("launch", "activate", "check"):
                 try:
+                    # HI-11: pgrep 的 app_name 走 shell 单引号转义, 防注入
+                    app_sh_for_pgrep = app_name.replace("'", "'\"'\"'")
                     pid_proc = await asyncio.create_subprocess_shell(
-                        f"pgrep -f '{app_name}' | head -1",
+                        f"pgrep -f '{app_sh_for_pgrep}' | head -1",
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                     )

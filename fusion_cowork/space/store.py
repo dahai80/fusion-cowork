@@ -283,10 +283,15 @@ class SpaceStore:
         return [self._row_to_space(r) for r in rows]
 
     async def update_space(self, space_id: str, **kwargs) -> Optional[Space]:
+        # CR-4: 列白名单, 拒非白名单列 (防 kwargs 插值注入未知列名)
+        _ALLOWED = {"name", "description", "owner_id", "status", "kb_bind_mode", "kb_id", "collab_mode", "config"}
         db = await self._ensure_db()
         sets = []
         params: list = []
         for key, val in kwargs.items():
+            if key not in _ALLOWED:
+                logger.warning(f"SpaceStore.update_space 拒非白名单列: {key}")
+                continue
             if key == "config":
                 sets.append("config = ?")
                 params.append(json.dumps(val.to_dict() if hasattr(val, "to_dict") else val, ensure_ascii=False))
@@ -359,10 +364,15 @@ class SpaceStore:
         return [self._row_to_member(r) for r in rows]
 
     async def update_member(self, space_id: str, user_id: str, **kwargs) -> Optional[SpaceMember]:
+        # CR-4: 列白名单
+        _ALLOWED = {"role", "display_name", "last_active"}
         db = await self._ensure_db()
         sets = []
         params: list = []
         for key, val in kwargs.items():
+            if key not in _ALLOWED:
+                logger.warning(f"SpaceStore.update_member 拒非白名单列: {key}")
+                continue
             if isinstance(val, SpaceRole):
                 val = val.value
             sets.append(f"{key} = ?")
