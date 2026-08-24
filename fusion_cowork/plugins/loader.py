@@ -228,6 +228,16 @@ class PluginLoader:
         if manifest.sandbox:
             return self._load_sandboxed(name, manifest, entry_file)
 
+        # CR-21: sandbox=false 插件走主进程 exec_module = 潜在 RCE,
+        # 须在 config plugins.trusted 白名单, 否则拒绝加载。
+        trusted = self._get_trusted_plugins()
+        if name not in trusted:
+            logger.error(
+                f"插件 {name} sandbox=false 且未在 plugins.trusted 白名单, 拒绝加载"
+                f" (需显式信任: config set plugins.trusted '[...{name}...]' 或启动参数 --trust-plugin {name})"
+            )
+            return []
+
         module_name = f"fusion_cowork_plugin_{name}"
         try:
             spec = importlib.util.spec_from_file_location(module_name, str(entry_file))
@@ -324,6 +334,21 @@ class PluginLoader:
         logger.info(f"插件 {name} 沙箱加载完成: {len(registered)} 个节点 (全程子进程隔离)")
         return registered
 
+    def _get_trusted_plugins(self) -> List[str]:
+        """CR-21: 读 config plugins.trusted 白名单 (sandbox=false 插件须显式信任)。"""
+        try:
+            from ..config_center import ConfigCenter
+
+            cc = ConfigCenter.get_instance()
+            trusted = cc.get("plugins.trusted", [])
+            if isinstance(trusted, list):
+                return [str(t) for t in trusted]
+            if isinstance(trusted, str):
+                return [t.strip() for t in trusted.split(",") if t.strip()]
+        except Exception as e:
+            logger.debug(f"读取 plugins.trusted 失败, 视为空白名单: {e}")
+        return []
+
     def load_all(self) -> Dict[str, List[BaseNode]]:
         results = {}
         for manifest in self.discover():
@@ -391,9 +416,25 @@ class PluginLoader:
             return False
 
     def _install_zip(self, zip_path: Path) -> bool:
+        base = self._plugins_dir.resolve()
         try:
             with zipfile.ZipFile(zip_path, "r") as zf:
                 names = zf.namelist()
+                # CR-22: 逐条校验防 zip-slip — 每个解压目标必须落在 plugins_dir 内
+                for member in zf.infolist():
+                    if member.is_dir():
+                        continue
+                    # 拒绝对路径 / 驱动符 / ../ 遍历
+                    if member.filename.startswith(("/", "\\")) or ":" in member.filename.split("/")[0]:
+                        logger.error(f"zip-slip 拒绝: 非法路径 {member.filename!r}")
+                        return False
+                    dest = (base / member.filename).resolve()
+                    try:
+                        dest.relative_to(base)
+                    except ValueError:
+                        logger.error(f"zip-slip 拒绝: {member.filename!r} 越界 {base}")
+                        return False
+
                 top_dirs = set()
                 for n in names:
                     parts = n.split("/")
@@ -403,10 +444,18 @@ class PluginLoader:
                     logger.error("zip 文件结构无效: 无顶层目录")
                     return False
                 plugin_name = top_dirs.pop()
-                target = self._plugins_dir / plugin_name
+                target = (base / plugin_name).resolve()
+                # CR-22: rmtree 前校验 target 在 plugins_dir 内, 防越界删除
+                try:
+                    target.relative_to(base)
+                except ValueError:
+                    logger.error(f"插件目录越界, 拒绝删除: {target}")
+                    return False
                 if target.exists():
                     shutil.rmtree(target)
-                zf.extractall(str(self._plugins_dir))
+                # CR-22: 安全解压 — 逐条校验后再写 (extractall 已被上述校验替代)
+                for member in zf.infolist():
+                    zf.extract(member, str(base))
                 logger.info(f"zip 插件已安装: {plugin_name}")
                 return True
         except zipfile.BadZipFile as e:
@@ -415,6 +464,19 @@ class PluginLoader:
         except Exception as e:
             logger.error(f"zip 安装失败: {e}")
             return False
+
+    def _safe_rmtree(self, name: str) -> bool:
+        """CR-22: 仅允许删除 plugins_dir 内的目录, 拒越界 (防 ../ 遍历)。"""
+        base = self._plugins_dir.resolve()
+        target = (base / name).resolve()
+        try:
+            target.relative_to(base)
+        except ValueError:
+            logger.error(f"插件目录越界, 拒绝删除: {target}")
+            return False
+        if target.exists() and target.is_dir():
+            shutil.rmtree(target)
+        return True
 
     def _install_dir(self, src_dir: Path) -> bool:
         manifest_path = src_dir / "manifest.json"
@@ -426,7 +488,8 @@ class PluginLoader:
             return False
         target = self._plugins_dir / manifest.name
         if target.exists():
-            shutil.rmtree(target)
+            if not self._safe_rmtree(manifest.name):
+                return False
         shutil.copytree(str(src_dir), str(target))
         logger.info(f"插件已安装: {manifest.name} -> {target}")
         return True
@@ -437,7 +500,8 @@ class PluginLoader:
         if not plugin_dir.exists():
             logger.warning(f"插件目录不存在: {name}")
             return False
-        shutil.rmtree(plugin_dir)
+        if not self._safe_rmtree(name):
+            return False
         logger.info(f"插件已卸载删除: {name}")
         return True
 

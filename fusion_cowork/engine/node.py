@@ -313,14 +313,25 @@ class NodeRegistry:
     # 工具名称映射表（吸纳自 Squish tool_name_map.py）
     # 用于用户友好的名称 ↔ 后端节点名称的转换
     _name_aliases: Dict[str, str] = {}
+    # CR-20: 已注册名保护 — 插件覆盖已注册节点 → 拒绝 (防劫持)
+    # 首次注册视为基线; 同类重注册幂等放行 (import_all_nodes 多次调用安全)
+    _protected_names: set[str] = set()
 
     @classmethod
-    def register(cls, node_class: type[BaseNode]) -> type[BaseNode]:
-        """注册一个节点类型。"""
+    def register(cls, node_class: type[BaseNode], *, force: bool = False) -> type[BaseNode]:
+        """注册一个节点类型。
+
+        CR-20: 若 name 已注册且新类非已注册类本身 → 拒绝覆盖 (防插件劫持内置节点)。
+        force=True 显式覆盖 (内部卸载后重注册场景)。
+        """
         name = node_class.name
-        if name in cls._registry:
-            logger.warning(f"节点类型 '{name}' 已存在，将被覆盖")
+        existing = cls._registry.get(name)
+        if existing is not None and existing is not node_class and not force:
+            logger.error(f"节点类型 '{name}' 已注册为 {existing.__name__}, 拒绝 {node_class.__name__} 覆盖 (防劫持)")
+            return node_class
         cls._registry[name] = node_class
+        if name not in cls._protected_names:
+            cls._protected_names.add(name)
         return node_class
 
     @classmethod
@@ -419,13 +430,15 @@ class NodeRegistry:
 
     @classmethod
     def unregister(cls, name: str) -> None:
-        """注销节点类型。"""
+        """注销节点类型 (同时释放保护标记)。"""
         cls._registry.pop(name, None)
+        cls._protected_names.discard(name)
 
     @classmethod
     def clear(cls) -> None:
         """清空注册表。"""
         cls._registry.clear()
+        cls._protected_names.clear()
 
 
 def register_node(func=None, *, name: str = ""):

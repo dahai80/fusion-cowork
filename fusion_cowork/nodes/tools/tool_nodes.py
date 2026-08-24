@@ -743,6 +743,17 @@ class ApplyEditNode(BaseNode):
             )
 
         path = Path(file_path).expanduser()
+        # CR-19: 文件写节点须经 scoped_folder 校验, 拒越界写入 (备份与写入同路径)
+        from ...security import get_scoped_folder_manager
+
+        scope = get_scoped_folder_manager()
+        if not scope.ensure_allowed(path):
+            logger.warning(f"apply_edit 沙箱拒绝越界路径: {path}")
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"路径越界, 不在允许范围: {path}",
+                summary="沙箱拒绝",
+            )
         if not path.exists():
             return NodeResult(
                 status=NodeStatus.FAILED,

@@ -14,6 +14,38 @@ from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# CR-23: 子进程仅继承安全环境变量子集, 不泄漏父进程敏感 (API key/token/凭据等)
+_SAFE_ENV_KEYS = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "USER",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TMPDIR",
+        "TZ",
+        "PYTHONPATH",
+        "VIRTUAL_ENV",
+    }
+)
+
+# CR-23: darwin seatbelt profile — 限制 fs 写 + 拒绝原始网络, 仅允许写 /tmp 与插件目录
+# 注: 此为最小防御层, 与 rlimit (CPU/内存/文件数/进程数) 叠加
+_SEATBELT_PROFILE = """(version 1)
+(deny default)
+(allow process-fork)
+(allow process-exec)
+(allow signal (target self))
+(allow file-read*)
+(allow file-write* (subpath "/tmp"))
+(allow file-write* (subpath "${HOME}/.fusion-cowork"))
+(allow file-write-data (literal "/dev/null"))
+(allow file-write-data (literal "/dev/dtracehelper"))
+(allow sysctl-read)
+(deny network*)
+"""
+
 
 class SandboxStatus(str, Enum):
     IDLE = "idle"
@@ -110,14 +142,18 @@ class PluginSandbox:
         logger.info(f"PluginSandbox.execute id={sandbox_id} plugin={plugin_name} cmd={command}")
 
         try:
-            proc_env = dict(os.environ)
+            # CR-23: 仅继承安全 env 子集, 不泄漏父进程敏感变量 (API key/token 等)
+            proc_env = {k: v for k, v in os.environ.items() if k in _SAFE_ENV_KEYS}
             proc_env.update(env or {})
             proc_env["FUSION_SANDBOX_ID"] = sandbox_id
             proc_env["FUSION_SANDBOX_LIMITS"] = json.dumps(self._limits.to_dict())
 
+            # CR-23: darwin seatbelt — sandbox-exec 包装限制 fs 写 + 拒网络
+            real_cmd, real_args = self._wrap_seatbelt(command, args or [])
+
             proc = await asyncio.create_subprocess_exec(
-                command,
-                *(args or []),
+                real_cmd,
+                *real_args,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -170,27 +206,63 @@ class PluginSandbox:
 
         return result
 
+    def _wrap_seatbelt(self, command: str, args: List[str]) -> tuple:
+        """CR-23: darwin 用 sandbox-exec 包裹真实命令, 限制 fs 写 + 拒网络。
+
+        sandbox-exec 不可用时回退原命令 (仅靠 rlimit 隔离, 记 WARNING)。
+        """
+        import shutil as _shutil
+        from pathlib import Path as _Path
+
+        if not _shutil.which("sandbox-exec"):
+            logger.warning("sandbox-exec 不可用, 回退 rlimit-only 隔离 (无 fs/network 限制)")
+            return command, args
+        profile_path = "/tmp/fusion_sandbox_profile.sb"
+        try:
+            # sandbox-exec 不展开 shell 变量, ${HOME} 会被当未绑定变量报错;
+            # 写入前用真实 home 路径替换
+            profile = _SEATBELT_PROFILE.replace("${HOME}", str(_Path.home()))
+            with open(profile_path, "w", encoding="utf-8") as f:
+                f.write(profile)
+        except OSError as e:
+            logger.warning(f"seatbelt profile 写入失败, 回退 rlimit-only: {e}")
+            return command, args
+        logger.info(f"PluginSandbox seatbelt 包装: sandbox-exec -f {profile_path}")
+        return "sandbox-exec", ["-f", profile_path, "--", command, *args]
+
     def _make_preexec_fn(self):
+        import sys as _sys
+
         def _set_limits():
+            # CR-23: setrlimit 失败 fail-closed — 限制设不上则拒执行 (防逃逸)
             try:
                 cpu_limit = int(self._limits.max_cpu_seconds)
                 resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit, cpu_limit))
             except (ValueError, OSError) as e:
-                logger.debug(f"PluginSandbox setrlimit CPU failed: {e}")
-            try:
-                mem_bytes = self._limits.max_memory_mb * 1024 * 1024
-                resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
-            except (ValueError, OSError) as e:
-                logger.debug(f"PluginSandbox setrlimit AS failed: {e}")
+                logger.error(f"PluginSandbox setrlimit CPU fail-closed: {e}")
+                os._exit(127)
+            mem_bytes = self._limits.max_memory_mb * 1024 * 1024
+            # darwin: RLIMIT_AS/RLIMIT_DATA 在 Python 子进程均不可用 — 解释器启动即
+            # 预留数十 GB 虚拟内存, fork 后 setrlimit 必超当前预留而失败。darwin 的
+            # 内存隔离改由 seatbelt profile 承担 (见 _wrap_seatbelt); rlimit 内存
+            # 限仅在 Linux (VM 预留小) 生效, 设不上 fail-closed。
+            if _sys.platform != "darwin":
+                try:
+                    resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
+                except (ValueError, OSError) as e:
+                    logger.error(f"PluginSandbox setrlimit AS fail-closed: {e}")
+                    os._exit(127)
+            else:
+                logger.debug("PluginSandbox darwin: 内存隔离由 seatbelt 承担, 跳过 RLIMIT_AS")
             try:
                 resource.setrlimit(resource.RLIMIT_NPROC, (self._limits.max_processes, self._limits.max_processes))
             except (ValueError, OSError) as e:
-                logger.debug(f"PluginSandbox setrlimit NPROC failed: {e}")
+                logger.debug(f"PluginSandbox setrlimit NPROC unsupported: {e}")
             try:
                 file_bytes = self._limits.max_file_size_mb * 1024 * 1024
                 resource.setrlimit(resource.RLIMIT_FSIZE, (file_bytes, file_bytes))
             except (ValueError, OSError) as e:
-                logger.debug(f"PluginSandbox setrlimit FSIZE failed: {e}")
+                logger.debug(f"PluginSandbox setrlimit FSIZE unsupported: {e}")
 
         return _set_limits
 

@@ -69,8 +69,9 @@ class TestPermissionManager:
 
     @pytest.mark.asyncio
     async def test_manual_allows_safe(self):
+        # CR-16: MANUAL 放行低风险节点 (file_input 非高风险, 无需显式批准)
         pm = PermissionManager(level=PermissionLevel.MANUAL)
-        assert await pm.check("file_input") is False
+        assert await pm.check("file_input") is True
 
     @pytest.mark.asyncio
     async def test_auto_blocks_high_risk(self):
