@@ -7,7 +7,7 @@
 import asyncio
 import json
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from .. import __version__ as SERVER_VERSION
 from .mcp_server import MCPToolRegistry
@@ -16,6 +16,34 @@ logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "fusion-cowork"
+
+
+def _load_mcp_auth_token() -> Optional[str]:
+    """读取 config mcp.auth_token; 未配则 None (不启用认证)。"""
+    from ..config_center import ConfigCenter
+
+    token = ConfigCenter.get_instance().get("mcp.auth_token")
+    if not token or not isinstance(token, str):
+        return None
+    return token
+
+
+def _auth_denied(request, token: Optional[str]):
+    """校验 Authorization: Bearer <token>; 配了 token 则缺/错返 401 响应, 未配返 None。"""
+    if not token:
+        return None
+    auth = request.headers.get("authorization", "")
+    parts = auth.split(" ", 1)
+    bearer = parts[1].strip() if len(parts) == 2 and parts[0].lower() == "bearer" else ""
+    if not bearer or bearer != token:
+        logger.warning(f"MCP HTTP 认证失败: {request.client.host if request.client else '?'}")
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            {"jsonrpc": "2.0", "id": None, "error": {"code": -32001, "message": "Unauthorized"}},
+            status_code=401,
+        )
+    return None
 
 
 def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
@@ -36,6 +64,9 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
     _initialized = False
     _sse_queue: asyncio.Queue = asyncio.Queue()
     _event_emitter = event_emitter
+    _auth_token = _load_mcp_auth_token()
+    if _auth_token:
+        logger.info("MCP HTTP 认证已启用: mcp.auth_token Bearer 校验")
 
     async def _handle_initialize(params: Dict[str, Any]) -> Dict[str, Any]:
         nonlocal _initialized
@@ -76,6 +107,9 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
     @app.post("/mcp")
     async def mcp_endpoint(request: Request):
         """MCP JSON-RPC 2.0 端点。"""
+        denied = _auth_denied(request, _auth_token)
+        if denied is not None:
+            return denied
         try:
             body = await request.json()
         except json.JSONDecodeError:
@@ -133,6 +167,9 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
         委托给 fusion-plugins-ecosystem.MCPHandler, 供 fusion-studio 插件生态面板调用。
         仅路由 plugins/* 方法, 其余返回 -32601。
         """
+        denied = _auth_denied(request, _auth_token)
+        if denied is not None:
+            return denied
         from .rpc_bridge import dispatch_rpc
 
         try:
@@ -152,6 +189,9 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
     @app.get("/sse")
     async def sse_endpoint(request: Request):
         """SSE 推送通道 — 订阅 EventEmitter 事件流。"""
+        denied = _auth_denied(request, _auth_token)
+        if denied is not None:
+            return denied
 
         async def event_stream():
             if _event_emitter:
@@ -206,6 +246,9 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
 
     _sessions: Dict[str, Dict[str, Any]] = {}
     _event_emitter = event_emitter
+    _auth_token = _load_mcp_auth_token()
+    if _auth_token:
+        logger.info("MCP Streamable 认证已启用: mcp.auth_token Bearer 校验")
 
     async def _handle_initialize(params: Dict[str, Any]) -> Dict[str, Any]:
         client_info = params.get("clientInfo", {})
@@ -247,6 +290,9 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
 
     @app.post("/mcp")
     async def streamable_endpoint(request: Request):
+        denied = _auth_denied(request, _auth_token)
+        if denied is not None:
+            return denied
         session_id = request.headers.get("mcp-session-id", "")
         try:
             body = await request.json()
@@ -332,6 +378,9 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
 
     @app.delete("/mcp")
     async def streamable_delete(request: Request):
+        denied = _auth_denied(request, _auth_token)
+        if denied is not None:
+            return denied
         session_id = request.headers.get("mcp-session-id", "")
         if session_id in _sessions:
             del _sessions[session_id]
@@ -342,6 +391,9 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
     @app.get("/mcp")
     async def streamable_get(request: Request):
         """GET /mcp — 服务端推送流 (需有效会话)。"""
+        denied = _auth_denied(request, _auth_token)
+        if denied is not None:
+            return denied
         session_id = request.headers.get("mcp-session-id", "")
         if session_id not in _sessions:
             return JSONResponse({"error": "session not found"}, status_code=404)

@@ -51,7 +51,9 @@ class SandboxedNode(BaseNode):
         self._class_name = class_name
         self._sandbox = sandbox
         self._params_schema = params_schema or {
-            "type": "object", "properties": {}, "required": [],
+            "type": "object",
+            "properties": {},
+            "required": [],
         }
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -99,7 +101,7 @@ class SandboxedNode(BaseNode):
 
         out = res.stdout or ""
         idx = out.find(_RESULT_MARKER)
-        payload_str = out[idx + len(_RESULT_MARKER):].strip() if idx >= 0 else out.strip()
+        payload_str = out[idx + len(_RESULT_MARKER) :].strip() if idx >= 0 else out.strip()
         try:
             payload = json.loads(payload_str)
         except json.JSONDecodeError as e:
@@ -292,7 +294,7 @@ class PluginLoader:
 
         out = pre.stdout or ""
         idx = out.find(_RESULT_MARKER)
-        payload_str = out[idx + len(_RESULT_MARKER):].strip() if idx >= 0 else out.strip()
+        payload_str = out[idx + len(_RESULT_MARKER) :].strip() if idx >= 0 else out.strip()
         try:
             payload = json.loads(payload_str)
         except json.JSONDecodeError as e:

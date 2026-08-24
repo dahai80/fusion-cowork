@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SOCK_PATH = "/tmp/fusion-cowork.sock"
 
+_DEFAULT_PRINCIPAL = "local_user"
+_AUTH_TOKEN_KEY = "desk.auth_token"
+_IDENTITY_FIELDS = frozenset({"operator_id", "user_id", "inviter_id", "author_id", "owner_id", "from_user_id"})
+
 
 class DeskRPCServer:
     """Desk RPC 服务端 — 监听 UDS，处理 Studio 发来的 JSON-RPC 请求。"""
@@ -49,6 +53,7 @@ class DeskRPCServer:
         self._collab_hub = None
         self._collab_sessions: Dict[str, Dict[str, Any]] = {}
         self._collab_queues: Dict[str, asyncio.Queue] = {}
+        self._auth_token: Optional[str] = None
         self._register_handlers()
 
     def _register_handlers(self) -> None:
@@ -200,6 +205,7 @@ class DeskRPCServer:
 
     async def start(self) -> None:
         """启动 RPC 服务端。"""
+        from ..config_center import ConfigCenter
         from ..nodes import import_all_nodes
 
         import_all_nodes()
@@ -209,7 +215,13 @@ class DeskRPCServer:
                 await self._space_store.initialize()
             except Exception as e:
                 logger.warning(f"SpaceStore 初始化失败 (desk.space.* 不可用): {e}")
+        self._auth_token = ConfigCenter.get_instance().get(_AUTH_TOKEN_KEY) or None
+        if self._auth_token:
+            logger.info("Desk RPC 认证已启用: desk.auth_token 握手校验")
         if os.path.exists(self._sock_path):
+            if not self._is_owned_socket(self._sock_path):
+                logger.error(f"UDS {self._sock_path} 已存在但非当前用户所有, 拒绝覆盖 (可能被恶意占用)")
+                raise RuntimeError(f"UDS {self._sock_path} 被非当前用户占用")
             os.unlink(self._sock_path)
 
         self._running = True
@@ -217,7 +229,20 @@ class DeskRPCServer:
             self._handle_client,
             path=self._sock_path,
         )
-        logger.info(f"Desk RPC 服务启动: {self._sock_path}")
+        try:
+            os.chmod(self._sock_path, 0o600)
+        except OSError as e:
+            logger.warning(f"UDS 权限设置 0o600 失败 (仅 owner 可连接): {e}")
+        logger.info(f"Desk RPC 服务启动: {self._sock_path} (perms 0o600, owner-only)")
+
+    @staticmethod
+    def _is_owned_socket(path: str) -> bool:
+        """校验 UDS 文件属当前用户所有, 防恶意占用后窃听 (darwin 无 SO_PEERCRED)。"""
+        try:
+            st = os.stat(path)
+            return st.st_uid == os.getuid()
+        except OSError:
+            return True
 
     async def stop(self) -> None:
         """停止 RPC 服务端。"""
@@ -285,8 +310,19 @@ class DeskRPCServer:
                 "error": {"code": -32601, "message": f"Method not found: {method}"},
             }
 
+        authed = self._authenticate(params)
+        if isinstance(authed, dict) and "__auth_error__" in authed:
+            err = authed["__auth_error__"]
+            return {"jsonrpc": "2.0", "id": req_id, "error": err}
+
+        space_err = await self._check_space_access(method, authed)
+        if space_err is not None:
+            if req_id is not None:
+                return {"jsonrpc": "2.0", "id": req_id, "result": space_err}
+            return {"jsonrpc": "2.0", "result": space_err}
+
         try:
-            result = await handler(params)
+            result = await handler(authed)
             if req_id is not None:
                 return {"jsonrpc": "2.0", "id": req_id, "result": result}
             return {"jsonrpc": "2.0", "result": result}
@@ -297,6 +333,123 @@ class DeskRPCServer:
                 "id": req_id,
                 "error": {"code": -32603, "message": f"Internal error: {e}"},
             }
+
+    def _authenticate(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """认证调用方, 返回带可信身份的 params (CR-5 反 IDOR)。
+
+        - desk.auth_token 配了则校验 params._auth_token, 缺/错拒。
+        - 身份字段 (operator_id/user_id/inviter_id/author_id/owner_id/from_user_id) 不信 params,
+          一律改用连接级 principal (本地单用户 = local_user, UDS 0o600 已保证连接即本机 owner)。
+        - 返回新 dict: 剥离调用方提供的身份字段, 注入可信 principal 到全部身份字段。
+        """
+        if self._auth_token:
+            token = params.get("_auth_token", "")
+            if not isinstance(token, str) or token != self._auth_token:
+                logger.warning("Desk RPC 认证失败: _auth_token 缺失或不匹配")
+                return {"__auth_error__": {"code": -32001, "message": "认证失败: token 无效"}}
+        sanitized = {k: v for k, v in params.items() if k not in _IDENTITY_FIELDS and k != "_auth_token"}
+        sanitized["__principal__"] = _DEFAULT_PRINCIPAL
+        sanitized["operator_id"] = _DEFAULT_PRINCIPAL
+        sanitized["user_id"] = _DEFAULT_PRINCIPAL
+        sanitized["inviter_id"] = _DEFAULT_PRINCIPAL
+        sanitized["author_id"] = _DEFAULT_PRINCIPAL
+        return sanitized
+
+    async def _require_space_access(self, space_id: str, principal: str, action: str) -> Optional[Dict[str, Any]]:
+        """校验 principal 对 space 的访问权 (CR-5 IDOR 守卫)。返回 error_dict 或 None。"""
+        if not self._space_store or not space_id:
+            return None
+        space = await self._space_store.get_space(space_id)
+        if not space:
+            return {"error": f"空间不存在: {space_id}"}
+        if principal == space.owner_id:
+            return None
+        from ..space.permission import SpacePermission
+
+        perm = SpacePermission(self._space_store)
+        member = await self._space_store.get_member(space_id, principal)
+        if member is None:
+            logger.warning(f"IDOR 拒绝: principal={principal} 非空间 {space_id} 成员")
+            return {"error": f"无权访问空间 {space_id}"}
+        if action and not await perm.check(space_id, principal, action):
+            return {"error": f"权限不足: 缺 {action}"}
+        return None
+
+    _SPACE_ACCESS_ACTIONS: Dict[str, str] = {
+        "desk.space.get": "",
+        "desk.space.update": "manage_space",
+        "desk.space.archive": "manage_space",
+        "desk.space.delete": "manage_space",
+        "desk.space.member.invite": "manage_members",
+        "desk.space.member.list": "",
+        "desk.space.member.remove": "manage_members",
+        "desk.space.member.update_role": "manage_members",
+        "desk.space.presence.heartbeat": "",
+        "desk.space.presence.cursor": "",
+        "desk.space.presence.list": "",
+        "desk.space.presence.remove": "",
+        "desk.space.collab.join": "",
+        "desk.space.collab.send": "send_message",
+        "desk.space.collab.cursor": "",
+        "desk.space.collab.poll": "",
+        "desk.space.collab.leave": "",
+        "desk.space.chat.send": "send_message",
+        "desk.space.chat.list": "",
+        "desk.space.chat.history": "",
+        "desk.space.chat.context": "",
+        "desk.space.chat.stream": "send_message",
+        "desk.space.knowledge.bind": "manage_kb",
+        "desk.space.knowledge.status": "",
+        "desk.space.knowledge.upload": "upload_document",
+        "desk.space.knowledge.search": "",
+        "desk.space.knowledge.query": "",
+        "desk.space.knowledge.unbind": "manage_kb",
+        "desk.space.agent.list": "",
+        "desk.space.agent.add": "manage_agents",
+        "desk.space.agent.remove": "manage_agents",
+        "desk.space.agent.call": "call_agent",
+        "desk.space.agent.relay": "call_agent",
+        "desk.space.agent.update": "manage_agents",
+        "desk.space.snapshot.list": "",
+        "desk.space.snapshot.create": "manage_snapshots",
+        "desk.space.snapshot.clone": "manage_snapshots",
+        "desk.space.snapshot.restore": "manage_snapshots",
+        "desk.space.snapshot.delete": "manage_snapshots",
+        "desk.space.comment.create": "send_message",
+        "desk.space.comment.list": "",
+        "desk.space.workflow.list": "",
+        "desk.space.workflow.create": "run_workflow",
+        "desk.space.workflow.run": "run_workflow",
+        "desk.space.discovery.scan": "",
+        "desk.space.desktop.share": "",
+        "desk.space.desktop.control": "",
+        "desk.space.artifact.create": "upload_file",
+        "desk.space.artifact.get": "view_artifact",
+        "desk.space.artifact.update": "edit_artifact",
+        "desk.space.artifact.share": "share_artifact",
+        "desk.space.artifact.transfer": "transfer_artifact",
+        "desk.space.artifact.list": "view_artifact",
+        "desk.space.artifact.delete": "delete_data",
+        "desk.space.notification.list": "",
+        "desk.space.notification.mark_read": "",
+        "desk.project.syncKnowledge": "upload_document",
+        "desk.project.importSnapshot": "send_message",
+        "desk.project.exportToProject": "",
+    }
+
+    async def _check_space_access(self, method: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """dispatch 层 IDOR 守卫: desk.space.* + desk.project.* 按 method→action 校验。
+
+        desk.space.member.join (invite_code 自助加入) / desk.space.create / desk.space.list 不校验。
+        """
+        action = self._SPACE_ACCESS_ACTIONS.get(method)
+        if action is None:
+            return None
+        space_id = params.get("space_id", "")
+        if not space_id:
+            return None
+        principal = params.get("__principal__", _DEFAULT_PRINCIPAL)
+        return await self._require_space_access(space_id, principal, action)
 
     async def _write_response(self, writer: asyncio.StreamWriter, response: Dict[str, Any]) -> None:
         """写入 JSON-RPC 响应 — 序列化失败时降级为错误帧，避免静默断连 (0 bytes)。"""
@@ -1614,10 +1767,10 @@ class DeskRPCServer:
             return {"error": err}
         space_id = params.get("space_id", "")
         artifact_id = params.get("artifact_id", "")
-        from_user = params.get("from_user_id", "")
+        from_user = params.get("__principal__", "local_user")
         to_user = params.get("to_user_id", "")
         if not all([space_id, artifact_id, from_user, to_user]):
-            return {"error": "space_id, artifact_id, from_user_id, to_user_id 必填"}
+            return {"error": "space_id, artifact_id, to_user_id 必填"}
         try:
             result = await svc.transfer_ownership(space_id, artifact_id, from_user, to_user)
             return result

@@ -57,7 +57,11 @@ class RemoteControlServer:
         )
 
     def _build_ssl_context(self):
-        """构造 TLS ssl_context — P2-10。仅当 tls_cert/tls_key 提供时启用。"""
+        """构造 TLS ssl_context — P2-10。仅当 tls_cert/tls_key 提供时启用。
+
+        fail-closed: 配了证书但加载失败 → raise, 不降级明文 (防止静默暴露未加密 WS)。
+        未配证书 → None (明文, 调用方自行决定是否接受)。
+        """
         if not self.tls_cert or not self.tls_key:
             return None
         import ssl
@@ -68,8 +72,8 @@ class RemoteControlServer:
             logger.info(f"RemoteControlServer TLS 已启用: cert={self.tls_cert}")
             return ctx
         except Exception as e:
-            logger.error(f"TLS 证书加载失败, 降级明文: {e}")
-            return None
+            logger.error(f"TLS 证书加载失败, 拒绝降级明文 (fail-closed): {e}")
+            raise RuntimeError(f"TLS 证书加载失败, 拒绝降级明文: {e}") from e
 
     async def stop(self):
         self._running = False

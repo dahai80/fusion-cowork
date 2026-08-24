@@ -446,7 +446,7 @@ class TestPluginLoader:
 
 # ── P1-6 插件沙箱运行时隔离测试 ──
 
-_SANDBOX_PLUGIN_CODE = '''
+_SANDBOX_PLUGIN_CODE = """
 from fusion_cowork.engine.node import BaseNode, NodeCategory, NodeResult, NodeStatus, register_node
 
 @register_node
@@ -465,7 +465,7 @@ class EchoNode(BaseNode):
             data={"echo": "SBX:" + str(inputs.get("text", ""))},
             summary="echoed",
         )
-'''
+"""
 
 
 def _make_sandbox_plugin(tmp: str) -> Path:
@@ -473,8 +473,12 @@ def _make_sandbox_plugin(tmp: str) -> Path:
     pdir.mkdir()
     (pdir / "plugin.py").write_text(_SANDBOX_PLUGIN_CODE)
     manifest = PluginManifest(
-        name="sbx_plugin", version="0.1", description="d",
-        nodes=["sbx_echo"], entry_point="plugin", sandbox=True,
+        name="sbx_plugin",
+        version="0.1",
+        description="d",
+        nodes=["sbx_echo"],
+        entry_point="plugin",
+        sandbox=True,
     )
     (pdir / "manifest.json").write_text(json.dumps(manifest.to_dict()))
     return pdir
@@ -524,8 +528,12 @@ class TestPluginSandboxIsolation:
             pdir.mkdir()
             (pdir / "plugin.py").write_text(crash_code)
             manifest = PluginManifest(
-                name="sbx_plugin", version="0.1", description="d",
-                nodes=["sbx_echo"], entry_point="plugin", sandbox=True,
+                name="sbx_plugin",
+                version="0.1",
+                description="d",
+                nodes=["sbx_echo"],
+                entry_point="plugin",
+                sandbox=True,
             )
             (pdir / "manifest.json").write_text(json.dumps(manifest.to_dict()))
             from fusion_cowork.plugins.loader import PluginLoader
