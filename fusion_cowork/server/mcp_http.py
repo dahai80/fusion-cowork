@@ -32,12 +32,25 @@ def _load_mcp_auth_token() -> Optional[str]:
 
 
 def _auth_denied(request, token: Optional[str]):
-    """校验 Authorization: Bearer <token>; 配了 token 则缺/错返 401 响应, 未配返 None。"""
-    if not token:
-        return None
+    """校验 Authorization: Bearer <token>; 配了 token 则缺/错返 401 响应, 未配返 None。
+
+    Stage 2: JWT active (env FUSION_JWT_SECRET/FUSION_JWKS_URL) → 有效 JWT 也放行。
+    """
     auth = request.headers.get("authorization", "")
     parts = auth.split(" ", 1)
     bearer = parts[1].strip() if len(parts) == 2 and parts[0].lower() == "bearer" else ""
+    # Stage 2: JWT 优先 — active 且有效即放行 (无需静态 token)
+    if bearer:
+        try:
+            from fusion_cowork.auth import get_default_verifier
+
+            verifier = get_default_verifier()
+            if verifier.active and verifier.verify_token(bearer) is not None:
+                return None
+        except Exception as e:
+            logger.warning(f"MCP HTTP JWT 校验异常: {e}")
+    if not token:
+        return None
     if not bearer or bearer != token:
         logger.warning(f"MCP HTTP 认证失败: {request.client.host if request.client else '?'}")
         from fastapi.responses import JSONResponse

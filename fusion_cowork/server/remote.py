@@ -125,8 +125,11 @@ class RemoteControlServer:
             # A-5: 不信请求体 _authenticated 字段 (可伪造); 仅服务端连接态为准。
             # 首次有效 token → 标记该连接已认证, 后续请求免校验。
             auth_token = params.get("token") or request.get("token", "")
-            if auth_token != self.token:
-                logger.warning(f"Remote client {client_id} 认证失败 (token 不匹配)")
+            # Stage 2: JWT 优先, 静态 token fallback (verify_any_token)
+            from fusion_cowork.auth import verify_any_token
+
+            if verify_any_token(auth_token, self.token) is None:
+                logger.warning(f"Remote client {client_id} 认证失败 (token 无效)")
                 return {"id": req_id, "error": "Authentication failed"}
             self._client_authed[client_id] = True
             logger.info(f"Remote client {client_id} 认证通过")

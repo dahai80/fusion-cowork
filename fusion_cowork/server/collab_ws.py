@@ -218,10 +218,12 @@ class CollabHub:
                 # LO-13: hello 必须带认证 + 身份校验, 防无认证注入/presence 冒充
                 first = await websocket.recv()
                 hello = json.loads(first)
-                # auth_token 配了则校验 hello.token, 缺/错拒连
+                # auth_token 配了则校验 hello.token (Stage 2: JWT 也可通过), 缺/错拒连
                 if self._auth_token:
+                    from fusion_cowork.auth import verify_any_token
+
                     token = str(hello.get("token", ""))
-                    if token != self._auth_token:
+                    if verify_any_token(token, self._auth_token) is None:
                         logger.warning("CollabHub WS 认证失败: hello token 无效")
                         await websocket.send(json.dumps({"type": "error", "error": "认证失败"}))
                         await websocket.close()

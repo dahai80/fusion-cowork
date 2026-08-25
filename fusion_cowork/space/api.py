@@ -94,6 +94,8 @@ def create_space_api(
         """A-5: 提取可信 principal — 不读请求体身份字段。返 TenantPrincipal (含 tenant_id)。
 
         - 配了 principal_resolver → 调用方自定义 (如解析 JWT/header)。
+        - Stage 2: 否则若 JWT verifier active (env FUSION_JWT_SECRET/FUSION_JWKS_URL) →
+          从 `Authorization: Bearer <jwt>` 校验, 提取 tenant_id/user_id claim。
         - 否则: 若配 auth_token 则从 `X-Principal` header 取 (经 token 校验可信);
           无 token 本地单用户 → local_user / default tenant。
         body 里的 owner_id/user_id 一律不信 (CR-5 反 IDOR)。
@@ -105,6 +107,20 @@ def create_space_api(
             if isinstance(resolved, str):
                 return TenantPrincipal(tenant_id=DEFAULT_TENANT, user_id=resolved or LOCAL_USER)
             return TenantPrincipal()
+        # Stage 2: JWT (env 配了 active) — 从 Authorization Bearer 校验
+        try:
+            from fusion_cowork.auth import get_default_verifier
+
+            verifier = get_default_verifier()
+            if verifier.active:
+                authz = request.headers.get("Authorization", "") or request.headers.get("authorization", "")
+                token = authz[len("Bearer ") :] if authz.startswith("Bearer ") else ""
+                if token:
+                    jwt_principal = verifier.verify_token(token)
+                    if jwt_principal is not None:
+                        return jwt_principal
+        except Exception as e:
+            logger.warning(f"Space API JWT 校验异常, 回退静态身份: {e}")
         if _auth_token:
             uid = request.headers.get("X-Principal", "") or LOCAL_USER
             return TenantPrincipal(tenant_id=DEFAULT_TENANT, user_id=uid)
@@ -115,7 +131,23 @@ def create_space_api(
         return _resolve_principal(request).tenant_id
 
     async def _check_auth(request: Request) -> Optional[JSONResponse]:
-        """A-5: auth_token 配了则校验 Bearer; 缺/错返 401。"""
+        """A-5: auth_token 配了则校验 Bearer; 缺/错返 401。Stage 2: JWT 也可通过。"""
+        # Stage 2: JWT active → 校验通过即放行 (tenant_id 由 _resolve_principal 提取)
+        try:
+            from fusion_cowork.auth import get_default_verifier
+
+            verifier = get_default_verifier()
+            if verifier.active:
+                authz = request.headers.get("Authorization", "") or request.headers.get("authorization", "")
+                token = authz[len("Bearer ") :] if authz.startswith("Bearer ") else ""
+                if token and verifier.verify_token(token) is not None:
+                    return None
+                # JWT active 但无/错 token: 若同时配了静态 token 则继续走静态校验, 否则 401
+                if not _auth_token:
+                    logger.warning("Space API 认证失败: JWT 无效或缺失")
+                    return JSONResponse({"error": "认证失败: token 无效"}, status_code=401)
+        except Exception as e:
+            logger.warning(f"Space API JWT 校验异常: {e}")
         if not _auth_token:
             return None
         authz = request.headers.get("Authorization", "")

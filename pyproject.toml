@@ -40,8 +40,16 @@ test = [
 plugins = [
     "fusion-plugins-ecosystem>=0.3.3",
 ]
+cloud = [
+    "pyjwt>=2.8",
+    "asyncpg>=0.29",
+    "cryptography>=42",
+    "prometheus-client>=0.20",
+    "opentelemetry-api>=1.24",
+    "structlog>=24",
+]
 dev = [
-    "fusion-cowork[test,web,plugins]",
+    "fusion-cowork[test,web,plugins,cloud]",
 ]
 
 [project.scripts]

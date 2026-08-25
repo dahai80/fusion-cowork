@@ -104,6 +104,9 @@ class DeskRPCServer:
         self._collab_sessions: Dict[str, Dict[str, Any]] = {}
         self._collab_queues: Dict[str, asyncio.Queue] = {}
         self._auth_token: Optional[str] = None
+        # Stage 2: JWT verifier (env FUSION_JWT_SECRET/FUSION_JWKS_URL 配了启用)。
+        # _authenticate 优先用 resolver; resolver 缺则用 _jwt_verifier (active 时)。
+        self._jwt_verifier = None
         # A-10: 共享 MLX/KB 客户端实例 (旧版 11 处 handler 各 new FusionMLXClient() 不 close,
         # httpx 连接池泄漏)。handler 取共享实例, stop() 统一关闭。
         self._mlx_client = None
@@ -291,6 +294,18 @@ class DeskRPCServer:
         self._auth_token = ConfigCenter.get_instance().get(_AUTH_TOKEN_KEY) or None
         if self._auth_token:
             logger.info("Desk RPC 认证已启用: desk.auth_token 握手校验")
+        # Stage 2: JWT verifier (env FUSION_JWT_SECRET/FUSION_JWKS_URL 启用, _authenticate 优先用)
+        try:
+            from fusion_cowork.auth import get_default_verifier
+
+            self._jwt_verifier = get_default_verifier()
+            if self._jwt_verifier.active:
+                logger.info("Desk RPC JWT 认证已启用 (env FUSION_JWT_SECRET/FUSION_JWKS_URL)")
+        except Exception as e:
+            logger.warning(f"JWT verifier 构造失败 (JWT 认证降级): {e}")
+            self._jwt_verifier = None
+        if os.environ.get("FUSION_REQUIRE_JWT", "") == "1":
+            logger.info("Desk RPC 生产模式: FUSION_REQUIRE_JWT=1 (强制 JWT, 禁静默降级)")
         if os.path.exists(self._sock_path):
             if not self._is_owned_socket(self._sock_path):
                 logger.error(f"UDS {self._sock_path} 已存在但非当前用户所有, 拒绝覆盖 (可能被恶意占用)")
@@ -474,28 +489,63 @@ class DeskRPCServer:
     def _authenticate(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """认证调用方, 返回带可信身份的 params (CR-5 反 IDOR)。
 
-        - desk.auth_token 配了则校验 params._auth_token, 缺/错拒。
-        - principal_resolver 设了则先解析 (Stage 2 JWT/OIDC → TenantPrincipal); 否则本地静态身份。
-        - 身份字段 (operator_id/user_id/inviter_id/author_id/owner_id/from_user_id) 不信 params,
-          一律改用连接级 principal (本地单用户 = local_user, UDS 0o600 已保证连接即本机 owner)。
-        - 注入 __tenant_id__ 到 params, 下游 store 方法据此隔离 (缺则 default tenant)。
+        优先级 (Stage 2):
+        1. JWT: env FUSION_JWT_SECRET/FUSION_JWKS_URL 配了 → 校验 params._auth_token Bearer JWT,
+           提取 tenant_id/user_id claim。生产 (FUSION_REQUIRE_JWT=1) 强制走此路径, 无 JWT → 拒。
+        2. principal_resolver: 外部注入 (如 OIDC header 解析), 返 TenantPrincipal。
+        3. 静态 token: desk.auth_token 配了 → 等值校验 (本地/桌面保留), 通过走默认身份。
+        4. 本地无认证: 以上都无 → local_user / default tenant (单用户向后兼容)。
+
+        身份字段 (operator_id/user_id/inviter_id/author_id/owner_id/from_user_id) 不信 params,
+        一律改用连接级 principal。注入 __tenant_id__, 下游 store 据此隔离。
         """
-        if self._auth_token:
-            token = params.get("_auth_token", "")
-            if not isinstance(token, str) or token != self._auth_token:
-                logger.warning("Desk RPC 认证失败: _auth_token 缺失或不匹配")
-                return {"__auth_error__": {"code": -32001, "message": "认证失败: token 无效"}}
         sanitized = {k: v for k, v in params.items() if k not in _IDENTITY_FIELDS and k != "_auth_token"}
         principal_id = _DEFAULT_PRINCIPAL
         tenant_id = DEFAULT_TENANT
-        if self._principal_resolver is not None:
+        token = params.get("_auth_token", "")
+        if not isinstance(token, str):
+            token = ""
+        resolved_principal: Optional[TenantPrincipal] = None
+
+        # 1. JWT (env 配了 active)
+        if self._jwt_verifier is not None and self._jwt_verifier.active:
+            jwt_principal = self._jwt_verifier.verify_token(token)
+            if jwt_principal is not None:
+                resolved_principal = jwt_principal
+            elif self._require_jwt_mode():
+                logger.warning("Desk RPC 认证失败: 生产模式 JWT 校验未通过")
+                return {"__auth_error__": {"code": -32001, "message": "认证失败: JWT 无效或过期"}}
+
+        # 2. principal_resolver (外部注入, 覆盖 JWT)
+        if resolved_principal is None and self._principal_resolver is not None:
             try:
                 resolved = self._principal_resolver(params)
                 if isinstance(resolved, TenantPrincipal):
-                    principal_id = resolved.user_id or _DEFAULT_PRINCIPAL
-                    tenant_id = resolved.tenant_id or DEFAULT_TENANT
+                    resolved_principal = resolved
+                elif isinstance(resolved, str):
+                    resolved_principal = TenantPrincipal(user_id=resolved or _DEFAULT_PRINCIPAL)
             except Exception as e:
                 logger.warning("principal_resolver 解析失败, 回退本地身份: %s", e)
+
+        # 3. 静态 token fallback (本地/桌面)
+        if resolved_principal is None and self._auth_token:
+            from fusion_cowork.auth import verify_static_token
+
+            static_principal = verify_static_token(token, self._auth_token)
+            if static_principal is None:
+                logger.warning("Desk RPC 认证失败: 静态 token 不匹配")
+                return {"__auth_error__": {"code": -32001, "message": "认证失败: token 无效"}}
+            resolved_principal = static_principal
+
+        # 4. 生产模式 + 无任何认证通过 → 拒 (防静默降级到 local_user)
+        if resolved_principal is None and self._require_jwt_mode():
+            logger.warning("Desk RPC 认证失败: 生产模式无 JWT/静态 token")
+            return {"__auth_error__": {"code": -32001, "message": "认证失败: 需有效凭证"}}
+
+        if resolved_principal is not None:
+            principal_id = resolved_principal.user_id or _DEFAULT_PRINCIPAL
+            tenant_id = resolved_principal.tenant_id or DEFAULT_TENANT
+
         sanitized["__principal__"] = principal_id
         sanitized["__tenant_id__"] = tenant_id
         sanitized["operator_id"] = principal_id
@@ -503,6 +553,11 @@ class DeskRPCServer:
         sanitized["inviter_id"] = principal_id
         sanitized["author_id"] = principal_id
         return sanitized
+
+    @staticmethod
+    def _require_jwt_mode() -> bool:
+        """生产模式: env FUSION_REQUIRE_JWT=1 → 强制 JWT, 禁静默降级。"""
+        return os.environ.get("FUSION_REQUIRE_JWT", "") == "1"
 
     async def _require_space_access(
         self, space_id: str, principal: str, action: str, tenant_id: Optional[str] = None

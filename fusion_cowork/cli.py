@@ -1755,7 +1755,9 @@ def remote_serve(host: str, port: int, token: str, tls_cert: str, tls_key: str):
         scheme = "wss" if (tls_cert and tls_key) else "ws"
         console.print_success(f"远程控制服务已启动: {scheme}://{host}:{port}/control")
         if token:
-            console.print_info(f"认证令牌: {token}")
+            _t = str(token)
+            _shown = f"{_t[:4]}***{_t[-4:]}" if len(_t) > 8 else "(已设置)"
+            console.print_info(f"认证令牌: {_shown}")
         if tls_cert and tls_key:
             console.print_info(f"TLS 已启用: cert={tls_cert}")
         console.print_info("等待远程连接... (Ctrl+C 停止)")
@@ -2039,7 +2041,10 @@ def push_config(bark_url, ntfy_url, ntfy_token, sound, priority):
     if all(v is None for v in (bark_url, ntfy_url, ntfy_token, sound, priority)):
         console.print_info(f"Bark URL: {cc.get('push.bark_url', '(未设置)')}")
         console.print_info(f"ntfy URL: {cc.get('push.ntfy_url', '(未设置)')}")
-        console.print_info(f"ntfy Token: {cc.get('push.ntfy_token', '(未设置)')}")
+        # Stage 2: token 脱敏显示 (仅前4后4, 中间 *)
+        _ntfy = cc.get("push.ntfy_token", "") or ""
+        _shown = f"{_ntfy[:4]}***{_ntfy[-4:]}" if len(_ntfy) > 8 else ("(已设置)" if _ntfy else "(未设置)")
+        console.print_info(f"ntfy Token: {_shown}")
         console.print_info(f"提示音: {cc.get('push.sound', '(未设置)')}")
         console.print_info(f"优先级: {cc.get('push.priority', '(未设置)')}")
         return
@@ -2051,7 +2056,9 @@ def push_config(bark_url, ntfy_url, ntfy_token, sound, priority):
         console.print_result(f"ntfy URL 已设置: {ntfy_url}")
     if ntfy_token is not None:
         cc.set("push.ntfy_token", ntfy_token)
-        console.print_result(f"ntfy Token 已设置: {ntfy_token}")
+        _nt = str(ntfy_token)
+        _nshown = f"{_nt[:4]}***{_nt[-4:]}" if len(_nt) > 8 else "(已设置)"
+        console.print_result(f"ntfy Token 已设置: {_nshown}")
     if sound is not None:
         cc.set("push.sound", sound)
     if priority is not None:

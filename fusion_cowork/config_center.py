@@ -14,8 +14,26 @@ logger = logging.getLogger(__name__)
 
 _instance_lock = threading.Lock()
 
-_CONFIG_DIR = os.path.expanduser("~/.fusion-cowork")
+_CONFIG_DIR = os.environ.get("FUSION_CONFIG_DIR") or os.path.expanduser("~/.fusion-cowork")
 _CONFIG_FILE = os.path.join(_CONFIG_DIR, "config.json")
+
+# Stage 2: secret key 识别 — 日志/导出脱敏 (明文 value 不进日志, 防 secret 泄漏)
+_SECRET_KEY_SUBSTR = ("token", "secret", "api_key", "apikey", "password", "passwd", "credential")
+_REDACTED = "[REDACTED]"
+
+
+def _is_secret_key(key: str) -> bool:
+    if not isinstance(key, str) or not key:
+        return False
+    kl = key.lower()
+    return any(sub in kl for sub in _SECRET_KEY_SUBSTR)
+
+
+def _redact_value(key: str, value: Any) -> Any:
+    """secret key 值脱敏 — 返 REDACTED 占位 (仅日志/导出用, 不改 _store 原值)。"""
+    if _is_secret_key(key) and value not in (None, "", 0, False):
+        return _REDACTED
+    return value
 
 
 @dataclass
@@ -128,7 +146,11 @@ class ConfigCenter:
             entry = ConfigEntry(key=key, value=value, source=source)
             self._store[key] = entry
             change = ConfigChange(key=key, old_value=old_value, new_value=value)
-            logger.info(f"ConfigCenter.set key={key} old={old_value} new={value} source={source}")
+            # Stage 2: secret key 日志脱敏 — 不泄明文 value
+            logger.info(
+                f"ConfigCenter.set key={key} old={_redact_value(key, old_value)} "
+                f"new={_redact_value(key, value)} source={source}"
+            )
         self._notify_observers(change)
         # A-7: 接线 — 写即落盘, 重启不丢
         self._persist_silent()
@@ -271,9 +293,15 @@ class ConfigCenter:
         return count
 
     def to_dict(self) -> Dict[str, Any]:
+        # Stage 2: secret key 值脱敏 (导出/展示不泄明文)
+        def _redact_entry(k: str, v: ConfigEntry) -> Dict[str, Any]:
+            d = asdict(v)
+            d["value"] = _redact_value(k, d.get("value"))
+            return d
+
         return {
-            "entries": {k: asdict(v) for k, v in self._store.items()},
-            "defaults": dict(self._defaults),
+            "entries": {k: _redact_entry(k, v) for k, v in self._store.items()},
+            "defaults": {k: _redact_value(k, v) for k, v in self._defaults.items()},
             "observer_count": len(self._observers),
         }
 
