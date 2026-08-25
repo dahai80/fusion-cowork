@@ -3150,6 +3150,45 @@ def db_migrate(dsn: str):
 # ── 主入口 ──
 
 
+@cli.command("serve")
+@click.option("--host", default="", help="绑定地址 (默认读 FUSION_BIND_HOST, 再默认 0.0.0.0 容器模式)")
+@click.option("--port", default=11438, show_default=True, help="HTTP 端口 (/rpc /health /mcp /sse)")
+@click.option("--json-log", "json_log", is_flag=True, help="结构化 JSON 日志 (structlog, 生产)")
+@click.option("--metrics-port", default=0, help="prometheus /metrics 端口 (0=不启)")
+def serve(host: str, port: int, json_log: bool, metrics_port: int):
+    """容器/云部署模式 — HTTP 单通道 (无 UDS), 0.0.0.0 绑定, uvicorn 接管 SIGTERM 优雅关停。
+
+    Dockerfile CMD / k8s ENTRYPOINT 用此命令。
+    本地开发仍用 `desk rpc` (UDS + HTTP 双通道)。
+    """
+    import asyncio
+
+    from .nodes import import_all_nodes
+    from .observability.metrics import maybe_start_prometheus_endpoint
+    from .server.mcp_server import MCPServer
+
+    bind_host = host or os.environ.get("FUSION_BIND_HOST", "0.0.0.0")
+    _json_env = os.environ.get("FUSION_JSON_LOG", "").strip().lower() in ("1", "true", "yes", "on")
+    if json_log or _json_env:
+        setup_logger(json=True)
+    if metrics_port:
+        maybe_start_prometheus_endpoint(metrics_port)
+
+    import_all_nodes()
+    rt = _build_runtime()
+    mcp = MCPServer(
+        host=bind_host,
+        port=port,
+        permission_manager=rt["permission_manager"],
+        hook_manager=rt["hook_manager"],
+    )
+    console.print_success(f"fusion-cowork serve (容器模式): {bind_host}:{port} (/rpc /health /mcp /sse)")
+    try:
+        asyncio.run(mcp.serve_http(event_emitter=rt["event_emitter"]))
+    except KeyboardInterrupt:
+        console.print_info("服务已停止")
+
+
 def main():
     """Fusion-Cowork 主入口。"""
     cli()

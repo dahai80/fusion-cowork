@@ -324,6 +324,26 @@ do_doctor() {
     echo ""
 }
 
+# ── container ───────────────────────────────────────────────────────
+# v0.4.0: 容器/云模式 — 前台跑 HTTP 单通道 (无 UDS), 不探 venv (容器用系统 python),
+# uvicorn 原生接管 SIGTERM。Dockerfile CMD 直接跑 python 模块, 此命令供手动调试。
+do_container() {
+    log_step "Container mode (HTTP single channel, foreground)"
+    # 容器内 PATH 已含 python (Dockerfile ENTRYPOINT); 本地手动跑用当前 python
+    local python_bin
+    python_bin="$(command -v python3 || command -v python)"
+    if [[ -z "${python_bin}" ]]; then
+        log_error "python3 not found in PATH"
+        exit 1
+    fi
+    local bind_host="${FUSION_BIND_HOST:-0.0.0.0}"
+    local port="${FUSION_PORT:-11438}"
+    log_info "serve ${bind_host}:${port} (uvicorn native SIGTERM)"
+    exec "${python_bin}" -m fusion_cowork serve \
+        --host "${bind_host}" \
+        --port "${port}"
+}
+
 # ── Usage ───────────────────────────────────────────────────────────
 usage() {
     cat <<'EOF'
@@ -339,10 +359,13 @@ Commands:
   log [N|-f] Tail server log (default 50 lines, -f to follow)
   clean      Rotate old logs, clear __pycache__, remove stale PID/socket
   doctor     Health check (venv, CLI, socket, upstream services)
+  container  容器/云模式 — 前台 HTTP 单通道 (无 UDS, 不探 venv, uvicorn 接管 SIGTERM)
   help       Show this help
 
 Environment:
-  SOCK_FILE  Unix Domain Socket path (default: /tmp/fusion-cowork.sock)
+  SOCK_FILE          Unix Domain Socket path (default: /tmp/fusion-cowork.sock)
+  FUSION_BIND_HOST   容器模式 bind host (default: 0.0.0.0)
+  FUSION_PORT        容器模式 HTTP 端口 (default: 11438)
 EOF
 }
 
@@ -358,6 +381,7 @@ case "${cmd}" in
     log)               show_log "${1:-}" ;;
     clean)             do_clean   ;;
     doctor)            do_doctor  ;;
+    container)         do_container ;;
     help|-h|--help)    usage ;;
     *)
         log_error "Unknown command: ${cmd}"

@@ -46,6 +46,7 @@ cloud = [
     "cryptography>=42",
     "prometheus-client>=0.20",
     "opentelemetry-api>=1.24",
+    "opentelemetry-sdk>=1.24",
     "structlog>=24",
 ]
 dev = [

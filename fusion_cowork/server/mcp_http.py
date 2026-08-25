@@ -21,6 +21,43 @@ logger = logging.getLogger(__name__)
 MCP_PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "fusion-cowork"
 
+# MD-1: 请求体上限 1MiB, 防无界 body OOM (uvicorn.Config 无此参, 用 ASGI 中间件实现)
+_MAX_BODY_BYTES = 1024 * 1024
+
+
+class _BodySizeLimitMiddleware:
+    """ASGI 中间件: 超过 _MAX_BODY_BYTES 的请求返 413 (Content Too Large)。
+
+    透明代理属性到内层 app (FastAPI), 使外部仍可访问 app.title / app.routes 等。
+    """
+
+    def __init__(self, app, max_bytes: int = _MAX_BODY_BYTES):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    def __getattr__(self, name):
+        return getattr(self.app, name)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        cl = 0
+        for k, v in scope.get("headers", []):
+            if k == b"content-length":
+                try:
+                    cl = int(v)
+                except ValueError:
+                    cl = 0
+                break
+        if cl and cl > self.max_bytes:
+            await send(
+                {"type": "http.response.start", "status": 413, "headers": [[b"content-type", b"application/json"]]}
+            )
+            await send({"type": "http.response.body", "body": b'{"error":"request body too large"}'})
+            return
+        await self.app(scope, receive, send)
+
 
 def _load_mcp_auth_token() -> Optional[str]:
     """读取 config mcp.auth_token; 未配则 None (不启用认证)。"""
@@ -270,7 +307,7 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
         result["version"] = SERVER_VERSION
         return result
 
-    return app
+    return _BodySizeLimitMiddleware(app)
 
 
 # ---- P2-9: MCP Streamable HTTP (2025-03-26 spec) ----
@@ -512,4 +549,4 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
         result["protocol"] = "streamable-2025-03-26"
         return result
 
-    return app
+    return _BodySizeLimitMiddleware(app)

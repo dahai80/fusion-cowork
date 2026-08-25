@@ -1,0 +1,19 @@
+# Docker build context ignore (fusion-cowork v0.4.0)
+# 构建上下文为 monorepo 根 (docker compose build 时 . 设为 fusion-cowork/)
+**/.git
+**/.venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/.ruff_cache
+**/.codegraph
+**/tests
+**/browser
+**/logs
+**/.remember
+**/*.egg-info
+**/.DS_Store
+**/node_modules
+**/dist
+**/build
