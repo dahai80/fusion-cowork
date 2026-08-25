@@ -31,6 +31,14 @@ from typing import Optional
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from fusion_cowork.tenant import (
+    DEFAULT_TENANT,
+    LOCAL_USER,
+    TenantPrincipal,
+    reset_current_tenant,
+    set_current_tenant,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -62,6 +70,17 @@ def create_space_api(
     app = FastAPI(title="Fusion-Cowork Space API", version="0.8.0")
     _event_emitter = event_emitter
 
+    # Stage 1: 每请求注入 tenant_id 到 contextvar, 下游 store.resolve_tenant_id(None) 自动取。
+    # Stage 2 接通 JWT 后 _resolve_principal 返 JWT claim tenant_id。
+    @app.middleware("http")
+    async def _tenant_middleware(request: Request, call_next):
+        tid = _resolve_tenant(request)
+        t_tok = set_current_tenant(tid)
+        try:
+            return await call_next(request)
+        finally:
+            reset_current_tenant(t_tok)
+
     from .permission import SpacePermission
     from .presence import PresenceManager
 
@@ -71,19 +90,29 @@ def create_space_api(
     _auth_token = auth_token
     _principal_resolver = principal_resolver
 
-    def _resolve_principal(request: Request) -> str:
-        """A-5: 提取可信 principal — 不读请求体身份字段。
+    def _resolve_principal(request: Request) -> TenantPrincipal:
+        """A-5: 提取可信 principal — 不读请求体身份字段。返 TenantPrincipal (含 tenant_id)。
 
         - 配了 principal_resolver → 调用方自定义 (如解析 JWT/header)。
         - 否则: 若配 auth_token 则从 `X-Principal` header 取 (经 token 校验可信);
-          无 token 本地单用户 → local_user。
+          无 token 本地单用户 → local_user / default tenant。
         body 里的 owner_id/user_id 一律不信 (CR-5 反 IDOR)。
         """
         if _principal_resolver:
-            return _principal_resolver(request) or "local_user"
+            resolved = _principal_resolver(request)
+            if isinstance(resolved, TenantPrincipal):
+                return resolved
+            if isinstance(resolved, str):
+                return TenantPrincipal(tenant_id=DEFAULT_TENANT, user_id=resolved or LOCAL_USER)
+            return TenantPrincipal()
         if _auth_token:
-            return request.headers.get("X-Principal", "") or "local_user"
-        return "local_user"
+            uid = request.headers.get("X-Principal", "") or LOCAL_USER
+            return TenantPrincipal(tenant_id=DEFAULT_TENANT, user_id=uid)
+        return TenantPrincipal()
+
+    def _resolve_tenant(request: Request) -> str:
+        """Stage 1: 提取 tenant_id (Stage 2 JWT 完整接通, 本阶段默认 default)。"""
+        return _resolve_principal(request).tenant_id
 
     async def _check_auth(request: Request) -> Optional[JSONResponse]:
         """A-5: auth_token 配了则校验 Bearer; 缺/错返 401。"""
@@ -96,20 +125,23 @@ def create_space_api(
             return JSONResponse({"error": "认证失败: token 无效"}, status_code=401)
         return None
 
-    async def _require_access(space_id: str, principal: str, action: str) -> Optional[JSONResponse]:
+    async def _require_access(
+        space_id: str, principal: str, action: str, tenant_id: Optional[str] = None
+    ) -> Optional[JSONResponse]:
         """A-5: IDOR 守卫 — 校验 principal 对 space 的成员资格 + 权限。
-        owner 全放行; 非成员 403; 成员查角色矩阵 action。"""
+        owner 全放行; 非成员 403; 成员查角色矩阵 action。Stage 1: 传 tenant_id 给 store。"""
         if not _space_store or not space_id:
             return None
-        space = await _space_store.get_space(space_id)
+        tid = tenant_id or DEFAULT_TENANT
+        space = await _space_store.get_space(space_id, tenant_id=tid)
         if not space:
             return JSONResponse({"error": "空间不存在"}, status_code=404)
         owner_id = getattr(space, "owner_id", "") if space else ""
         if principal and principal == owner_id:
             return None
-        member = await _space_store.get_member(space_id, principal)
+        member = await _space_store.get_member(space_id, principal, tenant_id=tid)
         if member is None:
-            logger.warning(f"Space API IDOR 拒: principal={principal} 非空间 {space_id} 成员")
+            logger.warning(f"Space API IDOR 拒: principal={principal} 非空间 {space_id} 成员 tenant={tid}")
             return JSONResponse({"error": "无权访问该空间"}, status_code=403)
         if action:
             perm = SpacePermission(_space_store)
@@ -126,11 +158,12 @@ def create_space_api(
             return auth_err
         body = await request.json()
         # A-5: owner_id 取可信 principal, 不信 body (CR-5 反 IDOR)
-        owner = _resolve_principal(request)
+        principal = _resolve_principal(request)
         sp = await space_svc.create(
             name=body.get("name", ""),
             description=body.get("description", ""),
-            owner_id=owner,
+            owner_id=principal.user_id,
+            tenant_id=principal.tenant_id,
         )
         return JSONResponse(sp.to_dict(), status_code=201)
 
@@ -168,8 +201,10 @@ def create_space_api(
         auth_err = await _check_auth(request)
         if auth_err:
             return auth_err
-        operator = _resolve_principal(request)
-        access_err = await _require_access(space_id, operator, "manage_members")
+        operator_principal = _resolve_principal(request)
+        access_err = await _require_access(
+            space_id, operator_principal.user_id, "manage_members", tenant_id=operator_principal.tenant_id
+        )
         if access_err:
             return access_err
         body = await request.json()
@@ -177,7 +212,7 @@ def create_space_api(
             space_id=space_id,
             user_id=body["user_id"],
             display_name=body.get("display_name", ""),
-            operator_id=operator,
+            operator_id=operator_principal.user_id,
             role=body.get("role"),
         )
         return JSONResponse(m.to_dict(), status_code=201)
@@ -215,7 +250,7 @@ def create_space_api(
         if auth_err:
             return auth_err
         principal = _resolve_principal(request)
-        access_err = await _require_access(space_id, principal, "")
+        access_err = await _require_access(space_id, principal.user_id, "", tenant_id=principal.tenant_id)
         if access_err:
             return access_err
         msgs = await chat_svc.list_messages(space_id, limit=limit, offset=offset)

@@ -5,6 +5,7 @@ SQLite 存储会话数据，支持：
 - 会话列表与查询
 - 会话分叉（fork）— 从某步骤重新执行
 - 自动清理过期会话
+- 多租户隔离 (tenant_id 列 + 查询守卫, v0.4.0)
 """
 
 import json
@@ -15,6 +16,8 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from fusion_cowork.tenant import DEFAULT_TENANT, resolve_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,7 @@ class Session:
     completed_at: Optional[float] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     steps_snapshot: List[Dict[str, Any]] = field(default_factory=list)
+    tenant_id: str = DEFAULT_TENANT
 
     def __post_init__(self):
         if not self.id:
@@ -67,14 +71,22 @@ class SessionStore:
                     updated_at REAL NOT NULL,
                     completed_at REAL,
                     metadata TEXT NOT NULL DEFAULT '{}',
-                    steps_snapshot TEXT NOT NULL DEFAULT '[]'
+                    steps_snapshot TEXT NOT NULL DEFAULT '[]',
+                    tenant_id TEXT NOT NULL DEFAULT ''
                 )
             """)
+            # v0.4.0: 旧库无 tenant_id 列 → ALTER 补列 (幂等)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+            if "tenant_id" not in cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''")
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)
             """)
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_sessions_tenant ON sessions(tenant_id)
             """)
         logger.debug(f"SessionStore 初始化完成: {self._db_path}")
 
@@ -96,19 +108,23 @@ class SessionStore:
             completed_at=row["completed_at"],
             metadata=json.loads(row["metadata"]),
             steps_snapshot=json.loads(row["steps_snapshot"]),
+            tenant_id=row["tenant_id"],
         )
 
-    def save(self, session: Session) -> Session:
+    def save(self, session: Session, tenant_id: Optional[str] = None) -> Session:
         now = time.time()
         session.updated_at = now
+        if not getattr(session, "tenant_id", "") or session.tenant_id == DEFAULT_TENANT:
+            session.tenant_id = resolve_tenant_id(tenant_id or getattr(session, "tenant_id", None))
+        tid = session.tenant_id
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO sessions
                 (id, workflow_id, workflow_name, status, initial_input,
                  execution_id, created_at, updated_at, completed_at,
-                 metadata, steps_snapshot)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 metadata, steps_snapshot, tenant_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     session.id,
@@ -122,14 +138,16 @@ class SessionStore:
                     session.completed_at,
                     json.dumps(session.metadata),
                     json.dumps(session.steps_snapshot),
+                    tid,
                 ),
             )
-        logger.debug(f"Session 保存: {session.id} status={session.status}")
+        logger.debug(f"Session 保存: {session.id} status={session.status} tenant={tid}")
         return session
 
-    def get(self, session_id: str) -> Optional[Session]:
+    def get(self, session_id: str, tenant_id: Optional[str] = None) -> Optional[Session]:
+        tid = resolve_tenant_id(tenant_id)
         with self._connect() as conn:
-            row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            row = conn.execute("SELECT * FROM sessions WHERE id = ? AND tenant_id = ?", (session_id, tid)).fetchone()
         if row:
             return self._row_to_session(row)
         return None
@@ -139,45 +157,56 @@ class SessionStore:
         status: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
+        tenant_id: Optional[str] = None,
     ) -> List[Session]:
+        tid = resolve_tenant_id(tenant_id)
         with self._connect() as conn:
             if status:
                 rows = conn.execute(
-                    "SELECT * FROM sessions WHERE status = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
-                    (status, limit, offset),
+                    "SELECT * FROM sessions WHERE status = ? AND tenant_id = ? "
+                    "ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                    (status, tid, limit, offset),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ? OFFSET ?",
-                    (limit, offset),
+                    "SELECT * FROM sessions WHERE tenant_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                    (tid, limit, offset),
                 ).fetchall()
         return [self._row_to_session(r) for r in rows]
 
-    def update_status(self, session_id: str, status: str, completed_at: Optional[float] = None):
+    def update_status(
+        self,
+        session_id: str,
+        status: str,
+        completed_at: Optional[float] = None,
+        tenant_id: Optional[str] = None,
+    ):
         now = time.time()
+        tid = resolve_tenant_id(tenant_id)
         with self._connect() as conn:
             if completed_at:
                 conn.execute(
-                    "UPDATE sessions SET status=?, updated_at=?, completed_at=? WHERE id=?",
-                    (status, now, completed_at, session_id),
+                    "UPDATE sessions SET status=?, updated_at=?, completed_at=? WHERE id=? AND tenant_id=?",
+                    (status, now, completed_at, session_id, tid),
                 )
             else:
                 conn.execute(
-                    "UPDATE sessions SET status=?, updated_at=? WHERE id=?",
-                    (status, now, session_id),
+                    "UPDATE sessions SET status=?, updated_at=? WHERE id=? AND tenant_id=?",
+                    (status, now, session_id, tid),
                 )
-        logger.debug(f"Session 更新状态: {session_id} -> {status}")
+        logger.debug(f"Session 更新状态: {session_id} -> {status} tenant={tid}")
 
-    def update_steps(self, session_id: str, steps: List[Dict[str, Any]]):
+    def update_steps(self, session_id: str, steps: List[Dict[str, Any]], tenant_id: Optional[str] = None):
         now = time.time()
+        tid = resolve_tenant_id(tenant_id)
         with self._connect() as conn:
             conn.execute(
-                "UPDATE sessions SET steps_snapshot=?, updated_at=? WHERE id=?",
-                (json.dumps(steps), now, session_id),
+                "UPDATE sessions SET steps_snapshot=?, updated_at=? WHERE id=? AND tenant_id=?",
+                (json.dumps(steps), now, session_id, tid),
             )
 
-    def fork(self, session_id: str, from_step: int = 0) -> Optional[Session]:
-        original = self.get(session_id)
+    def fork(self, session_id: str, from_step: int = 0, tenant_id: Optional[str] = None) -> Optional[Session]:
+        original = self.get(session_id, tenant_id=tenant_id)
         if not original:
             logger.warning(f"Fork 失败: Session {session_id} 不存在")
             return None
@@ -187,29 +216,34 @@ class SessionStore:
             status="forked",
             initial_input=original.initial_input.copy(),
             metadata={"forked_from": session_id, "fork_from_step": from_step},
+            tenant_id=original.tenant_id,
         )
         if from_step > 0 and from_step <= len(original.steps_snapshot):
             forked.steps_snapshot = original.steps_snapshot[:from_step]
         self.save(forked)
-        logger.info(f"Session fork: {session_id} -> {forked.id} (from_step={from_step})")
+        logger.info(f"Session fork: {session_id} -> {forked.id} (from_step={from_step}) tenant={forked.tenant_id}")
         return forked
 
-    def delete(self, session_id: str) -> bool:
+    def delete(self, session_id: str, tenant_id: Optional[str] = None) -> bool:
+        tid = resolve_tenant_id(tenant_id)
         with self._connect() as conn:
-            cursor = conn.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+            cursor = conn.execute("DELETE FROM sessions WHERE id=? AND tenant_id=?", (session_id, tid))
         deleted = cursor.rowcount > 0
         if deleted:
-            logger.debug(f"Session 删除: {session_id}")
+            logger.debug(f"Session 删除: {session_id} tenant={tid}")
         return deleted
 
-    def resume(self, session_id: str) -> Optional[Dict[str, Any]]:
-        session = self.get(session_id)
+    def resume(self, session_id: str, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        session = self.get(session_id, tenant_id=tenant_id)
         if not session:
             logger.warning(f"resume 失败: 会话不存在 {session_id}")
             return None
         if session.status in ("completed", "cancelled"):
             logger.info(f"resume: 会话已终态 ({session.status}), 返回快照供重放")
-        logger.info(f"Session resume: {session_id} status={session.status} steps={len(session.steps_snapshot)}")
+        logger.info(
+            f"Session resume: {session_id} status={session.status} "
+            f"steps={len(session.steps_snapshot)} tenant={session.tenant_id}"
+        )
         return {
             "session": self.to_dict(session),
             "workflow_id": session.workflow_id,
@@ -219,34 +253,41 @@ class SessionStore:
             "execution_id": session.execution_id,
         }
 
-    def list_resumable(self, limit: int = 20) -> List[Session]:
+    def list_resumable(self, limit: int = 20, tenant_id: Optional[str] = None) -> List[Session]:
         # R-4: 旧版含 'running' → 恢复一个仍在跑的会话 = 双重执行 (同 session_id 并发跑两遍)。
         # running 视为活跃, 不入可恢复列表。仅 paused/failed 可恢复。
+        tid = resolve_tenant_id(tenant_id)
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM sessions WHERE status IN ('paused','failed') ORDER BY updated_at DESC LIMIT ?",
-                (limit,),
+                "SELECT * FROM sessions WHERE status IN ('paused','failed') AND tenant_id = ? "
+                "ORDER BY updated_at DESC LIMIT ?",
+                (tid, limit),
             ).fetchall()
-        logger.info(f"list_resumable: {len(rows)} 条可恢复会话 (排除 running 防双重执行)")
+        logger.info(f"list_resumable: {len(rows)} 条可恢复会话 (排除 running 防双重执行) tenant={tid}")
         return [self._row_to_session(r) for r in rows]
 
-    def cleanup_expired(self, expire_days: int = SESSION_EXPIRE_DAYS) -> int:
+    def cleanup_expired(self, expire_days: int = SESSION_EXPIRE_DAYS, tenant_id: Optional[str] = None) -> int:
+        tid = resolve_tenant_id(tenant_id)
         cutoff = time.time() - expire_days * 86400
         with self._connect() as conn:
             cursor = conn.execute(
-                "DELETE FROM sessions WHERE updated_at < ? AND status IN ('completed', 'failed', 'cancelled')",
-                (cutoff,),
+                "DELETE FROM sessions WHERE updated_at < ? AND status IN ('completed', 'failed', 'cancelled') "
+                "AND tenant_id = ?",
+                (cutoff, tid),
             )
             # R-1: paused 会话长期不活动也回收 (旧版只清终态, paused 永驻泄漏)。
             # paused 用更短阈值: 暂停超 3 倍 expire_days 视为遗忘, 回收。
             paused_cutoff = time.time() - expire_days * 3 * 86400
             paused_cursor = conn.execute(
-                "DELETE FROM sessions WHERE updated_at < ? AND status = 'paused'",
-                (paused_cutoff,),
+                "DELETE FROM sessions WHERE updated_at < ? AND status = 'paused' AND tenant_id = ?",
+                (paused_cutoff, tid),
             )
         count = cursor.rowcount + paused_cursor.rowcount
         if count:
-            logger.info(f"清理过期 Session: {count} 条 (终态={cursor.rowcount}, 长期paused={paused_cursor.rowcount})")
+            logger.info(
+                f"清理过期 Session: {count} 条 (终态={cursor.rowcount}, "
+                f"长期paused={paused_cursor.rowcount}) tenant={tid}"
+            )
         return count
 
     def to_dict(self, session: Session) -> Dict[str, Any]:

@@ -10,6 +10,8 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
+from fusion_cowork.tenant import resolve_tenant_id
+
 from ..ai.mlx_client import FusionMLXClient
 from .permission import SpacePermission
 from .store import SpaceStore
@@ -64,21 +66,23 @@ class SpaceAgentRuntime:
         space_id: str,
         agent_id: str,
         operator_id: str,
+        tenant_id: Optional[str] = None,
     ) -> bool:
         if not await self._perm.check(space_id, operator_id, "manage_agents"):
             raise PermissionError(f"User {operator_id} cannot manage agents in space {space_id}")
-        db = await self._store._ensure_db()
-        cursor = await db.execute(
-            "DELETE FROM space_agents WHERE id = ? AND space_id = ?",
-            (agent_id, space_id),
-        )
-        await db.commit()
-        removed = cursor.rowcount > 0
+        tid = resolve_tenant_id(tenant_id)
+        # A-8: 经 store 串行写事务, 加 tenant_id 守卫防跨租户删 agent。
+        async with self._store.write_tx() as db:
+            cursor = await db.execute(
+                "DELETE FROM space_agents WHERE id = ? AND space_id = ? AND tenant_id = ?",
+                (agent_id, space_id, tid),
+            )
+            removed = cursor.rowcount > 0
         if removed:
             rt = self._running_runtimes.pop(agent_id, None)
             if rt and hasattr(rt, "stop"):
                 await rt.stop()
-        logger.info(f"SpaceAgentRuntime.remove_agent agent={agent_id} removed={removed}")
+        logger.info(f"SpaceAgentRuntime.remove_agent agent={agent_id} removed={removed} tenant={tid}")
         return removed
 
     async def list_agents(self, space_id: str) -> List[Dict[str, Any]]:

@@ -527,9 +527,7 @@ class PluginLoader:
                         return False
                 # E-13: 压缩比上限 (跳过压缩大小为 0 的存档)
                 if total_compressed > 0 and total_uncompressed / total_compressed > _MAX_RATIO:
-                    logger.error(
-                        f"zip 炸弹拒绝: 压缩比 {total_uncompressed / total_compressed:.1f} > {_MAX_RATIO}"
-                    )
+                    logger.error(f"zip 炸弹拒绝: 压缩比 {total_uncompressed / total_compressed:.1f} > {_MAX_RATIO}")
                     return False
 
                 top_dirs = set()

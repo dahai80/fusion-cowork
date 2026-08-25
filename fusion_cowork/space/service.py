@@ -34,6 +34,7 @@ class SpaceService:
         kb_id: Optional[str] = None,
         collab_mode: str = "local",
         config: Optional[SpaceConfig] = None,
+        tenant_id: Optional[str] = None,
     ) -> Space:
         space = Space(
             name=name,
@@ -45,15 +46,16 @@ class SpaceService:
             collab_mode=collab_mode,
             config=config or SpaceConfig(),
         )
-        space = await self._store.create_space(space)
+        space = await self._store.create_space(space, tenant_id=tenant_id)
         owner_member = SpaceMember(
             space_id=space.id,
             user_id=owner_id,
             role=SpaceRole.OWNER.value,
             display_name=owner_id,
         )
-        await self._store.add_member(owner_member)
-        logger.info(f"SpaceService.create id={space.id} name={name} owner={owner_id}")
+        owner_member.tenant_id = space.tenant_id
+        await self._store.add_member(owner_member, tenant_id=space.tenant_id)
+        logger.info(f"SpaceService.create id={space.id} name={name} owner={owner_id} tenant={space.tenant_id}")
         return space
 
     async def get(self, space_id: str) -> Optional[Space]:

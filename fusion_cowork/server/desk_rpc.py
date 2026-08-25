@@ -20,11 +20,20 @@ import traceback
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 
+from fusion_cowork.tenant import (
+    DEFAULT_TENANT,
+    LOCAL_USER,
+    TenantPrincipal,
+    reset_current_tenant,
+    resolve_tenant_id,
+    set_current_tenant,
+)
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_SOCK_PATH = "/tmp/fusion-cowork.sock"
 
-_DEFAULT_PRINCIPAL = "local_user"
+_DEFAULT_PRINCIPAL = LOCAL_USER
 _AUTH_TOKEN_KEY = "desk.auth_token"
 _IDENTITY_FIELDS = frozenset({"operator_id", "user_id", "inviter_id", "author_id", "owner_id", "from_user_id"})
 
@@ -75,6 +84,7 @@ class DeskRPCServer:
         permission_manager=None,
         hook_manager=None,
         space_store=None,
+        principal_resolver: Optional[Callable] = None,
     ):
         self._sock_path = sock_path
         self._server: Optional[asyncio.AbstractServer] = None
@@ -85,6 +95,9 @@ class DeskRPCServer:
         self._permission_manager = permission_manager
         self._hook_manager = hook_manager
         self._space_store = space_store
+        # Stage 1/2: principal_resolver 供外部注入 JWT/SSO 身份解析;
+        # None 时用本地静态身份 (local_user / default tenant)。
+        self._principal_resolver = principal_resolver
         self._orchestrator = None
         self._presence_manager = None
         self._collab_hub = None
@@ -418,47 +431,54 @@ class DeskRPCServer:
             err = authed["__auth_error__"]
             return {"jsonrpc": "2.0", "id": req_id, "error": err}
 
-        space_err = await self._check_space_access(method, authed)
-        if space_err is not None:
-            if req_id is not None:
-                return {"jsonrpc": "2.0", "id": req_id, "result": space_err}
-            return {"jsonrpc": "2.0", "result": space_err}
-
+        # Stage 1: 注入 tenant_id 到 contextvar, 下游 store.resolve_tenant_id(None) 自动取。
+        tid = authed.get("__tenant_id__") or DEFAULT_TENANT
+        t_tok = set_current_tenant(tid)
         try:
-            result = await handler(authed)
-            if req_id is not None:
-                return {"jsonrpc": "2.0", "id": req_id, "result": result}
-            return {"jsonrpc": "2.0", "result": result}
-        except Exception as e:
-            # HI-5: 对外仅 trace_id + 通用消息, 不泄内部栈/绝对路径/SQL 错误;
-            # 服务端详记 trace_id ↔ (method, params 摘要, 完整 traceback) 供排查
-            trace_id = secrets.token_hex(8)
-            param_keys = list(authed.keys()) if isinstance(authed, dict) else []
-            logger.error(
-                "Desk RPC 处理异常 trace_id=%s method=%s param_keys=%s err=%s\n%s",
-                trace_id,
-                method,
-                param_keys,
-                e,
-                traceback.format_exc(),
-            )
-            return {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "error": {
-                    "code": -32603,
-                    "message": "Internal error",
-                    "data": {"trace_id": trace_id},
-                },
-            }
+            space_err = await self._check_space_access(method, authed)
+            if space_err is not None:
+                if req_id is not None:
+                    return {"jsonrpc": "2.0", "id": req_id, "result": space_err}
+                return {"jsonrpc": "2.0", "result": space_err}
+
+            try:
+                result = await handler(authed)
+                if req_id is not None:
+                    return {"jsonrpc": "2.0", "id": req_id, "result": result}
+                return {"jsonrpc": "2.0", "result": result}
+            except Exception as e:
+                # HI-5: 对外仅 trace_id + 通用消息, 不泄内部栈/绝对路径/SQL 错误;
+                # 服务端详记 trace_id ↔ (method, params 摘要, 完整 traceback) 供排查
+                trace_id = secrets.token_hex(8)
+                param_keys = list(authed.keys()) if isinstance(authed, dict) else []
+                logger.error(
+                    "Desk RPC 处理异常 trace_id=%s method=%s param_keys=%s err=%s\n%s",
+                    trace_id,
+                    method,
+                    param_keys,
+                    e,
+                    traceback.format_exc(),
+                )
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {
+                        "code": -32603,
+                        "message": "Internal error",
+                        "data": {"trace_id": trace_id},
+                    },
+                }
+        finally:
+            reset_current_tenant(t_tok)
 
     def _authenticate(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """认证调用方, 返回带可信身份的 params (CR-5 反 IDOR)。
 
         - desk.auth_token 配了则校验 params._auth_token, 缺/错拒。
+        - principal_resolver 设了则先解析 (Stage 2 JWT/OIDC → TenantPrincipal); 否则本地静态身份。
         - 身份字段 (operator_id/user_id/inviter_id/author_id/owner_id/from_user_id) 不信 params,
           一律改用连接级 principal (本地单用户 = local_user, UDS 0o600 已保证连接即本机 owner)。
-        - 返回新 dict: 剥离调用方提供的身份字段, 注入可信 principal 到全部身份字段。
+        - 注入 __tenant_id__ 到 params, 下游 store 方法据此隔离 (缺则 default tenant)。
         """
         if self._auth_token:
             token = params.get("_auth_token", "")
@@ -466,18 +486,32 @@ class DeskRPCServer:
                 logger.warning("Desk RPC 认证失败: _auth_token 缺失或不匹配")
                 return {"__auth_error__": {"code": -32001, "message": "认证失败: token 无效"}}
         sanitized = {k: v for k, v in params.items() if k not in _IDENTITY_FIELDS and k != "_auth_token"}
-        sanitized["__principal__"] = _DEFAULT_PRINCIPAL
-        sanitized["operator_id"] = _DEFAULT_PRINCIPAL
-        sanitized["user_id"] = _DEFAULT_PRINCIPAL
-        sanitized["inviter_id"] = _DEFAULT_PRINCIPAL
-        sanitized["author_id"] = _DEFAULT_PRINCIPAL
+        principal_id = _DEFAULT_PRINCIPAL
+        tenant_id = DEFAULT_TENANT
+        if self._principal_resolver is not None:
+            try:
+                resolved = self._principal_resolver(params)
+                if isinstance(resolved, TenantPrincipal):
+                    principal_id = resolved.user_id or _DEFAULT_PRINCIPAL
+                    tenant_id = resolved.tenant_id or DEFAULT_TENANT
+            except Exception as e:
+                logger.warning("principal_resolver 解析失败, 回退本地身份: %s", e)
+        sanitized["__principal__"] = principal_id
+        sanitized["__tenant_id__"] = tenant_id
+        sanitized["operator_id"] = principal_id
+        sanitized["user_id"] = principal_id
+        sanitized["inviter_id"] = principal_id
+        sanitized["author_id"] = principal_id
         return sanitized
 
-    async def _require_space_access(self, space_id: str, principal: str, action: str) -> Optional[Dict[str, Any]]:
+    async def _require_space_access(
+        self, space_id: str, principal: str, action: str, tenant_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         """校验 principal 对 space 的访问权 (CR-5 IDOR 守卫)。返回 error_dict 或 None。"""
         if not self._space_store or not space_id:
             return None
-        space = await self._space_store.get_space(space_id)
+        tid = resolve_tenant_id(tenant_id)
+        space = await self._space_store.get_space(space_id, tenant_id=tid)
         if not space:
             return {"error": f"空间不存在: {space_id}"}
         if principal == space.owner_id:
@@ -485,9 +519,9 @@ class DeskRPCServer:
         from ..space.permission import SpacePermission
 
         perm = SpacePermission(self._space_store)
-        member = await self._space_store.get_member(space_id, principal)
+        member = await self._space_store.get_member(space_id, principal, tenant_id=tid)
         if member is None:
-            logger.warning(f"IDOR 拒绝: principal={principal} 非空间 {space_id} 成员")
+            logger.warning(f"IDOR 拒绝: principal={principal} 非空间 {space_id} 成员 tenant={tid}")
             return {"error": f"无权访问空间 {space_id}"}
         if action and not await perm.check(space_id, principal, action):
             return {"error": f"权限不足: 缺 {action}"}
@@ -567,7 +601,8 @@ class DeskRPCServer:
         if not space_id:
             return None
         principal = params.get("__principal__", _DEFAULT_PRINCIPAL)
-        return await self._require_space_access(space_id, principal, action)
+        tenant_id = params.get("__tenant_id__")
+        return await self._require_space_access(space_id, principal, action, tenant_id=tenant_id)
 
     def _internal_error(self, e: Exception, method: str = "") -> Dict[str, Any]:
         """HI-5: handler 业务异常统一对外返回通用消息 + trace_id, 不泄 str(e) 内部细节
