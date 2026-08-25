@@ -1085,6 +1085,43 @@ class TestFusionMLXClientEnhancements:
         finally:
             mc._HAS_FUSION_CORE = saved_flag
 
+    @pytest.mark.asyncio
+    async def test_chat_no_choices_raises_runtime_not_index(self):
+        # E-12: 上游返畸形响应 (空 choices) → RuntimeError 含上下文, 非裸 IndexError
+        import fusion_cowork.ai.mlx_client as mc
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
+
+        saved_flag = mc._HAS_FUSION_CORE
+        mc._HAS_FUSION_CORE = False
+        try:
+            client = FusionMLXClient(max_retries=0, retry_delay=0.01)
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.json.return_value = {"error": "no choices"}  # 无 choices 键
+            client._client = MagicMock()
+            client._client.post = AsyncMock(return_value=mock_resp)
+            with pytest.raises(RuntimeError, match="无 choices"):
+                await client.chat(model="test", messages=[{"role": "user", "content": "hi"}])
+        finally:
+            mc._HAS_FUSION_CORE = saved_flag
+
+    @pytest.mark.asyncio
+    async def test_chat_zero_iterations_not_raise_none(self):
+        # E-12: max_retries<0 → 零迭代 → last_exc 仍 None。旧版 raise None 抛 TypeError,
+        # 新版降级 RuntimeError ("无有效响应") 不再 TypeError
+        import fusion_cowork.ai.mlx_client as mc
+        from fusion_cowork.ai.mlx_client import FusionMLXClient
+
+        saved_flag = mc._HAS_FUSION_CORE
+        mc._HAS_FUSION_CORE = False
+        try:
+            client = FusionMLXClient(max_retries=-1, retry_delay=0.01)
+            with pytest.raises(RuntimeError):
+                await client.chat(model="test", messages=[{"role": "user", "content": "hi"}])
+        finally:
+            mc._HAS_FUSION_CORE = saved_flag
+
 
 class TestSharedContext:
     """M7.6: SharedContext for workflow node space context access."""
