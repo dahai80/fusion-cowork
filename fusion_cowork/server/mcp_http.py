@@ -7,10 +7,11 @@
 import asyncio
 import json
 import logging
-import secrets
 import time
 import traceback
 from typing import Any, Dict, Optional
+
+from fusion_cowork.observability.trace import get_trace_id
 
 from .. import __version__ as SERVER_VERSION
 from .mcp_server import MCPToolRegistry
@@ -174,7 +175,7 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
             return JSONResponse({"jsonrpc": "2.0", "result": result})
         except Exception as e:
             # HI-5: trace_id 入响应, 栈仅日志, 不泄 str(e) 给客户端
-            trace_id = secrets.token_hex(8)
+            trace_id = get_trace_id()
             logger.error(
                 "MCP HTTP 处理异常 trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc()
             )
@@ -262,7 +263,12 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
 
     @app.get("/health")
     async def health():
-        return {"status": "ok", "server": SERVER_NAME, "version": SERVER_VERSION}
+        from ..observability.health import run_health
+
+        result = await run_health(None)
+        result["server"] = SERVER_NAME
+        result["version"] = SERVER_VERSION
+        return result
 
     return app
 
@@ -433,7 +439,7 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
             return JSONResponse({"jsonrpc": "2.0", "result": {}}, headers=headers, status_code=202)
         except Exception as e:
             # HI-5: trace_id 入响应, 栈仅日志
-            trace_id = secrets.token_hex(8)
+            trace_id = get_trace_id()
             logger.error(
                 "MCP Streamable 处理异常 trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc()
             )
@@ -498,6 +504,12 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
 
     @app.get("/health")
     async def health():
-        return {"status": "ok", "server": SERVER_NAME, "version": SERVER_VERSION, "protocol": "streamable-2025-03-26"}
+        from ..observability.health import run_health
+
+        result = await run_health(None)
+        result["server"] = SERVER_NAME
+        result["version"] = SERVER_VERSION
+        result["protocol"] = "streamable-2025-03-26"
+        return result
 
     return app

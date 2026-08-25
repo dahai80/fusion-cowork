@@ -15,11 +15,11 @@ import asyncio
 import json
 import logging
 import os
-import secrets
 import traceback
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 
+from fusion_cowork.observability.trace import get_trace_id
 from fusion_cowork.tenant import (
     DEFAULT_TENANT,
     LOCAL_USER,
@@ -313,9 +313,12 @@ class DeskRPCServer:
             os.unlink(self._sock_path)
 
         self._running = True
+        max_conn = int(os.environ.get("FUSION_DESK_MAX_CONNECTIONS", "100"))
         self._server = await asyncio.start_unix_server(
             self._handle_client,
             path=self._sock_path,
+            backlog=max_conn,
+            limit=_MAX_RPC_LINE + 1024,
         )
         try:
             os.chmod(self._sock_path, 0o600)
@@ -464,7 +467,7 @@ class DeskRPCServer:
             except Exception as e:
                 # HI-5: 对外仅 trace_id + 通用消息, 不泄内部栈/绝对路径/SQL 错误;
                 # 服务端详记 trace_id ↔ (method, params 摘要, 完整 traceback) 供排查
-                trace_id = secrets.token_hex(8)
+                trace_id = get_trace_id()
                 param_keys = list(authed.keys()) if isinstance(authed, dict) else []
                 logger.error(
                     "Desk RPC 处理异常 trace_id=%s method=%s param_keys=%s err=%s\n%s",
@@ -662,7 +665,7 @@ class DeskRPCServer:
     def _internal_error(self, e: Exception, method: str = "") -> Dict[str, Any]:
         """HI-5: handler 业务异常统一对外返回通用消息 + trace_id, 不泄 str(e) 内部细节
         (绝对路径/SQL 列名/httpx URL); 服务端详记 trace_id↔(method, err, traceback)。"""
-        trace_id = secrets.token_hex(8)
+        trace_id = get_trace_id()
         logger.error(
             "Desk RPC handler 异常 trace_id=%s method=%s err=%s\n%s",
             trace_id,
@@ -694,8 +697,12 @@ class DeskRPCServer:
 
     async def _handle_health(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from .. import __version__
+        from ..observability.health import run_health
 
-        return {"status": "ok", "service": "fusion-cowork", "version": __version__}
+        result = await run_health(self._space_store)
+        result["service"] = "fusion-cowork"
+        result["version"] = __version__
+        return result
 
     async def _handle_nodes_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..engine.node import NodeRegistry
@@ -1781,7 +1788,7 @@ class DeskRPCServer:
                 synced.append({"name": safe_name, "result": result})
             except Exception as e:
                 logger.error("syncKnowledge: %s failed: %s", safe_name, e)
-                errors.append({"name": safe_name, "error": "上传失败", "trace_id": secrets.token_hex(8)})
+                errors.append({"name": safe_name, "error": "上传失败", "trace_id": get_trace_id()})
         logger.info("desk.project.syncKnowledge space=%s synced=%d errors=%d", space_id, len(synced), len(errors))
         return {"synced": synced, "errors": errors}
 

@@ -9,10 +9,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import secrets
 import sys
 import traceback
 from typing import TYPE_CHECKING, Any, Callable, Dict
+
+from fusion_cowork.observability.trace import get_trace_id
 
 if TYPE_CHECKING:
     from .mcp_server import MCPToolRegistry
@@ -110,7 +111,7 @@ class StdioTransport:
                 await self._send_result(req_id, result)
         except Exception as e:
             # HI-5: trace_id 入响应, 栈仅日志, 不泄 str(e) 给 MCP 客户端
-            trace_id = secrets.token_hex(8)
+            trace_id = get_trace_id()
             logger.error(
                 "MCP stdio 处理异常 trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc()
             )

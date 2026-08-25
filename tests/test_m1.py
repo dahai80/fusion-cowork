@@ -141,8 +141,10 @@ class TestDeskRPCServer:
 
         rpc = DeskRPCServer()
         result = await rpc._handle_health({})
-        assert result["status"] == "ok"
+        # v0.4.0 Stage 4: /health 深度检查 (db/disk/上游 MLX); MLX 未起 → degraded 不阻断
+        assert result["status"] in ("ok", "degraded")
         assert result["service"] == "fusion-cowork"
+        assert "checks" in result
 
     @pytest.mark.asyncio
     async def test_handle_nodes_list(self):

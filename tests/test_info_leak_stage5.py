@@ -51,9 +51,9 @@ class TestHI5TraceIdNoLeak:
         assert err["code"] == -32603
         assert err["message"] == "Internal error"
         tid = err["data"]["trace_id"]
-        # 8 字节 = 16 hex 字符
-        assert isinstance(tid, str) and len(tid) == 16
-        assert re.fullmatch(r"[0-9a-f]{16}", tid)
+        # v0.4.0 Stage 4 统一 trace_id 格式: fc_<16hex> (observability.trace)
+        assert isinstance(tid, str) and len(tid) == 19
+        assert re.fullmatch(r"fc_[0-9a-f]{16}", tid)
         # 绝不泄漏内部细节
         blob = json.dumps(resp, ensure_ascii=False)
         assert "secret" not in blob
@@ -67,7 +67,7 @@ class TestHI5TraceIdNoLeak:
 
         server = DeskRPCServer()
         res = server._internal_error(FileNotFoundError("/Users/dahai/secret/path.db"), method="desk.x")
-        assert "trace_id" in res and isinstance(res["trace_id"], str) and len(res["trace_id"]) == 16
+        assert "trace_id" in res and isinstance(res["trace_id"], str) and len(res["trace_id"]) == 19
         blob = json.dumps(res, ensure_ascii=False)
         # 绝对路径 + 异常类型名不进响应
         assert "/Users/dahai" not in blob
@@ -99,7 +99,7 @@ class TestHI5TraceIdNoLeak:
         assert err["code"] == -32603
         assert err["message"] == "Internal error"
         tid = err["data"]["trace_id"]
-        assert isinstance(tid, str) and re.fullmatch(r"[0-9a-f]{16}", tid)
+        assert isinstance(tid, str) and re.fullmatch(r"fc_[0-9a-f]{16}", tid)
         blob = json.dumps(resp, ensure_ascii=False)
         assert "db://10.0.0.5" not in blob
         assert "leak" not in blob
@@ -135,7 +135,7 @@ class TestHI5TraceIdNoLeak:
         assert err["code"] == -32603
         assert err["message"] == "Internal error"
         tid = err["data"]["trace_id"]
-        assert isinstance(tid, str) and re.fullmatch(r"[0-9a-f]{16}", tid)
+        assert isinstance(tid, str) and re.fullmatch(r"fc_[0-9a-f]{16}", tid)
         blob = json.dumps(body, ensure_ascii=False)
         assert "secret stack" not in blob
         assert "10.0.0.1" not in blob

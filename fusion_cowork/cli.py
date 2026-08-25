@@ -1041,6 +1041,8 @@ def desk_rpc(sock: str, http_port: int):
     )
 
     async def _run():
+        import signal
+
         await rpc.start()
         console.print_success(f"Desk RPC 服务已启动 (UDS): {sock}")
 
@@ -1048,10 +1050,22 @@ def desk_rpc(sock: str, http_port: int):
         if http_port > 0:
             http_task = asyncio.create_task(_serve_http(http_port))
 
+        loop = asyncio.get_running_loop()
+        stop_event = asyncio.Event()
+
+        def _request_stop():
+            console.print_info("收到停止信号, 开始优雅关停...")
+            stop_event.set()
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                loop.add_signal_handler(sig, _request_stop)
+            except (NotImplementedError, RuntimeError):
+                pass
+
         console.print_info("等待 Fusion-Studio 连接... (Ctrl+C 停止)")
         try:
-            while True:
-                await asyncio.sleep(1)
+            await stop_event.wait()
         except asyncio.CancelledError:
             pass
         finally:
@@ -1062,6 +1076,7 @@ def desk_rpc(sock: str, http_port: int):
                 except (asyncio.CancelledError, Exception):
                     pass
             await rpc.stop()
+            console.print_info("Desk RPC 服务已停止")
 
     async def _serve_http(port: int):
         try:
@@ -1070,13 +1085,14 @@ def desk_rpc(sock: str, http_port: int):
 
             import_all_nodes()
             rt = _build_runtime()
+            bind_host = os.environ.get("FUSION_BIND_HOST", "127.0.0.1")
             mcp = MCPServer(
-                host="127.0.0.1",
+                host=bind_host,
                 port=port,
                 permission_manager=rt["permission_manager"],
                 hook_manager=rt["hook_manager"],
             )
-            console.print_success(f"Desk HTTP 服务已启动: 127.0.0.1:{port} (/rpc /health /mcp /sse)")
+            console.print_success(f"Desk HTTP 服务已启动: {bind_host}:{port} (/rpc /health /mcp /sse)")
             await mcp.serve_http(event_emitter=rt["event_emitter"])
         except ImportError:
             console.print_warning("HTTP 通道未启动 (缺 [web] 依赖): pip install fusion-cowork[web]; 仅 UDS 可用")

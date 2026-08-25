@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
 from typing import Any, Dict, List
+
+from fusion_cowork.observability.trace import get_trace_id
 
 logger = logging.getLogger(__name__)
 
@@ -242,7 +243,7 @@ class MCPToolRegistry:
         logger.info(f"MCP 调用: {tool_name}")
 
         # E-9: trace_id 贯穿调用, 异常对外只返 trace_id + 通用消息, 栈仅日志 (HI-5)。
-        trace_id = f"mcp_{uuid.uuid4().hex[:12]}"
+        trace_id = get_trace_id()
         try:
             result = await self._execute_tool(tool_name, arguments)
             return {
