@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -195,6 +196,9 @@ class SpaceStore:
         self._db_path = os.path.join(data_dir, _DB_FILENAME)
         self._db: Optional[aiosqlite.Connection] = None
         self._trajectory_exporter = trajectory_exporter
+        # A-8: 写事务序列化锁 — 单共享连接下并发写必 OperationalError: database is locked。
+        # asyncio.Lock 让写串行, 配 busy_timeout 重试, 不再裸 commit。
+        self._write_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         os.makedirs(self._data_dir, exist_ok=True)
@@ -202,6 +206,8 @@ class SpaceStore:
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA foreign_keys=ON")
+        # A-8: busy_timeout 5s — 写冲突时等待而非立即报 locked。
+        await self._db.execute("PRAGMA busy_timeout=5000")
         await self._db.executescript(_SCHEMA_SQL)
         for sql in _MIGRATION_SQL:
             try:
@@ -223,29 +229,58 @@ class SpaceStore:
         assert self._db is not None
         return self._db
 
+    # A-8: 写事务上下文 — 串行锁 + BEGIN IMMEDIATE 取写锁 + 统一 commit/回滚。
+    # 单共享连接下并发写必 database is locked; 锁内 BEGIN IMMEDIATE 立即拿写锁,
+    # 异常自动 ROLLBACK 释放。所有写方法 (含 artifact service) 走此上下文, 杜绝裸 commit。
+    class _WriteTx:
+        def __init__(self, store: SpaceStore):
+            self._store = store
+
+        async def __aenter__(self) -> aiosqlite.Connection:
+            await self._store._write_lock.acquire()
+            db = await self._store._ensure_db()
+            await db.execute("BEGIN IMMEDIATE")
+            return db
+
+        async def __aexit__(self, exc_type, exc, tb):
+            db = self._store._db
+            try:
+                if exc_type is None:
+                    await db.commit()
+                else:
+                    await db.execute("ROLLBACK")
+            except Exception as ce:
+                logger.error(f"_WriteTx 收尾异常: {ce}")
+            finally:
+                self._store._write_lock.release()
+            return False
+
+    def write_tx(self) -> _WriteTx:
+        # 公共入口 — artifact/service 等跨模块写共享同一串行事务, 保证写隔离。
+        return self._WriteTx(self)
+
     # ── Space CRUD ──
 
     async def create_space(self, space: Space) -> Space:
-        db = await self._ensure_db()
-        await db.execute(
-            "INSERT INTO spaces (id, name, description, owner_id, status, "
-            "kb_bind_mode, kb_id, collab_mode, config, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                space.id,
-                space.name,
-                space.description,
-                space.owner_id,
-                space.status.value if isinstance(space.status, SpaceStatus) else space.status,
-                space.kb_bind_mode,
-                space.kb_id,
-                space.collab_mode,
-                json.dumps(space.config.to_dict(), ensure_ascii=False),
-                space.created_at,
-                space.updated_at,
-            ),
-        )
-        await db.commit()
+        async with self._WriteTx(self) as db:
+            await db.execute(
+                "INSERT INTO spaces (id, name, description, owner_id, status, "
+                "kb_bind_mode, kb_id, collab_mode, config, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    space.id,
+                    space.name,
+                    space.description,
+                    space.owner_id,
+                    space.status.value if isinstance(space.status, SpaceStatus) else space.status,
+                    space.kb_bind_mode,
+                    space.kb_id,
+                    space.collab_mode,
+                    json.dumps(space.config.to_dict(), ensure_ascii=False),
+                    space.created_at,
+                    space.updated_at,
+                ),
+            )
         logger.info(f"SpaceStore.create_space id={space.id} name={space.name}")
         return space
 
@@ -285,7 +320,6 @@ class SpaceStore:
     async def update_space(self, space_id: str, **kwargs) -> Optional[Space]:
         # CR-4: 列白名单, 拒非白名单列 (防 kwargs 插值注入未知列名)
         _ALLOWED = {"name", "description", "owner_id", "status", "kb_bind_mode", "kb_id", "collab_mode", "config"}
-        db = await self._ensure_db()
         sets = []
         params: list = []
         for key, val in kwargs.items():
@@ -303,43 +337,41 @@ class SpaceStore:
         sets.append("updated_at = ?")
         params.append(datetime.now().isoformat())
         params.append(space_id)
-        await db.execute(f"UPDATE spaces SET {', '.join(sets)} WHERE id = ?", params)
-        await db.commit()
+        async with self._WriteTx(self) as db:
+            await db.execute(f"UPDATE spaces SET {', '.join(sets)} WHERE id = ?", params)
         logger.info(f"SpaceStore.update_space id={space_id} fields={list(kwargs.keys())}")
         return await self.get_space(space_id)
 
     async def delete_space(self, space_id: str) -> bool:
-        db = await self._ensure_db()
-        await db.execute("DELETE FROM space_members WHERE space_id = ?", (space_id,))
-        await db.execute("DELETE FROM space_messages WHERE space_id = ?", (space_id,))
-        await db.execute("DELETE FROM space_agents WHERE space_id = ?", (space_id,))
-        await db.execute("DELETE FROM space_snapshots WHERE space_id = ?", (space_id,))
-        await db.execute("DELETE FROM space_workflows WHERE space_id = ?", (space_id,))
-        await db.execute("DELETE FROM space_artifacts WHERE space_id = ?", (space_id,))
-        await db.execute("DELETE FROM space_invite_links WHERE space_id = ?", (space_id,))
-        cursor = await db.execute("DELETE FROM spaces WHERE id = ?", (space_id,))
-        await db.commit()
-        deleted = cursor.rowcount > 0
+        async with self._WriteTx(self) as db:
+            await db.execute("DELETE FROM space_members WHERE space_id = ?", (space_id,))
+            await db.execute("DELETE FROM space_messages WHERE space_id = ?", (space_id,))
+            await db.execute("DELETE FROM space_agents WHERE space_id = ?", (space_id,))
+            await db.execute("DELETE FROM space_snapshots WHERE space_id = ?", (space_id,))
+            await db.execute("DELETE FROM space_workflows WHERE space_id = ?", (space_id,))
+            await db.execute("DELETE FROM space_artifacts WHERE space_id = ?", (space_id,))
+            await db.execute("DELETE FROM space_invite_links WHERE space_id = ?", (space_id,))
+            cursor = await db.execute("DELETE FROM spaces WHERE id = ?", (space_id,))
+            deleted = cursor.rowcount > 0
         logger.info(f"SpaceStore.delete_space id={space_id} deleted={deleted}")
         return deleted
 
     # ── Member CRUD ──
 
     async def add_member(self, member: SpaceMember) -> SpaceMember:
-        db = await self._ensure_db()
-        await db.execute(
-            "INSERT INTO space_members (space_id, user_id, role, display_name, joined_at, last_active) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                member.space_id,
-                member.user_id,
-                member.role.value if isinstance(member.role, SpaceRole) else member.role,
-                member.display_name,
-                member.joined_at,
-                member.last_active,
-            ),
-        )
-        await db.commit()
+        async with self._WriteTx(self) as db:
+            await db.execute(
+                "INSERT INTO space_members (space_id, user_id, role, display_name, joined_at, last_active) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    member.space_id,
+                    member.user_id,
+                    member.role.value if isinstance(member.role, SpaceRole) else member.role,
+                    member.display_name,
+                    member.joined_at,
+                    member.last_active,
+                ),
+            )
         logger.info(f"SpaceStore.add_member space={member.space_id} user={member.user_id} role={member.role}")
         return member
 
@@ -366,7 +398,6 @@ class SpaceStore:
     async def update_member(self, space_id: str, user_id: str, **kwargs) -> Optional[SpaceMember]:
         # CR-4: 列白名单
         _ALLOWED = {"role", "display_name", "last_active"}
-        db = await self._ensure_db()
         sets = []
         params: list = []
         for key, val in kwargs.items():
@@ -382,22 +413,21 @@ class SpaceStore:
         sets.append("last_active = ?")
         params.append(datetime.now().isoformat())
         params.extend([space_id, user_id])
-        await db.execute(
-            f"UPDATE space_members SET {', '.join(sets)} WHERE space_id = ? AND user_id = ?",
-            params,
-        )
-        await db.commit()
+        async with self._WriteTx(self) as db:
+            await db.execute(
+                f"UPDATE space_members SET {', '.join(sets)} WHERE space_id = ? AND user_id = ?",
+                params,
+            )
         logger.info(f"SpaceStore.update_member space={space_id} user={user_id}")
         return await self.get_member(space_id, user_id)
 
     async def remove_member(self, space_id: str, user_id: str) -> bool:
-        db = await self._ensure_db()
-        cursor = await db.execute(
-            "DELETE FROM space_members WHERE space_id = ? AND user_id = ?",
-            (space_id, user_id),
-        )
-        await db.commit()
-        deleted = cursor.rowcount > 0
+        async with self._WriteTx(self) as db:
+            cursor = await db.execute(
+                "DELETE FROM space_members WHERE space_id = ? AND user_id = ?",
+                (space_id, user_id),
+            )
+            deleted = cursor.rowcount > 0
         logger.info(f"SpaceStore.remove_member space={space_id} user={user_id} deleted={deleted}")
         return deleted
 
@@ -413,27 +443,26 @@ class SpaceStore:
     # ── Message CRUD ──
 
     async def add_message(self, msg: SpaceMessage) -> SpaceMessage:
-        db = await self._ensure_db()
-        await db.execute(
-            "INSERT INTO space_messages (id, space_id, user_id, agent_id, role, content, "
-            "content_type, attachments, parent_msg_id, thread_id, metadata, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                msg.id,
-                msg.space_id,
-                msg.user_id,
-                msg.agent_id,
-                msg.role,
-                msg.content,
-                msg.content_type,
-                json.dumps(msg.attachments, ensure_ascii=False),
-                msg.parent_msg_id,
-                msg.thread_id,
-                json.dumps(msg.metadata, ensure_ascii=False),
-                msg.created_at,
-            ),
-        )
-        await db.commit()
+        async with self._WriteTx(self) as db:
+            await db.execute(
+                "INSERT INTO space_messages (id, space_id, user_id, agent_id, role, content, "
+                "content_type, attachments, parent_msg_id, thread_id, metadata, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    msg.id,
+                    msg.space_id,
+                    msg.user_id,
+                    msg.agent_id,
+                    msg.role,
+                    msg.content,
+                    msg.content_type,
+                    json.dumps(msg.attachments, ensure_ascii=False),
+                    msg.parent_msg_id,
+                    msg.thread_id,
+                    json.dumps(msg.metadata, ensure_ascii=False),
+                    msg.created_at,
+                ),
+            )
         logger.debug(f"SpaceStore.add_message id={msg.id} space={msg.space_id}")
         if self._trajectory_exporter is not None:
             try:
@@ -457,10 +486,9 @@ class SpaceStore:
         return [self._row_to_message(r) for r in rows]
 
     async def delete_message(self, msg_id: str) -> bool:
-        db = await self._ensure_db()
-        cursor = await db.execute("DELETE FROM space_messages WHERE id = ?", (msg_id,))
-        await db.commit()
-        return cursor.rowcount > 0
+        async with self._WriteTx(self) as db:
+            cursor = await db.execute("DELETE FROM space_messages WHERE id = ?", (msg_id,))
+            return cursor.rowcount > 0
 
     async def count_messages(self, space_id: str) -> int:
         db = await self._ensure_db()
@@ -477,23 +505,22 @@ class SpaceStore:
         import uuid
 
         agent_id = agent_data.get("id") or f"agent_{uuid.uuid4().hex[:8]}"
-        db = await self._ensure_db()
-        await db.execute(
-            "INSERT INTO space_agents (id, space_id, name, agent_type, system_prompt, "
-            "enable_rag, config, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                agent_id,
-                agent_data.get("space_id", ""),
-                agent_data.get("name", ""),
-                agent_data.get("agent_type", "assistant"),
-                agent_data.get("system_prompt", ""),
-                int(agent_data.get("enable_rag", False)),
-                json.dumps(agent_data.get("config", {}), ensure_ascii=False),
-                agent_data.get("created_by", ""),
-                datetime.now().isoformat(),
-            ),
-        )
-        await db.commit()
+        async with self._WriteTx(self) as db:
+            await db.execute(
+                "INSERT INTO space_agents (id, space_id, name, agent_type, system_prompt, "
+                "enable_rag, config, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    agent_id,
+                    agent_data.get("space_id", ""),
+                    agent_data.get("name", ""),
+                    agent_data.get("agent_type", "assistant"),
+                    agent_data.get("system_prompt", ""),
+                    int(agent_data.get("enable_rag", False)),
+                    json.dumps(agent_data.get("config", {}), ensure_ascii=False),
+                    agent_data.get("created_by", ""),
+                    datetime.now().isoformat(),
+                ),
+            )
         logger.info(f"SpaceStore.add_agent id={agent_id}")
         return agent_id
 
@@ -520,7 +547,6 @@ class SpaceStore:
     async def update_agent(self, space_id: str, agent_id: str, **kwargs) -> bool:
         if not kwargs:
             return False
-        db = await self._ensure_db()
         sets = []
         vals = []
         for k, v in kwargs.items():
@@ -534,47 +560,45 @@ class SpaceStore:
         if not sets:
             return False
         vals.extend([agent_id, space_id])
-        await db.execute(
-            f"UPDATE space_agents SET {', '.join(sets)} WHERE id = ? AND space_id = ?",
-            vals,
-        )
-        await db.commit()
+        async with self._WriteTx(self) as db:
+            await db.execute(
+                f"UPDATE space_agents SET {', '.join(sets)} WHERE id = ? AND space_id = ?",
+                vals,
+            )
         logger.info(f"SpaceStore.update_agent id={agent_id} fields={list(kwargs.keys())}")
         return True
 
     async def remove_agent(self, space_id: str, agent_id: str) -> bool:
-        db = await self._ensure_db()
-        await db.execute(
-            "DELETE FROM space_agents WHERE id = ? AND space_id = ?",
-            (agent_id, space_id),
-        )
-        await db.commit()
+        async with self._WriteTx(self) as db:
+            await db.execute(
+                "DELETE FROM space_agents WHERE id = ? AND space_id = ?",
+                (agent_id, space_id),
+            )
         logger.info(f"SpaceStore.remove_agent id={agent_id} space={space_id}")
         return True
 
     # ── Snapshot CRUD ──
 
     async def create_snapshot(self, snapshot: SpaceSnapshot) -> SpaceSnapshot:
-        db = await self._ensure_db()
-        await db.execute(
-            "INSERT INTO space_snapshots (id, space_id, name, messages_count, agents_count, "
-            "files_count, workflows_count, artifacts_count, snapshot_data, created_by, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                snapshot.id,
-                snapshot.space_id,
-                snapshot.name,
-                snapshot.messages_count,
-                snapshot.agents_count,
-                snapshot.files_count,
-                snapshot.workflows_count,
-                snapshot.artifacts_count,
-                json.dumps(snapshot.snapshot_data, ensure_ascii=False),
-                snapshot.created_by,
-                snapshot.created_at,
-            ),
-        )
-        await db.commit()
+        async with self._WriteTx(self) as db:
+            await db.execute(
+                "INSERT INTO space_snapshots (id, space_id, name, messages_count, agents_count, "
+                "files_count, workflows_count, artifacts_count, snapshot_data, created_by, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    snapshot.id,
+                    snapshot.space_id,
+                    snapshot.name,
+                    snapshot.messages_count,
+                    snapshot.agents_count,
+                    snapshot.files_count,
+                    snapshot.workflows_count,
+                    snapshot.artifacts_count,
+                    json.dumps(snapshot.snapshot_data, ensure_ascii=False),
+                    snapshot.created_by,
+                    snapshot.created_at,
+                ),
+            )
         logger.info(f"SpaceStore.create_snapshot id={snapshot.id} space={snapshot.space_id}")
         return snapshot
 
@@ -597,12 +621,11 @@ class SpaceStore:
         return self._row_to_snapshot(row) if row else None
 
     async def delete_snapshot(self, space_id: str, snapshot_id: str) -> bool:
-        db = await self._ensure_db()
-        await db.execute(
-            "DELETE FROM space_snapshots WHERE id = ? AND space_id = ?",
-            (snapshot_id, space_id),
-        )
-        await db.commit()
+        async with self._WriteTx(self) as db:
+            await db.execute(
+                "DELETE FROM space_snapshots WHERE id = ? AND space_id = ?",
+                (snapshot_id, space_id),
+            )
         logger.info(f"SpaceStore.delete_snapshot id={snapshot_id}")
         return True
 
@@ -620,13 +643,21 @@ class SpaceStore:
         import uuid
 
         comment_id = f"cmt_{uuid.uuid4().hex[:8]}"
-        db = await self._ensure_db()
-        await db.execute(
-            "INSERT INTO space_comments (id, space_id, message_id, author_id, author_name, "
-            "content, thread_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (comment_id, space_id, message_id, author_id, author_name, content, thread_id, datetime.now().isoformat()),
-        )
-        await db.commit()
+        async with self._WriteTx(self) as db:
+            await db.execute(
+                "INSERT INTO space_comments (id, space_id, message_id, author_id, author_name, "
+                "content, thread_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    comment_id,
+                    space_id,
+                    message_id,
+                    author_id,
+                    author_name,
+                    content,
+                    thread_id,
+                    datetime.now().isoformat(),
+                ),
+            )
         logger.info(f"SpaceStore.add_comment id={comment_id} thread={thread_id or '-'}")
         return comment_id
 
@@ -650,14 +681,13 @@ class SpaceStore:
         expires_at: Optional[str] = None,
         created_by: str = "",
     ) -> str:
-        db = await self._ensure_db()
-        role_str = role.value if isinstance(role, SpaceRole) else role
-        await db.execute(
-            "INSERT INTO space_invite_links (code, space_id, role, max_uses, uses, "
-            "expires_at, created_by, created_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
-            (code, space_id, role_str, max_uses, expires_at, created_by, datetime.now().isoformat()),
-        )
-        await db.commit()
+        async with self._WriteTx(self) as db:
+            role_str = role.value if isinstance(role, SpaceRole) else role
+            await db.execute(
+                "INSERT INTO space_invite_links (code, space_id, role, max_uses, uses, "
+                "expires_at, created_by, created_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
+                (code, space_id, role_str, max_uses, expires_at, created_by, datetime.now().isoformat()),
+            )
         logger.info(f"SpaceStore.create_invite code={code} space={space_id}")
         return code
 
@@ -671,12 +701,11 @@ class SpaceStore:
         return dict(row) if row else None
 
     async def use_invite(self, code: str) -> bool:
-        db = await self._ensure_db()
-        await db.execute(
-            "UPDATE space_invite_links SET uses = uses + 1 WHERE code = ?",
-            (code,),
-        )
-        await db.commit()
+        async with self._WriteTx(self) as db:
+            await db.execute(
+                "UPDATE space_invite_links SET uses = uses + 1 WHERE code = ?",
+                (code,),
+            )
         return True
 
     # ── Sync Events ──
@@ -684,21 +713,21 @@ class SpaceStore:
     async def add_sync_event(
         self, space_id: str, event_type: str, event_data: Dict[str, Any], lamport_ts: int, node_id: str
     ) -> int:
-        db = await self._ensure_db()
-        cursor = await db.execute(
-            "INSERT INTO sync_events (space_id, event_type, event_data, lamport_ts, node_id, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                space_id,
-                event_type,
-                json.dumps(event_data, ensure_ascii=False),
-                lamport_ts,
-                node_id,
-                datetime.now().isoformat(),
-            ),
-        )
-        await db.commit()
-        return cursor.lastrowid
+        async with self._WriteTx(self) as db:
+            cursor = await db.execute(
+                "INSERT INTO sync_events (space_id, event_type, event_data, lamport_ts, node_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    space_id,
+                    event_type,
+                    json.dumps(event_data, ensure_ascii=False),
+                    lamport_ts,
+                    node_id,
+                    datetime.now().isoformat(),
+                ),
+            )
+            rowid = cursor.lastrowid
+        return rowid
 
     # ── Row Converters ──
 

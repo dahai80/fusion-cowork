@@ -20,6 +20,10 @@ from .store import SpaceStore
 logger = logging.getLogger(__name__)
 
 
+class ConflictError(Exception):
+    pass
+
+
 class SpaceArtifactService:
     """Artifact 权限管理 — 创建者编辑 + 参与者只读 + 所有权转交。"""
 
@@ -38,28 +42,28 @@ class SpaceArtifactService:
     ) -> Dict[str, Any]:
         if not await self._perm.check(space_id, owner_user_id, "edit_artifact"):
             raise PermissionError(f"User {owner_user_id} cannot create artifact in space {space_id}")
-        db = await self._store._ensure_db()
         artifact_id = f"art_{uuid.uuid4().hex[:8]}"
         now = datetime.now().isoformat()
-        await db.execute(
-            "INSERT INTO space_artifacts "
-            "(id, space_id, name, artifact_type, content, owner_user_id, "
-            "metadata, version, created_by, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
-            (
-                artifact_id,
-                space_id,
-                name,
-                artifact_type,
-                content,
-                owner_user_id,
-                json.dumps(metadata or {}, ensure_ascii=False),
-                owner_user_id,
-                now,
-                now,
-            ),
-        )
-        await db.commit()
+        # A-8: 经 store 串行写事务, 与 SpaceStore 写隔离 (单共享连接)。
+        async with self._store.write_tx() as db:
+            await db.execute(
+                "INSERT INTO space_artifacts "
+                "(id, space_id, name, artifact_type, content, owner_user_id, "
+                "metadata, version, created_by, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+                (
+                    artifact_id,
+                    space_id,
+                    name,
+                    artifact_type,
+                    content,
+                    owner_user_id,
+                    json.dumps(metadata or {}, ensure_ascii=False),
+                    owner_user_id,
+                    now,
+                    now,
+                ),
+            )
         logger.info(f"SpaceArtifactService.create_artifact id={artifact_id} space={space_id}")
         return {
             "id": artifact_id,
@@ -98,37 +102,42 @@ class SpaceArtifactService:
     ) -> Dict[str, Any]:
         if not await self._perm.check(space_id, user_id, "edit_artifact"):
             raise PermissionError(f"User {user_id} cannot edit artifact in space {space_id}")
-        db = await self._store._ensure_db()
-        cursor = await db.execute(
-            "SELECT * FROM space_artifacts WHERE id = ? AND space_id = ?",
-            (artifact_id, space_id),
-        )
-        row = await cursor.fetchone()
-        if not row:
-            raise ValueError(f"Artifact {artifact_id} not found")
-        art = dict(row)
-        if art["owner_user_id"] != user_id:
-            if not await self._perm.is_owner_or_admin(space_id, user_id):
-                raise PermissionError(f"Only artifact owner or admin can edit: {artifact_id}")
         now = datetime.now().isoformat()
-        new_version = (art.get("version", 1) or 1) + 1
-        sets = ["version = ?", "updated_at = ?"]
-        vals: list = [new_version, now]
-        if content:
-            sets.append("content = ?")
-            vals.append(content)
-        if name:
-            sets.append("name = ?")
-            vals.append(name)
-        if metadata is not None:
-            sets.append("metadata = ?")
-            vals.append(json.dumps(metadata, ensure_ascii=False))
-        vals.extend([artifact_id, space_id])
-        await db.execute(
-            f"UPDATE space_artifacts SET {', '.join(sets)} WHERE id = ? AND space_id = ?",
-            vals,
-        )
-        await db.commit()
+        # A-8: 读版本 + 乐观写同一串行事务, 防 SELECT→UPDATE 间被并发写覆盖。
+        async with self._store.write_tx() as db:
+            cursor = await db.execute(
+                "SELECT * FROM space_artifacts WHERE id = ? AND space_id = ?",
+                (artifact_id, space_id),
+            )
+            row = await cursor.fetchone()
+            if not row:
+                raise ValueError(f"Artifact {artifact_id} not found")
+            art = dict(row)
+            if art["owner_user_id"] != user_id:
+                if not await self._perm.is_owner_or_admin(space_id, user_id):
+                    raise PermissionError(f"Only artifact owner or admin can edit: {artifact_id}")
+            current_version = art.get("version", 1) or 1
+            new_version = current_version + 1
+            sets = ["version = ?", "updated_at = ?"]
+            vals: list = [new_version, now]
+            if content:
+                sets.append("content = ?")
+                vals.append(content)
+            if name:
+                sets.append("name = ?")
+                vals.append(name)
+            if metadata is not None:
+                sets.append("metadata = ?")
+                vals.append(json.dumps(metadata, ensure_ascii=False))
+            # A-8: 乐观锁 — WHERE version=current 防并发编辑丢更新, rowcount=0 即冲突。
+            vals.extend([artifact_id, space_id, current_version])
+            cursor = await db.execute(
+                f"UPDATE space_artifacts SET {', '.join(sets)} WHERE id = ? AND space_id = ? AND version = ?",
+                vals,
+            )
+            if cursor.rowcount == 0:
+                logger.warning(f"SpaceArtifactService.update_artifact 乐观锁冲突 id={artifact_id} v={current_version}")
+                raise ConflictError(f"Artifact {artifact_id} 已被他人修改, 请刷新重试")
         logger.info(f"SpaceArtifactService.update_artifact id={artifact_id} v={new_version}")
         return {"id": artifact_id, "version": new_version, "updated_at": now}
 
@@ -164,23 +173,22 @@ class SpaceArtifactService:
     ) -> Dict[str, Any]:
         if not await self._perm.check(space_id, from_user_id, "transfer_artifact"):
             raise PermissionError(f"User {from_user_id} cannot transfer artifact in space {space_id}")
-        db = await self._store._ensure_db()
-        cursor = await db.execute(
-            "SELECT owner_user_id FROM space_artifacts WHERE id = ? AND space_id = ?",
-            (artifact_id, space_id),
-        )
-        row = await cursor.fetchone()
-        if not row:
-            raise ValueError(f"Artifact {artifact_id} not found")
-        if dict(row)["owner_user_id"] != from_user_id:
-            if not await self._perm.is_owner_or_admin(space_id, from_user_id):
-                raise PermissionError("Only current owner or admin can transfer")
         now = datetime.now().isoformat()
-        await db.execute(
-            "UPDATE space_artifacts SET owner_user_id = ?, updated_at = ? WHERE id = ? AND space_id = ?",
-            (to_user_id, now, artifact_id, space_id),
-        )
-        await db.commit()
+        async with self._store.write_tx() as db:
+            cursor = await db.execute(
+                "SELECT owner_user_id FROM space_artifacts WHERE id = ? AND space_id = ?",
+                (artifact_id, space_id),
+            )
+            row = await cursor.fetchone()
+            if not row:
+                raise ValueError(f"Artifact {artifact_id} not found")
+            if dict(row)["owner_user_id"] != from_user_id:
+                if not await self._perm.is_owner_or_admin(space_id, from_user_id):
+                    raise PermissionError("Only current owner or admin can transfer")
+            await db.execute(
+                "UPDATE space_artifacts SET owner_user_id = ?, updated_at = ? WHERE id = ? AND space_id = ?",
+                (to_user_id, now, artifact_id, space_id),
+            )
         logger.info(f"SpaceArtifactService.transfer_ownership id={artifact_id} {from_user_id}->{to_user_id}")
         return {"artifact_id": artifact_id, "new_owner": to_user_id}
 
@@ -214,12 +222,11 @@ class SpaceArtifactService:
     ) -> bool:
         if not await self._perm.is_owner_or_admin(space_id, user_id):
             return False
-        db = await self._store._ensure_db()
-        cursor = await db.execute(
-            "DELETE FROM space_artifacts WHERE id = ? AND space_id = ?",
-            (artifact_id, space_id),
-        )
-        await db.commit()
-        removed = cursor.rowcount > 0
+        async with self._store.write_tx() as db:
+            cursor = await db.execute(
+                "DELETE FROM space_artifacts WHERE id = ? AND space_id = ?",
+                (artifact_id, space_id),
+            )
+            removed = cursor.rowcount > 0
         logger.info(f"SpaceArtifactService.delete_artifact id={artifact_id} removed={removed}")
         return removed

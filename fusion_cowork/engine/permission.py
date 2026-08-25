@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List
@@ -115,13 +116,17 @@ class PermissionManager:
         self.rules: List[Permission] = []
         self._pending_approvals: Dict[str, Permission] = {}
         self._hook_manager = hook_manager
+        # R-3: rules/_pending_approvals 并发保护 — check() 遍历与 approve/deny/reset 改写竞态。
+        self._lock = threading.Lock()
 
     async def check(self, tool_name: str, action: str = "", params: Dict[str, Any] = None) -> bool:
         # A-6: deny 规则须先于 Hook 批准判定 — 否则 Hook approve 可覆盖显式 deny (绕过)。
         # 先扫 deny: 命中 deny → 即拒, Hook 批准也不再翻盘。
         denied = False
         ctx = None
-        for rule in self.rules:
+        with self._lock:
+            rules_snapshot = list(self.rules)
+        for rule in rules_snapshot:
             if rule.matches(tool_name, params) and not rule.allowed:
                 logger.warning(f"权限拒绝 (deny 规则优先): {tool_name} (scope={rule.scope})")
                 denied = True
@@ -157,7 +162,7 @@ class PermissionManager:
             return True
 
         # CR-16: approve 规则命中→allow (任意 level); deny 已在上一步处理
-        for rule in self.rules:
+        for rule in rules_snapshot:
             if rule.matches(tool_name, params) and rule.allowed:
                 return True
 
@@ -171,24 +176,28 @@ class PermissionManager:
 
     def approve(self, tool_name: str, scope: str = "*") -> None:
         rule = Permission(tool_name=tool_name, allowed=True, scope=scope)
-        self.rules.append(rule)
+        with self._lock:
+            self.rules.append(rule)
         logger.info(f"权限批准: {tool_name} (scope={scope})")
 
     def deny(self, tool_name: str, scope: str = "*") -> None:
         rule = Permission(tool_name=tool_name, allowed=False, scope=scope)
-        self.rules.append(rule)
+        with self._lock:
+            self.rules.append(rule)
         logger.info(f"权限拒绝: {tool_name} (scope={scope})")
 
     def request_approval(self, tool_name: str, params: Dict[str, Any] = None) -> str:
         import uuid
 
         req_id = f"perm_{uuid.uuid4().hex[:8]}"
-        self._pending_approvals[req_id] = Permission(tool_name=tool_name, allowed=False, scope="*")
+        with self._lock:
+            self._pending_approvals[req_id] = Permission(tool_name=tool_name, allowed=False, scope="*")
         logger.info(f"权限请求: {req_id} → {tool_name}")
         return req_id
 
     def grant_approval(self, req_id: str, scope: str = "*") -> bool:
-        perm = self._pending_approvals.pop(req_id, None)
+        with self._lock:
+            perm = self._pending_approvals.pop(req_id, None)
         if not perm:
             return False
         self.approve(perm.tool_name, scope)
@@ -197,9 +206,11 @@ class PermissionManager:
     def save(self, path: str = "") -> None:
         target = path or _PERMISSIONS_FILE
         os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+        with self._lock:
+            rules_snapshot = list(self.rules)
         data = {
             "level": self.level.value,
-            "rules": [{"tool_name": r.tool_name, "allowed": r.allowed, "scope": r.scope} for r in self.rules],
+            "rules": [{"tool_name": r.tool_name, "allowed": r.allowed, "scope": r.scope} for r in rules_snapshot],
         }
         # E-4: 原子写 — 写 tmp 再 os.replace, 杜绝半写/并发读到残缺 JSON 崩溃
         tmp_path = f"{target}.tmp.{os.getpid()}"
@@ -224,33 +235,39 @@ class PermissionManager:
                 data = json.load(f)
         except (json.JSONDecodeError, OSError) as e:
             logger.error(f"权限规则文件损坏, 丢弃旧规则: {target} ({e})")
-            self.rules = []
+            with self._lock:
+                self.rules = []
             return
         try:
             self.level = PermissionLevel(data.get("level", "confirm"))
         except ValueError:
             logger.warning(f"权限 level 值非法, 退化 CONFIRM: {data.get('level')}")
             self.level = PermissionLevel.CONFIRM
-        self.rules = [
+        new_rules = [
             Permission(tool_name=r["tool_name"], allowed=r["allowed"], scope=r.get("scope", "*"))
             for r in data.get("rules", [])
         ]
-        logger.info(f"权限规则已加载: {len(self.rules)} 条 (level={self.level.value})")
+        with self._lock:
+            self.rules = new_rules
+        logger.info(f"权限规则已加载: {len(new_rules)} 条 (level={self.level.value})")
 
     def reset(self, tool_name: str = "") -> int:
-        if tool_name:
-            before = len(self.rules)
-            self.rules = [r for r in self.rules if r.tool_name != tool_name]
-            removed = before - len(self.rules)
-        else:
-            removed = len(self.rules)
-            self.rules.clear()
-        self._pending_approvals.clear()
+        with self._lock:
+            if tool_name:
+                before = len(self.rules)
+                self.rules = [r for r in self.rules if r.tool_name != tool_name]
+                removed = before - len(self.rules)
+            else:
+                removed = len(self.rules)
+                self.rules.clear()
+            self._pending_approvals.clear()
         logger.info(f"PermissionManager.reset removed={removed} tool_name={tool_name or '*'}")
         return removed
 
     def to_dict(self) -> Dict[str, Any]:
+        with self._lock:
+            rules_snapshot = list(self.rules)
         return {
             "level": self.level.value,
-            "rules": [{"tool_name": r.tool_name, "allowed": r.allowed, "scope": r.scope} for r in self.rules],
+            "rules": [{"tool_name": r.tool_name, "allowed": r.allowed, "scope": r.scope} for r in rules_snapshot],
         }

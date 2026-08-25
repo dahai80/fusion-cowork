@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -316,6 +317,9 @@ class NodeRegistry:
     # CR-20: 已注册名保护 — 插件覆盖已注册节点 → 拒绝 (防劫持)
     # 首次注册视为基线; 同类重注册幂等放行 (import_all_nodes 多次调用安全)
     _protected_names: set[str] = set()
+    # R-3: 类级可变状态并发保护 — register/clear 与 create/list 间 check-then-set TOCTOU。
+    # RLock 容 create()→get() 重入; 装饰器导入期 + 运行期并发注册均安全。
+    _lock: threading.RLock = threading.RLock()
 
     @classmethod
     def register(cls, node_class: type[BaseNode], *, force: bool = False) -> type[BaseNode]:
@@ -323,29 +327,34 @@ class NodeRegistry:
 
         CR-20: 若 name 已注册且新类非已注册类本身 → 拒绝覆盖 (防插件劫持内置节点)。
         force=True 显式覆盖 (内部卸载后重注册场景)。
+        R-3: 锁内 check-then-set, 防并发注册覆盖竞态。
         """
         name = node_class.name
-        existing = cls._registry.get(name)
-        if existing is not None and existing is not node_class and not force:
-            logger.error(f"节点类型 '{name}' 已注册为 {existing.__name__}, 拒绝 {node_class.__name__} 覆盖 (防劫持)")
-            return node_class
-        cls._registry[name] = node_class
-        if name not in cls._protected_names:
-            cls._protected_names.add(name)
+        with cls._lock:
+            existing = cls._registry.get(name)
+            if existing is not None and existing is not node_class and not force:
+                logger.error(
+                    f"节点类型 '{name}' 已注册为 {existing.__name__}, 拒绝 {node_class.__name__} 覆盖 (防劫持)"
+                )
+                return node_class
+            cls._registry[name] = node_class
+            if name not in cls._protected_names:
+                cls._protected_names.add(name)
         return node_class
 
     @classmethod
     def get(cls, name: str) -> Optional[type[BaseNode]]:
         """获取节点类型（支持别名查找）。"""
-        # 先直接查找
-        node_class = cls._registry.get(name)
-        if node_class:
-            return node_class
-        # 再通过别名查找
-        backend_name = cls._name_aliases.get(name)
-        if backend_name:
-            return cls._registry.get(backend_name)
-        return None
+        with cls._lock:
+            # 先直接查找
+            node_class = cls._registry.get(name)
+            if node_class:
+                return node_class
+            # 再通过别名查找
+            backend_name = cls._name_aliases.get(name)
+            if backend_name:
+                return cls._registry.get(backend_name)
+            return None
 
     @classmethod
     def create(cls, name: str, **kwargs) -> Optional[BaseNode]:
@@ -383,9 +392,10 @@ class NodeRegistry:
             alias: 别名（用户友好名称）
             target_name: 目标节点名称
         """
-        if target_name not in cls._registry:
-            logger.debug(f"别名 '{alias}' → '{target_name}' 目标节点未注册 (节点导入后自动解析)")
-        cls._name_aliases[alias] = target_name
+        with cls._lock:
+            if target_name not in cls._registry:
+                logger.debug(f"别名 '{alias}' → '{target_name}' 目标节点未注册 (节点导入后自动解析)")
+            cls._name_aliases[alias] = target_name
         logger.debug(f"注册别名: {alias} → {target_name}")
 
     @classmethod
@@ -398,21 +408,25 @@ class NodeRegistry:
         Returns:
             str: 后端节点名称
         """
-        if name in cls._registry:
-            return name
-        backend = cls._name_aliases.get(name)
-        return backend or name
+        with cls._lock:
+            if name in cls._registry:
+                return name
+            backend = cls._name_aliases.get(name)
+            return backend or name
 
     @classmethod
     def list_aliases(cls) -> Dict[str, str]:
         """列出所有别名映射。"""
-        return dict(cls._name_aliases)
+        with cls._lock:
+            return dict(cls._name_aliases)
 
     @classmethod
     def list(cls, category: Optional[NodeCategory] = None) -> List[Dict[str, Any]]:
         """列出所有注册的节点类型（可选按分类过滤）。"""
+        with cls._lock:
+            items = list(cls._registry.items())
         result = []
-        for name, node_class in cls._registry.items():
+        for name, node_class in items:
             if category and node_class.category != category:
                 continue
             result.append(
@@ -431,14 +445,16 @@ class NodeRegistry:
     @classmethod
     def unregister(cls, name: str) -> None:
         """注销节点类型 (同时释放保护标记)。"""
-        cls._registry.pop(name, None)
-        cls._protected_names.discard(name)
+        with cls._lock:
+            cls._registry.pop(name, None)
+            cls._protected_names.discard(name)
 
     @classmethod
     def clear(cls) -> None:
         """清空注册表。"""
-        cls._registry.clear()
-        cls._protected_names.clear()
+        with cls._lock:
+            cls._registry.clear()
+            cls._protected_names.clear()
 
 
 def register_node(func=None, *, name: str = ""):
