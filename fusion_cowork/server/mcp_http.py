@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import secrets
+import time
 import traceback
 from typing import Any, Dict, Optional
 
@@ -278,6 +279,22 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
     _auth_token = _load_mcp_auth_token()
     if _auth_token:
         logger.info("MCP Streamable 认证已启用: mcp.auth_token Bearer 校验")
+    # R-1: 会话上限 + TTL, 防 _sessions 只增不删 (客户端不 DELETE 则永驻, 内存泄漏)
+    _MAX_SESSIONS = 200
+    _SESSION_TTL = 3600  # 秒; 超时未活动会话被清扫
+
+    def _sweep_sessions() -> None:
+        """R-1: 清扫超时会话 + 超上限淘汰最旧, 防 _sessions 无界增长。"""
+        now = time.time()
+        expired = [sid for sid, s in _sessions.items() if now - s.get("last_seen", now) > _SESSION_TTL]
+        for sid in expired:
+            _sessions.pop(sid, None)
+            logger.info(f"MCP Streamable 会话超时回收: {sid}")
+        if len(_sessions) > _MAX_SESSIONS:
+            oldest = sorted(_sessions.items(), key=lambda kv: kv[1].get("last_seen", 0))
+            for sid, _ in oldest[: len(_sessions) - _MAX_SESSIONS]:
+                _sessions.pop(sid, None)
+                logger.info(f"MCP Streamable 会话超上限淘汰: {sid}")
 
     async def _handle_initialize(params: Dict[str, Any]) -> Dict[str, Any]:
         client_info = params.get("clientInfo", {})
@@ -339,10 +356,13 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
                 status_code=400,
             )
 
+        # R-1: 每请求清扫超时/超上限会话, 防只增不删
+        _sweep_sessions()
+
         # initialize 必须建会话
         if body.get("method") == "initialize":
             session_id = _new_session_id()
-            _sessions[session_id] = {"initialized": False}
+            _sessions[session_id] = {"initialized": False, "last_seen": time.time()}
         elif session_id not in _sessions:
             return JSONResponse(
                 {
@@ -354,6 +374,7 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
             )
 
         sess = _sessions[session_id]
+        sess["last_seen"] = time.time()
         method = body.get("method", "")
         req_id = body.get("id")
         params = body.get("params", {})

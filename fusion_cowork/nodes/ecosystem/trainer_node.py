@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List
@@ -24,19 +25,21 @@ from ...engine.node import (
 
 logger = logging.getLogger(__name__)
 
-# 本地 fusion-trainer CLI 默认路径（共享 .venv）。FUSION_TRAINER_BIN 可覆盖。
-_DEFAULT_TRAINER_BIN = "/Users/dahai/fusion/.venv/bin/fusion-trainer"
-
 # 仅暴露 fusion-trainer 当前已实现的训练方法。
 # dpo/orpo 由上游 fusion-mlx#399 阻塞，本节点不暴露，避免误导用户。
 _SUPPORTED_METHODS = frozenset({"sft", "grpo"})
 
 
 def _resolve_trainer_bin() -> str:
+    # E-1: 去硬编码 /Users/dahai 路径。优先 env 覆盖, 次之 PATH 查找, 最后空串 (运行时报清晰错)。
     bin_path = os.environ.get("FUSION_TRAINER_BIN", "").strip()
     if bin_path:
         return bin_path
-    return _DEFAULT_TRAINER_BIN
+    found = shutil.which("fusion-trainer")
+    if found:
+        logger.debug(f"fusion-trainer 解析自 PATH: {found}")
+        return found
+    return ""
 
 
 def _build_sft_args(dataset: str, model: str, config: str, output_dir: str) -> List[str]:
@@ -148,11 +151,14 @@ class TrainerNode(BaseNode):
             )
 
         bin_path = _resolve_trainer_bin()
-        if not Path(bin_path).exists():
-            logger.error(f"fusion-trainer CLI 未找到: {bin_path}")
+        if not bin_path or not Path(bin_path).exists():
+            logger.error(f"fusion-trainer CLI 未找到: {bin_path!r}")
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=(f"fusion-trainer CLI 未找到: {bin_path}（请安装 fusion-trainer 或设置 FUSION_TRAINER_BIN）"),
+                error=(
+                    f"fusion-trainer CLI 未找到: {bin_path!r}"
+                    "（请在 PATH 安装 fusion-trainer, 或 export FUSION_TRAINER_BIN=<绝对路径>）"
+                ),
                 summary="CLI 缺失",
             )
 

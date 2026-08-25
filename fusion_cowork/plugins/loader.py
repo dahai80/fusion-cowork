@@ -493,11 +493,26 @@ class PluginLoader:
 
     def _install_zip(self, zip_path: Path) -> bool:
         base = self._plugins_dir.resolve()
+        # E-13: zip 炸弹防护 — 限文件数/解压总大小/压缩比
+        _MAX_ZIP_ENTRIES = 10000
+        _MAX_UNCOMPRESSED = 512 * 1024 * 1024  # 512MB
+        _MAX_RATIO = 200  # 解压/压缩 比, 超过即炸弹嫌疑
         try:
             with zipfile.ZipFile(zip_path, "r") as zf:
                 names = zf.namelist()
+                # E-13: 文件数上限
+                if len(names) > _MAX_ZIP_ENTRIES:
+                    logger.error(f"zip 炸弹拒绝: 条目数 {len(names)} > {_MAX_ZIP_ENTRIES}")
+                    return False
                 # CR-22: 逐条校验防 zip-slip — 每个解压目标必须落在 plugins_dir 内
+                total_uncompressed = 0
+                total_compressed = 0
                 for member in zf.infolist():
+                    total_uncompressed += member.file_size
+                    total_compressed += member.compress_size
+                    if total_uncompressed > _MAX_UNCOMPRESSED:
+                        logger.error(f"zip 炸弹拒绝: 解压总大小 {total_uncompressed} > {_MAX_UNCOMPRESSED}")
+                        return False
                     if member.is_dir():
                         continue
                     # 拒绝对路径 / 驱动符 / ../ 遍历
@@ -510,6 +525,12 @@ class PluginLoader:
                     except ValueError:
                         logger.error(f"zip-slip 拒绝: {member.filename!r} 越界 {base}")
                         return False
+                # E-13: 压缩比上限 (跳过压缩大小为 0 的存档)
+                if total_compressed > 0 and total_uncompressed / total_compressed > _MAX_RATIO:
+                    logger.error(
+                        f"zip 炸弹拒绝: 压缩比 {total_uncompressed / total_compressed:.1f} > {_MAX_RATIO}"
+                    )
+                    return False
 
                 top_dirs = set()
                 for n in names:
@@ -542,9 +563,16 @@ class PluginLoader:
             return False
 
     def _safe_rmtree(self, name: str) -> bool:
-        """CR-22: 仅允许删除 plugins_dir 内的目录, 拒越界 (防 ../ 遍历)。"""
+        """CR-22: 仅允许删除 plugins_dir 内的目录, 拒越界 (防 ../ 遍历)。
+
+        E-13: target==base (name="" 或 ".") 拒绝 — relative_to(base) 对 base 本身不抛,
+        旧版会 rmtree(plugins_dir) 删插件根目录。
+        """
         base = self._plugins_dir.resolve()
         target = (base / name).resolve()
+        if target == base:
+            logger.error(f"拒删除插件根目录: name={name!r} (E-13 防 target==base)")
+            return False
         try:
             target.relative_to(base)
         except ValueError:
@@ -693,3 +721,17 @@ class PluginLoader:
             if isinstance(k, str) and k and isinstance(v, (str, int, float, bool)):
                 safe[k] = str(v)
         return safe
+
+
+# E-13: 模块级单例 — 旧版各 CLI 命令各 new PluginLoader() 致 _loaded/_node_map 状态分散,
+# 已加载插件在不同实例间不可见 (卸载/列表命令看到空)。统一单例保证状态一致。
+_DEFAULT_PLUGIN_LOADER: Optional[PluginLoader] = None
+
+
+def get_plugin_loader(plugins_dir: str = "") -> PluginLoader:
+    """E-13: 返回进程级 PluginLoader 单例 (首次调用惰性构造)。"""
+    global _DEFAULT_PLUGIN_LOADER
+    if _DEFAULT_PLUGIN_LOADER is None:
+        _DEFAULT_PLUGIN_LOADER = PluginLoader(plugins_dir=plugins_dir)
+        logger.debug("PluginLoader 单例已构造")
+    return _DEFAULT_PLUGIN_LOADER

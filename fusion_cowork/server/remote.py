@@ -33,6 +33,9 @@ class RemoteControlServer:
         self._server = None
         self._clients: Dict[str, Any] = {}
         self._running = False
+        # A-5: 服务端连接认证态 — 首次有效 token 标记该 client 已认证,
+        # 不读请求体里的 _authenticated 字段 (客户端可伪造绕过 token 校验)
+        self._client_authed: Dict[str, bool] = {}
         # 命名会话 attach: session_id -> {client_id, attached_at}
         self._session_attachments: Dict[str, str] = {}
 
@@ -108,6 +111,9 @@ class RemoteControlServer:
             logger.warning(f"Client {client_id} disconnected: {e}")
         finally:
             self._clients.pop(client_id, None)
+            self._client_authed.pop(client_id, None)
+            # R-1: 断连清该 client 的会话绑定, 防 _session_attachments 悬挂泄漏
+            self._detach_client_sessions(client_id)
             logger.info(f"Remote client disconnected: {client_id}")
 
     async def _process_request(self, client_id: str, request: Dict[str, Any]) -> Dict[str, Any]:
@@ -115,10 +121,15 @@ class RemoteControlServer:
         params = request.get("params", {})
         req_id = request.get("id")
 
-        if self.token and not request.get("_authenticated"):
+        if self.token and not self._client_authed.get(client_id):
+            # A-5: 不信请求体 _authenticated 字段 (可伪造); 仅服务端连接态为准。
+            # 首次有效 token → 标记该连接已认证, 后续请求免校验。
             auth_token = params.get("token") or request.get("token", "")
             if auth_token != self.token:
+                logger.warning(f"Remote client {client_id} 认证失败 (token 不匹配)")
                 return {"id": req_id, "error": "Authentication failed"}
+            self._client_authed[client_id] = True
+            logger.info(f"Remote client {client_id} 认证通过")
 
         if method == "status":
             return {"id": req_id, "result": await self._get_status()}
@@ -263,6 +274,14 @@ class RemoteControlServer:
             logger.error(f"attach_session failed: {e}")
             return {"error": str(e)}
 
+    def _detach_client_sessions(self, client_id: str) -> None:
+        """R-1: 清该 client 所有会话绑定, 防 _session_attachments 悬挂泄漏 (断连不 detach 则残留)。"""
+        stale = [sid for sid, cid in self._session_attachments.items() if cid == client_id]
+        for sid in stale:
+            self._session_attachments.pop(sid, None)
+        if stale:
+            logger.info(f"Remote client {client_id} detach 会话: {stale}")
+
     async def _broadcast(self, message: Dict[str, Any]):
         msg_str = json.dumps(message, ensure_ascii=False)
         disconnected = []
@@ -273,6 +292,9 @@ class RemoteControlServer:
                 disconnected.append(cid)
         for cid in disconnected:
             self._clients.pop(cid, None)
+            self._client_authed.pop(cid, None)
+            # R-1: 广播失败断连的 client 也清会话绑定, 防 _session_attachments 悬挂泄漏
+            self._detach_client_sessions(cid)
 
 
 class RemoteControlClient:

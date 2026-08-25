@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.3.0-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.3.1-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -639,6 +639,18 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] 29 new tests (18 artifact + 11 FSB, 519 total)
 
 ### Patch Releases
+
+#### V0.3.1 — 架构债务审计修复 (10 CRITICAL A + 8 HIGH R + 15 E 工程缺陷全关闭)
+架构审计 (`audit/fusion-cowork-audit-report-0825.md`, 判定 NOT PRODUCTION-READY, 10 放行门槛) 全修复, v0.3.0→v0.3.1。7 阶段独立验证 (每阶段 ruff 0 + pytest 绿 + checkpoint commit)。
+
+- [x] **Stage 1 — 沙箱+权限+REPL+CDP/URL 安全纵深 (A 系列)**: scoped_folder 路径规范化统一 (resolve(strict=False)+expanduser); seatbelt profile 收紧; PythonREPL AST 拒危险调用深化; CDP JS eval allow_js 网关 + 表达式注入阻断; FetchURL SSRF 私网阻断 + redirect 收紧
+- [x] **Stage 2 — 认证/授权四路绕过全堵 (R 系列)**: UDS 身份绑定 + 跨 handler principal 一致性; space IDOR 守卫全覆盖
+- [x] **Stage 3 — 死配置接线 + MCP 映射/错误**: 死配置/未接线 feature 接通; MCP tools/call 映射校正; 错误信息脱敏
+- [x] **Stage 4 — 并发正确性 (DB+类级锁+Hook)**: aiosqlite 写锁; NodeRegistry 类级 RLock 防 TOCTOU; HookManager 异步派发不阻塞事件循环
+- [x] **Stage 5 — 资源管控 (泄漏+超时+僵尸)**: 子进程组 killpg 杜绝孤儿; executor wait_for 超时; 资源句柄 finally 清理
+- [x] **Stage 6 — 持久化原子性+剩余工程缺陷**: E-1 trainer_node PATH 解析; E-2 AppleScript 转义; E-4 持久化原子写 (tmp+os.replace+fsync, enhanced_scheduler + ApplyEdit); E-7 DeskRPC engine 单例; E-15 schema 类级缓存 (免 47× 实例构造); R-4 断点续跑排除 running; R-5 调度失败计数熔断; R-5b cron 描述安全 int; R-6 WS 广播并发+慢客户端隔离+presence TTL GC; R-7 workflow_sync 旧版本拒收; R-8 MCP transport 有界读 8MiB
+- [x] **Stage 7 — 版本 bump + 文档**: v0.3.0→v0.3.1 (pyproject.toml + `__init__.py`); README + CLAUDE.md 更新
+- [x] 测试: 910 passed / 1 skipped, ruff 0 issues
 
 #### V0.3.0 — 安全加固 (审计 74 项发现全修复)
 对抗性审计 (`audit/fusion-cowork-0824.md`, 74 项: 23 CRITICAL / 20 HIGH / 18 MEDIUM / 13 LOW, 判定 NOT PRODUCTION-READY) 全修复, v0.2.15→v0.3.0。

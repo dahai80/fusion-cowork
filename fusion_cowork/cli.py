@@ -1269,9 +1269,9 @@ def plugin():
 @plugin.command("list")
 def plugin_list():
     """列出已发现和已加载的插件。"""
-    from .plugins import PluginLoader
+    from .plugins import get_plugin_loader
 
-    loader = PluginLoader()
+    loader = get_plugin_loader()
     discovered = loader.discover()
     if not discovered:
         console.print_info("没有发现插件")
@@ -1292,9 +1292,9 @@ def plugin_list():
 @click.argument("path")
 def plugin_install(path: str):
     """从目录、zip 或 URL (http(s)://...zip) 安装插件。"""
-    from .plugins import PluginLoader
+    from .plugins import get_plugin_loader
 
-    loader = PluginLoader()
+    loader = get_plugin_loader()
     try:
         ok = loader.install(path)
         if ok:
@@ -1310,9 +1310,9 @@ def plugin_install(path: str):
 @click.confirmation_option(prompt="确认卸载该插件?")
 def plugin_uninstall(name: str):
     """卸载插件。"""
-    from .plugins import PluginLoader
+    from .plugins import get_plugin_loader
 
-    loader = PluginLoader()
+    loader = get_plugin_loader()
     try:
         loader.uninstall(name)
         console.print_success(f"已卸载插件: {name}")
@@ -1329,9 +1329,9 @@ def plugin_uninstall(name: str):
 )
 def plugin_import_claude_desktop(config_path: str):
     """从 Claude Desktop 配置导入 MCP server 为插件。"""
-    from .plugins import PluginLoader
+    from .plugins import get_plugin_loader
 
-    loader = PluginLoader()
+    loader = get_plugin_loader()
     try:
         imported = loader.import_from_claude_desktop(config_path)
         if imported:
@@ -1348,9 +1348,9 @@ def plugin_import_claude_desktop(config_path: str):
 @click.argument("name")
 def plugin_load(name: str):
     """加载插件（注册节点）。"""
-    from .plugins import PluginLoader
+    from .plugins import get_plugin_loader
 
-    loader = PluginLoader()
+    loader = get_plugin_loader()
     try:
         loader.load(name)
         console.print_success(f"已加载插件: {name}")
@@ -1362,9 +1362,9 @@ def plugin_load(name: str):
 @click.argument("name")
 def plugin_unload(name: str):
     """卸载插件（取消注册节点）。"""
-    from .plugins import PluginLoader
+    from .plugins import get_plugin_loader
 
-    loader = PluginLoader()
+    loader = get_plugin_loader()
     try:
         loader.unload(name)
         console.print_success(f"已卸载插件节点: {name}")

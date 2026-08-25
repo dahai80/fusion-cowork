@@ -82,6 +82,10 @@ class AgentLoop:
         self._on_turn = on_turn
         self._messages: List[Dict[str, str]] = [{"role": "system", "content": self._system_prompt}]
         self._interrupted = False
+        # R-2: 在途 node.execute handle, interrupt() 可真取消 (旧版仅翻 flag, 节点继续跑)
+        self._exec_handle: Optional[asyncio.Task] = None
+        # R-2: 单节点执行超时 (秒), 0=不限; 默认 60s 防 shell/REPL 卡死整条 loop
+        self._node_timeout: float = 60.0
         self._supplement_queue: asyncio.Queue[str] = asyncio.Queue()
         self._available_nodes = self._collect_node_catalog()
         logger.debug(f"AgentLoop 初始化, 可用节点 {len(self._available_nodes)} 个")
@@ -103,6 +107,10 @@ class AgentLoop:
 
     async def run(self, user_input: str) -> AgentLoopResult:
         result = AgentLoopResult()
+        # R-1: run 起始重置历史为仅系统提示, 防跨 run 累积无界增长 (旧版 append 永不清)
+        self._messages = [{"role": "system", "content": self._system_prompt}]
+        self._interrupted = False
+        self._exec_handle = None
         self._messages.append({"role": "user", "content": user_input})
         result.turns.append(AgentTurn(role="user", content=user_input))
 
@@ -193,7 +201,12 @@ class AgentLoop:
             if node is None:
                 return f"节点 '{action.node}' (→{backend}) 不存在"
             logger.info(f"执行节点 {backend}, params={action.params}")
-            r = await node.execute({})
+            # R-2: node.execute 无超时 → 卡死循环; 存 handle 供 interrupt 真取消
+            self._exec_handle = asyncio.ensure_future(node.execute({}))
+            try:
+                r = await asyncio.wait_for(asyncio.shield(self._exec_handle), timeout=self._node_timeout)
+            finally:
+                self._exec_handle = None
             obs = {
                 "status": r.status.value if r.status else "unknown",
                 "summary": r.summary or "",
@@ -201,6 +214,12 @@ class AgentLoop:
                 "data": (r.data or {}) if len(str(r.data or {})) < 2000 else "(数据过大已省略)",
             }
             return json.dumps(obs, ensure_ascii=False)
+        except TimeoutError:
+            logger.warning(f"节点执行超时 {action.node} ({self._node_timeout}s)")
+            return f"节点执行超时: {action.node}"
+        except asyncio.CancelledError:
+            logger.info(f"节点执行被中断: {action.node}")
+            raise
         except Exception as e:
             logger.error(f"节点执行异常 {action.node}: {e}", exc_info=True)
             return f"节点执行异常: {e}"
@@ -215,6 +234,10 @@ class AgentLoop:
 
     def interrupt(self) -> None:
         self._interrupted = True
+        # R-2: 真取消在途 node.execute 协程 (旧版仅翻 flag, 当前节点跑完才停, 用户叫停无效)
+        if self._exec_handle and not self._exec_handle.done():
+            self._exec_handle.cancel()
+            logger.info(f"已取消在途节点执行: handle={id(self._exec_handle)}")
         logger.info("收到中断信号")
 
     async def supplement(self, message: str) -> None:

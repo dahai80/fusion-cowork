@@ -8,7 +8,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shlex
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -24,6 +26,51 @@ from ...engine.node import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """R-2: 杀整个进程组 (start_new_session 创建的组), 杜绝孙进程孤儿。
+
+    proc.kill() 仅杀直子, 子进程派生的孙进程继续跑成孤儿。killpg SIGKILL 整组。
+    """
+    try:
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGKILL)
+        logger.debug(f"已 killpg 进程组 pgid={pgid} (pid={proc.pid})")
+    except (ProcessLookupError, PermissionError, OSError) as e:
+        logger.debug(f"killpg 失败, 退化 proc.kill: {e}")
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    # E-4: 原子写 — tmp 文件写完再 os.replace, 防中途崩溃留半写文件。
+    # 同目录写 tmp (保证同文件系统, replace 原子), 失败清理 tmp。
+    import tempfile
+
+    tmp = None
+    try:
+        fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
+        os.replace(tmp, path)
+    except Exception:
+        if tmp is not None:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
 
 # 命令沙箱 — 黑名单/白名单
 _SHELL_BLACKLIST = frozenset(
@@ -75,9 +122,75 @@ def _check_shell_command(command: str) -> Optional[str]:
     return None
 
 
+# E-11: SSRF 防御 — 拒私有/环回/链路本地/云元数据地址
+_SSRF_BANNED_HOSTS = frozenset(
+    {
+        "localhost",
+        "ip6-localhost",
+        "ip6-loopback",
+        "metadata.google.internal",  # GCP 元数据
+        "169.254.169.254",  # AWS/Azure 元数据
+        "fd00.169.254.169.254",
+    }
+)
+
+
+def _check_ssrf_url(url: str) -> Optional[str]:
+    """解析 URL 主机, 解析所有 A/AAAA, 任一落在内网/环回/链路本地 → 拒。
+
+    返回拒绝原因 str, 通过则 None。解析失败 (畸形 host) → 拒 (保守)。
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if not host:
+        return "URL 无主机名"
+    host_lower = host.lower().rstrip(".")
+    if host_lower in _SSRF_BANNED_HOSTS:
+        return f"主机 '{host}' 在 SSRF 黑名单 (内网/元数据)"
+
+    # 字面量 IP 直接判
+    try:
+        ip = ipaddress.ip_address(host_lower)
+    except ValueError:
+        ip = None
+    if ip is not None and _is_private_ip(ip):
+        return f"URL 主机 {ip} 属内网/环回/链路本地地址"
+
+    # 域名: 解析所有地址, 任一内网 → 拒 (防 DNS rebinding + split-horizon)
+    if ip is None:
+        try:
+            infos = socket.getaddrinfo(host_lower, None)
+        except OSError as e:
+            return f"主机 '{host}' DNS 解析失败: {e}"
+        seen = set()
+        for info in infos:
+            addr = info[4][0]
+            if addr in seen:
+                continue
+            seen.add(addr)
+            try:
+                resolved = ipaddress.ip_address(addr)
+            except ValueError:
+                continue
+            if _is_private_ip(resolved):
+                return f"主机 '{host}' 解析到内网地址 {resolved} (SSRF 拒绝)"
+    return None
+
+
+def _is_private_ip(ip) -> bool:
+    return bool(
+        ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+    )
+
+
 def _check_python_code(code: str) -> Optional[str]:
     # MD-18: AST 遍历替代正则黑名单 (正则可被注释/字符串/unicode 绕过)
     # parse 失败 (语法错误) 仍放行交子进程报错; 仅拒危险结构
+    # A-4 补强: __import__/importlib/getattr(__builtins__)/eval/exec 等动态导入/执行绕过拦截
     import ast
 
     _DANGEROUS_IMPORTS = _PYTHON_BLACKLIST_IMPORTS
@@ -86,6 +199,13 @@ def _check_python_code(code: str) -> Optional[str]:
         ("os", "popen"),
     }
     _DANGEROUS_ATTR_SUBSTR = ("subprocess",)
+    # A-4: 危险内置名 — __import__ 动态导入 / importlib 动态加载 / eval·exec 动态执行 /
+    # getattr(__builtins__, ...) 取危险内置 / __builtins__ 直访
+    _DANGEROUS_BUILTIN_CALLS = frozenset(
+        {"__import__", "eval", "exec", "compile", "breakpoint", "globals", "locals", "vars"}
+    )
+    _DANGEROUS_NAMES = frozenset({"__import__", "importlib", "builtins", "__builtins__"})
+    _DANGEROUS_ATTR_NAMES = frozenset({"__import__", "import_module", "exec", "eval", "compile"})
     try:
         tree = ast.parse(code)
     except SyntaxError:
@@ -102,12 +222,30 @@ def _check_python_code(code: str) -> Optional[str]:
                 return f"代码被沙箱阻止: 禁止 from '{mod}' 导入"
         elif isinstance(node, ast.Call):
             func = node.func
+            # A-4: __import__("subprocess") — Name 直接调危险内置
+            if isinstance(func, ast.Name) and func.id in _DANGEROUS_BUILTIN_CALLS:
+                return f"代码被沙箱阻止: 禁止调用内置 '{func.id}()' (可绕过静态导入拦截)"
             if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
                 attr_pair = (func.value.id, func.attr)
                 if attr_pair in _DANGEROUS_ATTRS:
                     return f"代码被沙箱阻止: 禁止调用 {attr_pair[0]}.{attr_pair[1]}()"
                 if func.value.id in _DANGEROUS_ATTR_SUBSTR:
                     return f"代码被沙箱阻止: 禁止使用 {func.value.id}.{func.attr}"
+                # A-4: importlib.import_module(...) / builtins.__import__(...)
+                if func.value.id in _DANGEROUS_NAMES or func.attr in _DANGEROUS_ATTR_NAMES:
+                    return f"代码被沙箱阻止: 禁止动态导入/执行 {func.value.id}.{func.attr}()"
+        # A-4: 裸引用 __import__ / importlib / __builtins__ 作值 (如赋给变量再调) 也拒
+        if isinstance(node, ast.Name) and node.id in _DANGEROUS_NAMES:
+            ctx_is_load = isinstance(node.ctx, ast.Load)
+            if ctx_is_load:
+                return f"代码被沙箱阻止: 禁止引用 '{node.id}' (动态导入/执行逃逸面)"
+        # A-4: getattr(__builtins__, "eval") / getattr(builtins, "system") — 经 getattr 取危险对象
+        if isinstance(node, ast.Call):
+            f2 = node.func
+            if isinstance(f2, ast.Name) and f2.id == "getattr" and node.args:
+                first = node.args[0]
+                if isinstance(first, ast.Name) and first.id in _DANGEROUS_NAMES:
+                    return f"代码被沙箱阻止: 禁止 getattr({first.id}, ...) 取动态对象"
     return None
 
 
@@ -227,6 +365,8 @@ class ShellExecNode(BaseNode):
                     stdout=subprocess.PIPE if capture else None,
                     stderr=subprocess.PIPE if capture else None,
                     cwd=workdir or None,
+                    # R-2: 新会话 leader, 子进程自成进程组, 超时可 killpg 杀整组 (含孙进程)
+                    start_new_session=True,
                 )
             else:
                 # CR-6/7: use_shell=False 走 exec 列表 (不起 /bin/sh), 消除 shell 注入
@@ -242,13 +382,17 @@ class ShellExecNode(BaseNode):
                     stdout=subprocess.PIPE if capture else None,
                     stderr=subprocess.PIPE if capture else None,
                     cwd=workdir or None,
+                    # R-2: 新会话 leader, 超时可 killpg 杀整组 (旧版 proc.kill 只杀直子, 孙进程成孤儿)
+                    start_new_session=True,
                 )
 
             try:
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             except TimeoutError:
-                proc.kill()
+                # R-2: killpg 杀整个进程组 (start_new_session 自成组), 杜绝孙进程孤儿
+                _kill_process_group(proc)
                 await proc.wait()
+                logger.warning(f"ShellExec 超时杀进程组: {command[:80]} ({timeout}s)")
                 return NodeResult(
                     status=NodeStatus.FAILED,
                     error=f"命令执行超时 ({timeout}s)",
@@ -400,6 +544,8 @@ class PythonREPLNode(BaseNode):
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                # R-2: 新会话 leader, 超时 killpg 杀整组 (旧版 proc.kill 只杀直子, 孤儿孙进程)
+                start_new_session=True,
             )
 
             try:
@@ -408,7 +554,9 @@ class PythonREPLNode(BaseNode):
                     timeout=timeout,
                 )
             except TimeoutError:
-                proc.kill()
+                _kill_process_group(proc)
+                await proc.wait()
+                logger.warning(f"PythonREPL 超时杀进程组 ({timeout}s)")
                 return NodeResult(
                     status=NodeStatus.FAILED,
                     error=f"Python 执行超时 ({timeout}s)",
@@ -623,6 +771,15 @@ class FetchURLNode(BaseNode):
                 summary="URL 协议不安全",
             )
 
+        # E-11: SSRF 防御 — 解析主机, 拒私有/环回/链路本地/元数据地址
+        ssrf_err = _check_ssrf_url(url)
+        if ssrf_err:
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=ssrf_err,
+                summary="URL 指向内网/元数据地址, 已拒 (SSRF 防御)",
+            )
+
         timeout = params.get("timeout", 15)
         max_chars = params.get("max_chars", 100000)
         extract_text = params.get("extract_text", True)
@@ -630,7 +787,8 @@ class FetchURLNode(BaseNode):
         try:
             import httpx
 
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            # E-11: follow_redirects=False — 防重定向绕过主机校验 (重定向目标未经 SSRF 检查)
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
                 resp = await client.get(
                     url,
                     headers={
@@ -791,13 +949,14 @@ class ApplyEditNode(BaseNode):
                     summary=f"预览: 将修改 {count} 处",
                 )
 
-            # 创建备份
+            # 创建备份 (E-4: 原子写, tmp+os.replace, 防半写损坏)
+            backup_path = None
             if create_backup:
                 backup_path = path.with_suffix(f"{path.suffix}.bak")
-                backup_path.write_text(content, encoding="utf-8")
+                _atomic_write_text(backup_path, content)
 
-            # 写入修改
-            path.write_text(new_content, encoding="utf-8")
+            # 写入修改 (E-4: 原子写)
+            _atomic_write_text(path, new_content)
 
             return NodeResult(
                 status=NodeStatus.SUCCESS,

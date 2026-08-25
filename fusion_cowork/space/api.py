@@ -42,24 +42,95 @@ def create_space_api(
     event_emitter=None,
     agent_runtime=None,
     presence_manager=None,
+    space_store=None,
+    auth_token: Optional[str] = None,
+    principal_resolver=None,
+    collab_hub=None,
 ):
+    """协作空间 REST API。
+
+    A-5 (0825 审计): 身份字段不再信请求体 — owner_id/user_id/operator_id 一律取
+    principal_resolver(request) 返回的连接级可信身份 (默认 local_user)。body 里的
+    身份字段被忽略, 防 CR-5 式冒充/IDOR。配 auth_token 则所有端点校验
+    `Authorization: Bearer <token>`。list_messages / get_space 等读端点加
+    SpacePermission.check (view_artifact / send_message), 非成员拒。
+
+    A-9 (0825 审计): CollabHub (WS 传输层) 由调用方 (server/cli) 注入 collab_hub,
+    space 域不再反向 import ..server.collab_ws — 分层边界保持单向 (server 消费 space)。
+    """
 
     app = FastAPI(title="Fusion-Cowork Space API", version="0.8.0")
     _event_emitter = event_emitter
 
+    from .permission import SpacePermission
     from .presence import PresenceManager
 
     _presence = presence_manager or PresenceManager(event_emitter=event_emitter)
+    # A-5: space_store 优先显式注入; 缺则回退 member_svc._store (服务均持有同一 store)
+    _space_store = space_store or getattr(member_svc, "_store", None)
+    _auth_token = auth_token
+    _principal_resolver = principal_resolver
+
+    def _resolve_principal(request: Request) -> str:
+        """A-5: 提取可信 principal — 不读请求体身份字段。
+
+        - 配了 principal_resolver → 调用方自定义 (如解析 JWT/header)。
+        - 否则: 若配 auth_token 则从 `X-Principal` header 取 (经 token 校验可信);
+          无 token 本地单用户 → local_user。
+        body 里的 owner_id/user_id 一律不信 (CR-5 反 IDOR)。
+        """
+        if _principal_resolver:
+            return _principal_resolver(request) or "local_user"
+        if _auth_token:
+            return request.headers.get("X-Principal", "") or "local_user"
+        return "local_user"
+
+    async def _check_auth(request: Request) -> Optional[JSONResponse]:
+        """A-5: auth_token 配了则校验 Bearer; 缺/错返 401。"""
+        if not _auth_token:
+            return None
+        authz = request.headers.get("Authorization", "")
+        token = authz[len("Bearer ") :] if authz.startswith("Bearer ") else ""
+        if token != _auth_token:
+            logger.warning("Space API 认证失败: Bearer token 无效")
+            return JSONResponse({"error": "认证失败: token 无效"}, status_code=401)
+        return None
+
+    async def _require_access(space_id: str, principal: str, action: str) -> Optional[JSONResponse]:
+        """A-5: IDOR 守卫 — 校验 principal 对 space 的成员资格 + 权限。
+        owner 全放行; 非成员 403; 成员查角色矩阵 action。"""
+        if not _space_store or not space_id:
+            return None
+        space = await _space_store.get_space(space_id)
+        if not space:
+            return JSONResponse({"error": "空间不存在"}, status_code=404)
+        owner_id = getattr(space, "owner_id", "") if space else ""
+        if principal and principal == owner_id:
+            return None
+        member = await _space_store.get_member(space_id, principal)
+        if member is None:
+            logger.warning(f"Space API IDOR 拒: principal={principal} 非空间 {space_id} 成员")
+            return JSONResponse({"error": "无权访问该空间"}, status_code=403)
+        if action:
+            perm = SpacePermission(_space_store)
+            if not await perm.check(space_id, principal, action):
+                return JSONResponse({"error": f"权限不足: 缺 {action}"}, status_code=403)
+        return None
 
     # ── Space CRUD ──
 
     @app.post("/spaces")
     async def create_space(request: Request):
+        auth_err = await _check_auth(request)
+        if auth_err:
+            return auth_err
         body = await request.json()
+        # A-5: owner_id 取可信 principal, 不信 body (CR-5 反 IDOR)
+        owner = _resolve_principal(request)
         sp = await space_svc.create(
             name=body.get("name", ""),
             description=body.get("description", ""),
-            owner_id=body.get("owner_id", ""),
+            owner_id=owner,
         )
         return JSONResponse(sp.to_dict(), status_code=201)
 
@@ -92,12 +163,21 @@ def create_space_api(
 
     @app.post("/spaces/{space_id}/members")
     async def add_member(space_id: str, request: Request):
+        # A-5: operator 取可信 principal, 不信 body.operator_id (CR-5 反冒充)。
+        # body.user_id 是被加成员 (非身份断言), role 是角色 — 均为操作对象非主体。
+        auth_err = await _check_auth(request)
+        if auth_err:
+            return auth_err
+        operator = _resolve_principal(request)
+        access_err = await _require_access(space_id, operator, "manage_members")
+        if access_err:
+            return access_err
         body = await request.json()
         m = await member_svc.add_direct(
             space_id=space_id,
             user_id=body["user_id"],
             display_name=body.get("display_name", ""),
-            operator_id=body.get("operator_id", ""),
+            operator_id=operator,
             role=body.get("role"),
         )
         return JSONResponse(m.to_dict(), status_code=201)
@@ -128,7 +208,16 @@ def create_space_api(
         return JSONResponse(msg.to_dict(), status_code=201)
 
     @app.get("/spaces/{space_id}/messages")
-    async def list_messages(space_id: str, limit: int = 100, offset: int = 0):
+    async def list_messages(space_id: str, request: Request, limit: int = 100, offset: int = 0):
+        # A-5: list_messages 无 user_id/permission.check → IDOR, 任意用户读任意空间消息。
+        # 校验连接级 principal 成员资格 (read → 空字符串 action 仅查成员, 任意角色可读)。
+        auth_err = await _check_auth(request)
+        if auth_err:
+            return auth_err
+        principal = _resolve_principal(request)
+        access_err = await _require_access(space_id, principal, "")
+        if access_err:
+            return access_err
         msgs = await chat_svc.list_messages(space_id, limit=limit, offset=offset)
         return JSONResponse([m.to_dict() for m in msgs])
 
@@ -321,29 +410,35 @@ def create_space_api(
     async def health():
         return {"status": "ok", "service": "fusion-cowork-space"}
 
-    # ── WebSocket 双向协作通道 ──
+    # ── WebSocket 双向协作通道 (A-9: CollabHub 由调用方注入, 不反向 import server) ──
 
-    from ..server.collab_ws import CollabHub
+    _collab_hub = collab_hub
 
-    _collab_hub = CollabHub(chat_svc=chat_svc, presence_manager=_presence)
+    if _collab_hub is not None:
 
-    @app.websocket("/spaces/{space_id}/ws")
-    async def collab_ws(websocket: WebSocket, space_id: str):
-        await websocket.accept()
-        try:
-            hello = await websocket.receive_json()
-            user_id = hello.get("user_id", "")
-            display_name = hello.get("display_name", "")
-            await _collab_hub.join(websocket, space_id, user_id, display_name=display_name)
-            while True:
-                raw = await websocket.receive_text()
-                result = await _collab_hub.handle_message(websocket, raw)
-                if result is not None:
-                    await websocket.send_json(result)
-        except WebSocketDisconnect:
-            await _collab_hub.leave(websocket)
-        except Exception as e:
-            logger.warning(f"WS 异常: {e}")
-            await _collab_hub.leave(websocket)
+        @app.websocket("/spaces/{space_id}/ws")
+        async def collab_ws(websocket: WebSocket, space_id: str):
+            await websocket.accept()
+            try:
+                hello = await websocket.receive_json()
+                user_id = hello.get("user_id", "")
+                display_name = hello.get("display_name", "")
+                await _collab_hub.join(websocket, space_id, user_id, display_name=display_name)
+                while True:
+                    raw = await websocket.receive_text()
+                    result = await _collab_hub.handle_message(websocket, raw)
+                    if result is not None:
+                        await websocket.send_json(result)
+            except WebSocketDisconnect:
+                await _collab_hub.leave(websocket)
+            except Exception as e:
+                logger.warning(f"WS 异常: {e}")
+                await _collab_hub.leave(websocket)
+    else:
+        # A-9: 未注入 CollabHub (如独立测试 space 域) → WS 端点降级拒连, 不崩 app 启动。
+        @app.websocket("/spaces/{space_id}/ws")
+        async def collab_ws(websocket: WebSocket, space_id: str):
+            await websocket.accept()
+            await websocket.close(code=1011, reason="WS 协作通道未配置 (collab_hub 未注入)")
 
     return app

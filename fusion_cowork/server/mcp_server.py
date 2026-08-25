@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,12 @@ class MCPToolRegistry:
     def __init__(self, permission_manager=None, hook_manager=None):
         self._tools: Dict[str, Dict[str, Any]] = {}
         self._node_map: Dict[str, tuple] = {}
+        # E-9: 默认无注入时启用 CONFIRM 级 PermissionManager — 否则 run_terminal/
+        # file_output/app_lifecycle 等高风险 MCP 工具无 CONFIRM gate 直跑。
+        if permission_manager is None:
+            from ..engine.permission import PermissionManager
+
+            permission_manager = PermissionManager()
         self._permission_manager = permission_manager
         self._hook_manager = hook_manager
 
@@ -214,7 +221,6 @@ class MCPToolRegistry:
             "classify_files": ("ai_classify", lambda a: {"files": [], "source_path": a.get("path", "~/Desktop")}),
             "summarize_documents": ("ai_summarize", lambda a: {"files": [], "source_path": a.get("path", "~/Desktop")}),
             "desktop_cleanup": ("desktop_clean", lambda a: {"dry_run": False}),
-            "run_workflow": ("desktop_clean", lambda a: {"template": a.get("template", "")}),
             "skill_list": ("__skill__", None),
             "skill_run": ("__skill__", None),
         }
@@ -235,16 +241,25 @@ class MCPToolRegistry:
 
         logger.info(f"MCP 调用: {tool_name}")
 
+        # E-9: trace_id 贯穿调用, 异常对外只返 trace_id + 通用消息, 栈仅日志 (HI-5)。
+        trace_id = f"mcp_{uuid.uuid4().hex[:12]}"
         try:
             result = await self._execute_tool(tool_name, arguments)
             return {
                 "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}],
+                "_trace_id": trace_id,
             }
         except Exception as e:
-            logger.error(f"MCP 工具执行异常: {e}")
+            logger.error(f"MCP 工具执行异常 trace_id={trace_id} tool={tool_name}: {e}", exc_info=True)
             return {
-                "content": [{"type": "text", "text": f"错误: {e}"}],
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"工具执行失败, 请凭 trace_id 排查: {trace_id}",
+                    }
+                ],
                 "isError": True,
+                "_trace_id": trace_id,
             }
 
     async def _execute_tool(self, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -269,6 +284,31 @@ class MCPToolRegistry:
             skill_params = args.get("params", {})
             result = await registry.execute(skill_name, **skill_params)
             return {"status": "success", "result": result}
+
+        # E-8: run_workflow 走 TemplateManager + WorkflowEngine, 原误映射 desktop_clean。
+        if tool_name == "run_workflow":
+            template_id = args.get("template", "")
+            if not template_id:
+                return {"error": "缺少 template 参数"}
+            from ..templates import TemplateManager
+
+            mgr = TemplateManager()
+            wf = mgr.template_to_workflow(template_id)
+            if wf is None:
+                logger.warning(f"MCP run_workflow 模板不存在: {template_id}")
+                return {"error": f"模板不存在: {template_id}", "template": template_id}
+            from ..engine import WorkflowEngine
+
+            engine = WorkflowEngine()
+            input_data = args.get("input_data", {})
+            wf_result = await engine.execute(wf, input_data)
+            return {
+                "status": wf_result.status.value if hasattr(wf_result, "status") else "completed",
+                "data": getattr(wf_result, "output_data", None),
+                "summary": getattr(wf_result, "summary", ""),
+                "error": getattr(wf_result, "error", None),
+                "template": template_id,
+            }
 
         mapping = self._node_map.get(tool_name)
         if not mapping:

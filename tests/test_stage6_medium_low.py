@@ -61,6 +61,64 @@ class TestMessageBusBounded:
         assert len(hist) <= _HISTORY_MAX
 
 
+# ── E-6: MessageBus 静默丢消息 → 错误回传 ──
+
+
+class TestMessageBusDeliveryFailure:
+    @pytest.mark.asyncio
+    async def test_send_all_full_raises(self):
+        # E-6: 点对点全部队列满 → raise MessageDeliveryError, 调用方不再拿 msg_id 当成功
+        from fusion_cowork.orchestrator.comm import MessageDeliveryError
+
+        bus = AgentMessageBus()
+        q = bus.subscribe("inbox:agent_dead")
+        for i in range(_QUEUE_MAX):
+            q.put_nowait({"i": i})
+        with pytest.raises(MessageDeliveryError) as exc:
+            await bus.send("runtime", "agent_dead", {"action": "execute"})
+        assert exc.value.receiver == "agent_dead"
+        # 丢弃消息留底, 可回查
+        dropped = bus.get_dropped()
+        assert len(dropped) >= 1
+        assert dropped[-1].receiver == "agent_dead"
+
+    @pytest.mark.asyncio
+    async def test_send_partial_delivery_ok(self):
+        # E-6: 部分投递成功 → 不 raise, 正常返回 msg_id
+        bus = AgentMessageBus()
+        _q_full = bus.subscribe("inbox:partial")
+        _q_ok = bus.subscribe("inbox:partial")
+        for i in range(_QUEUE_MAX):
+            _q_full.put_nowait({"i": i})
+        msg_id = await bus.send("runtime", "partial", {"x": 1})
+        assert msg_id
+        assert _q_ok.qsize() == 1
+
+    @pytest.mark.asyncio
+    async def test_publish_overflow_logs_and_tracks(self):
+        # E-6: 广播溢出不 raise (多订阅者 best-effort), 但留底可回查
+        bus = AgentMessageBus()
+        q = bus.subscribe("overflow_b")
+        for i in range(_QUEUE_MAX):
+            q.put_nowait({"i": i})
+        msg_id = await bus.publish("overflow_b", "sender_b", {"x": 1})
+        assert msg_id
+        dropped = bus.get_dropped()
+        assert len(dropped) >= 1
+        assert dropped[-1].topic == "overflow_b"
+
+    @pytest.mark.asyncio
+    async def test_clear_dropped(self):
+        bus = AgentMessageBus()
+        q = bus.subscribe("overflow_c")
+        for i in range(_QUEUE_MAX):
+            q.put_nowait({"i": i})
+        await bus.publish("overflow_c", "sender_c", {"x": 1})
+        assert len(bus.get_dropped()) >= 1
+        bus.clear_dropped()
+        assert bus.get_dropped() == []
+
+
 # ── MD-11/12/13/LO-4: ConfigCenter atomic + lock ──
 
 
@@ -375,28 +433,33 @@ class TestCollabWsAuth:
     @pytest.mark.asyncio
     async def test_member_check_rejects_nonmember(self):
         from fusion_cowork.server.collab_ws import CollabHub
+        from fusion_cowork.space.models import Space
 
         store = AsyncMock()
         store.get_member = AsyncMock(return_value=None)
-        store.get_space = AsyncMock(return_value={"owner_id": "other"})
+        # A-5: get_space 返回 Space dataclass, 非 dict — 旧 mock 返 dict 假绿,
+        # 掩盖生产 space.get("owner_id") AttributeError。改用真实 Space。
+        store.get_space = AsyncMock(return_value=Space(id="s1", name="s", owner_id="other"))
         hub = CollabHub(space_store=store)
-        # 复刻 _handler 成员校验分支
         member = await hub._space_store.get_member("s1", "intruder")
         space = await hub._space_store.get_space("s1")
-        rejected = member is None and (not space or space.get("owner_id") != "intruder")
+        owner_id = getattr(space, "owner_id", "") if space else ""
+        rejected = member is None and (not space or owner_id != "intruder")
         assert rejected
 
     @pytest.mark.asyncio
     async def test_owner_allowed_when_not_member(self):
         from fusion_cowork.server.collab_ws import CollabHub
+        from fusion_cowork.space.models import Space
 
         store = AsyncMock()
         store.get_member = AsyncMock(return_value=None)
-        store.get_space = AsyncMock(return_value={"owner_id": "owner1"})
+        store.get_space = AsyncMock(return_value=Space(id="s1", name="s", owner_id="owner1"))
         hub = CollabHub(space_store=store)
         member = await hub._space_store.get_member("s1", "owner1")
         space = await hub._space_store.get_space("s1")
-        rejected = member is None and (not space or space.get("owner_id") != "owner1")
+        owner_id = getattr(space, "owner_id", "") if space else ""
+        rejected = member is None and (not space or owner_id != "owner1")
         assert not rejected
 
 

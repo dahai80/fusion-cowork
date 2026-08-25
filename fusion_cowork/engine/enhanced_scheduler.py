@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -62,6 +63,8 @@ class EnhancedScheduler:
         self._store_path = store_path or str(Path.home() / ".fusion-cowork" / "scheduler_history.json")
         self._executions: List[TaskExecution] = []
         self._dependencies: Dict[str, TaskDependency] = {}
+        # R-1: 执行记录上限, 超出丢最旧 (旧版只 append 不 trim, 内存 + 持久化膨胀)
+        self._max_executions = 500
         self._load_history()
 
     # ── 任务执行记录 ──
@@ -86,6 +89,10 @@ class EnhancedScheduler:
             tokens_used=tokens_used,
         )
         self._executions.append(execution)
+        # R-1: 超上限丢最旧, 防 _executions 无界增长
+        if len(self._executions) > self._max_executions:
+            self._executions = self._executions[-self._max_executions :]
+            logger.debug(f"enhanced_scheduler 执行记录超上限, 保留最近 {self._max_executions} 条")
         self._save_history()
         return execution
 
@@ -202,7 +209,7 @@ class EnhancedScheduler:
     # ── 持久化 ──
 
     def _save_history(self) -> None:
-        """保存执行历史到 JSON。"""
+        # E-4: 原子写 — tmp+os.replace, 避免写一半崩溃留下半截 JSON 致 _load_history 解析失败。
         path = Path(self._store_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         data = [
@@ -219,7 +226,19 @@ class EnhancedScheduler:
             }
             for e in self._executions[-1000:]  # 保留最近 1000 条
         ]
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        payload = json.dumps(data, ensure_ascii=False, indent=2)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        try:
+            tmp.write_text(payload, encoding="utf-8")
+            os.replace(tmp, path)
+        except Exception:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+            logger.exception(f"调度历史原子写失败: {path}")
+            raise
 
     def _load_history(self) -> None:
         """加载执行历史。"""
@@ -242,13 +261,28 @@ class EnhancedScheduler:
 
         minute, hour, day, month, weekday = parts
 
+        def _safe_int(field_value: str) -> Optional[int]:
+            # R-5b: 旧版 int(weekday)/int(hour) 遇 */2、1,3、1-5 直接 ValueError 崩。
+            # 只解析纯整数字段, 复杂表达式回退原样 (不崩溃)。
+            try:
+                return int(field_value)
+            except ValueError:
+                return None
+
         desc = []
         if weekday != "*":
             days = ["日", "一", "二", "三", "四", "五", "六"]
-            desc.append(f"每周{days[int(weekday)]}")
+            wd = _safe_int(weekday)
+            if wd is not None and 0 <= wd <= 6:
+                desc.append(f"每周{days[wd]}")
+            else:
+                desc.append(f"每周{weekday}")
         if hour != "*":
-            h = int(hour)
-            desc.append(f"每{hour}小时" if hour == "*/1" else f"{h:02d}:{minute.zfill(2)}")
+            h = _safe_int(hour)
+            if h is not None:
+                desc.append(f"每{hour}小时" if hour == "*/1" else f"{h:02d}:{minute.zfill(2)}")
+            else:
+                desc.append(f"{hour}:{minute.zfill(2)}")
         if day != "*":
             desc.append(f"每月第{day}天")
         if minute == "0" and hour != "*":

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List
@@ -51,41 +52,58 @@ class HookManager:
 
     def __init__(self):
         self._handlers: Dict[HookEvent, List[tuple]] = {}
+        # R-3: _handlers 并发保护 — register/unregister/clear 与 fire 遍历竞态。
+        self._lock = threading.Lock()
 
     def register(self, event: HookEvent, handler: Callable, priority: int = 0) -> None:
-        if event not in self._handlers:
-            self._handlers[event] = []
-        self._handlers[event].append((priority, handler))
-        self._handlers[event].sort(key=lambda x: x[0], reverse=True)
+        with self._lock:
+            if event not in self._handlers:
+                self._handlers[event] = []
+            self._handlers[event].append((priority, handler))
+            self._handlers[event].sort(key=lambda x: x[0], reverse=True)
         logger.info(f"Hook 注册: {event.value} → {getattr(handler, '__name__', str(handler))} (priority={priority})")
 
     def unregister(self, event: HookEvent, handler: Callable) -> None:
-        if event in self._handlers:
-            self._handlers[event] = [(p, h) for p, h in self._handlers[event] if h is not handler]
+        with self._lock:
+            if event in self._handlers:
+                self._handlers[event] = [(p, h) for p, h in self._handlers[event] if h is not handler]
 
     async def fire(self, event: HookEvent, data: Dict[str, Any] = None) -> HookContext:
         ctx = HookContext(event=event, data=data or {})
 
-        handlers = self._handlers.get(event, [])
+        # R-3: 拷贝 handlers 列表 (勿返引用) — fire 期间 register/unregister 不影响本轮, 也无竞态。
+        with self._lock:
+            handlers = list(self._handlers.get(event, []))
         if not handlers:
             return ctx
+
+        # E-14: PRE_* 验证类事件 — handler 抛异常 = 校验器故障, fail-closed 取消 (勿静默跳过)。
+        fail_closed = event in (HookEvent.PRE_NODE_EXECUTE, HookEvent.PERMISSION_REQUEST, HookEvent.PRE_COMPACT)
+        loop = asyncio.get_event_loop()
 
         for priority, handler in handlers:
             try:
                 if asyncio.iscoroutinefunction(handler):
                     await handler(ctx)
                 else:
-                    handler(ctx)
+                    # E-14: 同步 handler 走 run_in_executor, 勿阻塞事件循环 (原 handler(ctx) 直跑)。
+                    await loop.run_in_executor(None, handler, ctx)
                 if ctx.cancelled:
                     logger.info(f"Hook 取消: {event.value} (by {getattr(handler, '__name__', '?')})")
                     break
             except Exception as e:
-                logger.error(f"Hook 处理异常: {event.value} → {e}")
+                logger.error(f"Hook 处理异常: {event.value} → {e}", exc_info=True)
+                if fail_closed:
+                    logger.warning(f"Hook fail-closed: {event.value} handler 异常, 取消事件流")
+                    ctx.cancel()
+                    break
 
         return ctx
 
     def get_registered_events(self) -> List[str]:
-        return [e.value for e in self._handlers if self._handlers[e]]
+        with self._lock:
+            return [e.value for e in self._handlers if self._handlers[e]]
 
     def clear(self) -> None:
-        self._handlers.clear()
+        with self._lock:
+            self._handlers.clear()

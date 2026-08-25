@@ -220,12 +220,14 @@ class SessionStore:
         }
 
     def list_resumable(self, limit: int = 20) -> List[Session]:
+        # R-4: 旧版含 'running' → 恢复一个仍在跑的会话 = 双重执行 (同 session_id 并发跑两遍)。
+        # running 视为活跃, 不入可恢复列表。仅 paused/failed 可恢复。
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM sessions WHERE status IN ('paused','failed','running') ORDER BY updated_at DESC LIMIT ?",
+                "SELECT * FROM sessions WHERE status IN ('paused','failed') ORDER BY updated_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
-        logger.info(f"list_resumable: {len(rows)} 条可恢复会话")
+        logger.info(f"list_resumable: {len(rows)} 条可恢复会话 (排除 running 防双重执行)")
         return [self._row_to_session(r) for r in rows]
 
     def cleanup_expired(self, expire_days: int = SESSION_EXPIRE_DAYS) -> int:
@@ -235,9 +237,16 @@ class SessionStore:
                 "DELETE FROM sessions WHERE updated_at < ? AND status IN ('completed', 'failed', 'cancelled')",
                 (cutoff,),
             )
-        count = cursor.rowcount
+            # R-1: paused 会话长期不活动也回收 (旧版只清终态, paused 永驻泄漏)。
+            # paused 用更短阈值: 暂停超 3 倍 expire_days 视为遗忘, 回收。
+            paused_cutoff = time.time() - expire_days * 3 * 86400
+            paused_cursor = conn.execute(
+                "DELETE FROM sessions WHERE updated_at < ? AND status = 'paused'",
+                (paused_cutoff,),
+            )
+        count = cursor.rowcount + paused_cursor.rowcount
         if count:
-            logger.info(f"清理过期 Session: {count} 条")
+            logger.info(f"清理过期 Session: {count} 条 (终态={cursor.rowcount}, 长期paused={paused_cursor.rowcount})")
         return count
 
     def to_dict(self, session: Session) -> Dict[str, Any]:

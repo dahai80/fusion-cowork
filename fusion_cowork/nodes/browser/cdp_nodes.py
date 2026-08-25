@@ -782,6 +782,11 @@ class CDPWaitForNode(_CDPNodeBase):
                 "timeout": {"type": "number", "default": 30.0},
                 "host": {"type": "string", "default": "127.0.0.1"},
                 "port": {"type": "integer", "default": 9222},
+                "allow_js": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "E-10: 显式确认放行任意 JS 注入 (高危, 同 cdp_evaluate)",
+                },
             },
             "required": ["expression"],
         }
@@ -792,7 +797,17 @@ class CDPWaitForNode(_CDPNodeBase):
         timeout = float(inputs.get("timeout", params.get("timeout", 30.0)))
         if not expression:
             return NodeResult(status=NodeStatus.FAILED, error="未指定 expression")
+        # E-10: wait_for_function 在页面执行任意 JS, 同 cdp_evaluate 高危,
+        # 须显式 allow_js 确认 + 权限放行 (cdp_wait_for 已入 HIGH_RISK_NODES)
+        if not params.get("allow_js", False):
+            logger.error("cdp_wait_for 拒绝: 未设 allow_js=true (任意 JS 注入高危, 须显式确认)")
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error="CDP 等待条件被拒绝: 须显式确认 (allow_js=true) + 权限放行",
+                summary="CDP 等待条件未授权",
+            )
         client = self._get_client(inputs, params)
+        client.confirm_js_eval()
         try:
             await client.connect()
             result = await client.wait_for_function(expression, timeout=timeout)

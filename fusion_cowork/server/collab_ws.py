@@ -10,13 +10,19 @@ CollabHub 按 space_id 分房间, 每条 WS 连接绑定 (space_id, user_id):
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Optional, Set
 
 logger = logging.getLogger(__name__)
+
+# R-6: 单连接广播超时 — 慢客户端超过此值放弃, 不拖累全房广播。
+_BROADCAST_SEND_TIMEOUT = 5.0
+# R-6: 单条聊天内容上限, 防巨型消息拖垮序列化/广播。
+_CHAT_CONTENT_MAX = 32 * 1024
 
 
 class CollabHub:
@@ -116,6 +122,9 @@ class CollabHub:
         content = str(msg.get("content", "")).strip()
         if not content:
             return {"error": "内容为空"}
+        # R-6: 聊天内容无上限 → 单条巨型消息拖垮广播 (序列化+内存)。限 32KiB。
+        if len(content) > _CHAT_CONTENT_MAX:
+            return {"error": f"内容过长 ({len(content)} > {_CHAT_CONTENT_MAX} 字符)"}
         if self._chat_svc:
             try:
                 await self._chat_svc.send_message(space_id, user_id=user_id, content=content)
@@ -170,15 +179,22 @@ class CollabHub:
         if not room:
             return
         payload = json.dumps(data, ensure_ascii=False)
-        dead: List[Any] = []
-        for ws in list(room):
-            if ws is exclude:
-                continue
+        targets = [ws for ws in list(room) if ws is not exclude]
+        if not targets:
+            return
+
+        # R-6: 旧版顺序 await ws.send → 一个慢客户端阻塞全房广播 (广播风暴)。
+        # 改并发 gather, 每连接独立超时隔离慢客户端, 超时不拖累其他。
+        async def _one(ws: Any) -> bool:
             try:
-                await ws.send(payload)
+                await asyncio.wait_for(ws.send(payload), timeout=_BROADCAST_SEND_TIMEOUT)
+                return True
             except Exception as e:
-                logger.debug(f"广播发送失败, 标记移除: {e}")
-                dead.append(ws)
+                logger.debug(f"广播发送失败/超时, 标记移除: {e}")
+                return False
+
+        results = await asyncio.gather(*[_one(ws) for ws in targets], return_exceptions=True)
+        dead = [ws for ws, ok in zip(targets, results) if ok is False]
         for ws in dead:
             await self.leave(ws)
 
@@ -222,7 +238,11 @@ class CollabHub:
                     member = await self._space_store.get_member(space_id, user_id)
                     if member is None:
                         space = await self._space_store.get_space(space_id)
-                        if not space or space.get("owner_id") != user_id:
+                        # A-5: get_space 返回 Space dataclass (.owner_id 属性), 非 dict —
+                        # 旧 space.get("owner_id") 在 dataclass 上 AttributeError (非成员路径恒崩,
+                        # 异常被外层 except 吞 → 连接静默断, 攻击者可探测空间存在性)。
+                        owner_id = getattr(space, "owner_id", "") if space else ""
+                        if not space or owner_id != user_id:
                             logger.warning(f"CollabHub WS 拒绝: user={user_id} 非 space={space_id} 成员")
                             await websocket.send(json.dumps({"type": "error", "error": "非空间成员"}))
                             await websocket.close()

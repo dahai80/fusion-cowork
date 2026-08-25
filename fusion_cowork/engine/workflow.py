@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -395,6 +396,8 @@ class WorkflowEngine:
         self._event_emitter = event_emitter
         # HI-19: 预算追踪 — 在节点循环顶部检查, 超预算且 enforce 则中止执行
         self._budget_tracker = budget_tracker
+        # R-1: _executions 上限, 终态后超出则淘汰最旧 (旧版只增不删, 长跑引擎内存泄漏)
+        self._max_executions = 100
 
     def on_progress(self, callback: callable) -> None:
         """注册进度回调。"""
@@ -430,6 +433,8 @@ class WorkflowEngine:
         )
         self._executions[exec_id] = execution
         self._cancel_flags[exec_id] = False
+        # R-1: _executions 超上限淘汰最旧终态项, 防 long-running 引擎内存泄漏
+        self._trim_executions()
 
         # Session: auto-create
         session = None
@@ -579,11 +584,23 @@ class WorkflowEngine:
                     continue
 
                 # 收集输入数据
+                # A-1: 端口路由接线 — edge.source_output/target_input 原为装饰品 (execute 合并全部上游)。
+                # 默认 edge (source_output="output", target_input="input") 保持全合并 (向后兼容,
+                # 现有节点读 inputs.get("data") 等); 非 default 显式端口 → 按 source_output 取值,
+                # 按 target_input 落键, 消除扇出节点多路输入互相污染。
                 node_input = {}
-                upstream = workflow.get_upstream_nodes(node_id)
-                for up_id in upstream:
-                    if up_id in passed_data:
-                        node_input.update(passed_data[up_id])
+                in_edges = [e for e in workflow.edges if e.target_id == node_id]
+                for edge in in_edges:
+                    up_id = edge.source_id
+                    if up_id not in passed_data:
+                        continue
+                    src = passed_data[up_id]
+                    if edge.source_output == "output" and edge.target_input == "input":
+                        node_input.update(src)
+                    else:
+                        val = src.get(edge.source_output) if isinstance(src, dict) else src
+                        if val is not None:
+                            node_input[edge.target_input] = val
 
                 # 加上初始输入
                 if node_id in passed_data:
@@ -669,7 +686,40 @@ class WorkflowEngine:
                             node_name=node.name,
                             data={"input_data": node_input},
                         )
-                    result = await node.execute(node_input)
+                    # A-1: 接线 NodeConfig.timeout/max_retries/retry_delay (原死配置)。
+                    # timeout>0 → asyncio.wait_for 兜底, 节点卡死不再拖垮事件循环;
+                    # max_retries>0 → 失败/异常重试, retry_delay 退避, 瞬时故障自愈。
+                    timeout = float(node.config.timeout or 0.0)
+                    max_retries = int(node.config.max_retries or 0)
+                    retry_delay = float(node.config.retry_delay or 0.0)
+                    result = None
+                    last_err = None
+                    for attempt in range(max_retries + 1):
+                        try:
+                            if timeout > 0:
+                                result = await asyncio.wait_for(node.execute(node_input), timeout=timeout)
+                            else:
+                                result = await node.execute(node_input)
+                            # 成功或节点级 FAILED (业务失败不重试, 仅异常/超时重试)
+                            break
+                        except TimeoutError as te:
+                            last_err = f"节点 '{node.name}' 超时 (timeout={timeout}s): {te}"
+                            logger.warning(f"{last_err} attempt={attempt + 1}/{max_retries + 1}")
+                            result = None
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as ne:
+                            last_err = str(ne)
+                            logger.warning(f"节点 '{node.name}' 异常 attempt={attempt + 1}/{max_retries + 1}: {ne}")
+                            result = None
+                        if attempt < max_retries and retry_delay > 0:
+                            await asyncio.sleep(retry_delay)
+                    if result is None:
+                        # 重试耗尽仍无成功结果 → 构造失败 NodeResult
+                        result = NodeResult(
+                            status=NodeStatus.FAILED,
+                            error=last_err or f"节点 '{node.name}' 重试 {max_retries} 次后仍失败",
+                        )
 
                     step.status = result.status
                     step.completed_at = time.time()
@@ -876,3 +926,23 @@ class WorkflowEngine:
     def clear_executions(self) -> None:
         """清空执行记录。"""
         self._executions.clear()
+
+    def _trim_executions(self) -> None:
+        """R-1: _executions 超上限淘汰最旧终态项, 保留运行态。
+
+        优先剔终态 (completed/failed/cancelled) 中 started_at 最旧者; 全是运行态则按上限丢最旧。
+        """
+        if len(self._executions) <= self._max_executions:
+            return
+        terminal = [e for e in self._executions.values() if e.status != WorkflowStatus.RUNNING]
+        if terminal:
+            terminal.sort(key=lambda e: e.started_at)
+            victim = terminal[0]
+            self._executions.pop(victim.id, None)
+            self._cancel_flags.pop(victim.id, None)
+            logger.debug(f"_executions 淘汰终态项: {victim.id} (status={victim.status})")
+        else:
+            oldest = min(self._executions.values(), key=lambda e: e.started_at)
+            self._executions.pop(oldest.id, None)
+            self._cancel_flags.pop(oldest.id, None)
+            logger.debug(f"_executions 全运行态, 淘汰最旧: {oldest.id}")

@@ -119,6 +119,56 @@ class TestMCPPermission:
         result = await registry.call_tool("read_file", {"path": "/tmp/original.txt"})
         assert "isError" not in result or not result.get("isError")
 
+    @pytest.mark.asyncio
+    async def test_mcp_error_trace_id_no_leak(self):
+        # E-9: 异常对外只返 trace_id + 通用消息, 不泄内部栈/路径/SQL
+        pm = PermissionManager(level=PermissionLevel.BYPASS)
+        registry = MCPToolRegistry(permission_manager=pm)
+        registry.register_tools()
+
+        class _BoomNode(BaseNode):
+            name = "file_input"
+            display_name = "File Input"
+
+            def __init__(self, **kw):
+                super().__init__(**kw)
+                self.config = NodeConfig()
+
+            async def execute(self, params):
+                raise RuntimeError("internal SQL path /secret leak: SELECT * FROM users")
+
+        saved = dict(NodeRegistry._registry)
+        saved_aliases = dict(getattr(NodeRegistry, "_name_aliases", {}))
+        NodeRegistry.clear()
+        NodeRegistry.register(_BoomNode)
+
+        try:
+            result = await registry.call_tool("read_file", {"path": "/tmp/x"})
+        finally:
+            NodeRegistry._registry = saved
+            NodeRegistry._name_aliases = saved_aliases
+        assert result.get("isError") is True
+        assert "_trace_id" in result
+        body = result["content"][0]["text"]
+        assert "trace_id" in body
+        # 不泄漏内部栈/SQL/路径
+        assert "SELECT" not in body
+        assert "/secret" not in body
+        assert "Traceback" not in body
+        assert "RuntimeError" not in body
+
+    @pytest.mark.asyncio
+    async def test_mcp_run_workflow_maps_to_engine(self):
+        # E-8: run_workflow 不再误映射 desktop_clean, 走 TemplateManager+WorkflowEngine
+        pm = PermissionManager(level=PermissionLevel.BYPASS)
+        registry = MCPToolRegistry(permission_manager=pm)
+        registry.register_tools()
+        # 不存在的模板 → 返回 error 含 template 字段, 不执行 desktop_clean
+        result = await registry.call_tool("run_workflow", {"template": "__nope__"})
+        body = json.loads(result["content"][0]["text"])
+        assert body.get("template") == "__nope__"
+        assert "error" in body
+
 
 # ── EventEmitter + SSE ──
 
@@ -307,7 +357,9 @@ class TestMCPServerM3:
 
     def test_server_default_no_permission(self):
         server = MCPServer()
-        assert server._registry._permission_manager is None
+        # E-9: 默认无注入时启用 CONFIRM 级 PermissionManager — 高风险 MCP 工具
+        # (run_terminal/file_output/app_lifecycle) 不再无 gate 直跑。
+        assert server._registry._permission_manager is not None
         assert server._registry._hook_manager is None
 
 
@@ -442,6 +494,141 @@ class TestPluginLoader:
             ok = loader.uninstall("rm_plugin")
             assert ok is True
             assert not plugin_dir.exists()
+
+
+# ── E-13: 插件清单/zip 安装安全加固 ──
+
+
+class TestPluginManifestNameValidation:
+    # E-13: from_dict 拒绝空 name (防 target=plugins_dir 越界删除) 与路径分隔符 (防遍历)
+
+    def test_empty_name_rejected(self):
+        from fusion_cowork.plugins.manifest import PluginManifest
+
+        with pytest.raises(ValueError):
+            PluginManifest.from_dict({"name": "", "version": "0.1"})
+
+    def test_whitespace_only_name_rejected(self):
+        from fusion_cowork.plugins.manifest import PluginManifest
+
+        with pytest.raises(ValueError):
+            PluginManifest.from_dict({"name": "   ", "version": "0.1"})
+
+    def test_missing_name_rejected(self):
+        from fusion_cowork.plugins.manifest import PluginManifest
+
+        with pytest.raises(ValueError):
+            PluginManifest.from_dict({"version": "0.1"})
+
+    def test_path_separator_name_rejected(self):
+        from fusion_cowork.plugins.manifest import PluginManifest
+
+        for bad in ["a/b", "a\\b", ".", ".."]:
+            with pytest.raises(ValueError):
+                PluginManifest.from_dict({"name": bad, "version": "0.1"})
+
+    def test_valid_name_accepted(self):
+        from fusion_cowork.plugins.manifest import PluginManifest
+
+        m = PluginManifest.from_dict({"name": "ok_plugin-1", "version": "0.1"})
+        assert m.name == "ok_plugin-1"
+
+
+class TestSafeRmtreeBaseGuard:
+    # E-13: _safe_rmtree 拒绝 target==base (name="" 或 ".") — 旧版 rmtree(plugins_dir) 删插件根
+
+    def test_empty_name_rejected(self):
+        from fusion_cowork.plugins.loader import PluginLoader
+
+        loader = PluginLoader()
+        with tempfile.TemporaryDirectory() as tmp:
+            loader._plugins_dir = Path(tmp)
+            ok = loader._safe_rmtree("")
+            assert ok is False
+            assert Path(tmp).exists(), "插件根目录必须保留"
+
+    def test_dot_name_rejected(self):
+        from fusion_cowork.plugins.loader import PluginLoader
+
+        loader = PluginLoader()
+        with tempfile.TemporaryDirectory() as tmp:
+            loader._plugins_dir = Path(tmp)
+            ok = loader._safe_rmtree(".")
+            assert ok is False
+            assert Path(tmp).exists()
+
+    def test_normal_plugin_deleted(self):
+        from fusion_cowork.plugins.loader import PluginLoader
+
+        loader = PluginLoader()
+        with tempfile.TemporaryDirectory() as tmp:
+            loader._plugins_dir = Path(tmp)
+            pdir = Path(tmp) / "real_plugin"
+            pdir.mkdir()
+            ok = loader._safe_rmtree("real_plugin")
+            assert ok is True
+            assert not pdir.exists()
+
+    def test_traversal_rejected(self):
+        from fusion_cowork.plugins.loader import PluginLoader
+
+        loader = PluginLoader()
+        with tempfile.TemporaryDirectory() as tmp:
+            loader._plugins_dir = Path(tmp)
+            ok = loader._safe_rmtree("../escape")
+            assert ok is False
+
+
+class TestInstallZipBombGuard:
+    # E-13: _install_zip 限文件数/解压总大小/压缩比, 防 zip 炸弹
+
+    def _make_zip(self, tmp_src: str, entries: dict) -> Path:
+        zip_path = Path(tmp_src) / "bomb.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name, content in entries.items():
+                zf.writestr(name, content)
+        return zip_path
+
+    def test_too_many_entries_rejected(self):
+        from fusion_cowork.plugins.loader import PluginLoader
+
+        loader = PluginLoader()
+        # 10001 条目 > 上限 10000
+        entries = {f"bomb/f{i}.txt": "x" for i in range(10001)}
+        with tempfile.TemporaryDirectory() as tmp_plugins, tempfile.TemporaryDirectory() as tmp_src:
+            loader._plugins_dir = Path(tmp_plugins)
+            zip_path = self._make_zip(tmp_src, entries)
+            ok = loader._install_zip(zip_path)
+            assert ok is False
+
+    def test_high_compression_ratio_rejected(self):
+        from fusion_cowork.plugins.loader import PluginLoader
+
+        loader = PluginLoader()
+        # 1KB 压缩 → ~1MB 解压, 比 >200 (但解压总大小 <512MB, 走压缩比分支)
+        entries = {"bomb/big.txt": "A" * (1024 * 1024), "bomb/manifest.json": "{}"}
+        with tempfile.TemporaryDirectory() as tmp_plugins, tempfile.TemporaryDirectory() as tmp_src:
+            loader._plugins_dir = Path(tmp_plugins)
+            zip_path = self._make_zip(tmp_src, entries)
+            ok = loader._install_zip(zip_path)
+            assert ok is False, "高压缩比 zip 应被拒绝"
+
+    def test_normal_zip_accepted(self):
+        from fusion_cowork.plugins.loader import PluginLoader
+        from fusion_cowork.plugins.manifest import PluginManifest
+
+        loader = PluginLoader()
+        manifest = PluginManifest(name="ok_zip", version="0.1", description="d", nodes=["n1"])
+        entries = {
+            "ok_zip/manifest.json": json.dumps(manifest.to_dict()),
+            "ok_zip/plugin.py": "# plugin\n",
+        }
+        with tempfile.TemporaryDirectory() as tmp_plugins, tempfile.TemporaryDirectory() as tmp_src:
+            loader._plugins_dir = Path(tmp_plugins)
+            zip_path = self._make_zip(tmp_src, entries)
+            ok = loader._install_zip(zip_path)
+            assert ok is True
+            assert (Path(tmp_plugins) / "ok_zip").exists()
 
 
 # ── P1-6 插件沙箱运行时隔离测试 ──
@@ -651,6 +838,78 @@ class TestSkillRegistry:
         registry.register(Skill(name="clear_x_m3", description="x", handler=handler))
         registry.clear()
         assert registry.list_skills() == []
+
+
+# ── E-13: 基线内置节点卸载保护 ──
+
+
+class TestBuiltinNodeUnregisterGuard:
+    def test_freeze_then_unregister_builtin_rejected(self):
+        # E-13: freeze_builtins 后, 内置名不可被 unregister 删除
+        # (防恶意插件 node_map 谎报拥有 shell_exec → loader.unload 删内置)
+        from fusion_cowork.engine.node import BaseNode, NodeConfig, NodeRegistry
+
+        class _E13FakeBuiltin(BaseNode):
+            name = "e13_builtin_node"
+            display_name = "E13 Builtin"
+
+            def __init__(self, **kw):
+                super().__init__(**kw)
+                self.config = NodeConfig()
+
+            async def execute(self, params):
+                return {"status": "ok"}
+
+        saved = dict(NodeRegistry._registry)
+        saved_builtins = set(NodeRegistry._builtin_names)
+        saved_frozen = NodeRegistry._builtins_frozen
+        try:
+            NodeRegistry.register(_E13FakeBuiltin)
+            # 模拟 import_all_nodes: 仅冻结本次模块新注册的名 (非全表快照)
+            NodeRegistry.freeze_builtins(extra_names={"e13_builtin_node"})
+            assert "e13_builtin_node" in NodeRegistry._builtin_names
+            # 卸载被拒 — 内置名受保护
+            NodeRegistry.unregister("e13_builtin_node")
+            assert "e13_builtin_node" in NodeRegistry._registry
+            # force=True 仍可卸 (内部重注册场景)
+            NodeRegistry.unregister("e13_builtin_node", force=True)
+            assert "e13_builtin_node" not in NodeRegistry._registry
+        finally:
+            NodeRegistry._registry = saved
+            NodeRegistry._builtin_names = saved_builtins
+            NodeRegistry._builtins_frozen = saved_frozen
+
+    def test_unregister_non_builtin_ok(self):
+        # E-13: freeze 后注册的插件节点不在 builtin 快照 → 可正常卸载 (插件生命周期)
+        from fusion_cowork.engine.node import BaseNode, NodeConfig, NodeRegistry
+
+        class _E13PluginNode(BaseNode):
+            name = "e13_plugin_node"
+            display_name = "E13 Plugin"
+
+            def __init__(self, **kw):
+                super().__init__(**kw)
+                self.config = NodeConfig()
+
+            async def execute(self, params):
+                return {"status": "ok"}
+
+        saved = dict(NodeRegistry._registry)
+        saved_builtins = set(NodeRegistry._builtin_names)
+        saved_frozen = NodeRegistry._builtins_frozen
+        try:
+            NodeRegistry.freeze_builtins()
+            builtin_count = len(NodeRegistry._builtin_names)
+            # freeze 之后注册的插件节点不在快照内
+            NodeRegistry.register(_E13PluginNode)
+            assert "e13_plugin_node" not in NodeRegistry._builtin_names
+            assert len(NodeRegistry._builtin_names) == builtin_count
+            NodeRegistry.unregister("e13_plugin_node")
+            assert "e13_plugin_node" not in NodeRegistry._registry
+        finally:
+            NodeRegistry._registry = saved
+            NodeRegistry._builtin_names = saved_builtins
+            NodeRegistry._builtins_frozen = saved_frozen
 
 
 class TestBuiltinSkills:

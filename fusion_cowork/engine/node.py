@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -261,6 +262,17 @@ class BaseNode(ABC):
             "required": [],
         }
 
+    @classmethod
+    def _cached_default_schema(cls) -> Dict[str, Any]:
+        # E-15: list()/create() 旧版每节点新建实例取 schema (47× 构造 + uuid 副作用)。
+        # schema 仅依赖类 (get_params_schema 不读 self.config.params), 缓存类级空配置 schema。
+        cached = cls.__dict__.get("_schema_cache")
+        if cached is not None:
+            return cached
+        schema = cls(NodeConfig()).get_params_schema()
+        cls._schema_cache = schema
+        return schema
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id,
@@ -316,6 +328,13 @@ class NodeRegistry:
     # CR-20: 已注册名保护 — 插件覆盖已注册节点 → 拒绝 (防劫持)
     # 首次注册视为基线; 同类重注册幂等放行 (import_all_nodes 多次调用安全)
     _protected_names: set[str] = set()
+    # E-13: 基线内置节点名 — freeze_builtins() 在 import_all_nodes 后冻结。
+    # unregister 拒卸内置名 (防恶意插件 node_map 声明拥有 shell_exec → unload 删内置)。
+    _builtin_names: set[str] = set()
+    _builtins_frozen: bool = False
+    # R-3: 类级可变状态并发保护 — register/clear 与 create/list 间 check-then-set TOCTOU。
+    # RLock 容 create()→get() 重入; 装饰器导入期 + 运行期并发注册均安全。
+    _lock: threading.RLock = threading.RLock()
 
     @classmethod
     def register(cls, node_class: type[BaseNode], *, force: bool = False) -> type[BaseNode]:
@@ -323,29 +342,34 @@ class NodeRegistry:
 
         CR-20: 若 name 已注册且新类非已注册类本身 → 拒绝覆盖 (防插件劫持内置节点)。
         force=True 显式覆盖 (内部卸载后重注册场景)。
+        R-3: 锁内 check-then-set, 防并发注册覆盖竞态。
         """
         name = node_class.name
-        existing = cls._registry.get(name)
-        if existing is not None and existing is not node_class and not force:
-            logger.error(f"节点类型 '{name}' 已注册为 {existing.__name__}, 拒绝 {node_class.__name__} 覆盖 (防劫持)")
-            return node_class
-        cls._registry[name] = node_class
-        if name not in cls._protected_names:
-            cls._protected_names.add(name)
+        with cls._lock:
+            existing = cls._registry.get(name)
+            if existing is not None and existing is not node_class and not force:
+                logger.error(
+                    f"节点类型 '{name}' 已注册为 {existing.__name__}, 拒绝 {node_class.__name__} 覆盖 (防劫持)"
+                )
+                return node_class
+            cls._registry[name] = node_class
+            if name not in cls._protected_names:
+                cls._protected_names.add(name)
         return node_class
 
     @classmethod
     def get(cls, name: str) -> Optional[type[BaseNode]]:
         """获取节点类型（支持别名查找）。"""
-        # 先直接查找
-        node_class = cls._registry.get(name)
-        if node_class:
-            return node_class
-        # 再通过别名查找
-        backend_name = cls._name_aliases.get(name)
-        if backend_name:
-            return cls._registry.get(backend_name)
-        return None
+        with cls._lock:
+            # 先直接查找
+            node_class = cls._registry.get(name)
+            if node_class:
+                return node_class
+            # 再通过别名查找
+            backend_name = cls._name_aliases.get(name)
+            if backend_name:
+                return cls._registry.get(backend_name)
+            return None
 
     @classmethod
     def create(cls, name: str, **kwargs) -> Optional[BaseNode]:
@@ -363,9 +387,9 @@ class NodeRegistry:
         if "config" in kwargs and kwargs["config"] is not None:
             config = kwargs["config"]
             if hasattr(config, "params") and config.params:
-                # 获取节点 schema 进行参数强制转换
+                # 获取节点 schema 进行参数强制转换 (E-15: 走类级缓存避免每请求新建实例)
                 try:
-                    schema = node_class(NodeConfig()).get_params_schema()
+                    schema = node_class._cached_default_schema()
                     config.params = coerce_params(config.params, schema)
                 except Exception as e:
                     logger.debug(f"参数强制转换失败: {e}")
@@ -383,9 +407,10 @@ class NodeRegistry:
             alias: 别名（用户友好名称）
             target_name: 目标节点名称
         """
-        if target_name not in cls._registry:
-            logger.debug(f"别名 '{alias}' → '{target_name}' 目标节点未注册 (节点导入后自动解析)")
-        cls._name_aliases[alias] = target_name
+        with cls._lock:
+            if target_name not in cls._registry:
+                logger.debug(f"别名 '{alias}' → '{target_name}' 目标节点未注册 (节点导入后自动解析)")
+            cls._name_aliases[alias] = target_name
         logger.debug(f"注册别名: {alias} → {target_name}")
 
     @classmethod
@@ -398,21 +423,25 @@ class NodeRegistry:
         Returns:
             str: 后端节点名称
         """
-        if name in cls._registry:
-            return name
-        backend = cls._name_aliases.get(name)
-        return backend or name
+        with cls._lock:
+            if name in cls._registry:
+                return name
+            backend = cls._name_aliases.get(name)
+            return backend or name
 
     @classmethod
     def list_aliases(cls) -> Dict[str, str]:
         """列出所有别名映射。"""
-        return dict(cls._name_aliases)
+        with cls._lock:
+            return dict(cls._name_aliases)
 
     @classmethod
     def list(cls, category: Optional[NodeCategory] = None) -> List[Dict[str, Any]]:
         """列出所有注册的节点类型（可选按分类过滤）。"""
+        with cls._lock:
+            items = list(cls._registry.items())
         result = []
-        for name, node_class in cls._registry.items():
+        for name, node_class in items:
             if category and node_class.category != category:
                 continue
             result.append(
@@ -423,22 +452,49 @@ class NodeRegistry:
                     "description": node_class.description,
                     "icon": node_class.icon,
                     "default_label": node_class.default_label,
-                    "params_schema": node_class(NodeConfig()).get_params_schema(),
+                    "params_schema": node_class._cached_default_schema(),
                 }
             )
         return result
 
     @classmethod
-    def unregister(cls, name: str) -> None:
-        """注销节点类型 (同时释放保护标记)。"""
-        cls._registry.pop(name, None)
-        cls._protected_names.discard(name)
+    def freeze_builtins(cls, *, extra_names: Optional[set] = None) -> None:
+        """E-13: 冻结基线内置节点名。import_all_nodes 后调用。
+
+        仅冻结实际节点模块注册的名 (extra_names), 不含测试 fixture 等非模块名。
+        冻结后 unregister 拒卸内置名 (防恶意插件 node_map 谎报拥有 shell_exec →
+        loader.unload 调 unregister("shell_exec") 删内置节点)。
+
+        Args:
+            extra_names: 本次模块新注册的节点名集合, 累加到已有 builtin 快照。
+        """
+        with cls._lock:
+            if extra_names:
+                cls._builtin_names |= extra_names
+            cls._builtins_frozen = True
+        logger.info(f"基线内置节点冻结: {len(cls._builtin_names)} 个")
+
+    @classmethod
+    def unregister(cls, name: str, *, force: bool = False) -> None:
+        """注销节点类型 (同时释放保护标记)。
+
+        E-13: 内置基线节点拒绝卸载 (force=True 显式覆盖, 仅内部卸载重注册场景)。
+        """
+        with cls._lock:
+            if cls._builtins_frozen and name in cls._builtin_names and not force:
+                logger.error(f"拒卸载内置节点 '{name}' (E-13: 防插件 node_map 劫持删内置)")
+                return
+            cls._registry.pop(name, None)
+            cls._protected_names.discard(name)
 
     @classmethod
     def clear(cls) -> None:
         """清空注册表。"""
-        cls._registry.clear()
-        cls._protected_names.clear()
+        with cls._lock:
+            cls._registry.clear()
+            cls._protected_names.clear()
+            cls._builtin_names.clear()
+            cls._builtins_frozen = False
 
 
 def register_node(func=None, *, name: str = ""):

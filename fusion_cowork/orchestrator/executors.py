@@ -97,8 +97,36 @@ class WorkflowExecutor:
 class MLXExecutor:
     """MLX 执行器 — 调用 fusion-mlx AI 服务。"""
 
+    # A-3: 默认模型名, list_models 不可达时兜底 (与 agent_loop._resolve_model 一致)
+    _FALLBACK_MODEL = "qwen3.5-9b"
+
     def __init__(self, mode: str = "chat"):
         self._mode = mode
+
+    async def _resolve_model(self, client: Any) -> str:
+        model = None
+        try:
+            models = await client.list_models()
+            if models:
+                model = models[0].get("id") or models[0].get("model")
+        except Exception as e:
+            logger.debug(f"MLXExecutor list_models 失败, 用兜底模型: {e}")
+        return model or self._FALLBACK_MODEL
+
+    def _build_prompt(self, task_type: str, prompt: str, input_data: Dict[str, Any]) -> str:
+        # A-3: classify/summarize 改用单轮 chat (FusionMLXClient 无这两方法), 用 prompt 工程。
+        # 原 client.classify/summarize 调用恒 AttributeError → agent 能力不可用。
+        if task_type == "classify":
+            items = input_data.get("items", [])
+            categories = input_data.get("categories", [])
+            return (
+                f"将下列条目分类到给定类别中, 每条输出一行: <条目> => <类别>。\n"
+                f"类别: {', '.join(str(c) for c in categories) if categories else '(自动判断)'}\n"
+                f"条目: {items}\n只输出分类结果, 不解释。"
+            )
+        if task_type == "summarize":
+            return f"用中文精简总结以下内容, 不超 200 字:\n\n{prompt}"
+        return prompt
 
     async def __call__(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         prompt = input_data.get("prompt", "")
@@ -107,32 +135,28 @@ class MLXExecutor:
         if not prompt:
             return {"error": "缺少 prompt 参数"}
 
+        # A-3: with 上下文确保 httpx client 关闭 (A-10: 逐实例泄漏根因)
         try:
             from ..ai import FusionMLXClient, get_budget_tracker
 
-            client = FusionMLXClient()
             budget = get_budget_tracker()
+            async with FusionMLXClient() as client:
+                model = input_data.get("model") or await self._resolve_model(client)
+                # A-3: chat(model, messages) — 原 chat(prompt) 缺 model + 传字符串 → 400
+                messages = [{"role": "user", "content": self._build_prompt(task_type, prompt, input_data)}]
+                result = await client.chat(model, messages)
 
-            if task_type == "chat":
-                result = await client.chat(prompt)
-            elif task_type == "classify":
-                result = await client.classify(
-                    input_data.get("items", []),
-                    input_data.get("categories", []),
-                )
-            elif task_type == "summarize":
-                result = await client.summarize(prompt)
-            else:
-                result = await client.chat(prompt)
+                usage = getattr(result, "usage", None) or {}
+                if usage:
+                    ok = budget.record_usage(usage)
+                    if not ok:
+                        logger.warning(f"MLXExecutor 预算超限, 中止任务: budget={budget.to_dict()}")
+                        return {"status": "failed", "error": "token 预算超限", "budget": budget.to_dict()}
 
-            usage = getattr(result, "usage", None) or {}
-            if usage:
-                ok = budget.record_usage(usage)
-                if not ok:
-                    logger.warning(f"MLXExecutor 预算超限, 中止任务: budget={budget.to_dict()}")
-                    return {"status": "failed", "error": "token 预算超限", "budget": budget.to_dict()}
-
-            return {"status": "completed", "data": result}
+                return {
+                    "status": "completed",
+                    "data": {"content": result.content, "usage": usage, "model": model, "task_type": task_type},
+                }
         except Exception as e:
             logger.error(f"MLXExecutor 异常: {e}")
             return {"error": str(e)}
@@ -236,10 +260,21 @@ class CoordinatorExecutor:
         if task is not None and parent_id:
             task.parent_task = parent_id
 
-        for _ in range(60):
+        # R-2: 超时须真取消子任务 handle (旧版只返回 error, 子协程继续跑成僵尸)
+        try:
+            timeout_sec = float(input_data.get("child_timeout", 30))
+        except (TypeError, ValueError):
+            timeout_sec = 30.0
+
+        for _ in range(max(1, int(timeout_sec * 2))):
             await asyncio.sleep(0.5)
             task = self._orchestrator.get_task(task_id)
             if task and task.status in ("completed", "failed"):
                 return task.output_data if task.status == "completed" else {"error": task.error}
 
-        return {"error": "子任务超时 (30s)", "task_id": task_id}
+        logger.warning(f"CoordinatorExecutor 子任务超时 ({timeout_sec}s), 取消子任务: {task_id}")
+        try:
+            await self._orchestrator.cancel_task(task_id)
+        except Exception as e:
+            logger.error(f"CoordinatorExecutor 取消子任务失败: {e}")
+        return {"error": f"子任务超时 ({timeout_sec}s)", "task_id": task_id}

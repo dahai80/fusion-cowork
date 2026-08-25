@@ -43,8 +43,16 @@ class PluginManifest:
             timeout_seconds = 0.0
         if timeout_seconds < 0:
             timeout_seconds = 0.0
+        name = data.get("name", "")
+        # E-13: name 空或含路径分隔符 → target=plugins_dir 或目录穿越, rmtree 删插件根。
+        if not name or not name.strip():
+            logger.error("插件清单 name 为空, 拒绝 (防 target=plugins_dir 越界删除)")
+            raise ValueError("插件清单 name 不可为空")
+        if "/" in name or "\\" in name or name in (".", ".."):
+            logger.error(f"插件清单 name 含路径分隔符/遍历符: {name!r}, 拒绝")
+            raise ValueError(f"插件清单 name 非法: {name!r}")
         return cls(
-            name=data.get("name", ""),
+            name=name,
             version=data.get("version", "0.1.0"),
             description=data.get("description", ""),
             author=data.get("author", ""),

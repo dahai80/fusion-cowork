@@ -145,7 +145,12 @@ class FusionMLXClient:
                 resp = await self.client.post("/chat/completions", json=payload)
                 resp.raise_for_status()
                 data = resp.json()
-                choice = data["choices"][0]
+                # E-12: choices 缺失/空 → 防御, 旧版 data["choices"][0] 直接 IndexError
+                choices = data.get("choices") or []
+                if not choices:
+                    logger.error(f"chat() 响应无 choices (model={model}, keys={list(data.keys())})")
+                    raise RuntimeError(f"模型响应无 choices: {data.get('error', data)}")
+                choice = choices[0]
                 message = choice.get("message", {})
                 return self._build_llm_response(message, choice, data, model)
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.PoolTimeout) as e:
@@ -169,7 +174,8 @@ class FusionMLXClient:
                             "settings.json 的 auth.api_key; 两者是独立鉴权"
                         )
                     raise
-        raise last_exc
+        # E-12: last_exc 可能为 None (max_retries<0 零迭代, 或未来分支遗漏设值) → raise None 抛 TypeError
+        raise last_exc if last_exc is not None else RuntimeError("请求无有效响应且无异常记录")
 
     async def _chat_core(self, payload: dict, model: str) -> LLMResponse:
         # 路径B: fusion-core with_retry 统一重试 (429/500/502/503/504 + 瞬态异常, jitter退避)
@@ -191,7 +197,12 @@ class FusionMLXClient:
                 )
             raise
         data = resp.json()
-        choice = data["choices"][0]
+        # E-12: choices 缺失/空 → 防御
+        choices = data.get("choices") or []
+        if not choices:
+            logger.error(f"chat() 响应无 choices (model={model}, keys={list(data.keys())})")
+            raise RuntimeError(f"模型响应无 choices: {data.get('error', data)}")
+        choice = choices[0]
         message = choice.get("message", {})
         return self._build_llm_response(message, choice, data, model)
 
@@ -257,7 +268,8 @@ class FusionMLXClient:
                     await asyncio.sleep(self.retry_delay)
                 else:
                     raise
-        raise last_exc
+        # E-12: last_exc 可能为 None (max_retries<0 零迭代, 或未来分支遗漏设值) → raise None 抛 TypeError
+        raise last_exc if last_exc is not None else RuntimeError("请求无有效响应且无异常记录")
 
     async def embed(
         self,
