@@ -474,14 +474,15 @@ class TestRemoteControlTLS:
         server = RemoteControlServer()
         assert server._build_ssl_context() is None
 
-    def test_build_ssl_context_bad_cert_degrades_to_none(self, tmp_path):
+    def test_build_ssl_context_bad_cert_fail_closed(self, tmp_path):
         cert = tmp_path / "cert.pem"
         key = tmp_path / "key.pem"
         cert.write_text("not a cert")
         key.write_text("not a key")
         server = RemoteControlServer(tls_cert=str(cert), tls_key=str(key))
-        # 加载失败 → 降级明文, 返回 None (不抛)
-        assert server._build_ssl_context() is None
+        # HI-3 fail-closed: 配了证书但加载失败 → raise, 不降级明文
+        with pytest.raises(RuntimeError, match="拒绝降级明文"):
+            server._build_ssl_context()
 
     def test_build_ssl_context_valid_cert_returns_context(self, tmp_path):
         import subprocess

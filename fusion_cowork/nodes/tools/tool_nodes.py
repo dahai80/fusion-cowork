@@ -76,18 +76,51 @@ def _check_shell_command(command: str) -> Optional[str]:
 
 
 def _check_python_code(code: str) -> Optional[str]:
-    import re
+    # MD-18: AST 遍历替代正则黑名单 (正则可被注释/字符串/unicode 绕过)
+    # parse 失败 (语法错误) 仍放行交子进程报错; 仅拒危险结构
+    import ast
 
-    for mod in _PYTHON_BLACKLIST_IMPORTS:
-        pattern = rf"\bimport\s+{re.escape(mod)}\b|\bfrom\s+{re.escape(mod)}\b"
-        if re.search(pattern, code):
-            return f"代码被沙箱阻止: 禁止导入 '{mod}'"
-    if re.search(r"\bos\.system\s*\(", code):
-        return "代码被沙箱阻止: 禁止调用 os.system()"
-    if re.search(r"\bos\.popen\s*\(", code):
-        return "代码被沙箱阻止: 禁止调用 os.popen()"
-    if re.search(r"\bsubprocess\.", code):
-        return "代码被沙箱阻止: 禁止使用 subprocess"
+    _DANGEROUS_IMPORTS = _PYTHON_BLACKLIST_IMPORTS
+    _DANGEROUS_ATTRS = {
+        ("os", "system"),
+        ("os", "popen"),
+    }
+    _DANGEROUS_ATTR_SUBSTR = ("subprocess",)
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        # 语法错误交子进程报错, 不在此拦截 (避免误伤)
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if any(alias.name == m or alias.name.startswith(m + ".") for m in _DANGEROUS_IMPORTS):
+                    return f"代码被沙箱阻止: 禁止导入 '{alias.name}'"
+        elif isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            if any(mod == m or mod.startswith(m + ".") for m in _DANGEROUS_IMPORTS):
+                return f"代码被沙箱阻止: 禁止 from '{mod}' 导入"
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+                attr_pair = (func.value.id, func.attr)
+                if attr_pair in _DANGEROUS_ATTRS:
+                    return f"代码被沙箱阻止: 禁止调用 {attr_pair[0]}.{attr_pair[1]}()"
+                if func.value.id in _DANGEROUS_ATTR_SUBSTR:
+                    return f"代码被沙箱阻止: 禁止使用 {func.value.id}.{func.attr}"
+    return None
+
+
+_IDENT_RE = __import__("re").compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_repl_variables(variables: Dict[str, Any]) -> Optional[str]:
+    # CR-13c: 注入变量名必须合法 Python 标识符, 拒特殊字符 (防脚本注入)
+    for key in variables:
+        if not isinstance(key, str) or not _IDENT_RE.match(key):
+            return f"变量名非法 (非合法标识符): {key!r}"
+        if key.startswith("__"):
+            return f"变量名非法 (dunder 前缀): {key!r}"
     return None
 
 
@@ -140,8 +173,8 @@ class ShellExecNode(BaseNode):
                 },
                 "shell": {
                     "type": "boolean",
-                    "description": "是否通过 shell 执行",
-                    "default": True,
+                    "description": "是否通过 shell 执行 (默认 False, 仅显式开启走 shell=True + WARNING)",
+                    "default": False,
                 },
             },
             "required": ["command"],
@@ -173,7 +206,7 @@ class ShellExecNode(BaseNode):
         timeout = params.get("timeout", 30)
         workdir = params.get("workdir", "")
         capture = params.get("capture_output", True)
-        use_shell = params.get("shell", True)
+        use_shell = params.get("shell", False)
 
         from ...security import get_scoped_folder_manager
 
@@ -187,12 +220,29 @@ class ShellExecNode(BaseNode):
             )
 
         try:
-            proc = await asyncio.create_subprocess_shell(
-                command if use_shell else shlex.split(command),
-                stdout=subprocess.PIPE if capture else None,
-                stderr=subprocess.PIPE if capture else None,
-                cwd=workdir or None,
-            )
+            if use_shell:
+                logger.warning(f"ShellExec shell=True (纵深防御黑名单已过): {command[:80]}")
+                proc = await asyncio.create_subprocess_shell(
+                    command,
+                    stdout=subprocess.PIPE if capture else None,
+                    stderr=subprocess.PIPE if capture else None,
+                    cwd=workdir or None,
+                )
+            else:
+                # CR-6/7: use_shell=False 走 exec 列表 (不起 /bin/sh), 消除 shell 注入
+                argv = shlex.split(command)
+                if not argv:
+                    return NodeResult(
+                        status=NodeStatus.FAILED,
+                        error="命令解析为空",
+                        summary="空命令",
+                    )
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdout=subprocess.PIPE if capture else None,
+                    stderr=subprocess.PIPE if capture else None,
+                    cwd=workdir or None,
+                )
 
             try:
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -305,6 +355,16 @@ class PythonREPLNode(BaseNode):
 
         timeout = params.get("timeout", 15)
         variables = params.get("variables", {})
+
+        # CR-13c: 变量名合法性校验, 拒脚本注入
+        var_error = _validate_repl_variables(variables)
+        if var_error:
+            logger.warning(f"PythonREPL 变量名校验拦截: {var_error}")
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=var_error,
+                summary="沙箱拦截",
+            )
 
         # 构建执行脚本
         script_lines = [
@@ -683,6 +743,17 @@ class ApplyEditNode(BaseNode):
             )
 
         path = Path(file_path).expanduser()
+        # CR-19: 文件写节点须经 scoped_folder 校验, 拒越界写入 (备份与写入同路径)
+        from ...security import get_scoped_folder_manager
+
+        scope = get_scoped_folder_manager()
+        if not scope.ensure_allowed(path):
+            logger.warning(f"apply_edit 沙箱拒绝越界路径: {path}")
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"路径越界, 不在允许范围: {path}",
+                summary="沙箱拒绝",
+            )
         if not path.exists():
             return NodeResult(
                 status=NodeStatus.FAILED,

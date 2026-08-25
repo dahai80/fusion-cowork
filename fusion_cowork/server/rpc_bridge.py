@@ -13,6 +13,8 @@ Issue #48: fusion-studio 插件生态集成面板通过 POST /rpc 消费 15 个 
 from __future__ import annotations
 
 import logging
+import secrets
+import traceback
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -37,6 +39,14 @@ PLUGINS_METHODS = frozenset(
         "plugins/mcp.sessions.prune",
     }
 )
+
+# HI-4: 每方法必填 params 字段 (method→[required_keys]); 缺则 -32602 拒, 不进 handler
+# 键名对齐上游 MCPHandler: state.get/install/uninstall 用 plugin_id; config.set 需 ≥1 键
+_PARAMS_REQUIRED: Dict[str, frozenset] = {
+    "plugins/install": frozenset({"plugin_id"}),
+    "plugins/uninstall": frozenset({"plugin_id"}),
+    "plugins/state.get": frozenset({"plugin_id"}),
+}
 
 _HANDLER: Optional[Any] = None
 _DESK_RUNTIME: Optional[Any] = None
@@ -153,7 +163,9 @@ async def dispatch_rpc(request: Dict[str, Any]) -> Dict[str, Any]:
     request_id = request.get("id")
     method = request.get("method", "")
 
-    if method not in PLUGINS_METHODS and not method.startswith("plugins."):
+    # LO-10: 显式分发 — 白名单方法或 plugins/* 前缀走校验+dispatch, 其余 -32601
+    is_plugins_method = method in PLUGINS_METHODS or method.startswith("plugins/")
+    if not is_plugins_method:
         return {
             "jsonrpc": "2.0",
             "id": request_id,
@@ -162,6 +174,29 @@ async def dispatch_rpc(request: Dict[str, Any]) -> Dict[str, Any]:
                 "message": f"Method not found: {method} (/rpc 仅托管 plugins/*)",
             },
         }
+
+    # HI-4: 处理前校验 params 形状 — 必填字段缺失拒 -32602, 不把畸形请求喂给 handler
+    required = _PARAMS_REQUIRED.get(method)
+    if required is not None:
+        params = request.get("params")
+        if not isinstance(params, dict):
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32602, "message": "params 缺失或非对象", "data": {"method": method}},
+            }
+        missing = [k for k in required if not params.get(k)]
+        if missing:
+            logger.warning("rpc_bridge: %s 缺必填参数 %s", method, missing)
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32602,
+                    "message": "参数校验失败",
+                    "data": {"method": method, "missing": missing},
+                },
+            }
 
     try:
         handler = get_plugins_handler()
@@ -185,11 +220,23 @@ async def dispatch_rpc(request: Dict[str, Any]) -> Dict[str, Any]:
             return {"jsonrpc": "2.0", "result": None, "id": request_id}
         return response
     except Exception as e:
-        logger.error("rpc_bridge: dispatch %s 异常: %s", method, e)
+        # HI-5: 不泄 str(e) 进 RPC; 仅服务端日志 + 回 trace_id 供排障
+        trace_id = secrets.token_hex(8)
+        logger.error(
+            "rpc_bridge: dispatch 异常 trace_id=%s method=%s err=%s\n%s",
+            trace_id,
+            method,
+            e,
+            traceback.format_exc(),
+        )
         return {
             "jsonrpc": "2.0",
             "id": request_id,
-            "error": {"code": -32603, "message": f"Internal error: {e}"},
+            "error": {
+                "code": -32603,
+                "message": "Internal error",
+                "data": {"trace_id": trace_id},
+            },
         }
 
 

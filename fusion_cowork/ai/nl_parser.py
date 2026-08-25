@@ -141,6 +141,26 @@ class NLWorkflowGenerator:
             workflow_def.setdefault("nodes", [])
             workflow_def.setdefault("edges", [])
 
+            # CR-13b: 逐节点校验 name ∈ NodeRegistry, 未知名剔除 (LLM 可能幻觉节点名)
+            try:
+                from ..engine.node import NodeRegistry
+
+                known = {item.get("name", "") for item in NodeRegistry.list()}
+                if known:
+                    kept = []
+                    dropped = []
+                    for n in workflow_def["nodes"]:
+                        nm = n.get("name", "") if isinstance(n, dict) else ""
+                        if nm in known:
+                            kept.append(n)
+                        else:
+                            dropped.append(nm)
+                    if dropped:
+                        logger.warning(f"NL 生成剔除未注册节点名: {dropped}")
+                    workflow_def["nodes"] = kept
+            except Exception as ve:
+                logger.debug(f"NL 节点名校验跳过 (NodeRegistry 未就绪): {ve}")
+
             logger.info(f"成功生成工作流: {workflow_def['name']} ({len(workflow_def['nodes'])} 个节点)")
             return workflow_def
 

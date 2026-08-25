@@ -180,6 +180,30 @@ class Workflow:
                     queue.append(edge.target_id)
         return False
 
+    @staticmethod
+    def _has_cycle(edges: List[Edge]) -> bool:
+        """HI-16: 对给定边集做环检测 (Kahn 拓扑排序, 入度 0 耗尽仍有节点 = 有环)。
+        from_dict 一次性恢复所有边, 绕过 connect 的逐条环检查, 须在此补检。
+        """
+        nodes = set()
+        for e in edges:
+            nodes.add(e.source_id)
+            nodes.add(e.target_id)
+        in_degree = {n: 0 for n in nodes}
+        for e in edges:
+            in_degree[e.target_id] += 1
+        queue = [n for n, d in in_degree.items() if d == 0]
+        visited_count = 0
+        while queue:
+            cur = queue.pop(0)
+            visited_count += 1
+            for e in edges:
+                if e.source_id == cur:
+                    in_degree[e.target_id] -= 1
+                    if in_degree[e.target_id] == 0:
+                        queue.append(e.target_id)
+        return visited_count != len(nodes)
+
     def get_upstream_nodes(self, node_id: str) -> List[str]:
         """获取指定节点的上游节点 ID 列表。"""
         upstream = []
@@ -326,6 +350,10 @@ class Workflow:
                 label=edge_data.get("label", ""),
             )
             wf.edges.append(edge)
+        # HI-16: from_dict 一次性恢复所有边绕过 connect 的逐条环检查, 须在此补检
+        if wf._has_cycle(wf.edges):
+            logger.warning(f"反序列化工作流 '{wf.name}' 含环, 拒绝 (from_dict)")
+            raise ValueError(f"工作流 '{wf.name}' 含环: 边集存在循环依赖")
         wf.created_at = data.get("created_at", time.time())
         wf.updated_at = data.get("updated_at", time.time())
         return wf
@@ -355,6 +383,7 @@ class WorkflowEngine:
         session_store=None,
         event_emitter=None,
         trajectory_recorder=None,
+        budget_tracker=None,
     ):
         self._executions: Dict[str, WorkflowExecution] = {}
         self._cancel_flags: Dict[str, bool] = {}
@@ -364,6 +393,8 @@ class WorkflowEngine:
         self._session_store = session_store
         self._trajectory_recorder = trajectory_recorder
         self._event_emitter = event_emitter
+        # HI-19: 预算追踪 — 在节点循环顶部检查, 超预算且 enforce 则中止执行
+        self._budget_tracker = budget_tracker
 
     def on_progress(self, callback: callable) -> None:
         """注册进度回调。"""
@@ -456,6 +487,13 @@ class WorkflowEngine:
         # 断点续跑: 从已完成步骤快照恢复缓存 (P1-2)
         completed_ids: set = set()
         if resume_steps:
+            # HI-16: 校验快照节点 id ⊆ 当前工作流节点, 拒绝拓扑不匹配 (防旧快照污染)
+            snap_ids = {
+                sstep.get("node_id", "") for sstep in resume_steps if isinstance(sstep, dict) and sstep.get("node_id")
+            }
+            stale = snap_ids - set(workflow.nodes.keys())
+            if stale:
+                logger.warning(f"断点续跑快照含当前工作流不存在的节点 {stale}, 忽略这些步骤")
             for sstep in resume_steps:
                 if not isinstance(sstep, dict):
                     continue
@@ -504,6 +542,17 @@ class WorkflowEngine:
                 if self._cancel_flags.get(exec_id, False):
                     execution.status = WorkflowStatus.CANCELLED
                     break
+
+                # HI-19: 预算检查 — enforce 且已超预算则中止 (BudgetTracker 无 exhausted 方法, 用 _enforce+cost 判)
+                if self._budget_tracker is not None and self._budget_tracker._enforce:
+                    if self._budget_tracker._record.cost_usd >= self._budget_tracker._max_budget_usd:
+                        logger.warning(
+                            f"预算耗尽 ${self._budget_tracker._record.cost_usd:.4f} >= "
+                            f"${self._budget_tracker._max_budget_usd:.4f}, 中止执行 exec_id={exec_id}"
+                        )
+                        execution.status = WorkflowStatus.FAILED
+                        execution.error = "预算耗尽: 执行被中止"
+                        break
 
                 node = workflow.nodes.get(node_id)
                 if not node:
@@ -606,10 +655,9 @@ class WorkflowEngine:
                 )
                 execution.steps.append(step)
 
-                # 执行节点
+                # 执行节点 — CR-11: 状态只存 WorkflowStep, 不在共享 BaseNode 上写
+                # (并发执行同一 Workflow 时原地改 node.status/result 会互相覆盖)
                 try:
-                    node.status = NodeStatus.RUNNING
-
                     # Event: NODE_START
                     if self._event_emitter:
                         from .events import EventType
@@ -622,8 +670,6 @@ class WorkflowEngine:
                             data={"input_data": node_input},
                         )
                     result = await node.execute(node_input)
-                    node.status = result.status
-                    node.result = result
 
                     step.status = result.status
                     step.completed_at = time.time()
@@ -706,7 +752,6 @@ class WorkflowEngine:
                             logger.warning(f"节点 '{node.config.label or node.name}' 失败但继续执行")
 
                 except Exception as e:
-                    node.status = NodeStatus.FAILED
                     step.status = NodeStatus.FAILED
                     step.completed_at = time.time()
                     step.execution_time = step.completed_at - step.started_at

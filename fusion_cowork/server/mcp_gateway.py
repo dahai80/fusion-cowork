@@ -94,6 +94,11 @@ class MCPGateway:
         auto_restart: bool = True,
         max_restarts: int = 3,
     ) -> ManagedProcess:
+        # LO-12: spawn 可拉任意子进程 = 潜在 RCE footgun; 默认 fail-closed,
+        # 仅 FUSION_ENABLE_GATEWAY=1 显式开启 (未接任何 dispatch 路径, 死代码门控)
+        if os.environ.get("FUSION_ENABLE_GATEWAY") != "1":
+            logger.warning("MCPGateway.spawn 拒绝: 未设 FUSION_ENABLE_GATEWAY=1 (fail-closed, 防 RCE)")
+            raise PermissionError("MCPGateway.spawn disabled: set FUSION_ENABLE_GATEWAY=1 to enable")
         process_id = f"proc_{uuid.uuid4().hex[:8]}"
         mp = ManagedProcess(
             process_id=process_id,

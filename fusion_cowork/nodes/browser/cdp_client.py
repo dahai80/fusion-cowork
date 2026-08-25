@@ -3,9 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+# CR-14: navigate 仅允许 http/https, 拒危险 scheme (file/javascript/chrome/data/about)
+_ALLOWED_NAV_SCHEMES = {"http", "https"}
 
 try:
     import httpx
@@ -23,9 +27,10 @@ except ImportError:
 
 
 class CDPClient:
-    def __init__(self, host: str = "127.0.0.1", port: int = 9222):
+    def __init__(self, host: str = "127.0.0.1", port: int = 9222, token: Optional[str] = None):
         self.host = host
         self.port = port
+        self.token = token
         self._ws = None
         self._msg_id = 0
         self._connected = False
@@ -35,6 +40,12 @@ class CDPClient:
         self._console_buffer: List[Dict[str, Any]] = []
         self._network_enabled = False
         self._console_enabled = False
+        self._js_eval_confirmed = False  # CR-14: evaluate_js 须显式确认
+        # CR-14: 默认限 localhost; 非 localhost 连接 9222 无认证 = 高危, 拒绝
+        if self.host not in {"127.0.0.1", "localhost", "::1"}:
+            raise ValueError(f"CDP host={self.host} 非本机, 拒绝连接 (9222 调试端口无认证, 仅限 localhost)")
+        if not self.token:
+            logger.warning("CDP 9222 调试端口未配置 token, 连接无认证 (仅限可信本机环境)")
 
     async def connect(self) -> None:
         if not HAS_HTTPX or not HAS_WEBSOCKETS:
@@ -45,6 +56,11 @@ class CDPClient:
         self._connected = True
         self._reader_task = asyncio.create_task(self._reader_loop())
         logger.info(f"CDP 已连接: {ws_url}")
+
+    def confirm_js_eval(self) -> None:
+        # CR-14: 调用方 (节点层经权限确认) 显式放行 evaluate_js
+        self._js_eval_confirmed = True
+        logger.warning("CDP evaluate_js 已获显式确认放行 (高危操作)")
 
     async def _reader_loop(self) -> None:
         # 后台读取 WS: 无 id 的消息分发到事件缓冲, 有 id 的消息匹配 pending future
@@ -80,8 +96,11 @@ class CDPClient:
                 self._console_buffer = self._console_buffer[-500:]
 
     async def _get_ws_url(self) -> str:
+        headers = {}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"http://{self.host}:{self.port}/json")
+            resp = await client.get(f"http://{self.host}:{self.port}/json", headers=headers)
             resp.raise_for_status()
             targets = resp.json()
             if not targets:
@@ -134,6 +153,14 @@ class CDPClient:
         return self._connected
 
     async def navigate(self, url: str) -> Dict[str, Any]:
+        # CR-14: 校验 scheme, 仅放行 http/https, 拒 file/javascript/chrome/data 等
+        parsed = urlparse(url)
+        scheme = (parsed.scheme or "").lower()
+        if not scheme:
+            raise ValueError(f"CDP 导航拒绝: URL 缺少 scheme: {url!r}")
+        if scheme not in _ALLOWED_NAV_SCHEMES:
+            logger.warning(f"CDP 导航拒绝: 非允许 scheme={scheme!r} (仅 http/https): {url!r}")
+            raise ValueError(f"CDP 导航拒绝: scheme={scheme!r} 不在允许列表 (仅 http/https)")
         result = await self.send("Page.navigate", {"url": url})
         logger.info(f"CDP 导航: {url}")
         return result.get("result", {})
@@ -214,6 +241,10 @@ class CDPClient:
         return base64.b64decode(data_b64)
 
     async def evaluate_js(self, script: str) -> Any:
+        # CR-14: 任意 JS 执行 = 高危, 须调用方经权限确认后 confirm_js_eval() 放行
+        if not self._js_eval_confirmed:
+            logger.error("CDP evaluate_js 拒绝: 未获显式确认 (须 confirm_js_eval() 放行)")
+            raise PermissionError("CDP evaluate_js 被拒绝: 任意 JS 执行高危, 须权限确认后 confirm_js_eval()")
         result = await self.send(
             "Runtime.evaluate",
             {

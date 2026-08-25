@@ -47,6 +47,18 @@ class NodeExecutor:
 class WorkflowExecutor:
     """工作流执行器 — 通过 WorkflowEngine 执行工作流。"""
 
+    def __init__(self):
+        # HI-9: 可注入父引擎运行时 (permission/hook/session), 避免裸 WorkflowEngine 绕过权限
+        self._permission_manager = None
+        self._hook_manager = None
+        self._session_store = None
+
+    def inject_runtime(self, permission_manager=None, hook_manager=None, session_store=None) -> None:
+        """HI-9: 由 AgentOrchestrator 注入父引擎运行时, 使子工作流受同一权限/ Hook 约束。"""
+        self._permission_manager = permission_manager
+        self._hook_manager = hook_manager
+        self._session_store = session_store
+
     async def __call__(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         workflow_def = input_data.get("workflow", {})
         template_name = input_data.get("template_name", "")
@@ -65,7 +77,12 @@ class WorkflowExecutor:
                 return {"error": "缺少 workflow 或 template_name 参数"}
 
             wf = Workflow.from_dict(workflow_def)
-            engine = WorkflowEngine()
+            # HI-9: 注入父运行时, 非裸 engine (旧版裸 engine 无 permission → 高危节点不受控)
+            engine = WorkflowEngine(
+                permission_manager=self._permission_manager,
+                hook_manager=self._hook_manager,
+                session_store=self._session_store,
+            )
             result = await engine.execute(wf)
             return {
                 "status": result.status.value,
@@ -145,6 +162,11 @@ class ShellExecutor:
                 "stderr": stderr.decode("utf-8", errors="replace")[-1000:],
             }
         except TimeoutError:
+            # HI-8: 超时后杀子进程 (旧版 except 不 kill, 进程泄漏)
+            if "proc" in locals() and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+                logger.warning(f"ShellExecutor 超时杀进程: {command[:80]} ({timeout}s)")
             return {"error": f"命令超时 ({timeout}s)"}
         except Exception as e:
             logger.error(f"ShellExecutor 异常: {e}")
@@ -162,6 +184,9 @@ DEFAULT_EXECUTORS = {
 class CoordinatorExecutor:
     """协调执行器 — 将大任务分解给匹配的子 Agent 执行。"""
 
+    # HI-20: 最大委托深度, 防 Coordinator 递归自调用耗尽栈/资源
+    MAX_DEPTH = 5
+
     def __init__(self, orchestrator=None):
         self._orchestrator = orchestrator
 
@@ -178,6 +203,16 @@ class CoordinatorExecutor:
         if not description:
             return {"error": "缺少 prompt 或 description 参数"}
 
+        # HI-20: 深度限制 — 子任务继承+1, 超限拒绝 (防 Coordinator→Coordinator 无限递归)
+        depth = input_data.get("_depth", 0)
+        try:
+            depth = int(depth)
+        except (TypeError, ValueError):
+            depth = 0
+        if depth > self.MAX_DEPTH:
+            logger.warning(f"CoordinatorExecutor 委托深度超限: depth={depth} > MAX_DEPTH={self.MAX_DEPTH}, 拒绝")
+            return {"error": f"委托深度超限 (>{self.MAX_DEPTH}), 已拒绝递归执行"}
+
         agent_map = {
             "node": "executor_node",
             "workflow": "executor_workflow",
@@ -186,10 +221,20 @@ class CoordinatorExecutor:
         }
         _agent_id = agent_map.get(subtask_type, "executor_node")
 
+        # HI-20: 子任务 input_data 携带递增 depth, 供下层 Coordinator 继续校验
+        child_input = dict(input_data)
+        child_input["_depth"] = depth + 1
+
         task_id = await self._orchestrator.submit_task(
             description=description,
-            input_data=input_data,
+            input_data=child_input,
         )
+
+        # HI-20: parent_task 记录链路 (AgentTask.parent_task 现已设值)
+        parent_id = input_data.get("_task_id", "")
+        task = self._orchestrator.get_task(task_id)
+        if task is not None and parent_id:
+            task.parent_task = parent_id
 
         for _ in range(60):
             await asyncio.sleep(0.5)

@@ -20,11 +20,20 @@ logger = logging.getLogger(__name__)
 
 
 class CollabHub:
-    def __init__(self, chat_svc: Any = None, presence_manager: Any = None):
+    def __init__(
+        self,
+        chat_svc: Any = None,
+        presence_manager: Any = None,
+        space_store: Any = None,
+        auth_token: Optional[str] = None,
+    ):
         self._rooms: Dict[str, Set[Any]] = {}
         self._conn_meta: Dict[Any, Dict[str, str]] = {}
         self._chat_svc = chat_svc
         self._presence = presence_manager
+        # LO-13: space_store 校验成员资格; auth_token 校验 hello (防无认证注入/presence 冒充)
+        self._space_store = space_store
+        self._auth_token = auth_token
         logger.debug("CollabHub 初始化")
 
     async def join(self, websocket: Any, space_id: str, user_id: str, display_name: str = "") -> Dict[str, Any]:
@@ -190,11 +199,35 @@ class CollabHub:
 
         async def _handler(websocket):
             try:
+                # LO-13: hello 必须带认证 + 身份校验, 防无认证注入/presence 冒充
                 first = await websocket.recv()
                 hello = json.loads(first)
-                await self.join(
-                    websocket, hello.get("space_id", ""), hello.get("user_id", ""), hello.get("display_name", "")
-                )
+                # auth_token 配了则校验 hello.token, 缺/错拒连
+                if self._auth_token:
+                    token = str(hello.get("token", ""))
+                    if token != self._auth_token:
+                        logger.warning("CollabHub WS 认证失败: hello token 无效")
+                        await websocket.send(json.dumps({"type": "error", "error": "认证失败"}))
+                        await websocket.close()
+                        return
+                space_id = str(hello.get("space_id", "")).strip()
+                user_id = str(hello.get("user_id", "")).strip()
+                if not space_id or not user_id:
+                    logger.warning("CollabHub WS 拒绝: hello 缺 space_id/user_id")
+                    await websocket.send(json.dumps({"type": "error", "error": "缺 space_id/user_id"}))
+                    await websocket.close()
+                    return
+                # space_store 配了则校验成员资格, 非成员拒入房
+                if self._space_store is not None:
+                    member = await self._space_store.get_member(space_id, user_id)
+                    if member is None:
+                        space = await self._space_store.get_space(space_id)
+                        if not space or space.get("owner_id") != user_id:
+                            logger.warning(f"CollabHub WS 拒绝: user={user_id} 非 space={space_id} 成员")
+                            await websocket.send(json.dumps({"type": "error", "error": "非空间成员"}))
+                            await websocket.close()
+                            return
+                await self.join(websocket, space_id, user_id, hello.get("display_name", ""))
                 async for raw in websocket:
                     await self.handle_message(websocket, raw)
             except Exception as e:
@@ -203,5 +236,5 @@ class CollabHub:
                 await self.leave(websocket)
 
         server = await websockets.serve(_handler, host, port)
-        logger.info(f"CollabHub WS 监听: ws://{host}:{port}")
+        logger.info(f"CollabHub WS 监听: ws://{host}:{port} (auth={'on' if self._auth_token else 'off'})")
         return server

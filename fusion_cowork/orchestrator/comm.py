@@ -12,10 +12,14 @@ import asyncio
 import logging
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Deque, Dict, List
 
 logger = logging.getLogger(__name__)
+
+_QUEUE_MAX = 1024
+_HISTORY_MAX = 1000
 
 
 @dataclass
@@ -41,13 +45,13 @@ class AgentMessageBus:
 
     def __init__(self):
         self._subscribers: Dict[str, List[asyncio.Queue]] = {}
-        self._history: List[AgentMessage] = []
+        self._history: Deque[AgentMessage] = deque(maxlen=_HISTORY_MAX)
 
     def subscribe(self, topic: str) -> asyncio.Queue:
         """订阅主题，返回消息队列。"""
         if topic not in self._subscribers:
             self._subscribers[topic] = []
-        q: asyncio.Queue = asyncio.Queue()
+        q: asyncio.Queue = asyncio.Queue(maxsize=_QUEUE_MAX)
         self._subscribers[topic].append(q)
         logger.info(f"消息总线: 订阅 {topic}")
         return q
@@ -69,10 +73,15 @@ class AgentMessageBus:
         self._history.append(msg)
 
         queues = self._subscribers.get(topic, [])
+        dropped = 0
         for q in queues:
-            await q.put(msg)
+            try:
+                q.put_nowait(msg)
+            except asyncio.QueueFull:
+                dropped += 1
+                logger.warning(f"消息总线: 队列满 topic={topic} 丢弃消息 msg_id={msg.msg_id}")
 
-        logger.info(f"消息发布: {sender} → {topic} ({len(queues)} 订阅者)")
+        logger.info(f"消息发布: {sender} → {topic} ({len(queues)} 订阅者, 丢弃 {dropped})")
         return msg.msg_id
 
     async def send(self, sender: str, receiver: str, payload: Dict[str, Any]) -> str:
@@ -90,15 +99,24 @@ class AgentMessageBus:
         inbox_queues = self._subscribers.get(f"inbox:{receiver}", [])
         all_queues = queues + inbox_queues
 
+        delivered = 0
         for q in all_queues:
-            await q.put(msg)
+            try:
+                q.put_nowait(msg)
+                delivered += 1
+            except asyncio.QueueFull:
+                logger.warning(
+                    f"消息总线: inbox 满 receiver={receiver} 丢弃 msg_id={msg.msg_id} (可能死 agent, 队列未消费)"
+                )
 
-        logger.info(f"点对点: {sender} → {receiver}")
+        if delivered == 0 and all_queues:
+            logger.warning(f"消息总线: {sender} → {receiver} 全部投递失败 ({len(all_queues)} 队列均满)")
+        logger.info(f"点对点: {sender} → {receiver} (投递 {delivered}/{len(all_queues)})")
         return msg.msg_id
 
     def get_history(self, topic: str = "", limit: int = 100) -> List[AgentMessage]:
         """获取消息历史。"""
-        msgs = self._history
+        msgs = list(self._history)
         if topic:
             msgs = [m for m in msgs if m.topic == topic or m.topic.startswith(topic)]
         return msgs[-limit:]

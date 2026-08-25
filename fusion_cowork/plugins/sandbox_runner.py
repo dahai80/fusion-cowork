@@ -97,7 +97,12 @@ def _emit(payload: Dict[str, Any]) -> None:
 
 
 async def main() -> int:
-    raw = sys.stdin.read()
+    # CR-15: stdin 有界读 (限 16MB), 防 OOM + 任意长度输入攻击
+    max_input = 16 * 1024 * 1024
+    raw = sys.stdin.read(max_input + 1)
+    if len(raw) > max_input:
+        _emit({"ok": False, "error": "输入超过 16MB 上限"})
+        return 1
     if not raw:
         _emit({"ok": False, "error": "空输入"})
         return 1
@@ -121,8 +126,9 @@ async def main() -> int:
             _emit({"ok": False, "error": f"未知 action: {action}"})
             return 1
     except Exception as e:
+        # CR-15: traceback 仅服务端日志, 不进 RPC payload (防信息泄漏)
         logger.error(f"sandbox_runner 执行失败: {e}\n{traceback.format_exc()}")
-        _emit({"ok": False, "error": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc()})
+        _emit({"ok": False, "error": f"{type(e).__name__}: {e}"})
         return 1
 
 

@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
+
+_singleton_lock = threading.Lock()
 
 
 class ScopedFolderManager:
@@ -52,9 +55,14 @@ class ScopedFolderManager:
         if not self._enforce:
             return True
         try:
-            target = Path(path).expanduser().resolve()
+            # LO-9: strict=False 不跟随符号链接, 再 lstat 拒符号链接遍历 (TOCTOU)
+            target = Path(path).expanduser().resolve(strict=False)
         except (OSError, ValueError) as e:
             logger.warning(f"ScopedFolder 路径解析失败: {path} ({e})")
+            return False
+        # LO-9: 路径任一前缀段为符号链接则拒 (防 scope 内 symlink 指向 scope 外)
+        if self._path_contains_symlink(path):
+            logger.warning(f"ScopedFolder 拒符号链接路径: {path} (可能逃逸授权文件夹)")
             return False
         for scope in self._scopes:
             try:
@@ -63,6 +71,27 @@ class ScopedFolderManager:
             except ValueError:
                 continue
         logger.warning(f"ScopedFolder 拒绝越界路径: {target} (不在授权文件夹内)")
+        return False
+
+    @staticmethod
+    def _path_contains_symlink(path: str | os.PathLike) -> bool:
+        # 逐段检查 path 的每个父目录是否为符号链接; 不 follow, 仅 lstat
+        p = Path(path).expanduser()
+        try:
+            current = p if p.is_absolute() else Path.cwd() / p
+        except OSError:
+            return True
+        seen: set = set()
+        while current not in seen:
+            seen.add(current)
+            try:
+                if current.is_symlink():
+                    return True
+            except OSError:
+                return True
+            if current.parent == current:
+                break
+            current = current.parent
         return False
 
     def ensure_allowed(self, path: str | os.PathLike) -> bool:
@@ -81,12 +110,17 @@ _default_manager: Optional[ScopedFolderManager] = None
 
 
 def get_scoped_folder_manager() -> ScopedFolderManager:
+    # LO-8: 单例重建加锁, 防 from_config 竞态致多实例
     global _default_manager
-    if _default_manager is None:
-        _default_manager = ScopedFolderManager.from_config()
-    return _default_manager
+    if _default_manager is not None:
+        return _default_manager
+    with _singleton_lock:
+        if _default_manager is None:
+            _default_manager = ScopedFolderManager.from_config()
+        return _default_manager
 
 
 def reset_scoped_folder_manager() -> None:
     global _default_manager
-    _default_manager = None
+    with _singleton_lock:
+        _default_manager = None

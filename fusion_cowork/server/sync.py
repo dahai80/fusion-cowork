@@ -245,6 +245,10 @@ class CrossDeviceSync:
                     async for raw in websocket:
                         try:
                             data = json.loads(raw)
+                            # 认证校验 (与 _handle_message 一致): 配了 token 则逐条验
+                            if self.token and data.get("token", "") != self.token:
+                                logger.warning(f"WS 消息认证失败: {remote}, token 不匹配")
+                                continue
                             msg = SyncMessage(
                                 msg_id=data.get("msg_id", f"msg_{uuid.uuid4().hex[:8]}"),
                                 msg_type=data.get("msg_type", "unknown"),
@@ -268,8 +272,10 @@ class CrossDeviceSync:
                 finally:
                     self._ws_clients.discard(websocket)
 
-            self._ws_server = await websockets.serve(_ws_handler, self.host, self.port)
-            logger.info(f"WebSocket 同步服务监听: ws://{self.host}:{self.port}")
+            ssl_ctx = self._build_server_ssl_context()
+            self._ws_server = await websockets.serve(_ws_handler, self.host, self.port, ssl=ssl_ctx)
+            scheme = "wss" if ssl_ctx else "ws"
+            logger.info(f"WebSocket 同步服务监听: {scheme}://{self.host}:{self.port}")
         except ImportError:
             logger.warning("websockets 库未安装 (pip install websockets), WS 入站监听降级关闭")
         except OSError as oe:
@@ -286,6 +292,25 @@ class CrossDeviceSync:
             self._server.close()
             await self._server.wait_closed()
         logger.info("跨设备同步已停止")
+
+    def _build_server_ssl_context(self):
+        """构造入站 WS 服务端 TLS ssl_context — HI-12。
+
+        fail-closed: 配了 ssl_cert/ssl_key 但加载失败 → raise, 不降级明文。
+        未配 → None (明文)。
+        """
+        if not self.ssl_cert or not self.ssl_key:
+            return None
+        import ssl
+
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        try:
+            ctx.load_cert_chain(certfile=self.ssl_cert, keyfile=self.ssl_key)
+            logger.info(f"CrossDeviceSync 入站 TLS 已启用: cert={self.ssl_cert}")
+            return ctx
+        except Exception as e:
+            logger.error(f"CrossDeviceSync 入站 TLS 证书加载失败, 拒绝降级明文 (fail-closed): {e}")
+            raise RuntimeError(f"入站 TLS 证书加载失败, 拒绝降级明文: {e}") from e
 
     def get_connected_devices(self) -> List[Dict[str, Any]]:
         """获取连接的设备列表。"""

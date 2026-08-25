@@ -10,7 +10,8 @@ import asyncio
 import base64
 import logging
 import os
-from typing import Any, Dict, List, Tuple
+import tempfile
+from typing import Any, Dict, List, Optional, Tuple
 
 from ...engine.node import (
     BaseNode,
@@ -448,6 +449,8 @@ class ComputerUseLoopNode(BaseNode):
         max_steps = self.config.params.get("max_steps", 10)
         step_delay = self.config.params.get("step_delay", 1.0)
         model = self.config.params.get("model", "default")
+        # HI-10: 默认用临时文件, 用完即删; 显式 save_screenshots 才落盘到 screenshot_path
+        save_screenshots = self.config.params.get("save_screenshots", False)
 
         if not task:
             return NodeResult(status=NodeStatus.FAILED, error="未指定任务描述")
@@ -465,10 +468,20 @@ class ComputerUseLoopNode(BaseNode):
             steps_taken += 1
             logger.info(f"computer_use step {step + 1}/{max_steps}")
 
+            # HI-10: 用临时文件存截图, try/finally 删除 (修 param 名 output_dir→save_path + data 键 path→file_path)
+            shot_path = ""
+            tmp_handle = None
+            if not save_screenshots:
+                tmp_handle = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+                shot_path = tmp_handle.name
+                tmp_handle.close()
+            else:
+                shot_path = self.config.params.get("screenshot_path", "") or tempfile.gettempdir()
+
             capture = ScreenCaptureNode(
                 config=NodeConfig(
                     params={
-                        "output_dir": self.config.params.get("screenshot_path", ""),
+                        "save_path": shot_path,
                     }
                 )
             )
@@ -477,9 +490,15 @@ class ComputerUseLoopNode(BaseNode):
             if cap_result.status != NodeStatus.SUCCESS:
                 logger.warning(f"截图失败: {cap_result.error}")
                 actions_log.append({"step": step + 1, "action": "screenshot", "status": "failed"})
+                if not save_screenshots and shot_path:
+                    try:
+                        os.unlink(shot_path)
+                    except OSError:
+                        pass
                 continue
 
-            screenshot_path = cap_result.data.get("path", "")
+            # HI-10: ScreenCaptureNode 返回 data 键为 file_path, 非旧代码误读的 path
+            screenshot_path = cap_result.data.get("file_path", "") or shot_path
             actions_log.append({"step": step + 1, "action": "screenshot", "path": screenshot_path})
 
             try:
@@ -530,6 +549,12 @@ class ComputerUseLoopNode(BaseNode):
 
             if step_delay and step_delay > 0:
                 await asyncio.sleep(float(step_delay))
+        # HI-10: 循环结束清理最后一张临时截图 (每步 continue/break 后临时文件仍可能残留)
+        if not save_screenshots and screenshot_path:
+            try:
+                os.unlink(screenshot_path)
+            except OSError:
+                pass
 
         return NodeResult(
             status=NodeStatus.SUCCESS,
@@ -542,6 +567,31 @@ class ComputerUseLoopNode(BaseNode):
             summary=f"Computer Use: {steps_taken} 步, 任务={'完成' if any(a.get('action') == 'task_complete' for a in actions_log) else '未完成'}",
         )
 
+    # CR-9: AI 解析动作白名单 + 每高危动作参数校验 (动作本身已在 HIGH_RISK_NODES 节点级 gate)
+    _ACTION_WHITELIST = frozenset({"mouse_move", "mouse_click", "keyboard_type", "keyboard_shortcut"})
+    _ACTION_NODES = {
+        "mouse_move": "MouseMoveNode",
+        "mouse_click": "MouseClickNode",
+        "keyboard_type": "KeyboardTypeNode",
+        "keyboard_shortcut": "KeyboardShortcutNode",
+    }
+
+    @classmethod
+    def _validate_action_params(cls, action: str, params: Dict[str, Any]) -> Optional[str]:
+        """CR-9: 校验每动作必填参数, 返回错误字符串 (None=合法)。"""
+        if action in ("mouse_move", "mouse_click"):
+            for k in ("x", "y"):
+                v = params.get(k)
+                if not isinstance(v, (int, float)) or isinstance(v, bool):
+                    return f"{action} 缺少/非法坐标 '{k}'"
+        elif action == "keyboard_type":
+            if not isinstance(params.get("text"), str) or not params["text"]:
+                return "keyboard_type 缺少 text"
+        elif action == "keyboard_shortcut":
+            if not isinstance(params.get("key"), str) or not params["key"]:
+                return "keyboard_shortcut 缺少 key"
+        return None
+
     async def _execute_ai_action(self, ai_text: str) -> Dict[str, Any]:
         import json
         import re
@@ -553,6 +603,11 @@ class ComputerUseLoopNode(BaseNode):
             return {"status": "no_action", "text": ai_text[:100]}
 
         action = action_match.group(1).strip()
+        # CR-9: 动作白名单 — 拒绝 AI 输出任何未登记动作 (防注入未授权操作)
+        if action not in self._ACTION_WHITELIST:
+            logger.warning(f"computer_use 拒绝非白名单动作: {action}")
+            return {"status": "unknown_action", "action": action}
+
         params = {}
         if params_match:
             try:
@@ -560,23 +615,21 @@ class ComputerUseLoopNode(BaseNode):
             except json.JSONDecodeError:
                 params = {}
 
+        # CR-9: 每动作参数校验
+        err = self._validate_action_params(action, params)
+        if err:
+            logger.warning(f"computer_use 动作参数非法: {err}, action={action}")
+            return {"status": "invalid_params", "action": action, "error": err}
+
         logger.info(f"computer_use action: {action}, params={params}")
 
         try:
-            if action == "mouse_move":
-                node = MouseMoveNode(config=NodeConfig(params=params))
-                result = await node.execute(params)
-            elif action == "mouse_click":
-                node = MouseClickNode(config=NodeConfig(params=params))
-                result = await node.execute(params)
-            elif action == "keyboard_type":
-                node = KeyboardTypeNode(config=NodeConfig(params=params))
-                result = await node.execute(params)
-            elif action == "keyboard_shortcut":
-                node = KeyboardShortcutNode(config=NodeConfig(params=params))
-                result = await node.execute(params)
-            else:
-                return {"status": "unknown_action", "action": action}
+            node_cls_name = self._ACTION_NODES[action]
+            node_cls = globals().get(node_cls_name)
+            if node_cls is None:
+                return {"status": "error", "error": f"节点 {node_cls_name} 未找到"}
+            node = node_cls(config=NodeConfig(params=params))
+            result = await node.execute(params)
 
             return {"status": result.status.value, "data": result.data}
         except Exception as e:

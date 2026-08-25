@@ -15,6 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
+  <img src="https://img.shields.io/badge/version-0.3.0-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -638,6 +639,17 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] 29 new tests (18 artifact + 11 FSB, 519 total)
 
 ### Patch Releases
+
+#### V0.3.0 — 安全加固 (审计 74 项发现全修复)
+对抗性审计 (`audit/fusion-cowork-0824.md`, 74 项: 23 CRITICAL / 20 HIGH / 18 MEDIUM / 13 LOW, 判定 NOT PRODUCTION-READY) 全修复, v0.2.15→v0.3.0。
+
+- [x] **Stage 1 — 认证基线**: UDS socket 文件权限 0o600 + 可选 `desk.auth_token` 握手; `_authenticate()` 拒收 params 内 operator_id/user_id 身份字段 (仅信连接身份); MCP HTTP/streamable Bearer 中间件 (`mcp.auth_token`); remote TLS fail-closed (坏证书不降明文)
+- [x] **Stage 2 — 输入净化**: ShellExec 改 `create_subprocess_exec(*shlex.split)` 消 shell 注入; nl_parser 逐节点校验 name ∈ NodeRegistry; PythonREPL 改 AST walk 拒危险调用; store update_space/update_member 列白名单; CDP navigate scheme 校验 (仅 http/https) + evaluate 进 HIGH_RISK; AppleScript 转义顺序修正
+- [x] **Stage 3 — 权限模型 + 沙箱**: 新增 `PermissionLevel.CONFIRM` 默认 (check 重排: approve→allow / deny→deny / high-risk→deny / else→allow); HIGH_RISK_NODES 补全至 ~30 节点; ApplyEdit 加 `ensure_allowed`; register 拒覆盖内置名; sandbox=false 需 `plugins.trusted` 白名单; zip-slip 逐条 `relative_to` 校验; darwin seatbelt `sandbox-exec` 限制 fs/network + env 白名单 + setrlimit fail-closed + stdin 有界读 16MiB + traceback 不进 RPC
+- [x] **Stage 4 — 并发/执行正确性**: execute() 深拷贝 nodes 避共享 BaseNode 写污染; recorder 按 execution_id 命名空间; ComputerUseLoop 动作白名单 + 高危确认; orchestrator 真保留 Task handle + cancel 真杀协程; ShellExecutor 超时 kill+wait; 各 executor `wait_for(timeout)` + finally 清理; 委托深度上限 (默认 5)
+- [x] **Stage 5 — 错误处理/信息泄漏**: 错误帧带 trace_id, 栈仅日志不泄客户端; space/KB 输入校验 (必填/类型/长度); rpc_bridge params schema 校验 -32602
+- [x] **Stage 6 — MEDIUM+LOW 收尾**: MessageBus Queue(1024)+deque(1000) drop; ConfigCenter 原子写 (tempfile+flock+0o600+replace) + RLock + 单例锁 + 观察者迭代快照; 插件 URL https-only + 重定向拒 + 50MiB + sha256; claude_desk command 校验; scoped_folder 单例锁 + symlink 拒; mcp_gateway spawn fail-closed (`FUSION_ENABLE_GATEWAY=1`); collab_ws auth_token + 成员校验; latent — desk.space.workflow.* 改走 SpaceArtifactService + Workflow.from_dict (原 AttributeError); JSON-RPC batch -32600 拒 + UDS 有界读 + uvicorn 并发/请求体上限
+- [x] 测试: 868 passed / 1 skipped, ruff 0 issues
 
 #### V0.2.15 (Patch) — 审计缺口补齐 Stage-1 + Stage-2 (文件沙箱 + 断点续跑 + 插件进程外隔离 + P2 测试补齐)
 - [x] **P0-2 授权工作文件夹沙箱** — `security/scoped_folder.py` `ScopedFolderManager.ensure_allowed()` (resolve + relative_to 边界检查) 注入 6 个文件节点 (FileInput/Output/Copy/Move/Find/Delete + BatchRename) + ShellExec; 越界读/写拒绝或跳过

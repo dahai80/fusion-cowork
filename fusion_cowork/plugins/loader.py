@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -51,7 +52,9 @@ class SandboxedNode(BaseNode):
         self._class_name = class_name
         self._sandbox = sandbox
         self._params_schema = params_schema or {
-            "type": "object", "properties": {}, "required": [],
+            "type": "object",
+            "properties": {},
+            "required": [],
         }
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -82,12 +85,33 @@ class SandboxedNode(BaseNode):
 
             sandbox = PluginSandbox()
 
+        # LO-7: 从节点 meta 读 manifest.timeout_seconds 覆盖沙箱默认超时 (>0 才覆盖)
+        call_limits = None
+        meta = getattr(type(self), "_sandbox_meta", {}) or {}
+        meta_timeout = float(meta.get("timeout_seconds", 0.0) or 0.0)
+        if meta_timeout > 0:
+            from .sandbox import ResourceLimits
+
+            base = sandbox.limits
+            call_limits = ResourceLimits(
+                max_cpu_seconds=base.max_cpu_seconds,
+                max_memory_mb=base.max_memory_mb,
+                max_output_bytes=base.max_output_bytes,
+                max_processes=base.max_processes,
+                max_file_size_mb=base.max_file_size_mb,
+                timeout_seconds=meta_timeout,
+                heartbeat_interval=base.heartbeat_interval,
+                max_heartbeat_misses=base.max_heartbeat_misses,
+            )
+            logger.info(f"沙箱节点 {self._class_name} 超时覆盖: {meta_timeout}s (manifest 声明)")
+
         try:
             res = await sandbox.execute(
                 plugin_name=f"sandbox_node:{self._class_name}",
                 command=sys.executable,
                 args=[runner_path],
                 stdin_data=req,
+                limits=call_limits,
             )
         except Exception as e:
             logger.error(f"沙箱节点执行异常 {self._class_name}: {e}")
@@ -99,7 +123,19 @@ class SandboxedNode(BaseNode):
 
         out = res.stdout or ""
         idx = out.find(_RESULT_MARKER)
-        payload_str = out[idx + len(_RESULT_MARKER):].strip() if idx >= 0 else out.strip()
+        if idx < 0:
+            # LO-5: 无结果帧标记 → 子进程未输出约定结果, 不把整 stdout 当 payload
+            stdout_tail = out[-256:]
+            logger.error(
+                f"沙箱节点 {self._class_name} 未输出结果帧 (marker 缺失); "
+                f"stdout尾={stdout_tail!r} stderr={(res.stderr or '')[-256:]!r}"
+            )
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error="子进程未输出结果帧 (缺少 RESULT_MARKER)",
+                summary=f"沙箱返回无标记输出 rc={res.exit_code}",
+            )
+        payload_str = out[idx + len(_RESULT_MARKER) :].strip()
         try:
             payload = json.loads(payload_str)
         except json.JSONDecodeError as e:
@@ -137,7 +173,24 @@ def make_sandboxed_node_class(meta: Dict[str, Any], sandbox: Any) -> type[BaseNo
     """为单个插件节点生成沙箱包装子类 — P1-6。
 
     子类固定类级 name/display_name/category 等元数据, 满足 NodeRegistry 注册需求。
+    LO-6: 未知 meta 键记 warning (不静默吞), 便于插件清单字段错拼写暴露。
     """
+    _EXPECTED_META = {
+        "class_name",
+        "name",
+        "display_name",
+        "category",
+        "description",
+        "icon",
+        "default_label",
+        "entry_file",
+        "params_schema",
+        "timeout_seconds",
+    }
+    unknown = set(meta.keys()) - _EXPECTED_META
+    if unknown:
+        logger.warning(f"沙箱插件节点 meta 含未知键: {sorted(unknown)} (将被忽略)")
+
     cat_raw = meta.get("category", "tool")
     try:
         category = NodeCategory(cat_raw)
@@ -226,6 +279,16 @@ class PluginLoader:
         if manifest.sandbox:
             return self._load_sandboxed(name, manifest, entry_file)
 
+        # CR-21: sandbox=false 插件走主进程 exec_module = 潜在 RCE,
+        # 须在 config plugins.trusted 白名单, 否则拒绝加载。
+        trusted = self._get_trusted_plugins()
+        if name not in trusted:
+            logger.error(
+                f"插件 {name} sandbox=false 且未在 plugins.trusted 白名单, 拒绝加载"
+                f" (需显式信任: config set plugins.trusted '[...{name}...]' 或启动参数 --trust-plugin {name})"
+            )
+            return []
+
         module_name = f"fusion_cowork_plugin_{name}"
         try:
             spec = importlib.util.spec_from_file_location(module_name, str(entry_file))
@@ -292,7 +355,7 @@ class PluginLoader:
 
         out = pre.stdout or ""
         idx = out.find(_RESULT_MARKER)
-        payload_str = out[idx + len(_RESULT_MARKER):].strip() if idx >= 0 else out.strip()
+        payload_str = out[idx + len(_RESULT_MARKER) :].strip() if idx >= 0 else out.strip()
         try:
             payload = json.loads(payload_str)
         except json.JSONDecodeError as e:
@@ -310,6 +373,8 @@ class PluginLoader:
         registered = []
         for meta in node_metas:
             meta["entry_file"] = str(entry_file)
+            # LO-7: 透传 manifest.timeout_seconds 到节点 meta, execute 时覆盖沙箱默认超时
+            meta["timeout_seconds"] = manifest.timeout_seconds
             wrapper_cls = make_sandboxed_node_class(meta, sandbox)
             _sandboxed_factory(wrapper_cls)
             NodeRegistry.register(wrapper_cls)
@@ -321,6 +386,21 @@ class PluginLoader:
         self._sandboxes[name] = sandbox
         logger.info(f"插件 {name} 沙箱加载完成: {len(registered)} 个节点 (全程子进程隔离)")
         return registered
+
+    def _get_trusted_plugins(self) -> List[str]:
+        """CR-21: 读 config plugins.trusted 白名单 (sandbox=false 插件须显式信任)。"""
+        try:
+            from ..config_center import ConfigCenter
+
+            cc = ConfigCenter.get_instance()
+            trusted = cc.get("plugins.trusted", [])
+            if isinstance(trusted, list):
+                return [str(t) for t in trusted]
+            if isinstance(trusted, str):
+                return [t.strip() for t in trusted.split(",") if t.strip()]
+        except Exception as e:
+            logger.debug(f"读取 plugins.trusted 失败, 视为空白名单: {e}")
+        return []
 
     def load_all(self) -> Dict[str, List[BaseNode]]:
         results = {}
@@ -366,17 +446,40 @@ class PluginLoader:
         except ImportError:
             logger.error("安装 URL 插件需要 httpx (pip install httpx)")
             return False
+        # MD-16: 仅允许 https, 拒 http (防中间人篡改插件包)
+        if not url.lower().startswith("https://"):
+            logger.error(f"URL 插件仅允许 https://: {url} (拒 http 防篡改)")
+            return False
+        if not url.lower().endswith(".zip"):
+            logger.error(f"URL 插件仅支持 .zip: {url}")
+            return False
+        _MAX_DOWNLOAD = 50 * 1024 * 1024  # 50 MiB 上限, 防超大包耗尽内存
         try:
             logger.info(f"从 URL 下载插件: {url}")
-            with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+            tmp_path = Path(tempfile.mktemp(suffix=".zip"))
+            downloaded = 0
+            sha = hashlib.sha256()
+            with httpx.Client(timeout=60.0, follow_redirects=False) as client:
                 resp = client.get(url)
+                # MD-16: 显式拒重定向 (防开放重定向到内网/恶意源); 客户端须用直链
+                if resp.is_redirect:
+                    logger.error(f"URL 插件拒重定向: {url} -> {resp.headers.get('location', '?')}")
+                    return False
                 resp.raise_for_status()
-            if not url.lower().endswith(".zip"):
-                logger.error(f"URL 插件仅支持 .zip: {url}")
-                return False
-            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
-                tmp.write(resp.content)
-                tmp_path = Path(tmp.name)
+                with open(tmp_path, "wb") as f:
+                    for chunk in resp.iter_bytes(chunk_size=65536):
+                        downloaded += len(chunk)
+                        if downloaded > _MAX_DOWNLOAD:
+                            logger.error(f"URL 插件超大小上限 {_MAX_DOWNLOAD} 字节, 中止下载: {url}")
+                            f.close()
+                            try:
+                                tmp_path.unlink()
+                            except OSError:
+                                pass
+                            return False
+                        sha.update(chunk)
+                        f.write(chunk)
+            logger.info(f"URL 插件下载完成: {downloaded} 字节, sha256={sha.hexdigest()[:16]}")
             try:
                 return self._install_zip(tmp_path)
             finally:
@@ -389,9 +492,25 @@ class PluginLoader:
             return False
 
     def _install_zip(self, zip_path: Path) -> bool:
+        base = self._plugins_dir.resolve()
         try:
             with zipfile.ZipFile(zip_path, "r") as zf:
                 names = zf.namelist()
+                # CR-22: 逐条校验防 zip-slip — 每个解压目标必须落在 plugins_dir 内
+                for member in zf.infolist():
+                    if member.is_dir():
+                        continue
+                    # 拒绝对路径 / 驱动符 / ../ 遍历
+                    if member.filename.startswith(("/", "\\")) or ":" in member.filename.split("/")[0]:
+                        logger.error(f"zip-slip 拒绝: 非法路径 {member.filename!r}")
+                        return False
+                    dest = (base / member.filename).resolve()
+                    try:
+                        dest.relative_to(base)
+                    except ValueError:
+                        logger.error(f"zip-slip 拒绝: {member.filename!r} 越界 {base}")
+                        return False
+
                 top_dirs = set()
                 for n in names:
                     parts = n.split("/")
@@ -401,10 +520,18 @@ class PluginLoader:
                     logger.error("zip 文件结构无效: 无顶层目录")
                     return False
                 plugin_name = top_dirs.pop()
-                target = self._plugins_dir / plugin_name
+                target = (base / plugin_name).resolve()
+                # CR-22: rmtree 前校验 target 在 plugins_dir 内, 防越界删除
+                try:
+                    target.relative_to(base)
+                except ValueError:
+                    logger.error(f"插件目录越界, 拒绝删除: {target}")
+                    return False
                 if target.exists():
                     shutil.rmtree(target)
-                zf.extractall(str(self._plugins_dir))
+                # CR-22: 安全解压 — 逐条校验后再写 (extractall 已被上述校验替代)
+                for member in zf.infolist():
+                    zf.extract(member, str(base))
                 logger.info(f"zip 插件已安装: {plugin_name}")
                 return True
         except zipfile.BadZipFile as e:
@@ -413,6 +540,19 @@ class PluginLoader:
         except Exception as e:
             logger.error(f"zip 安装失败: {e}")
             return False
+
+    def _safe_rmtree(self, name: str) -> bool:
+        """CR-22: 仅允许删除 plugins_dir 内的目录, 拒越界 (防 ../ 遍历)。"""
+        base = self._plugins_dir.resolve()
+        target = (base / name).resolve()
+        try:
+            target.relative_to(base)
+        except ValueError:
+            logger.error(f"插件目录越界, 拒绝删除: {target}")
+            return False
+        if target.exists() and target.is_dir():
+            shutil.rmtree(target)
+        return True
 
     def _install_dir(self, src_dir: Path) -> bool:
         manifest_path = src_dir / "manifest.json"
@@ -424,7 +564,8 @@ class PluginLoader:
             return False
         target = self._plugins_dir / manifest.name
         if target.exists():
-            shutil.rmtree(target)
+            if not self._safe_rmtree(manifest.name):
+                return False
         shutil.copytree(str(src_dir), str(target))
         logger.info(f"插件已安装: {manifest.name} -> {target}")
         return True
@@ -435,7 +576,8 @@ class PluginLoader:
         if not plugin_dir.exists():
             logger.warning(f"插件目录不存在: {name}")
             return False
-        shutil.rmtree(plugin_dir)
+        if not self._safe_rmtree(name):
+            return False
         logger.info(f"插件已卸载删除: {name}")
         return True
 
@@ -473,6 +615,16 @@ class PluginLoader:
         imported = []
         for name, spec in servers.items():
             spec = spec or {}
+            # MD-17: 校验 command — 非空 + 绝对路径或白名单可执行名, 拒盲信外部 spec
+            command = str(spec.get("command", "")).strip()
+            args = spec.get("args", [])
+            env = spec.get("env", {})
+            if not command:
+                logger.warning(f"跳过 Claude Desktop MCP server (command 为空): {name}")
+                continue
+            if not self._is_safe_mcp_command(command, args, env):
+                logger.warning(f"跳过 Claude Desktop MCP server (command 校验失败): {name} command={command!r}")
+                continue
             manifest = PluginManifest(
                 name=f"mcp_{name}",
                 version="0.1.0",
@@ -488,15 +640,56 @@ class PluginLoader:
             (target / "manifest.json").write_text(
                 json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
             )
-            # 记录 MCP server spec 供运行时 MCP client 拉起
+            # MD-17: 记录 source hash (command+args) 供运行时校验未被篡改
+            source_hash = hashlib.sha256(
+                json.dumps({"command": command, "args": args}, sort_keys=True).encode()
+            ).hexdigest()
             (target / "mcp_server.json").write_text(
                 json.dumps(
-                    {"command": spec.get("command", ""), "args": spec.get("args", []), "env": spec.get("env", {})},
+                    {
+                        "command": command,
+                        "args": args,
+                        "env": self._sanitize_mcp_env(env),
+                        "source_hash": source_hash,
+                    },
                     ensure_ascii=False,
                     indent=2,
                 ),
                 encoding="utf-8",
             )
             imported.append(manifest.name)
-            logger.info(f"已从 Claude Desktop 导入 MCP server: {name} -> {manifest.name}")
+            logger.info(
+                f"已从 Claude Desktop 导入 MCP server: {name} -> {manifest.name} source_hash={source_hash[:16]}"
+            )
         return imported
+
+    @staticmethod
+    def _is_safe_mcp_command(command: str, args: Any, env: Any) -> bool:
+        # MD-17: command 须非空且不含 shell 元字符; args 须为 list; 拒明显危险调用
+        if not isinstance(args, list):
+            return False
+        shell_meta = {";", "|", "&", "`", "$", "(", ")", ">", "<", "\n", "\r"}
+        if any(ch in command for ch in shell_meta):
+            return False
+        # 拒危险命令名 (防拉起任意进程)
+        dangerous = {"rm", "rmdir", "mkfs", "dd", "shred", "curl", "wget", "nc", "bash", "sh"}
+        base = Path(command).name
+        if base in dangerous:
+            return False
+        for a in args:
+            if not isinstance(a, (str, int, float, bool)):
+                return False
+            if isinstance(a, str) and any(ch in a for ch in shell_meta):
+                return False
+        return True
+
+    @staticmethod
+    def _sanitize_mcp_env(env: Any) -> Dict[str, str]:
+        # MD-17: env 仅保留字符串值, 拒非字符串/空键 (防注入畸形 env)
+        if not isinstance(env, dict):
+            return {}
+        safe: Dict[str, str] = {}
+        for k, v in env.items():
+            if isinstance(k, str) and k and isinstance(v, (str, int, float, bool)):
+                safe[k] = str(v)
+        return safe

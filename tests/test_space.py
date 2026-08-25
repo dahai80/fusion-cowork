@@ -1042,7 +1042,9 @@ class TestFusionMLXClientEnhancements:
             mock_resp = MagicMock()
             mock_resp.status_code = 400
             mock_resp.text = "Bad Request"
-            mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError("400", request=MagicMock(), response=mock_resp)
+            mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+                "400", request=MagicMock(), response=mock_resp
+            )
             client._client = MagicMock()
             client._client.post = AsyncMock(return_value=mock_resp)
             with pytest.raises(httpx.HTTPStatusError):

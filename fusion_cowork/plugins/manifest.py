@@ -19,6 +19,8 @@ class PluginManifest:
     dependencies: List[str] = field(default_factory=list)
     entry_point: str = "plugin"
     sandbox: bool = False
+    # LO-7: 插件声明节点执行超时 (秒); 0 = 用沙箱默认 (120s), >0 覆盖默认
+    timeout_seconds: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -30,10 +32,17 @@ class PluginManifest:
             "dependencies": self.dependencies,
             "entry_point": self.entry_point,
             "sandbox": self.sandbox,
+            "timeout_seconds": self.timeout_seconds,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> PluginManifest:
+        try:
+            timeout_seconds = float(data.get("timeout_seconds", 0.0))
+        except (TypeError, ValueError):
+            timeout_seconds = 0.0
+        if timeout_seconds < 0:
+            timeout_seconds = 0.0
         return cls(
             name=data.get("name", ""),
             version=data.get("version", "0.1.0"),
@@ -43,6 +52,7 @@ class PluginManifest:
             dependencies=data.get("dependencies", []),
             entry_point=data.get("entry_point", "plugin"),
             sandbox=bool(data.get("sandbox", False)),
+            timeout_seconds=timeout_seconds,
         )
 
     @classmethod

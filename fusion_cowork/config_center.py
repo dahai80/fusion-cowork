@@ -4,11 +4,15 @@ import asyncio
 import json
 import logging
 import os
+import tempfile
+import threading
 import time
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+_instance_lock = threading.Lock()
 
 _CONFIG_DIR = os.path.expanduser("~/.fusion-cowork")
 _CONFIG_FILE = os.path.join(_CONFIG_DIR, "config.json")
@@ -56,6 +60,7 @@ class ConfigCenter:
     def __init__(self, config_file: str = ""):
         self._store: Dict[str, ConfigEntry] = {}
         self._observers: List[ConfigObserver] = []
+        self._lock = threading.RLock()
         self._config_file = config_file or _CONFIG_FILE
         self._defaults: Dict[str, Any] = {
             "engine.max_retries": 3,
@@ -82,9 +87,10 @@ class ConfigCenter:
 
     @classmethod
     def get_instance(cls) -> ConfigCenter:
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
+        with _instance_lock:
+            if cls._instance is None:
+                cls._instance = cls()
+            return cls._instance
 
     @classmethod
     def reset_instance(cls) -> None:
@@ -98,21 +104,23 @@ class ConfigCenter:
         return default
 
     def set(self, key: str, value: Any, source: str = "user") -> ConfigChange:
-        old_value = self.get(key)
-        entry = ConfigEntry(key=key, value=value, source=source)
-        self._store[key] = entry
-        change = ConfigChange(key=key, old_value=old_value, new_value=value)
-        logger.info(f"ConfigCenter.set key={key} old={old_value} new={value} source={source}")
+        with self._lock:
+            old_value = self.get(key)
+            entry = ConfigEntry(key=key, value=value, source=source)
+            self._store[key] = entry
+            change = ConfigChange(key=key, old_value=old_value, new_value=value)
+            logger.info(f"ConfigCenter.set key={key} old={old_value} new={value} source={source}")
         self._notify_observers(change)
         return change
 
     def delete(self, key: str) -> bool:
-        if key not in self._store:
-            logger.debug(f"ConfigCenter.delete key={key} not found")
-            return False
-        old_value = self._store.pop(key).value
-        change = ConfigChange(key=key, old_value=old_value, new_value=None)
-        logger.info(f"ConfigCenter.delete key={key}")
+        with self._lock:
+            if key not in self._store:
+                logger.debug(f"ConfigCenter.delete key={key} not found")
+                return False
+            old_value = self._store.pop(key).value
+            change = ConfigChange(key=key, old_value=old_value, new_value=None)
+            logger.info(f"ConfigCenter.delete key={key}")
         self._notify_observers(change)
         return True
 
@@ -151,7 +159,8 @@ class ConfigCenter:
         return removed > 0
 
     def _notify_observers(self, change: ConfigChange) -> None:
-        for observer in self._observers:
+        # MD-11: 迭代快照, 防 callback 内 observe/unobserve 改 _observers 致 RuntimeError
+        for observer in list(self._observers):
             if not observer.matches(change.key):
                 continue
             try:
@@ -167,36 +176,58 @@ class ConfigCenter:
                 logger.error(f"ConfigCenter observer error key={change.key}: {e}")
 
     def save(self, path: str = "") -> None:
+        # MD-12: 原子写 — temp + os.replace + 0o600 + flock, 防并发写撕裂/泄漏
         target = path or self._config_file
         os.makedirs(os.path.dirname(target), exist_ok=True)
-        data = {
-            "entries": {k: asdict(v) for k, v in self._store.items()},
-            "defaults": dict(self._defaults),
-        }
-        with open(target, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        with self._lock:
+            data = {
+                "entries": {k: asdict(v) for k, v in self._store.items()},
+                "defaults": dict(self._defaults),
+            }
+            try:
+                import fcntl
+
+                use_flock = True
+            except ImportError:
+                use_flock = False
+            fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(target), suffix=".tmp", prefix=".cfg_")
+            try:
+                if use_flock:
+                    fcntl.flock(fd, fcntl.LOCK_EX)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                os.chmod(tmp_path, 0o600)
+                os.replace(tmp_path, target)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         logger.info(f"ConfigCenter.save path={target} entries={len(self._store)}")
 
     def load(self, path: str = "") -> int:
+        # LO-4: load 与 set/delete 互斥, 防并发改 _store
         target = path or self._config_file
         if not os.path.exists(target):
             logger.debug(f"ConfigCenter.load file not found: {target}")
             return 0
         with open(target, encoding="utf-8") as f:
             data = json.load(f)
-        if "defaults" in data and isinstance(data["defaults"], dict):
-            self._defaults.update(data["defaults"])
-        entries = data.get("entries", {})
-        loaded = 0
-        for key, entry_data in entries.items():
-            if isinstance(entry_data, dict):
-                self._store[key] = ConfigEntry(
-                    key=entry_data.get("key", key),
-                    value=entry_data.get("value"),
-                    updated_at=entry_data.get("updated_at", 0.0),
-                    source=entry_data.get("source", "user"),
-                )
-                loaded += 1
+        with self._lock:
+            if "defaults" in data and isinstance(data["defaults"], dict):
+                self._defaults.update(data["defaults"])
+            entries = data.get("entries", {})
+            loaded = 0
+            for key, entry_data in entries.items():
+                if isinstance(entry_data, dict):
+                    self._store[key] = ConfigEntry(
+                        key=entry_data.get("key", key),
+                        value=entry_data.get("value"),
+                        updated_at=entry_data.get("updated_at", 0.0),
+                        source=entry_data.get("source", "user"),
+                    )
+                    loaded += 1
         logger.info(f"ConfigCenter.load path={target} entries={loaded}")
         return loaded
 

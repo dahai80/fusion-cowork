@@ -383,7 +383,15 @@ class MCPServer:
             import uvicorn
 
             logger.info(f"MCP 服务器启动 (HTTP 模式): {self.host}:{self.port}")
-            config = uvicorn.Config(app, host=self.host, port=self.port, log_level="info")
+            # MD-1: 限并发 + 请求体上限 1MiB, 防无界 body OOM
+            config = uvicorn.Config(
+                app,
+                host=self.host,
+                port=self.port,
+                log_level="info",
+                limit_concurrency=100,
+                max_request_size=1024 * 1024,
+            )
             server = uvicorn.Server(config)
             await server.serve()
         except ImportError:
@@ -400,7 +408,15 @@ class MCPServer:
             import uvicorn
 
             logger.info(f"MCP 服务器启动 (Streamable HTTP 模式): {self.host}:{self.port}")
-            config = uvicorn.Config(app, host=self.host, port=self.port, log_level="info")
+            # MD-1: 限并发 + 请求体上限 1MiB, 防无界 body OOM
+            config = uvicorn.Config(
+                app,
+                host=self.host,
+                port=self.port,
+                log_level="info",
+                limit_concurrency=100,
+                max_request_size=1024 * 1024,
+            )
             server = uvicorn.Server(config)
             await server.serve()
         except ImportError:

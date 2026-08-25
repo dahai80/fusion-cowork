@@ -88,13 +88,22 @@ class AgentOrchestrator:
     - 结果聚合
     """
 
-    def __init__(self):
+    def __init__(self, permission_manager=None, hook_manager=None, session_store=None):
         self._agents: Dict[str, Agent] = {}
         self._plans: Dict[str, OrchestrationPlan] = {}
         self._executors: Dict[str, Callable] = {}
         self._tasks: Dict[str, AgentTask] = {}
         self._runtimes: Dict[str, Any] = {}
         self._message_bus = None
+        # HI-9: 父引擎运行时, 注入子工作流执行器, 使委托工作流受同一权限/ Hook 约束
+        self._permission_manager = permission_manager
+        self._hook_manager = hook_manager
+        self._session_store = session_store
+        # HI-7: 保留 asyncio.Task handle, 供 cancel_task 真取消 (而非仅翻 flag)
+        self._task_handles: Dict[str, asyncio.Task] = {}
+        self._bg_tasks: set = set()
+        # HI-8: 单任务超时上限 (秒), execute_plan/_execute_task 用 asyncio.wait_for 包裹
+        self._task_timeout: float = 120.0
 
     def register_default_agents(self) -> None:
         """注册默认 Agent + 执行器。"""
@@ -169,6 +178,19 @@ class AgentOrchestrator:
         for agent_id, executor in DEFAULT_EXECUTORS.items():
             self.register_executor(agent_id, executor)
 
+        # HI-9: 有父运行时则换私有 WorkflowExecutor (DEFAULT_EXECUTORS 是模块级单例, 共享注入会跨实例污染)
+        if self._permission_manager is not None or self._hook_manager is not None or self._session_store is not None:
+            from .executors import WorkflowExecutor
+
+            wf_exec = WorkflowExecutor()
+            wf_exec.inject_runtime(
+                permission_manager=self._permission_manager,
+                hook_manager=self._hook_manager,
+                session_store=self._session_store,
+            )
+            self.register_executor("executor_workflow", wf_exec)
+            logger.debug("orchestrator 已绑定私有 WorkflowExecutor + 注入父引擎运行时")
+
         self.register_executor("planner", DEFAULT_EXECUTORS["executor_mlx"])
         self.register_executor("analyzer", DEFAULT_EXECUTORS["executor_mlx"])
         self.register_executor("validator", DEFAULT_EXECUTORS["executor_mlx"])
@@ -194,50 +216,55 @@ class AgentOrchestrator:
         )
         self._tasks[task_id] = task
 
-        # 后台执行
-        asyncio.create_task(self._run_submitted_task(task))
+        # 后台执行 — HI-7: 保留 handle 进 _task_handles, 供 cancel_task 真取消协程
+        handle = asyncio.create_task(self._run_submitted_task(task))
+        self._task_handles[task_id] = handle
+        self._bg_tasks.add(handle)
+        handle.add_done_callback(lambda h: self._bg_tasks.discard(h))
 
         return task_id
 
     async def _run_submitted_task(self, task: AgentTask) -> None:
-        """执行提交的任务。"""
+        """执行提交的任务 — HI-18: CancelledError 单独捕获, finally 置终态 + completed_at。"""
         task.status = "running"
         task.started_at = time.time()
 
-        executor = self._executors.get(task.agent_id)
-        if executor:
-            try:
+        try:
+            executor = self._executors.get(task.agent_id)
+            if executor:
                 if asyncio.iscoroutinefunction(executor):
                     result = await executor(task.input_data)
                 else:
                     result = executor(task.input_data)
                 task.output_data = result if isinstance(result, dict) else {"result": result}
                 task.status = "completed"
-            except Exception as e:
-                task.error = str(e)
-                task.status = "failed"
-                logger.error(f"提交任务执行异常: {e}")
-        else:
-            node_executor = self._executors.get("executor_node")
-            if node_executor:
-                try:
+            else:
+                node_executor = self._executors.get("executor_node")
+                if node_executor:
                     if asyncio.iscoroutinefunction(node_executor):
                         result = await node_executor(task.input_data)
                     else:
                         result = node_executor(task.input_data)
                     task.output_data = result if isinstance(result, dict) else {"result": result}
                     task.status = "completed"
-                except Exception as e:
-                    task.error = str(e)
+                else:
+                    task.error = f"无可用执行器: agent_id={task.agent_id}"
+                    task.output_data = {"status": "no_executor", "agent_id": task.agent_id, "input": task.input_data}
                     task.status = "failed"
-                    logger.error(f"提交任务降级 executor_node 执行异常: {e}")
-            else:
-                task.error = f"无可用执行器: agent_id={task.agent_id}"
-                task.output_data = {"status": "no_executor", "agent_id": task.agent_id, "input": task.input_data}
-                task.status = "failed"
-                logger.error(f"任务无执行器且无降级路径: {task.task_id} agent_id={task.agent_id}")
-
-        task.completed_at = time.time()
+                    logger.error(f"任务无执行器且无降级路径: {task.task_id} agent_id={task.agent_id}")
+        except asyncio.CancelledError:
+            # HI-18: CancelledError 是 BaseException, 旧 except Exception 不接 → status 卡 running
+            task.status = "cancelled"
+            task.error = "用户取消"
+            logger.info(f"提交任务被取消: {task.task_id}")
+            raise
+        except Exception as e:
+            task.error = str(e)
+            task.status = "failed"
+            logger.error(f"提交任务执行异常: {e}")
+        finally:
+            task.completed_at = time.time()
+            self._task_handles.pop(task.task_id, None)
 
     def cancel_task(self, task_id: str) -> bool:
         task = self._tasks.get(task_id)
@@ -247,6 +274,11 @@ class AgentOrchestrator:
         if task.status in ("completed", "failed", "cancelled"):
             logger.info(f"任务已终态，不可取消: {task_id} status={task.status}")
             return False
+        # HI-8: 真取消运行协程, 非仅翻 flag (flip flag 不停已运行 executor)
+        handle = self._task_handles.get(task_id)
+        if handle is not None and not handle.done():
+            handle.cancel()
+            logger.info(f"任务协程已请求取消: {task_id}")
         task.status = "cancelled"
         task.error = "用户取消"
         task.completed_at = time.time()
@@ -390,10 +422,16 @@ class AgentOrchestrator:
         if executor:
             try:
                 if asyncio.iscoroutinefunction(executor):
-                    result = await executor(task.input_data)
+                    # HI-8: 单任务超时, 防卡死 executor 拖垮整个 plan
+                    result = await asyncio.wait_for(executor(task.input_data), timeout=self._task_timeout)
                 else:
                     result = executor(task.input_data)
                 return result if isinstance(result, dict) else {"result": result}
+            except TimeoutError:
+                task.status = "failed"
+                task.error = f"任务超时 ({self._task_timeout}s)"
+                logger.warning(f"任务超时: {task.task_id} ({self._task_timeout}s)")
+                return {"error": task.error}
             except Exception as e:
                 task.status = "failed"
                 task.error = str(e)
@@ -405,8 +443,13 @@ class AgentOrchestrator:
             fallback = DEFAULT_EXECUTORS.get("executor_node")
             if fallback:
                 try:
-                    result = await fallback(task.input_data)
+                    result = await asyncio.wait_for(fallback(task.input_data), timeout=self._task_timeout)
                     return result if isinstance(result, dict) else {"result": result}
+                except TimeoutError:
+                    task.status = "failed"
+                    task.error = f"降级任务超时 ({self._task_timeout}s)"
+                    logger.warning(f"降级任务超时: {task.task_id} ({self._task_timeout}s)")
+                    return {"error": task.error}
                 except Exception as e:
                     task.status = "failed"
                     task.error = str(e)
@@ -491,10 +534,17 @@ class AgentOrchestrator:
         logger.info(f"AgentRuntime 启动完成: {len(self._runtimes)} 个运行时")
 
     async def stop_runtimes(self) -> None:
-        """停止所有 Runtime。"""
+        """停止所有 Runtime — HI-7/18: 同时取消残留后台任务, 防泄漏。"""
         for runtime in self._runtimes.values():
             await runtime.stop()
         self._runtimes.clear()
+        for handle in list(self._bg_tasks):
+            if not handle.done():
+                handle.cancel()
+        if self._bg_tasks:
+            await asyncio.gather(*self._bg_tasks, return_exceptions=True)
+            self._bg_tasks.clear()
+        self._task_handles.clear()
         logger.info("所有 AgentRuntime 已停止")
 
     def get_message_bus(self):
