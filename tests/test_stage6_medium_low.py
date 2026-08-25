@@ -61,6 +61,64 @@ class TestMessageBusBounded:
         assert len(hist) <= _HISTORY_MAX
 
 
+# ── E-6: MessageBus 静默丢消息 → 错误回传 ──
+
+
+class TestMessageBusDeliveryFailure:
+    @pytest.mark.asyncio
+    async def test_send_all_full_raises(self):
+        # E-6: 点对点全部队列满 → raise MessageDeliveryError, 调用方不再拿 msg_id 当成功
+        from fusion_cowork.orchestrator.comm import MessageDeliveryError
+
+        bus = AgentMessageBus()
+        q = bus.subscribe("inbox:agent_dead")
+        for i in range(_QUEUE_MAX):
+            q.put_nowait({"i": i})
+        with pytest.raises(MessageDeliveryError) as exc:
+            await bus.send("runtime", "agent_dead", {"action": "execute"})
+        assert exc.value.receiver == "agent_dead"
+        # 丢弃消息留底, 可回查
+        dropped = bus.get_dropped()
+        assert len(dropped) >= 1
+        assert dropped[-1].receiver == "agent_dead"
+
+    @pytest.mark.asyncio
+    async def test_send_partial_delivery_ok(self):
+        # E-6: 部分投递成功 → 不 raise, 正常返回 msg_id
+        bus = AgentMessageBus()
+        _q_full = bus.subscribe("inbox:partial")
+        _q_ok = bus.subscribe("inbox:partial")
+        for i in range(_QUEUE_MAX):
+            _q_full.put_nowait({"i": i})
+        msg_id = await bus.send("runtime", "partial", {"x": 1})
+        assert msg_id
+        assert _q_ok.qsize() == 1
+
+    @pytest.mark.asyncio
+    async def test_publish_overflow_logs_and_tracks(self):
+        # E-6: 广播溢出不 raise (多订阅者 best-effort), 但留底可回查
+        bus = AgentMessageBus()
+        q = bus.subscribe("overflow_b")
+        for i in range(_QUEUE_MAX):
+            q.put_nowait({"i": i})
+        msg_id = await bus.publish("overflow_b", "sender_b", {"x": 1})
+        assert msg_id
+        dropped = bus.get_dropped()
+        assert len(dropped) >= 1
+        assert dropped[-1].topic == "overflow_b"
+
+    @pytest.mark.asyncio
+    async def test_clear_dropped(self):
+        bus = AgentMessageBus()
+        q = bus.subscribe("overflow_c")
+        for i in range(_QUEUE_MAX):
+            q.put_nowait({"i": i})
+        await bus.publish("overflow_c", "sender_c", {"x": 1})
+        assert len(bus.get_dropped()) >= 1
+        bus.clear_dropped()
+        assert bus.get_dropped() == []
+
+
 # ── MD-11/12/13/LO-4: ConfigCenter atomic + lock ──
 
 

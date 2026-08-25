@@ -20,6 +20,18 @@ logger = logging.getLogger(__name__)
 
 _QUEUE_MAX = 1024
 _HISTORY_MAX = 1000
+# E-6: 丢弃消息保留上限, 供 get_dropped() 回查 (审计: 静默丢无重投无回传)
+_DROPPED_MAX = 256
+
+
+class MessageDeliveryError(RuntimeError):
+    """E-6: 点对点投递全部失败 — 调用方须感知, 不再拿 msg_id 当成功。"""
+
+    def __init__(self, sender: str, receiver: str, msg_id: str, reason: str = "队列满"):
+        self.sender = sender
+        self.receiver = receiver
+        self.msg_id = msg_id
+        super().__init__(f"消息投递失败 {sender}→{receiver} msg_id={msg_id}: {reason}")
 
 
 @dataclass
@@ -46,6 +58,8 @@ class AgentMessageBus:
     def __init__(self):
         self._subscribers: Dict[str, List[asyncio.Queue]] = {}
         self._history: Deque[AgentMessage] = deque(maxlen=_HISTORY_MAX)
+        # E-6: 丢弃消息留底 (点对点 raise 前也存, 供诊断/重投)
+        self._dropped: Deque[AgentMessage] = deque(maxlen=_DROPPED_MAX)
 
     def subscribe(self, topic: str) -> asyncio.Queue:
         """订阅主题，返回消息队列。"""
@@ -79,7 +93,10 @@ class AgentMessageBus:
                 q.put_nowait(msg)
             except asyncio.QueueFull:
                 dropped += 1
-                logger.warning(f"消息总线: 队列满 topic={topic} 丢弃消息 msg_id={msg.msg_id}")
+                # E-6: 广播丢弃升 ERROR (旧版仅 warning 静默吞), 留底供 get_dropped() 回查
+                logger.error(f"消息总线: 队列满 topic={topic} 丢弃 msg_id={msg.msg_id} (订阅者未消费)")
+        if dropped > 0:
+            self._dropped.append(msg)
 
         logger.info(f"消息发布: {sender} → {topic} ({len(queues)} 订阅者, 丢弃 {dropped})")
         return msg.msg_id
@@ -100,18 +117,24 @@ class AgentMessageBus:
         all_queues = queues + inbox_queues
 
         delivered = 0
+        full_queues = 0
         for q in all_queues:
             try:
                 q.put_nowait(msg)
                 delivered += 1
             except asyncio.QueueFull:
-                logger.warning(
-                    f"消息总线: inbox 满 receiver={receiver} 丢弃 msg_id={msg.msg_id} (可能死 agent, 队列未消费)"
+                full_queues += 1
+                logger.error(
+                    f"消息总线: inbox 满 receiver={receiver} msg_id={msg.msg_id} (可能死 agent, 队列未消费)"
                 )
 
-        if delivered == 0 and all_queues:
-            logger.warning(f"消息总线: {sender} → {receiver} 全部投递失败 ({len(all_queues)} 队列均满)")
         logger.info(f"点对点: {sender} → {receiver} (投递 {delivered}/{len(all_queues)})")
+        # E-6: 全部投递失败 → raise, 调用方拿到异常不再误判 msg_id=成功 (审计: 静默丢无错误回传)
+        if delivered == 0 and all_queues:
+            self._dropped.append(msg)
+            raise MessageDeliveryError(
+                sender=sender, receiver=receiver, msg_id=msg.msg_id, reason=f"{len(all_queues)} 队列均满"
+            )
         return msg.msg_id
 
     def get_history(self, topic: str = "", limit: int = 100) -> List[AgentMessage]:
@@ -124,3 +147,11 @@ class AgentMessageBus:
     def clear_history(self) -> None:
         """清除消息历史。"""
         self._history.clear()
+
+    def get_dropped(self, limit: int = 100) -> List[AgentMessage]:
+        """E-6: 取最近丢弃消息 (供诊断/重投)。"""
+        return list(self._dropped)[-limit:]
+
+    def clear_dropped(self) -> None:
+        """E-6: 清除丢弃消息留底。"""
+        self._dropped.clear()
