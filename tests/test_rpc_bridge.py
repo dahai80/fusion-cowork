@@ -39,24 +39,25 @@ async def test_dispatch_rpc_rejects_non_plugins_method():
 
 @pytest.mark.asyncio
 async def test_dispatch_rpc_unknown_plugins_method():
-    # plugins.bogus (点格式) 绕过白名单但命中 startswith("plugins.") → 委托 MCPHandler
-    # 依赖在 → handler 返回 -32601 (unknown method); 依赖缺 → ImportError → -32603
+    # LO-10: 点格式非白名单方法 (plugins.bogus) → guard 层 -32601, 不进 handler
+    # (guard: method in PLUGINS_METHODS or method.startswith("plugins/"))
     resp = await dispatch_rpc({"jsonrpc": "2.0", "id": 2, "method": "plugins.bogus", "params": {}})
     assert resp["jsonrpc"] == "2.0"
     assert resp["id"] == 2
-    if is_plugins_available():
-        assert resp["error"]["code"] == -32601
-    else:
-        assert resp["error"]["code"] == -32603
+    assert resp["error"]["code"] == -32601
 
 
 @pytest.mark.asyncio
 async def test_dispatch_rpc_rejects_slash_unknown_plugins():
-    # plugins/bogus (斜杠) 不在白名单且不命中 startswith("plugins.") → dispatch 层 -32601
+    # LO-10: 斜杠前缀宽匹配 (plugins/bogus 命中 startswith("plugins/")) → 委托 MCPHandler
+    # 依赖在 → handler 返回 -32601 (unknown method); 依赖缺 → ImportError → -32603
     resp = await dispatch_rpc({"jsonrpc": "2.0", "id": 9, "method": "plugins/bogus", "params": {}})
     assert resp["jsonrpc"] == "2.0"
     assert resp["id"] == 9
-    assert resp["error"]["code"] == -32601
+    if is_plugins_available():
+        assert resp["error"]["code"] == -32601
+    else:
+        assert resp["error"]["code"] == -32603
 
 
 @pytest.mark.asyncio

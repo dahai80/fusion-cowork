@@ -516,10 +516,15 @@ class TestSandboxEnv:
         assert env.get("PATH") == "/usr/bin"
         assert env.get("FUSION_SANDBOX_ID", "").startswith("sbx_")
 
-    def test_seatbelt_wrap_returns_sandbox_exec(self):
-        from fusion_cowork.plugins.sandbox import PluginSandbox
+    def test_seatbelt_wrap_returns_sandbox_exec(self, monkeypatch):
+        # CI (ubuntu) 无 sandbox-exec → _wrap_seatbelt 回退原命令; 跨平台断言 seatbelt
+        # 路径需 mock shutil.which 假装 sandbox-exec 可用
+        import shutil as _shutil
 
-        sbx = PluginSandbox()
+        import fusion_cowork.plugins.sandbox as sandbox_mod
+
+        monkeypatch.setattr(_shutil, "which", lambda name: "/usr/bin/sandbox-exec" if name == "sandbox-exec" else None)
+        sbx = sandbox_mod.PluginSandbox()
         cmd, args = sbx._wrap_seatbelt("/bin/true", ["--flag"])
         assert cmd == "sandbox-exec"
         assert "-f" in args

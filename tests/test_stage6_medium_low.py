@@ -309,10 +309,15 @@ class TestRpcBridgeDispatch:
 
     @pytest.mark.asyncio
     async def test_unknown_plugins_method_rejected_32601(self):
-        from fusion_cowork.server.rpc_bridge import dispatch_rpc
+        # LO-10: 斜杠前缀宽匹配 (plugins/nonexistent 命中 startswith("plugins/")) → 委托 MCPHandler
+        # 依赖在 → handler -32601 (unknown method); 依赖缺 → ImportError → -32603
+        from fusion_cowork.server.rpc_bridge import dispatch_rpc, is_plugins_available
 
         resp = await dispatch_rpc({"jsonrpc": "2.0", "id": 1, "method": "plugins/nonexistent"})
-        assert resp["error"]["code"] == -32601
+        if is_plugins_available():
+            assert resp["error"]["code"] == -32601
+        else:
+            assert resp["error"]["code"] == -32603
 
 
 # ── LO-12: mcp_gateway spawn fail-closed ──
