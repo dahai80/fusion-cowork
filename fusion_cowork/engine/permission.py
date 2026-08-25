@@ -59,6 +59,8 @@ HIGH_RISK_NODES = frozenset(
         "cdp_fill_form",
         "cdp_emulate",
         "cdp_network",
+        "cdp_wait_for",  # E-10: wait_for_function 任意 JS 注入, 同 cdp_evaluate 高危
+        "fetch_url",  # E-11: SSRF 面, 默认拒, 须显式放行
     }
 )
 
@@ -85,11 +87,16 @@ class Permission:
         if not params:
             return True
         if self.scope.startswith("file:"):
-            prefix = self.scope[5:].replace("**", "")
+            # E-3: scope 前缀含 ~/ 须 expanduser — 路径已展开为绝对 (/Users/x/...),
+            # 否则 startswith("~/Desktop/") 恒 False, 规则静默失效。
+            # params 值若仍带 ~/ 也一并展开比较 (两侧都对齐绝对路径)。
+            prefix = os.path.expanduser(self.scope[5:].replace("**", ""))
             for key in ("path", "output_path", "save_path", "source_path"):
                 val = params.get(key, "")
-                if isinstance(val, str) and val.startswith(prefix):
-                    return True
+                if isinstance(val, str):
+                    val_exp = os.path.expanduser(val)
+                    if val_exp == prefix.rstrip("/") or val_exp.startswith(prefix):
+                        return True
             return False
         if self.scope.startswith("command:"):
             prefix = self.scope[8:].replace("*", "")
@@ -110,10 +117,18 @@ class PermissionManager:
         self._hook_manager = hook_manager
 
     async def check(self, tool_name: str, action: str = "", params: Dict[str, Any] = None) -> bool:
-        if self.level == PermissionLevel.BYPASS:
-            return True
+        # A-6: deny 规则须先于 Hook 批准判定 — 否则 Hook approve 可覆盖显式 deny (绕过)。
+        # 先扫 deny: 命中 deny → 即拒, Hook 批准也不再翻盘。
+        denied = False
+        ctx = None
+        for rule in self.rules:
+            if rule.matches(tool_name, params) and not rule.allowed:
+                logger.warning(f"权限拒绝 (deny 规则优先): {tool_name} (scope={rule.scope})")
+                denied = True
+                break
 
-        # Hook: PERMISSION_REQUEST — 带外确认入口 (CR-2/3)
+        # Hook: PERMISSION_REQUEST — 带外确认入口 (CR-2/3)。A-6: BYPASS 亦不跳过审计 Hook
+        # (仍 fire 以记录), 仅最终判定照旧全放行。
         if self._hook_manager:
             from .hooks import HookEvent
 
@@ -124,22 +139,27 @@ class PermissionManager:
                     "action": action,
                     "params": params or {},
                     "high_risk": tool_name in HIGH_RISK_NODES,
+                    "denied_by_rule": denied,
                 },
             )
             if ctx and ctx.cancelled:
                 logger.info(f"权限被 Hook 拒绝: {tool_name}")
                 return False
-            if ctx and ctx.modified_data.get("approved"):
-                logger.info(f"权限被 Hook 批准: {tool_name}")
-                return True
 
-        # CR-16: 规则优先 — approve 命中→allow (任意 level); deny 命中→deny
+        if self.level == PermissionLevel.BYPASS:
+            return True
+
+        # A-6: deny 规则命中 → 即拒, Hook approve 不可翻盘
+        if denied:
+            return False
+        if ctx and ctx.modified_data.get("approved"):
+            logger.info(f"权限被 Hook 批准: {tool_name}")
+            return True
+
+        # CR-16: approve 规则命中→allow (任意 level); deny 已在上一步处理
         for rule in self.rules:
-            if rule.matches(tool_name, params):
-                if rule.allowed:
-                    return True
-                logger.warning(f"权限拒绝: {tool_name} (scope={rule.scope})")
-                return False
+            if rule.matches(tool_name, params) and rule.allowed:
+                return True
 
         # 高风险节点无显式批准 → 拒绝 (需 approve 规则或 Hook 放行)
         if tool_name in HIGH_RISK_NODES:
@@ -176,22 +196,41 @@ class PermissionManager:
 
     def save(self, path: str = "") -> None:
         target = path or _PERMISSIONS_FILE
-        os.makedirs(os.path.dirname(target), exist_ok=True)
+        os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
         data = {
             "level": self.level.value,
             "rules": [{"tool_name": r.tool_name, "allowed": r.allowed, "scope": r.scope} for r in self.rules],
         }
-        with open(target, "w", encoding="utf-8") as f:
+        # E-4: 原子写 — 写 tmp 再 os.replace, 杜绝半写/并发读到残缺 JSON 崩溃
+        tmp_path = f"{target}.tmp.{os.getpid()}"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.chmod(tmp_path, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp_path, target)
         logger.info(f"权限规则已保存: {target}")
 
     def load(self, path: str = "") -> None:
         target = path or _PERMISSIONS_FILE
         if not os.path.exists(target):
             return
-        with open(target, encoding="utf-8") as f:
-            data = json.load(f)
-        self.level = PermissionLevel(data.get("level", "manual"))
+        # E-4: load 容错 — 损坏 JSON 不崩, 退化默认空规则 + 日志
+        try:
+            with open(target, encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error(f"权限规则文件损坏, 丢弃旧规则: {target} ({e})")
+            self.rules = []
+            return
+        try:
+            self.level = PermissionLevel(data.get("level", "confirm"))
+        except ValueError:
+            logger.warning(f"权限 level 值非法, 退化 CONFIRM: {data.get('level')}")
+            self.level = PermissionLevel.CONFIRM
         self.rules = [
             Permission(tool_name=r["tool_name"], allowed=r["allowed"], scope=r.get("scope", "*"))
             for r in data.get("rules", [])

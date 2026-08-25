@@ -388,6 +388,12 @@ class CDPClient:
         logger.info(f"CDP 按键: {key}")
 
     async def wait_for_function(self, expression: str, timeout: float = 30.0, polling: int = 500) -> Dict[str, Any]:
+        # E-10: 表达式注入防御 — 拒危险标记 (}/ ; 及反引号), 防截断 setInterval/Promise 上下文逃逸
+        _dangerous = ("}", ";", "`", "eval(", "Function(", "=>{", "new Function")
+        for tok in _dangerous:
+            if tok in expression:
+                logger.error(f"CDP wait_for_function 拒绝: 表达式含危险标记 '{tok}'")
+                raise ValueError(f"CDP wait_for_function 表达式含危险标记 '{tok}', 拒绝注入")
         await self.send("Runtime.enable")
         result = await self.send(
             "Runtime.evaluate",

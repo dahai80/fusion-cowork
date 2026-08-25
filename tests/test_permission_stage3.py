@@ -171,9 +171,11 @@ class TestHighRiskNodesComplete:
         "cdp_fill_form",
         "cdp_emulate",
         "cdp_network",
+        "cdp_wait_for",  # E-10: wait_for_function 任意 JS 注入
+        "fetch_url",  # E-11: SSRF 面
     }
 
-    EXPECTED_LOW_RISK = {"file_input", "file_output", "filter", "loop", "merge", "web_search", "fetch_url"}
+    EXPECTED_LOW_RISK = {"file_input", "file_output", "filter", "loop", "merge", "web_search"}
 
     def test_all_expected_high_risk_present(self):
         missing = self.EXPECTED_HIGH_RISK - HIGH_RISK_NODES

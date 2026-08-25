@@ -31,11 +31,15 @@ _SAFE_ENV_KEYS = frozenset(
 )
 
 # CR-23: darwin seatbelt profile — 限制 fs 写 + 拒绝原始网络, 仅允许写 /tmp 与插件目录
+# A-2 修复: process-exec 仅放行被 exec 命令所在框架目录 (EXEC_DIR, 已 resolve 真实路径),
+# 不再无约束放行任意 exec — 沙箱内 os.exec("/bin/sh") / "/usr/bin/python" 逃逸被拒。
+# 解释器 (venv python 是 symlink → framework) 自身 dylib 须在该目录内 exec 才能启动,
+# 故放行整个框架目录而非单一 binary; fork 仍允许 (子进程再 exec 须命中该目录规则)。
 # 注: 此为最小防御层, 与 rlimit (CPU/内存/文件数/进程数) 叠加
 _SEATBELT_PROFILE = """(version 1)
 (deny default)
 (allow process-fork)
-(allow process-exec)
+(allow process-exec (subpath "${EXEC_DIR}"))
 (allow signal (target self))
 (allow file-read*)
 (allow file-write* (subpath "/tmp"))
@@ -170,27 +174,29 @@ class PluginSandbox:
                 stderr=asyncio.subprocess.PIPE,
                 env=proc_env,
                 preexec_fn=self._make_preexec_fn(active_limits),
+                # A-2: 子进程已在 preexec 建 session (setsid), start_new_session 冗余但显式
+                start_new_session=True,
             )
             self._subprocesses[sandbox_id] = proc
 
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(input=stdin_data.encode() if stdin_data else None),
+                    self._bounded_communicate(proc, stdin_data, active_limits.max_output_bytes),
                     timeout=active_limits.timeout_seconds,
                 )
             except TimeoutError:
-                proc.kill()
-                await proc.wait()
+                # A-2: kill 整进程组 (子进程 setsid 建独立组), 杜绝 fork 出孤儿逃过超时
+                await self._kill_process_group(proc)
                 result.status = SandboxStatus.TIMEOUT
                 result.error = f"Execution timed out after {active_limits.timeout_seconds}s"
                 result.finished_at = time.time()
-                logger.warning(f"PluginSandbox timeout id={sandbox_id}")
+                logger.warning(f"PluginSandbox timeout id={sandbox_id} (killpg)")
                 self._fire_crash_callback(result)
                 return result
 
             result.exit_code = proc.returncode
-            result.stdout = stdout_bytes[: active_limits.max_output_bytes].decode(errors="replace")
-            result.stderr = stderr_bytes[: active_limits.max_output_bytes].decode(errors="replace")
+            result.stdout = stdout_bytes.decode(errors="replace")
+            result.stderr = stderr_bytes.decode(errors="replace")
             result.finished_at = time.time()
             result.cpu_time = result.finished_at - result.started_at
 
@@ -217,10 +223,66 @@ class PluginSandbox:
 
         return result
 
+    async def _bounded_communicate(self, proc: asyncio.subprocess.Process, stdin_data: str, max_bytes: int) -> tuple:
+        """A-2: 流式有界读 stdout/stderr — 边读边累计, 超 max_bytes 立即停读截断,
+        避免 100GB 输出先全量进内存再截 (OOM)。communicate 的 input 仍写一次。
+        """
+        encoded_stdin = stdin_data.encode() if stdin_data else None
+
+        async def _read_bounded(stream: asyncio.StreamReader) -> bytes:
+            chunks = bytearray()
+            while True:
+                # 分块读, 超上限即停 (不 await 整条到 EOF)
+                chunk = await stream.read(64 * 1024)
+                if not chunk:
+                    break
+                remaining = max_bytes - len(chunks)
+                if remaining <= 0:
+                    # 已满: 排空余量避免管道阻塞, 但不再保留
+                    while stream.read(64 * 1024):
+                        pass
+                    break
+                chunks.extend(chunk[:remaining])
+            return bytes(chunks)
+
+        if encoded_stdin:
+            proc.stdin.write(encoded_stdin)
+            await proc.stdin.drain()
+        if proc.stdin:
+            proc.stdin.close()
+        out_task = asyncio.ensure_future(_read_bounded(proc.stdout))
+        err_task = asyncio.ensure_future(_read_bounded(proc.stderr))
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.gather(out_task, err_task)
+        finally:
+            await proc.wait()
+        return stdout_bytes, stderr_bytes
+
+    async def _kill_process_group(self, proc: asyncio.subprocess.Process) -> None:
+        """A-2: 杀整进程组 — proc setsid 建独立 session, killpg(-pgid) 清子孙。
+        回退: 组杀失败则 proc.kill() + wait。
+        """
+        try:
+            pgid = os.getpgid(proc.pid)
+            os.killpg(pgid, signal.SIGKILL)
+            logger.debug(f"PluginSandbox killpg pgid={pgid}")
+        except (ProcessLookupError, OSError) as e:
+            logger.debug(f"PluginSandbox killpg 回退 proc.kill: {e}")
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        try:
+            await proc.wait()
+        except Exception:
+            pass
+
     def _wrap_seatbelt(self, command: str, args: List[str]) -> tuple:
         """CR-23: darwin 用 sandbox-exec 包裹真实命令, 限制 fs 写 + 拒网络。
 
         sandbox-exec 不可用时回退原命令 (仅靠 rlimit 隔离, 记 WARNING)。
+        A-2 修复: profile 写到 per-sandbox 唯一文件 (O_EXCL|0600), 杜绝固定路径 TOCTOU;
+        且 process-exec 仅放行被 exec 的命令二进制绝对路径, 不再无约束允许 exec。
         """
         import shutil as _shutil
         from pathlib import Path as _Path
@@ -228,18 +290,27 @@ class PluginSandbox:
         if not _shutil.which("sandbox-exec"):
             logger.warning("sandbox-exec 不可用, 回退 rlimit-only 隔离 (无 fs/network 限制)")
             return command, args
-        profile_path = "/tmp/fusion_sandbox_profile.sb"
+        # 解析命令二进制真实绝对路径 (resolve 跨 symlink): venv python → framework 真体
+        cmd_abs = _shutil.which(command) or str(_Path(command).resolve())
+        cmd_real = str(_Path(cmd_abs).resolve())
+        # exec 放行目录 = 真实二进制所在 framework 版本目录 (python 须 exec 同目录 dylib 启动)
+        # 目录取 framework/Versions/3.14 这一级 (二进制在 .../Versions/3.14/bin/python3.14)
+        exec_dir = str(_Path(cmd_real).parents[1])
+        profile_path = f"/tmp/fusion_sandbox_profile_{uuid.uuid4().hex[:8]}.sb"
         try:
-            # sandbox-exec 不展开 shell 变量, ${HOME} 会被当未绑定变量报错;
-            # 写入前用真实 home 路径替换
-            profile = _SEATBELT_PROFILE.replace("${HOME}", str(_Path.home()))
-            with open(profile_path, "w", encoding="utf-8") as f:
-                f.write(profile)
+            # sandbox-exec 不展开 shell 变量, ${HOME}/${EXEC_DIR} 写入前用真实值替换
+            profile = _SEATBELT_PROFILE.replace("${HOME}", str(_Path.home())).replace("${EXEC_DIR}", exec_dir)
+            # O_EXCL: 文件已存在则拒 (防覆盖/TOCTOU); 0600: 仅属主读写
+            fd = os.open(profile_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                os.write(fd, profile.encode("utf-8"))
+            finally:
+                os.close(fd)
         except OSError as e:
             logger.warning(f"seatbelt profile 写入失败, 回退 rlimit-only: {e}")
             return command, args
-        logger.info(f"PluginSandbox seatbelt 包装: sandbox-exec -f {profile_path}")
-        return "sandbox-exec", ["-f", profile_path, "--", command, *args]
+        logger.info(f"PluginSandbox seatbelt 包装: sandbox-exec -f {profile_path} exec={cmd_abs}")
+        return "sandbox-exec", ["-f", profile_path, "--", cmd_abs, *args]
 
     def _make_preexec_fn(self, limits: Optional[ResourceLimits] = None):
         import sys as _sys
@@ -247,6 +318,11 @@ class PluginSandbox:
         active_limits = limits if limits is not None else self._limits
 
         def _set_limits():
+            # A-2: 子进程建独立进程组 — 超时父进程 killpg 杀整组, 杜绝孤儿
+            try:
+                os.setsid()
+            except OSError as e:
+                logger.debug(f"PluginSandbox setsid skipped: {e}")
             # CR-23: setrlimit 失败 fail-closed — 限制设不上则拒执行 (防逃逸)
             try:
                 cpu_limit = int(active_limits.max_cpu_seconds)
@@ -267,15 +343,22 @@ class PluginSandbox:
                     os._exit(127)
             else:
                 logger.debug("PluginSandbox darwin: 内存隔离由 seatbelt 承担, 跳过 RLIMIT_AS")
+            # A-2: NPROC/FSIZE 失败须 fail-closed (与 CPU/AS 一致),
+            # 否则限制静默失效 = 沙箱逃逸面
             try:
-                resource.setrlimit(resource.RLIMIT_NPROC, (active_limits.max_processes, active_limits.max_processes))
+                resource.setrlimit(
+                    resource.RLIMIT_NPROC,
+                    (active_limits.max_processes, active_limits.max_processes),
+                )
             except (ValueError, OSError) as e:
-                logger.debug(f"PluginSandbox setrlimit NPROC unsupported: {e}")
+                logger.error(f"PluginSandbox setrlimit NPROC fail-closed: {e}")
+                os._exit(127)
             try:
                 file_bytes = active_limits.max_file_size_mb * 1024 * 1024
                 resource.setrlimit(resource.RLIMIT_FSIZE, (file_bytes, file_bytes))
             except (ValueError, OSError) as e:
-                logger.debug(f"PluginSandbox setrlimit FSIZE unsupported: {e}")
+                logger.error(f"PluginSandbox setrlimit FSIZE fail-closed: {e}")
+                os._exit(127)
 
         return _set_limits
 
@@ -329,8 +412,8 @@ class PluginSandbox:
         if not proc or proc.returncode is not None:
             return False
         try:
-            proc.kill()
-            await proc.wait()
+            # A-2: 杀进程组而非仅直接子进程, 防 fork 孤儿
+            await self._kill_process_group(proc)
             logger.info(f"PluginSandbox._kill_sandbox id={sandbox_id}")
             return True
         except ProcessLookupError:
