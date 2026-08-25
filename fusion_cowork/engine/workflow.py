@@ -584,11 +584,23 @@ class WorkflowEngine:
                     continue
 
                 # 收集输入数据
+                # A-1: 端口路由接线 — edge.source_output/target_input 原为装饰品 (execute 合并全部上游)。
+                # 默认 edge (source_output="output", target_input="input") 保持全合并 (向后兼容,
+                # 现有节点读 inputs.get("data") 等); 非 default 显式端口 → 按 source_output 取值,
+                # 按 target_input 落键, 消除扇出节点多路输入互相污染。
                 node_input = {}
-                upstream = workflow.get_upstream_nodes(node_id)
-                for up_id in upstream:
-                    if up_id in passed_data:
-                        node_input.update(passed_data[up_id])
+                in_edges = [e for e in workflow.edges if e.target_id == node_id]
+                for edge in in_edges:
+                    up_id = edge.source_id
+                    if up_id not in passed_data:
+                        continue
+                    src = passed_data[up_id]
+                    if edge.source_output == "output" and edge.target_input == "input":
+                        node_input.update(src)
+                    else:
+                        val = src.get(edge.source_output) if isinstance(src, dict) else src
+                        if val is not None:
+                            node_input[edge.target_input] = val
 
                 # 加上初始输入
                 if node_id in passed_data:
