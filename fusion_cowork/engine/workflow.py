@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -669,7 +670,40 @@ class WorkflowEngine:
                             node_name=node.name,
                             data={"input_data": node_input},
                         )
-                    result = await node.execute(node_input)
+                    # A-1: 接线 NodeConfig.timeout/max_retries/retry_delay (原死配置)。
+                    # timeout>0 → asyncio.wait_for 兜底, 节点卡死不再拖垮事件循环;
+                    # max_retries>0 → 失败/异常重试, retry_delay 退避, 瞬时故障自愈。
+                    timeout = float(node.config.timeout or 0.0)
+                    max_retries = int(node.config.max_retries or 0)
+                    retry_delay = float(node.config.retry_delay or 0.0)
+                    result = None
+                    last_err = None
+                    for attempt in range(max_retries + 1):
+                        try:
+                            if timeout > 0:
+                                result = await asyncio.wait_for(node.execute(node_input), timeout=timeout)
+                            else:
+                                result = await node.execute(node_input)
+                            # 成功或节点级 FAILED (业务失败不重试, 仅异常/超时重试)
+                            break
+                        except TimeoutError as te:
+                            last_err = f"节点 '{node.name}' 超时 (timeout={timeout}s): {te}"
+                            logger.warning(f"{last_err} attempt={attempt + 1}/{max_retries + 1}")
+                            result = None
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as ne:
+                            last_err = str(ne)
+                            logger.warning(f"节点 '{node.name}' 异常 attempt={attempt + 1}/{max_retries + 1}: {ne}")
+                            result = None
+                        if attempt < max_retries and retry_delay > 0:
+                            await asyncio.sleep(retry_delay)
+                    if result is None:
+                        # 重试耗尽仍无成功结果 → 构造失败 NodeResult
+                        result = NodeResult(
+                            status=NodeStatus.FAILED,
+                            error=last_err or f"节点 '{node.name}' 重试 {max_retries} 次后仍失败",
+                        )
 
                     step.status = result.status
                     step.completed_at = time.time()

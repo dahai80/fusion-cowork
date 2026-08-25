@@ -119,6 +119,56 @@ class TestMCPPermission:
         result = await registry.call_tool("read_file", {"path": "/tmp/original.txt"})
         assert "isError" not in result or not result.get("isError")
 
+    @pytest.mark.asyncio
+    async def test_mcp_error_trace_id_no_leak(self):
+        # E-9: 异常对外只返 trace_id + 通用消息, 不泄内部栈/路径/SQL
+        pm = PermissionManager(level=PermissionLevel.BYPASS)
+        registry = MCPToolRegistry(permission_manager=pm)
+        registry.register_tools()
+
+        class _BoomNode(BaseNode):
+            name = "file_input"
+            display_name = "File Input"
+
+            def __init__(self, **kw):
+                super().__init__(**kw)
+                self.config = NodeConfig()
+
+            async def execute(self, params):
+                raise RuntimeError("internal SQL path /secret leak: SELECT * FROM users")
+
+        saved = dict(NodeRegistry._registry)
+        saved_aliases = dict(getattr(NodeRegistry, "_name_aliases", {}))
+        NodeRegistry.clear()
+        NodeRegistry.register(_BoomNode)
+
+        try:
+            result = await registry.call_tool("read_file", {"path": "/tmp/x"})
+        finally:
+            NodeRegistry._registry = saved
+            NodeRegistry._name_aliases = saved_aliases
+        assert result.get("isError") is True
+        assert "_trace_id" in result
+        body = result["content"][0]["text"]
+        assert "trace_id" in body
+        # 不泄漏内部栈/SQL/路径
+        assert "SELECT" not in body
+        assert "/secret" not in body
+        assert "Traceback" not in body
+        assert "RuntimeError" not in body
+
+    @pytest.mark.asyncio
+    async def test_mcp_run_workflow_maps_to_engine(self):
+        # E-8: run_workflow 不再误映射 desktop_clean, 走 TemplateManager+WorkflowEngine
+        pm = PermissionManager(level=PermissionLevel.BYPASS)
+        registry = MCPToolRegistry(permission_manager=pm)
+        registry.register_tools()
+        # 不存在的模板 → 返回 error 含 template 字段, 不执行 desktop_clean
+        result = await registry.call_tool("run_workflow", {"template": "__nope__"})
+        body = json.loads(result["content"][0]["text"])
+        assert body.get("template") == "__nope__"
+        assert "error" in body
+
 
 # ── EventEmitter + SSE ──
 
@@ -307,7 +357,9 @@ class TestMCPServerM3:
 
     def test_server_default_no_permission(self):
         server = MCPServer()
-        assert server._registry._permission_manager is None
+        # E-9: 默认无注入时启用 CONFIRM 级 PermissionManager — 高风险 MCP 工具
+        # (run_terminal/file_output/app_lifecycle) 不再无 gate 直跑。
+        assert server._registry._permission_manager is not None
         assert server._registry._hook_manager is None
 
 

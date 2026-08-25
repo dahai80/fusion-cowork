@@ -86,7 +86,7 @@ def create_space_api(
         if not _auth_token:
             return None
         authz = request.headers.get("Authorization", "")
-        token = authz[len("Bearer "):] if authz.startswith("Bearer ") else ""
+        token = authz[len("Bearer ") :] if authz.startswith("Bearer ") else ""
         if token != _auth_token:
             logger.warning("Space API 认证失败: Bearer token 无效")
             return JSONResponse({"error": "认证失败: token 无效"}, status_code=401)

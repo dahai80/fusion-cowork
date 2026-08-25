@@ -89,12 +89,31 @@ class ConfigCenter:
     def get_instance(cls) -> ConfigCenter:
         with _instance_lock:
             if cls._instance is None:
-                cls._instance = cls()
+                inst = cls()
+                # A-7: 单例首次构造即从磁盘加载, 重启不丢配置
+                # (scoped_folder/auth_token/trusted 白名单/权限 level 等)。
+                # 测试用 reset_instance 置空后重建仍走此路径。
+                inst._load_silent()
+                cls._instance = inst
             return cls._instance
 
     @classmethod
     def reset_instance(cls) -> None:
         cls._instance = None
+
+    def _load_silent(self) -> None:
+        # A-7: 加载失败不影响启动 (首次运行无文件属正常), 仅日志。
+        try:
+            self.load()
+        except Exception as e:
+            logger.warning(f"ConfigCenter 启动加载失败 (忽略, 走默认): {e}")
+
+    def _persist_silent(self) -> None:
+        # A-7: set/delete/reset 后自动落盘, 失败仅日志不抛 (内存值已生效)。
+        try:
+            self.save()
+        except Exception as e:
+            logger.warning(f"ConfigCenter 自动持久化失败 (内存值已生效): {e}")
 
     def get(self, key: str, default: Any = None) -> Any:
         if key in self._store:
@@ -111,6 +130,8 @@ class ConfigCenter:
             change = ConfigChange(key=key, old_value=old_value, new_value=value)
             logger.info(f"ConfigCenter.set key={key} old={old_value} new={value} source={source}")
         self._notify_observers(change)
+        # A-7: 接线 — 写即落盘, 重启不丢
+        self._persist_silent()
         return change
 
     def delete(self, key: str) -> bool:
@@ -122,6 +143,8 @@ class ConfigCenter:
             change = ConfigChange(key=key, old_value=old_value, new_value=None)
             logger.info(f"ConfigCenter.delete key={key}")
         self._notify_observers(change)
+        # A-7: 接线 — 删即落盘
+        self._persist_silent()
         return True
 
     def has(self, key: str) -> bool:
@@ -243,6 +266,8 @@ class ConfigCenter:
         count = len(self._store)
         self._store.clear()
         logger.info(f"ConfigCenter.reset all entries={count}")
+        # A-7: 全清也落盘, 防重启复活已删配置
+        self._persist_silent()
         return count
 
     def to_dict(self) -> Dict[str, Any]:
