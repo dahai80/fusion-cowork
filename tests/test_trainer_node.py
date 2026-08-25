@@ -35,10 +35,20 @@ def test_node_registered():
 
 
 def test_resolve_bin_honors_env(monkeypatch):
+    import shutil as _shutil
+
     monkeypatch.setenv("FUSION_TRAINER_BIN", "/tmp/custom-ft")
     assert _resolve_trainer_bin() == "/tmp/custom-ft"
+    # 删 env 后走 shutil.which("fusion-trainer") — 路径随环境变 (CI 无该 bin),
+    # 故按 which 解析结果断言, 而非硬编码本机 venv 绝对路径
     monkeypatch.delenv("FUSION_TRAINER_BIN", raising=False)
-    assert _resolve_trainer_bin() == "/Users/dahai/fusion/.venv/bin/fusion-trainer"
+    resolved = _resolve_trainer_bin()
+    found_in_path = _shutil.which("fusion-trainer")
+    if found_in_path:
+        assert resolved == found_in_path, f"删 env 后应解析自 PATH: 期望 {found_in_path}, 实际 {resolved}"
+    else:
+        # PATH 无 fusion-trainer (如 CI ubuntu) → 应返空串, fail-visible (不造假路径)
+        assert resolved == "", f"PATH 无 fusion-trainer 应回空串, 实际 {resolved!r}"
 
 
 def test_aliases_registered():

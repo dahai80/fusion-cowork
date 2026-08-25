@@ -111,6 +111,8 @@ async def test_send_to_device_no_retry_on_nontransient(monkeypatch):
 @pytest.mark.asyncio
 async def test_start_oserror_rolls_back_running_and_raises():
     # 绑定到已占用端口 → websockets.serve 抛 OSError → _running 应回滚 False + 抛出
+    # websockets 是可选 [web] extra — CI 不装时 skip (非本补丁行为)
+    pytest.importorskip("websockets")
     import websockets
 
     occupied = websockets.serve(lambda ws: None, "127.0.0.1", 0)

@@ -522,16 +522,21 @@ class TestSandboxEnv:
         # CI (ubuntu) 无 sandbox-exec → _wrap_seatbelt 回退原命令; 跨平台断言 seatbelt
         # 路径需 mock shutil.which 假装 sandbox-exec 可用
         import shutil as _shutil
+        from pathlib import Path as _Path
 
         import fusion_cowork.plugins.sandbox as sandbox_mod
 
         monkeypatch.setattr(_shutil, "which", lambda name: "/usr/bin/sandbox-exec" if name == "sandbox-exec" else None)
         sbx = sandbox_mod.PluginSandbox()
-        cmd, args = sbx._wrap_seatbelt("/bin/true", ["--flag"])
+        # 用本机真实存在的 true 二进制 (macOS /bin/true, linux /usr/bin/true) —
+        # 跨平台断言其 resolve 后绝对路径出现在 seatbelt args 里
+        true_bin = _shutil.which("true") or "/bin/true"
+        expected_abs = str(_Path(true_bin).resolve())
+        cmd, args = sbx._wrap_seatbelt(true_bin, ["--flag"])
         assert cmd == "sandbox-exec"
         assert "-f" in args
         assert "--" in args
-        assert "/bin/true" in args
+        assert expected_abs in args, f"seatbelt args 应含解析后的命令绝对路径, args={args}"
 
 
 # ── CR-15: sandbox_runner 有界读 + 无 traceback ──
