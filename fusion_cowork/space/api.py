@@ -45,6 +45,7 @@ def create_space_api(
     space_store=None,
     auth_token: Optional[str] = None,
     principal_resolver=None,
+    collab_hub=None,
 ):
     """协作空间 REST API。
 
@@ -53,6 +54,9 @@ def create_space_api(
     身份字段被忽略, 防 CR-5 式冒充/IDOR。配 auth_token 则所有端点校验
     `Authorization: Bearer <token>`。list_messages / get_space 等读端点加
     SpacePermission.check (view_artifact / send_message), 非成员拒。
+
+    A-9 (0825 审计): CollabHub (WS 传输层) 由调用方 (server/cli) 注入 collab_hub,
+    space 域不再反向 import ..server.collab_ws — 分层边界保持单向 (server 消费 space)。
     """
 
     app = FastAPI(title="Fusion-Cowork Space API", version="0.8.0")
@@ -406,29 +410,35 @@ def create_space_api(
     async def health():
         return {"status": "ok", "service": "fusion-cowork-space"}
 
-    # ── WebSocket 双向协作通道 ──
+    # ── WebSocket 双向协作通道 (A-9: CollabHub 由调用方注入, 不反向 import server) ──
 
-    from ..server.collab_ws import CollabHub
+    _collab_hub = collab_hub
 
-    _collab_hub = CollabHub(chat_svc=chat_svc, presence_manager=_presence)
+    if _collab_hub is not None:
 
-    @app.websocket("/spaces/{space_id}/ws")
-    async def collab_ws(websocket: WebSocket, space_id: str):
-        await websocket.accept()
-        try:
-            hello = await websocket.receive_json()
-            user_id = hello.get("user_id", "")
-            display_name = hello.get("display_name", "")
-            await _collab_hub.join(websocket, space_id, user_id, display_name=display_name)
-            while True:
-                raw = await websocket.receive_text()
-                result = await _collab_hub.handle_message(websocket, raw)
-                if result is not None:
-                    await websocket.send_json(result)
-        except WebSocketDisconnect:
-            await _collab_hub.leave(websocket)
-        except Exception as e:
-            logger.warning(f"WS 异常: {e}")
-            await _collab_hub.leave(websocket)
+        @app.websocket("/spaces/{space_id}/ws")
+        async def collab_ws(websocket: WebSocket, space_id: str):
+            await websocket.accept()
+            try:
+                hello = await websocket.receive_json()
+                user_id = hello.get("user_id", "")
+                display_name = hello.get("display_name", "")
+                await _collab_hub.join(websocket, space_id, user_id, display_name=display_name)
+                while True:
+                    raw = await websocket.receive_text()
+                    result = await _collab_hub.handle_message(websocket, raw)
+                    if result is not None:
+                        await websocket.send_json(result)
+            except WebSocketDisconnect:
+                await _collab_hub.leave(websocket)
+            except Exception as e:
+                logger.warning(f"WS 异常: {e}")
+                await _collab_hub.leave(websocket)
+    else:
+        # A-9: 未注入 CollabHub (如独立测试 space 域) → WS 端点降级拒连, 不崩 app 启动。
+        @app.websocket("/spaces/{space_id}/ws")
+        async def collab_ws(websocket: WebSocket, space_id: str):
+            await websocket.accept()
+            await websocket.close(code=1011, reason="WS 协作通道未配置 (collab_hub 未注入)")
 
     return app
