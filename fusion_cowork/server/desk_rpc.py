@@ -91,7 +91,29 @@ class DeskRPCServer:
         self._collab_sessions: Dict[str, Dict[str, Any]] = {}
         self._collab_queues: Dict[str, asyncio.Queue] = {}
         self._auth_token: Optional[str] = None
+        # A-10: 共享 MLX/KB 客户端实例 (旧版 11 处 handler 各 new FusionMLXClient() 不 close,
+        # httpx 连接池泄漏)。handler 取共享实例, stop() 统一关闭。
+        self._mlx_client = None
+        self._kb_client = None
         self._register_handlers()
+
+    def _get_mlx_client(self):
+        """A-10: 懒构造共享 FusionMLXClient (httpx 连接池复用, stop 统一 close)。"""
+        if self._mlx_client is None:
+            from ..ai import FusionMLXClient
+
+            self._mlx_client = FusionMLXClient()
+            logger.debug("DeskRPC 共享 FusionMLXClient 已构造")
+        return self._mlx_client
+
+    def _get_kb_client(self):
+        """A-10: 懒构造共享 KBClient。"""
+        if self._kb_client is None:
+            from fusion_cowork.ai.mlx_client import KBClient
+
+            self._kb_client = KBClient()
+            logger.debug("DeskRPC 共享 KBClient 已构造")
+        return self._kb_client
 
     def _register_handlers(self) -> None:
         """注册所有 desk.* JSON-RPC 方法。"""
@@ -292,6 +314,19 @@ class DeskRPCServer:
                 await self._space_store.close()
             except Exception as e:
                 logger.debug(f"SpaceStore 关闭失败: {e}")
+        # A-10: 关闭共享 MLX/KB 客户端 (旧版各 handler new 后不 close, 连接池泄漏)
+        if self._mlx_client is not None:
+            try:
+                await self._mlx_client.close()
+            except Exception as e:
+                logger.debug(f"FusionMLXClient 关闭失败: {e}")
+            self._mlx_client = None
+        if self._kb_client is not None:
+            try:
+                await self._kb_client.close()
+            except Exception as e:
+                logger.debug(f"KBClient 关闭失败: {e}")
+            self._kb_client = None
         if os.path.exists(self._sock_path):
             os.unlink(self._sock_path)
         logger.info("Desk RPC 服务停止")
@@ -785,9 +820,7 @@ class DeskRPCServer:
         return {"status": "cancelled" if ok else "noop", "task_id": task_id}
 
     async def _handle_mlx_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        from ..ai import FusionMLXClient
-
-        client = FusionMLXClient()
+        client = self._get_mlx_client()
         try:
             status = await client.health_check()
             return {"status": "running", "info": status}
@@ -795,9 +828,7 @@ class DeskRPCServer:
             return {"status": "stopped"}
 
     async def _handle_mlx_models(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        from ..ai import FusionMLXClient
-
-        client = FusionMLXClient()
+        client = self._get_mlx_client()
         try:
             models = await client.list_models()
             return {"models": models}
@@ -1315,11 +1346,10 @@ class DeskRPCServer:
     async def _handle_space_chat_send(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
-        from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceChatService, SpacePermission
 
         perm = SpacePermission(self._space_store)
-        mlx = FusionMLXClient()
+        mlx = self._get_mlx_client()
         chat_svc = SpaceChatService(self._space_store, mlx, perm)
         space_id = params.get("space_id", "")
         user_id = params.get("user_id", "")
@@ -1337,11 +1367,10 @@ class DeskRPCServer:
     async def _handle_space_chat_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
-        from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceChatService, SpacePermission
 
         perm = SpacePermission(self._space_store)
-        mlx = FusionMLXClient()
+        mlx = self._get_mlx_client()
         chat_svc = SpaceChatService(self._space_store, mlx, perm)
         space_id = params.get("space_id", "")
         limit = params.get("limit", 50)
@@ -1355,11 +1384,10 @@ class DeskRPCServer:
     async def _handle_space_chat_context(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
-        from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceChatService, SpacePermission
 
         perm = SpacePermission(self._space_store)
-        mlx = FusionMLXClient()
+        mlx = self._get_mlx_client()
         chat_svc = SpaceChatService(self._space_store, mlx, perm)
         space_id = params.get("space_id", "")
         limit = params.get("limit", 100)
@@ -1404,11 +1432,10 @@ class DeskRPCServer:
     async def _handle_space_kb_upload(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
-        from fusion_cowork.ai.mlx_client import KBClient
         from fusion_cowork.space import SpaceKBService, SpacePermission
 
         perm = SpacePermission(self._space_store)
-        kb_client = KBClient()
+        kb_client = self._get_kb_client()
         kb_svc = SpaceKBService(self._space_store, kb_client, perm)
         space_id = params.get("space_id", "")
         operator_id = params.get("operator_id", "")
@@ -1425,11 +1452,10 @@ class DeskRPCServer:
     async def _handle_space_kb_search(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
-        from fusion_cowork.ai.mlx_client import KBClient
         from fusion_cowork.space import SpaceKBService, SpacePermission
 
         perm = SpacePermission(self._space_store)
-        kb_client = KBClient()
+        kb_client = self._get_kb_client()
         kb_svc = SpaceKBService(self._space_store, kb_client, perm)
         space_id = params.get("space_id", "")
         query = params.get("query", "")
@@ -1443,11 +1469,10 @@ class DeskRPCServer:
     async def _handle_space_kb_query(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
-        from fusion_cowork.ai.mlx_client import KBClient
         from fusion_cowork.space import SpaceKBService, SpacePermission
 
         perm = SpacePermission(self._space_store)
-        kb_client = KBClient()
+        kb_client = self._get_kb_client()
         kb_svc = SpaceKBService(self._space_store, kb_client, perm)
         space_id = params.get("space_id", "")
         question = params.get("question", "")
@@ -1479,11 +1504,10 @@ class DeskRPCServer:
     async def _handle_space_agent_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
-        from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceAgentRuntime, SpacePermission
 
         perm = SpacePermission(self._space_store)
-        mlx = FusionMLXClient()
+        mlx = self._get_mlx_client()
         rt = SpaceAgentRuntime(self._space_store, mlx, perm)
         space_id = params.get("space_id", "")
         try:
@@ -1495,11 +1519,10 @@ class DeskRPCServer:
     async def _handle_space_agent_add(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
-        from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceAgentRuntime, SpacePermission
 
         perm = SpacePermission(self._space_store)
-        mlx = FusionMLXClient()
+        mlx = self._get_mlx_client()
         rt = SpaceAgentRuntime(self._space_store, mlx, perm)
         space_id = params.get("space_id", "")
         operator_id = params.get("operator_id", "")
@@ -1528,11 +1551,10 @@ class DeskRPCServer:
     async def _handle_space_agent_remove(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
-        from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceAgentRuntime, SpacePermission
 
         perm = SpacePermission(self._space_store)
-        mlx = FusionMLXClient()
+        mlx = self._get_mlx_client()
         rt = SpaceAgentRuntime(self._space_store, mlx, perm)
         space_id = params.get("space_id", "")
         agent_id = params.get("agent_id", "")
@@ -1549,11 +1571,10 @@ class DeskRPCServer:
     async def _handle_space_agent_call(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
-        from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceAgentRuntime, SpacePermission
 
         perm = SpacePermission(self._space_store)
-        mlx = FusionMLXClient()
+        mlx = self._get_mlx_client()
         rt = SpaceAgentRuntime(self._space_store, mlx, perm)
         space_id = params.get("space_id", "")
         agent_id = params.get("agent_id", "")
@@ -1572,11 +1593,10 @@ class DeskRPCServer:
     async def _handle_space_agent_relay(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
-        from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceChatService, SpacePermission
 
         perm = SpacePermission(self._space_store)
-        mlx = FusionMLXClient()
+        mlx = self._get_mlx_client()
         chat_svc = SpaceChatService(self._space_store, mlx, perm)
         space_id = params.get("space_id", "")
         user_id = params.get("user_id", "")
@@ -1610,7 +1630,6 @@ class DeskRPCServer:
         """
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
-        from fusion_cowork.ai.mlx_client import KBClient
         from fusion_cowork.space import SpaceKBService, SpacePermission
 
         space_id = params.get("space_id", "")
@@ -1623,7 +1642,7 @@ class DeskRPCServer:
         if not isinstance(files, list) or len(files) > _MAX_SYNC_FILES:
             return {"error": f"files 须为列表且不超 {_MAX_SYNC_FILES} 个"}
         perm = SpacePermission(self._space_store)
-        kb_client = KBClient()
+        kb_client = self._get_kb_client()
         kb_svc = SpaceKBService(self._space_store, kb_client, perm)
         synced = []
         errors = []
@@ -2281,11 +2300,10 @@ class DeskRPCServer:
     async def _handle_space_chat_stream(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
             return {"error": "SpaceStore 未配置"}
-        from fusion_cowork.ai.mlx_client import FusionMLXClient
         from fusion_cowork.space import SpaceChatService, SpacePermission
 
         perm = SpacePermission(self._space_store)
-        mlx = FusionMLXClient()
+        mlx = self._get_mlx_client()
         chat_svc = SpaceChatService(self._space_store, mlx, perm)
         space_id = params.get("space_id", "")
         user_id = params.get("user_id", "")

@@ -145,7 +145,12 @@ class FusionMLXClient:
                 resp = await self.client.post("/chat/completions", json=payload)
                 resp.raise_for_status()
                 data = resp.json()
-                choice = data["choices"][0]
+                # E-12: choices 缺失/空 → 防御, 旧版 data["choices"][0] 直接 IndexError
+                choices = data.get("choices") or []
+                if not choices:
+                    logger.error(f"chat() 响应无 choices (model={model}, keys={list(data.keys())})")
+                    raise RuntimeError(f"模型响应无 choices: {data.get('error', data)}")
+                choice = choices[0]
                 message = choice.get("message", {})
                 return self._build_llm_response(message, choice, data, model)
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.PoolTimeout) as e:
@@ -191,7 +196,12 @@ class FusionMLXClient:
                 )
             raise
         data = resp.json()
-        choice = data["choices"][0]
+        # E-12: choices 缺失/空 → 防御
+        choices = data.get("choices") or []
+        if not choices:
+            logger.error(f"chat() 响应无 choices (model={model}, keys={list(data.keys())})")
+            raise RuntimeError(f"模型响应无 choices: {data.get('error', data)}")
+        choice = choices[0]
         message = choice.get("message", {})
         return self._build_llm_response(message, choice, data, model)
 

@@ -8,7 +8,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shlex
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -24,6 +26,24 @@ from ...engine.node import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """R-2: 杀整个进程组 (start_new_session 创建的组), 杜绝孙进程孤儿。
+
+    proc.kill() 仅杀直子, 子进程派生的孙进程继续跑成孤儿。killpg SIGKILL 整组。
+    """
+    try:
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGKILL)
+        logger.debug(f"已 killpg 进程组 pgid={pgid} (pid={proc.pid})")
+    except (ProcessLookupError, PermissionError, OSError) as e:
+        logger.debug(f"killpg 失败, 退化 proc.kill: {e}")
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
 
 # 命令沙箱 — 黑名单/白名单
 _SHELL_BLACKLIST = frozenset(
@@ -318,6 +338,8 @@ class ShellExecNode(BaseNode):
                     stdout=subprocess.PIPE if capture else None,
                     stderr=subprocess.PIPE if capture else None,
                     cwd=workdir or None,
+                    # R-2: 新会话 leader, 子进程自成进程组, 超时可 killpg 杀整组 (含孙进程)
+                    start_new_session=True,
                 )
             else:
                 # CR-6/7: use_shell=False 走 exec 列表 (不起 /bin/sh), 消除 shell 注入
@@ -333,13 +355,17 @@ class ShellExecNode(BaseNode):
                     stdout=subprocess.PIPE if capture else None,
                     stderr=subprocess.PIPE if capture else None,
                     cwd=workdir or None,
+                    # R-2: 新会话 leader, 超时可 killpg 杀整组 (旧版 proc.kill 只杀直子, 孙进程成孤儿)
+                    start_new_session=True,
                 )
 
             try:
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             except TimeoutError:
-                proc.kill()
+                # R-2: killpg 杀整个进程组 (start_new_session 自成组), 杜绝孙进程孤儿
+                _kill_process_group(proc)
                 await proc.wait()
+                logger.warning(f"ShellExec 超时杀进程组: {command[:80]} ({timeout}s)")
                 return NodeResult(
                     status=NodeStatus.FAILED,
                     error=f"命令执行超时 ({timeout}s)",
@@ -491,6 +517,8 @@ class PythonREPLNode(BaseNode):
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                # R-2: 新会话 leader, 超时 killpg 杀整组 (旧版 proc.kill 只杀直子, 孤儿孙进程)
+                start_new_session=True,
             )
 
             try:
@@ -499,7 +527,9 @@ class PythonREPLNode(BaseNode):
                     timeout=timeout,
                 )
             except TimeoutError:
-                proc.kill()
+                _kill_process_group(proc)
+                await proc.wait()
+                logger.warning(f"PythonREPL 超时杀进程组 ({timeout}s)")
                 return NodeResult(
                     status=NodeStatus.FAILED,
                     error=f"Python 执行超时 ({timeout}s)",

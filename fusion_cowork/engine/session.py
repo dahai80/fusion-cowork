@@ -235,9 +235,16 @@ class SessionStore:
                 "DELETE FROM sessions WHERE updated_at < ? AND status IN ('completed', 'failed', 'cancelled')",
                 (cutoff,),
             )
-        count = cursor.rowcount
+            # R-1: paused 会话长期不活动也回收 (旧版只清终态, paused 永驻泄漏)。
+            # paused 用更短阈值: 暂停超 3 倍 expire_days 视为遗忘, 回收。
+            paused_cutoff = time.time() - expire_days * 3 * 86400
+            paused_cursor = conn.execute(
+                "DELETE FROM sessions WHERE updated_at < ? AND status = 'paused'",
+                (paused_cutoff,),
+            )
+        count = cursor.rowcount + paused_cursor.rowcount
         if count:
-            logger.info(f"清理过期 Session: {count} 条")
+            logger.info(f"清理过期 Session: {count} 条 (终态={cursor.rowcount}, 长期paused={paused_cursor.rowcount})")
         return count
 
     def to_dict(self, session: Session) -> Dict[str, Any]:

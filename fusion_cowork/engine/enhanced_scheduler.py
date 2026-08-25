@@ -62,6 +62,8 @@ class EnhancedScheduler:
         self._store_path = store_path or str(Path.home() / ".fusion-cowork" / "scheduler_history.json")
         self._executions: List[TaskExecution] = []
         self._dependencies: Dict[str, TaskDependency] = {}
+        # R-1: 执行记录上限, 超出丢最旧 (旧版只 append 不 trim, 内存 + 持久化膨胀)
+        self._max_executions = 500
         self._load_history()
 
     # ── 任务执行记录 ──
@@ -86,6 +88,10 @@ class EnhancedScheduler:
             tokens_used=tokens_used,
         )
         self._executions.append(execution)
+        # R-1: 超上限丢最旧, 防 _executions 无界增长
+        if len(self._executions) > self._max_executions:
+            self._executions = self._executions[-self._max_executions :]
+            logger.debug(f"enhanced_scheduler 执行记录超上限, 保留最近 {self._max_executions} 条")
         self._save_history()
         return execution
 

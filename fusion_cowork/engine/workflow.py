@@ -396,6 +396,8 @@ class WorkflowEngine:
         self._event_emitter = event_emitter
         # HI-19: 预算追踪 — 在节点循环顶部检查, 超预算且 enforce 则中止执行
         self._budget_tracker = budget_tracker
+        # R-1: _executions 上限, 终态后超出则淘汰最旧 (旧版只增不删, 长跑引擎内存泄漏)
+        self._max_executions = 100
 
     def on_progress(self, callback: callable) -> None:
         """注册进度回调。"""
@@ -431,6 +433,8 @@ class WorkflowEngine:
         )
         self._executions[exec_id] = execution
         self._cancel_flags[exec_id] = False
+        # R-1: _executions 超上限淘汰最旧终态项, 防 long-running 引擎内存泄漏
+        self._trim_executions()
 
         # Session: auto-create
         session = None
@@ -910,3 +914,23 @@ class WorkflowEngine:
     def clear_executions(self) -> None:
         """清空执行记录。"""
         self._executions.clear()
+
+    def _trim_executions(self) -> None:
+        """R-1: _executions 超上限淘汰最旧终态项, 保留运行态。
+
+        优先剔终态 (completed/failed/cancelled) 中 started_at 最旧者; 全是运行态则按上限丢最旧。
+        """
+        if len(self._executions) <= self._max_executions:
+            return
+        terminal = [e for e in self._executions.values() if e.status != WorkflowStatus.RUNNING]
+        if terminal:
+            terminal.sort(key=lambda e: e.started_at)
+            victim = terminal[0]
+            self._executions.pop(victim.id, None)
+            self._cancel_flags.pop(victim.id, None)
+            logger.debug(f"_executions 淘汰终态项: {victim.id} (status={victim.status})")
+        else:
+            oldest = min(self._executions.values(), key=lambda e: e.started_at)
+            self._executions.pop(oldest.id, None)
+            self._cancel_flags.pop(oldest.id, None)
+            logger.debug(f"_executions 全运行态, 淘汰最旧: {oldest.id}")

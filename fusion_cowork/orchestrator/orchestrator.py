@@ -233,7 +233,8 @@ class AgentOrchestrator:
             executor = self._executors.get(task.agent_id)
             if executor:
                 if asyncio.iscoroutinefunction(executor):
-                    result = await executor(task.input_data)
+                    # R-2: 后台执行器无超时 → 卡死协程永不终态。wait_for 强制超时 + CancelledError 置终态
+                    result = await asyncio.wait_for(executor(task.input_data), timeout=self._task_timeout)
                 else:
                     result = executor(task.input_data)
                 task.output_data = result if isinstance(result, dict) else {"result": result}
@@ -242,7 +243,7 @@ class AgentOrchestrator:
                 node_executor = self._executors.get("executor_node")
                 if node_executor:
                     if asyncio.iscoroutinefunction(node_executor):
-                        result = await node_executor(task.input_data)
+                        result = await asyncio.wait_for(node_executor(task.input_data), timeout=self._task_timeout)
                     else:
                         result = node_executor(task.input_data)
                     task.output_data = result if isinstance(result, dict) else {"result": result}
@@ -258,6 +259,11 @@ class AgentOrchestrator:
             task.error = "用户取消"
             logger.info(f"提交任务被取消: {task.task_id}")
             raise
+        except TimeoutError:
+            # R-2: wait_for 超时 → executor 协程已取消, 置终态避免卡 running
+            task.status = "failed"
+            task.error = f"任务超时 ({self._task_timeout}s)"
+            logger.warning(f"提交任务超时: {task.task_id} ({self._task_timeout}s)")
         except Exception as e:
             task.error = str(e)
             task.status = "failed"
@@ -265,6 +271,9 @@ class AgentOrchestrator:
         finally:
             task.completed_at = time.time()
             self._task_handles.pop(task.task_id, None)
+            # R-1: 终态任务从 _tasks 剔除, 防 _tasks 无界增长 (运行态保留供查询)
+            if task.status in ("completed", "failed", "cancelled"):
+                self._tasks.pop(task.task_id, None)
 
     def cancel_task(self, task_id: str) -> bool:
         task = self._tasks.get(task_id)
@@ -545,6 +554,9 @@ class AgentOrchestrator:
             await asyncio.gather(*self._bg_tasks, return_exceptions=True)
             self._bg_tasks.clear()
         self._task_handles.clear()
+        # R-1: 停机清终态残留, 防 _tasks/_plans 跨生命周期累积
+        self._tasks.clear()
+        self._plans.clear()
         logger.info("所有 AgentRuntime 已停止")
 
     def get_message_bus(self):

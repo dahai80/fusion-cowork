@@ -693,3 +693,17 @@ class PluginLoader:
             if isinstance(k, str) and k and isinstance(v, (str, int, float, bool)):
                 safe[k] = str(v)
         return safe
+
+
+# E-13: 模块级单例 — 旧版各 CLI 命令各 new PluginLoader() 致 _loaded/_node_map 状态分散,
+# 已加载插件在不同实例间不可见 (卸载/列表命令看到空)。统一单例保证状态一致。
+_DEFAULT_PLUGIN_LOADER: Optional[PluginLoader] = None
+
+
+def get_plugin_loader(plugins_dir: str = "") -> PluginLoader:
+    """E-13: 返回进程级 PluginLoader 单例 (首次调用惰性构造)。"""
+    global _DEFAULT_PLUGIN_LOADER
+    if _DEFAULT_PLUGIN_LOADER is None:
+        _DEFAULT_PLUGIN_LOADER = PluginLoader(plugins_dir=plugins_dir)
+        logger.debug("PluginLoader 单例已构造")
+    return _DEFAULT_PLUGIN_LOADER

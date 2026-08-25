@@ -112,6 +112,8 @@ class RemoteControlServer:
         finally:
             self._clients.pop(client_id, None)
             self._client_authed.pop(client_id, None)
+            # R-1: 断连清该 client 的会话绑定, 防 _session_attachments 悬挂泄漏
+            self._detach_client_sessions(client_id)
             logger.info(f"Remote client disconnected: {client_id}")
 
     async def _process_request(self, client_id: str, request: Dict[str, Any]) -> Dict[str, Any]:
@@ -272,6 +274,14 @@ class RemoteControlServer:
             logger.error(f"attach_session failed: {e}")
             return {"error": str(e)}
 
+    def _detach_client_sessions(self, client_id: str) -> None:
+        """R-1: 清该 client 所有会话绑定, 防 _session_attachments 悬挂泄漏 (断连不 detach 则残留)。"""
+        stale = [sid for sid, cid in self._session_attachments.items() if cid == client_id]
+        for sid in stale:
+            self._session_attachments.pop(sid, None)
+        if stale:
+            logger.info(f"Remote client {client_id} detach 会话: {stale}")
+
     async def _broadcast(self, message: Dict[str, Any]):
         msg_str = json.dumps(message, ensure_ascii=False)
         disconnected = []
@@ -282,6 +292,9 @@ class RemoteControlServer:
                 disconnected.append(cid)
         for cid in disconnected:
             self._clients.pop(cid, None)
+            self._client_authed.pop(cid, None)
+            # R-1: 广播失败断连的 client 也清会话绑定, 防 _session_attachments 悬挂泄漏
+            self._detach_client_sessions(cid)
 
 
 class RemoteControlClient:
