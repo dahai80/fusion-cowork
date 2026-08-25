@@ -34,6 +34,10 @@ def import_all_nodes() -> int:
     """
     import importlib
 
+    from fusion_cowork.engine.node import NodeRegistry
+
+    # E-13: 记录导入前的已注册名 — 这些非本次模块注册 (如测试 fixture), 不应进 builtin 快照。
+    prior_names = set(NodeRegistry._registry.keys())
     ok = 0
     for mod_path in _NODE_MODULES:
         try:
@@ -41,5 +45,9 @@ def import_all_nodes() -> int:
             ok += 1
         except Exception as e:
             logger.warning("节点模块导入失败 %s: %s", mod_path, e)
+    # E-13: 仅冻结本次模块新注册的节点名 (防 loader.unload 经恶意 node_map 删内置节点)。
+    # 累加到已有 builtin 快照 (import_all_nodes 可能多次调用, 首次注册的是真内置)。
+    new_names = set(NodeRegistry._registry.keys()) - prior_names
+    NodeRegistry.freeze_builtins(extra_names=new_names)
     logger.info("节点模块导入完成: %d/%d", ok, len(_NODE_MODULES))
     return ok

@@ -328,6 +328,10 @@ class NodeRegistry:
     # CR-20: 已注册名保护 — 插件覆盖已注册节点 → 拒绝 (防劫持)
     # 首次注册视为基线; 同类重注册幂等放行 (import_all_nodes 多次调用安全)
     _protected_names: set[str] = set()
+    # E-13: 基线内置节点名 — freeze_builtins() 在 import_all_nodes 后冻结。
+    # unregister 拒卸内置名 (防恶意插件 node_map 声明拥有 shell_exec → unload 删内置)。
+    _builtin_names: set[str] = set()
+    _builtins_frozen: bool = False
     # R-3: 类级可变状态并发保护 — register/clear 与 create/list 间 check-then-set TOCTOU。
     # RLock 容 create()→get() 重入; 装饰器导入期 + 运行期并发注册均安全。
     _lock: threading.RLock = threading.RLock()
@@ -454,9 +458,32 @@ class NodeRegistry:
         return result
 
     @classmethod
-    def unregister(cls, name: str) -> None:
-        """注销节点类型 (同时释放保护标记)。"""
+    def freeze_builtins(cls, *, extra_names: Optional[set] = None) -> None:
+        """E-13: 冻结基线内置节点名。import_all_nodes 后调用。
+
+        仅冻结实际节点模块注册的名 (extra_names), 不含测试 fixture 等非模块名。
+        冻结后 unregister 拒卸内置名 (防恶意插件 node_map 谎报拥有 shell_exec →
+        loader.unload 调 unregister("shell_exec") 删内置节点)。
+
+        Args:
+            extra_names: 本次模块新注册的节点名集合, 累加到已有 builtin 快照。
+        """
         with cls._lock:
+            if extra_names:
+                cls._builtin_names |= extra_names
+            cls._builtins_frozen = True
+        logger.info(f"基线内置节点冻结: {len(cls._builtin_names)} 个")
+
+    @classmethod
+    def unregister(cls, name: str, *, force: bool = False) -> None:
+        """注销节点类型 (同时释放保护标记)。
+
+        E-13: 内置基线节点拒绝卸载 (force=True 显式覆盖, 仅内部卸载重注册场景)。
+        """
+        with cls._lock:
+            if cls._builtins_frozen and name in cls._builtin_names and not force:
+                logger.error(f"拒卸载内置节点 '{name}' (E-13: 防插件 node_map 劫持删内置)")
+                return
             cls._registry.pop(name, None)
             cls._protected_names.discard(name)
 
@@ -466,6 +493,8 @@ class NodeRegistry:
         with cls._lock:
             cls._registry.clear()
             cls._protected_names.clear()
+            cls._builtin_names.clear()
+            cls._builtins_frozen = False
 
 
 def register_node(func=None, *, name: str = ""):
