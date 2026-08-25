@@ -40,11 +40,15 @@ class ModuleRegistry:
     ) -> Dict[str, Any]:
         tid = resolve_tenant_id(tenant_id)
         now = datetime.now().isoformat()
-        async with self._store.write_tx() as db:
-            await db.execute(
-                "INSERT OR REPLACE INTO sidebar_modules "
+        # INSERT OR REPLACE 是 sqlite 专用; ON CONFLICT DO UPDATE 双后端兼容 (sqlite 3.24+/pg)。
+        async with self._store.write_tx(tid) as h:
+            await h.exec(
+                "INSERT INTO sidebar_modules "
                 "(id, name, icon, route_path, enabled, metadata, created_at, updated_at, tenant_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET name=excluded.name, icon=excluded.icon, "
+                "route_path=excluded.route_path, enabled=excluded.enabled, "
+                "metadata=excluded.metadata, updated_at=excluded.updated_at, tenant_id=excluded.tenant_id",
                 (
                     module_id,
                     name,
@@ -68,24 +72,22 @@ class ModuleRegistry:
 
     async def list_modules(self, enabled_only: bool = False, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
         tid = resolve_tenant_id(tenant_id)
-        db = await self._store._ensure_db()
         if enabled_only:
-            cursor = await db.execute(
+            rows = await self._store._fetchall(
                 "SELECT * FROM sidebar_modules WHERE enabled = 1 AND tenant_id = ? ORDER BY id",
                 (tid,),
             )
         else:
-            cursor = await db.execute(
+            rows = await self._store._fetchall(
                 "SELECT * FROM sidebar_modules WHERE tenant_id = ? ORDER BY id",
                 (tid,),
             )
-        rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
     async def enable_module(self, module_id: str, tenant_id: Optional[str] = None) -> bool:
         tid = resolve_tenant_id(tenant_id)
-        async with self._store.write_tx() as db:
-            await db.execute(
+        async with self._store.write_tx(tid) as h:
+            await h.exec(
                 "UPDATE sidebar_modules SET enabled = 1, updated_at = ? WHERE id = ? AND tenant_id = ?",
                 (datetime.now().isoformat(), module_id, tid),
             )
@@ -94,8 +96,8 @@ class ModuleRegistry:
 
     async def disable_module(self, module_id: str, tenant_id: Optional[str] = None) -> bool:
         tid = resolve_tenant_id(tenant_id)
-        async with self._store.write_tx() as db:
-            await db.execute(
+        async with self._store.write_tx(tid) as h:
+            await h.exec(
                 "UPDATE sidebar_modules SET enabled = 0, updated_at = ? WHERE id = ? AND tenant_id = ?",
                 (datetime.now().isoformat(), module_id, tid),
             )
@@ -104,12 +106,10 @@ class ModuleRegistry:
 
     async def get_module(self, module_id: str, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         tid = resolve_tenant_id(tenant_id)
-        db = await self._store._ensure_db()
-        cursor = await db.execute(
+        row = await self._store._fetchone(
             "SELECT * FROM sidebar_modules WHERE id = ? AND tenant_id = ?",
             (module_id, tid),
         )
-        row = await cursor.fetchone()
         return dict(row) if row else None
 
 
@@ -133,8 +133,8 @@ class NotificationService:
         tid = resolve_tenant_id(tenant_id)
         now = datetime.now().isoformat()
         notif_id = f"notif_{uuid.uuid4().hex[:8]}"
-        async with self._store.write_tx() as db:
-            await db.execute(
+        async with self._store.write_tx(tid) as h:
+            await h.exec(
                 "INSERT INTO space_notifications "
                 "(id, space_id, user_id, notification_type, title, content, "
                 "metadata, read, created_at, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
@@ -170,25 +170,23 @@ class NotificationService:
         tenant_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         tid = resolve_tenant_id(tenant_id)
-        db = await self._store._ensure_db()
         if unread_only:
-            cursor = await db.execute(
+            rows = await self._store._fetchall(
                 "SELECT * FROM space_notifications WHERE user_id = ? AND read = 0 AND tenant_id = ? "
                 "ORDER BY created_at DESC",
                 (user_id, tid),
             )
         else:
-            cursor = await db.execute(
+            rows = await self._store._fetchall(
                 "SELECT * FROM space_notifications WHERE user_id = ? AND tenant_id = ? ORDER BY created_at DESC",
                 (user_id, tid),
             )
-        rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
     async def mark_read(self, notification_id: str, tenant_id: Optional[str] = None) -> bool:
         tid = resolve_tenant_id(tenant_id)
-        async with self._store.write_tx() as db:
-            await db.execute(
+        async with self._store.write_tx(tid) as h:
+            await h.exec(
                 "UPDATE space_notifications SET read = 1 WHERE id = ? AND tenant_id = ?",
                 (notification_id, tid),
             )

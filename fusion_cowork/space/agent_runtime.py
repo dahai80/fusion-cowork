@@ -72,12 +72,12 @@ class SpaceAgentRuntime:
             raise PermissionError(f"User {operator_id} cannot manage agents in space {space_id}")
         tid = resolve_tenant_id(tenant_id)
         # A-8: 经 store 串行写事务, 加 tenant_id 守卫防跨租户删 agent。
-        async with self._store.write_tx() as db:
-            cursor = await db.execute(
+        async with self._store.write_tx(tid) as h:
+            res = await h.exec(
                 "DELETE FROM space_agents WHERE id = ? AND space_id = ? AND tenant_id = ?",
                 (agent_id, space_id, tid),
             )
-            removed = cursor.rowcount > 0
+            removed = res.rowcount > 0
         if removed:
             rt = self._running_runtimes.pop(agent_id, None)
             if rt and hasattr(rt, "stop"):

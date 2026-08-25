@@ -58,6 +58,11 @@ fusion-cowork = "fusion_cowork.cli:main"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "postgres: Postgres 集成测试 (需 asyncpg + FUSION_PG_DSN)",
+    "slow: 慢测试 (负载/E2E/Docker build, CI 单独 job)",
+    "chaos: 混沌测试 (故障注入, 非常规 CI)",
+]
 
 [tool.coverage.run]
 source = ["fusion_cowork"]

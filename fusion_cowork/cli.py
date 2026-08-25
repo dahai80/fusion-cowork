@@ -3040,6 +3040,97 @@ async def _async_space_agent_relay(space_id: str, message: str, agents: str, use
         await store.close()
 
 
+# ── 数据库命令 (v0.4.0 Stage 3) ──
+
+
+@cli.group()
+def db():
+    """数据库备份/恢复 + 迁移管理 (postgres 后端)。"""
+
+
+@db.command("backup")
+@click.option("--dsn", default="", help="Postgres DSN (缺则读 env FUSION_PG_DSN)")
+@click.option("--dest", default="", help="备份输出路径 (.sql.gz)")
+def db_backup(dsn: str, dest: str):
+    """pg_dump 备份到 .sql.gz。"""
+    import os
+
+    dsn = dsn or os.environ.get("FUSION_PG_DSN", "")
+    if not dsn:
+        console.print_error("缺 DSN — 传 --dsn 或设 env FUSION_PG_DSN")
+        raise SystemExit(1)
+    if not dest:
+        from datetime import datetime
+
+        dest = f"fusion-cowork-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.sql.gz"
+    from .db.backup import BackupManager
+
+    mgr = BackupManager(dsn)
+    out = mgr.backup(dest)
+    console.print_success(f"备份完成: {out} ({out.stat().st_size} bytes)")
+
+
+@db.command("restore")
+@click.option("--dsn", default="", help="Postgres DSN (缺则读 env FUSION_PG_DSN)")
+@click.option("--src", required=True, help="备份文件 (.sql.gz)")
+@click.option("--confirm", is_flag=True, help="确认覆盖现有数据库 (破坏性)")
+def db_restore(dsn: str, src: str, confirm: bool):
+    """从 .sql.gz 恢复 (破坏性, 需 --confirm)。"""
+    import os
+
+    dsn = dsn or os.environ.get("FUSION_PG_DSN", "")
+    if not dsn:
+        console.print_error("缺 DSN — 传 --dsn 或设 env FUSION_PG_DSN")
+        raise SystemExit(1)
+    from .db.backup import BackupManager
+
+    mgr = BackupManager(dsn)
+    mgr.restore(src, confirm=confirm)
+    console.print_success(f"恢复完成: {src}")
+
+
+@db.command("migrate")
+@click.option("--dsn", default="", help="Postgres DSN (缺则读 env FUSION_PG_DSN)")
+def db_migrate(dsn: str):
+    """执行待应用的数据库迁移 (版本化, 幂等)。"""
+    import asyncio
+    import os
+
+    dsn = dsn or os.environ.get("FUSION_PG_DSN", "")
+    if not dsn:
+        console.print_error("缺 DSN — 传 --dsn 或设 env FUSION_PG_DSN")
+        raise SystemExit(1)
+
+    async def _run():
+        import asyncpg
+
+        from .db.migrations import MigrationRunner
+
+        conn = await asyncpg.connect(dsn)
+        try:
+            # 建基础 schema (迁移依赖表存在)
+            from .space.store import _pg_schema_sql
+
+            await conn.execute(_pg_schema_sql())
+
+            async def _exec(sql, params=(), read=False):
+                from .db.placeholders import normalize_placeholders
+
+                pgsql = normalize_placeholders(sql)
+                if read:
+                    return list(await conn.fetch(pgsql, *(params or ())))
+                await conn.execute(pgsql, *(params or ()))
+                return None
+
+            runner = MigrationRunner("postgres", executor=_exec, error_class=asyncpg.DuplicateColumnError)
+            applied = await runner.run_pending()
+            console.print_success(f"迁移完成: 应用版本 {applied or '(无待应用)'}")
+        finally:
+            await conn.close()
+
+    asyncio.run(_run())
+
+
 # ── 主入口 ──
 
 
