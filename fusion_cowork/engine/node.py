@@ -262,6 +262,17 @@ class BaseNode(ABC):
             "required": [],
         }
 
+    @classmethod
+    def _cached_default_schema(cls) -> Dict[str, Any]:
+        # E-15: list()/create() 旧版每节点新建实例取 schema (47× 构造 + uuid 副作用)。
+        # schema 仅依赖类 (get_params_schema 不读 self.config.params), 缓存类级空配置 schema。
+        cached = cls.__dict__.get("_schema_cache")
+        if cached is not None:
+            return cached
+        schema = cls(NodeConfig()).get_params_schema()
+        cls._schema_cache = schema
+        return schema
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id,
@@ -372,9 +383,9 @@ class NodeRegistry:
         if "config" in kwargs and kwargs["config"] is not None:
             config = kwargs["config"]
             if hasattr(config, "params") and config.params:
-                # 获取节点 schema 进行参数强制转换
+                # 获取节点 schema 进行参数强制转换 (E-15: 走类级缓存避免每请求新建实例)
                 try:
-                    schema = node_class(NodeConfig()).get_params_schema()
+                    schema = node_class._cached_default_schema()
                     config.params = coerce_params(config.params, schema)
                 except Exception as e:
                     logger.debug(f"参数强制转换失败: {e}")
@@ -437,7 +448,7 @@ class NodeRegistry:
                     "description": node_class.description,
                     "icon": node_class.icon,
                     "default_label": node_class.default_label,
-                    "params_schema": node_class(NodeConfig()).get_params_schema(),
+                    "params_schema": node_class._cached_default_schema(),
                 }
             )
         return result

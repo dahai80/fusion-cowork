@@ -41,12 +41,15 @@ def test_list_present_returns_states():
     assert ids == {"u1", "u2"}
 
 
-def test_timeout_marks_offline():
+def test_timeout_removes_expired():
+    # R-6: 过期 presence 不留 ghost (旧版仅置 online=False 永驻 → 内存泄漏+假在线)。
+    # 超时后 GC 直接删除条目, list_present 不再返回该 user。
     pm = PresenceManager(event_emitter=_noop_emitter(), timeout=0.05)
     pm.heartbeat("s1", "u1")
     time.sleep(0.06)
     states = pm.list_present("s1")
-    assert states[0].online is False
+    assert states == []
+    assert pm.get("s1", "u1") is None
 
 
 def test_get_returns_none_for_unknown():

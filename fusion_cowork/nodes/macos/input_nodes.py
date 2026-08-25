@@ -142,7 +142,8 @@ def _applescript_move(x: int, y: int) -> Tuple[int, str]:
 
 
 def _applescript_type(text: str) -> Tuple[int, str]:
-    escaped = text.replace('"', '\\"').replace("\\", "\\\\")
+    # E-2: 转义顺序 — 必须先 \ 后 ", 否则先转 " 会把已转义的反斜杠二次转义 (注入窗口)。
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
     script = f'''
     tell application "System Events"
         keystroke "{escaped}"

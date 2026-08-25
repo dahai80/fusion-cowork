@@ -19,6 +19,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# R-8: readline 无界读 → 畸形长行 (无 \n) OOM。设行上限, 超限抛 LimitOverrunError。
+MAX_LINE_BYTES = 8 * 1024 * 1024  # 8 MiB 行上限 (单个 MCP 请求, 足够富余)
+
 MCP_PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "fusion-cowork"
 try:
@@ -47,7 +50,8 @@ class StdioTransport:
         """主循环: 从 stdin 读取请求，处理，写回 stdout。"""
         self._running = True
         logger.info("MCP stdio 传输启动")
-        reader = asyncio.StreamReader()
+        # R-8: 限长 StreamReader, readline 超过 limit 抛 LimitOverrunError (而非无界累积)。
+        reader = asyncio.StreamReader(limit=MAX_LINE_BYTES)
         protocol = asyncio.StreamReaderProtocol(reader)
         await asyncio.get_event_loop().connect_read_pipe(lambda: protocol, sys.stdin)
 
@@ -70,6 +74,12 @@ class StdioTransport:
                 await self._dispatch(request)
 
             except TimeoutError:
+                continue
+            except asyncio.LimitOverrunError:
+                # R-8: 行超 MAX_LINE_BYTES (无 \n 终止)。排空缓冲避免卡死, 报错继续。
+                logger.error(f"MCP 行超上限 {MAX_LINE_BYTES} 字节, 丢弃 (可能畸形输入)")
+                reader._buffer.clear()
+                await self._send_error(None, -32602, "Request too large")
                 continue
             except Exception as e:
                 logger.error(f"stdio 读取异常: {e}")

@@ -113,10 +113,14 @@ class PresenceManager:
         return True
 
     def _gc(self, states: Dict[str, PresenceState]) -> None:
+        # R-6: 旧版仅置 online=False 不删除 → ghost presence 永驻 (内存泄漏 + 假在线)。
+        # 超时直接删除条目, 像离开一样清理。
         now = time.time()
-        for st in states.values():
-            if now - st.last_heartbeat > self._timeout:
-                st.online = False
+        expired = [uid for uid, st in states.items() if now - st.last_heartbeat > self._timeout]
+        for uid in expired:
+            del states[uid]
+            logger.debug(f"presence GC 过期移除 user={uid} (超 {self._timeout}s 未心跳)")
+        return len(expired)
 
     def _emit(self, space_id: str, kind: str, data: Dict[str, Any]) -> None:
         if self._emitter is None:

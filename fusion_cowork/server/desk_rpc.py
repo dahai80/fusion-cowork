@@ -95,6 +95,7 @@ class DeskRPCServer:
         # httpx 连接池泄漏)。handler 取共享实例, stop() 统一关闭。
         self._mlx_client = None
         self._kb_client = None
+        self._engine = None  # E-7: 复用单例 engine, 避免每请求新建
         self._register_handlers()
 
     def _get_mlx_client(self):
@@ -776,14 +777,19 @@ class DeskRPCServer:
         return self._orchestrator
 
     def _get_engine(self):
+        # E-7: 旧版每请求新建 WorkflowEngine → 重复构造开销。缓存单例 (其依赖均共享级)。
+        if self._engine is not None:
+            return self._engine
         from ..engine import WorkflowEngine
 
-        return WorkflowEngine(
+        self._engine = WorkflowEngine(
             permission_manager=self._permission_manager,
             hook_manager=self._hook_manager,
             session_store=self._session_store,
             event_emitter=self._event_emitter,
         )
+        logger.debug("DeskRPC 复用单例 WorkflowEngine")
+        return self._engine
 
     async def _handle_agent_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         orch = self._get_orchestrator()

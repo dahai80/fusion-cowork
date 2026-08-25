@@ -85,6 +85,8 @@ class CrossDeviceSync:
         self._server: Optional[asyncio.AbstractServer] = None
         self._ws_server = None
         self._ws_clients: set = set()
+        # R-7: 记录各 workflow 最近同步 updated_at, 接收端据此拒旧版本 (冲突解决)。
+        self._last_workflow_sync: Dict[str, float] = {}
 
     def register_device(self, device: Device) -> None:
         """注册设备。"""
@@ -174,6 +176,20 @@ class CrossDeviceSync:
                 logger.warning("消息认证失败: token 不匹配")
                 return
         msg_type = data.get("msg_type", "")
+        # R-7: workflow_sync 冲突解决 — 旧版 last-writer-wins 静默丢数据 (并发写同 workflow)。
+        # 以 payload.updated_at 为准, 旧版本直接拒收 (不覆盖本地较新版本)。
+        if msg_type == "workflow_sync":
+            payload = data.get("payload", {}) or {}
+            wf_id = str(payload.get("id") or payload.get("workflow_id") or "")
+            incoming_ts = float(payload.get("updated_at") or 0.0)
+            if wf_id and incoming_ts:
+                local_ts = self._last_workflow_sync.get(wf_id, 0.0)
+                if incoming_ts < local_ts:
+                    logger.warning(
+                        f"workflow_sync 冲突: {wf_id} 本地 updated_at={local_ts} 比入站 {incoming_ts} 新, 拒收旧版本"
+                    )
+                    return
+                self._last_workflow_sync[wf_id] = incoming_ts
         handlers = self._message_handlers.get(msg_type, [])
         for handler in handlers:
             try:
@@ -193,6 +209,17 @@ class CrossDeviceSync:
     ) -> Dict[str, Any]:
         """同步工作流到其他设备。"""
         targets = target_devices or [d.device_id for d in self.get_online_devices()]
+
+        # R-7: 确保 payload 带 updated_at (冲突解决依据)。缺则补发送时刻。
+        if isinstance(workflow_data, dict) and not workflow_data.get("updated_at"):
+            workflow_data = {**workflow_data, "updated_at": time.time()}
+        wf_id = (
+            str(workflow_data.get("id") or workflow_data.get("workflow_id") or "")
+            if isinstance(workflow_data, dict)
+            else ""
+        )
+        if wf_id:
+            self._last_workflow_sync[wf_id] = float(workflow_data.get("updated_at") or 0.0)
 
         msg = SyncMessage(
             msg_id=f"sync_{uuid.uuid4().hex[:8]}",

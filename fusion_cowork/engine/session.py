@@ -220,12 +220,14 @@ class SessionStore:
         }
 
     def list_resumable(self, limit: int = 20) -> List[Session]:
+        # R-4: 旧版含 'running' → 恢复一个仍在跑的会话 = 双重执行 (同 session_id 并发跑两遍)。
+        # running 视为活跃, 不入可恢复列表。仅 paused/failed 可恢复。
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM sessions WHERE status IN ('paused','failed','running') ORDER BY updated_at DESC LIMIT ?",
+                "SELECT * FROM sessions WHERE status IN ('paused','failed') ORDER BY updated_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
-        logger.info(f"list_resumable: {len(rows)} 条可恢复会话")
+        logger.info(f"list_resumable: {len(rows)} 条可恢复会话 (排除 running 防双重执行)")
         return [self._row_to_session(r) for r in rows]
 
     def cleanup_expired(self, expire_days: int = SESSION_EXPIRE_DAYS) -> int:

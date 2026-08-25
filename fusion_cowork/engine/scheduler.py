@@ -49,6 +49,7 @@ class ScheduledTask:
     last_run: Optional[float] = None
     next_run: Optional[float] = None
     run_count: int = 0
+    fail_count: int = 0
     description: str = ""
     tags: List[str] = field(default_factory=list)
 
@@ -70,6 +71,8 @@ class TaskScheduler:
         self._job_map: Dict[str, str] = {}  # task_id -> job_id
         self._executors: Dict[str, Callable] = {}
         self._task_store_path = task_store_path
+        # R-5: 连续失败上限, 超过才 FAILED+pause (避免一次瞬态失败永久停摆)。
+        self._max_fail = 5
 
     def start(self) -> None:
         """启动调度器。"""
@@ -207,9 +210,26 @@ class TaskScheduler:
             else:
                 executor()
             logger.info(f"定时任务执行完成: {task.name}")
+            task.fail_count = 0
         except Exception as e:
-            task.status = TaskStatus.FAILED
-            logger.error(f"定时任务执行失败 '{task.name}': {e}")
+            # R-5: 旧版直接 FAILED → APScheduler job 仍 active, 下次触发因 status!=ACTIVE 静默 skip,
+            # 用户不知任务已停摆 (审计: 永久停摆)。改为: 计失败次数, 未超阈值则恢复 ACTIVE 下次重试;
+            # 超阈值才 FAILED + pause job (显式停, 不静默 skip)。
+            task.fail_count = getattr(task, "fail_count", 0) + 1
+            logger.error(f"定时任务执行失败 '{task.name}' (第{task.fail_count}次): {e}")
+            if task.fail_count >= self._max_fail:
+                task.status = TaskStatus.FAILED
+                logger.warning(
+                    f"定时任务 '{task.name}' 连续失败 {task.fail_count} 次, 置 FAILED 并暂停 (需手动 resume_task 恢复)"
+                )
+                job_id = self._job_map.get(task_id)
+                if job_id:
+                    try:
+                        self._scheduler.pause_job(job_id)
+                    except Exception as pe:
+                        logger.error(f"FAILED 后暂停 job 失败 '{task.name}': {pe}")
+            else:
+                logger.info(f"定时任务 '{task.name}' 瞬态失败, 保持 ACTIVE 下次触发重试")
 
         # 更新下次运行时间
         job = self._scheduler.get_job(f"job_{task_id}")
@@ -221,7 +241,11 @@ class TaskScheduler:
         job_id = self._job_map.get(task_id)
         if not job_id:
             return False
-        self._scheduler.pause_job(job_id)
+        # R-5: job 可能已被 (FAILED 时) 暂停或移除 → JobLookupError 容错。
+        try:
+            self._scheduler.pause_job(job_id)
+        except Exception as e:
+            logger.warning(f"pause_job '{task_id}' 失败 (job 可能已移除): {e}")
         if task_id in self._tasks:
             self._tasks[task_id].status = TaskStatus.PAUSED
         return True
@@ -231,16 +255,25 @@ class TaskScheduler:
         job_id = self._job_map.get(task_id)
         if not job_id:
             return False
-        self._scheduler.resume_job(job_id)
+        try:
+            self._scheduler.resume_job(job_id)
+        except Exception as e:
+            logger.warning(f"resume_job '{task_id}' 失败 (job 可能已移除): {e}")
+            return False
         if task_id in self._tasks:
             self._tasks[task_id].status = TaskStatus.ACTIVE
+            # 恢复时重置失败计数, 允许重新尝试。
+            self._tasks[task_id].fail_count = 0
         return True
 
     def remove_task(self, task_id: str) -> bool:
         """删除任务。"""
         job_id = self._job_map.get(task_id)
         if job_id:
-            self._scheduler.remove_job(job_id)
+            try:
+                self._scheduler.remove_job(job_id)
+            except Exception as e:
+                logger.warning(f"remove_job '{task_id}' 失败 (job 可能已移除): {e}")
         self._job_map.pop(task_id, None)
         task = self._tasks.pop(task_id, None)
         if task:

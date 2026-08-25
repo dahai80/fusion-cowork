@@ -45,6 +45,33 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
             pass
 
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    # E-4: 原子写 — tmp 文件写完再 os.replace, 防中途崩溃留半写文件。
+    # 同目录写 tmp (保证同文件系统, replace 原子), 失败清理 tmp。
+    import tempfile
+
+    tmp = None
+    try:
+        fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
+        os.replace(tmp, path)
+    except Exception:
+        if tmp is not None:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
+
 # 命令沙箱 — 黑名单/白名单
 _SHELL_BLACKLIST = frozenset(
     {
@@ -922,13 +949,14 @@ class ApplyEditNode(BaseNode):
                     summary=f"预览: 将修改 {count} 处",
                 )
 
-            # 创建备份
+            # 创建备份 (E-4: 原子写, tmp+os.replace, 防半写损坏)
+            backup_path = None
             if create_backup:
                 backup_path = path.with_suffix(f"{path.suffix}.bak")
-                backup_path.write_text(content, encoding="utf-8")
+                _atomic_write_text(backup_path, content)
 
-            # 写入修改
-            path.write_text(new_content, encoding="utf-8")
+            # 写入修改 (E-4: 原子写)
+            _atomic_write_text(path, new_content)
 
             return NodeResult(
                 status=NodeStatus.SUCCESS,
