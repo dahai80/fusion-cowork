@@ -222,7 +222,11 @@ class CollabHub:
                     member = await self._space_store.get_member(space_id, user_id)
                     if member is None:
                         space = await self._space_store.get_space(space_id)
-                        if not space or space.get("owner_id") != user_id:
+                        # A-5: get_space 返回 Space dataclass (.owner_id 属性), 非 dict —
+                        # 旧 space.get("owner_id") 在 dataclass 上 AttributeError (非成员路径恒崩,
+                        # 异常被外层 except 吞 → 连接静默断, 攻击者可探测空间存在性)。
+                        owner_id = getattr(space, "owner_id", "") if space else ""
+                        if not space or owner_id != user_id:
                             logger.warning(f"CollabHub WS 拒绝: user={user_id} 非 space={space_id} 成员")
                             await websocket.send(json.dumps({"type": "error", "error": "非空间成员"}))
                             await websocket.close()

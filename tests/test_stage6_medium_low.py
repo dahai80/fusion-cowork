@@ -375,28 +375,33 @@ class TestCollabWsAuth:
     @pytest.mark.asyncio
     async def test_member_check_rejects_nonmember(self):
         from fusion_cowork.server.collab_ws import CollabHub
+        from fusion_cowork.space.models import Space
 
         store = AsyncMock()
         store.get_member = AsyncMock(return_value=None)
-        store.get_space = AsyncMock(return_value={"owner_id": "other"})
+        # A-5: get_space 返回 Space dataclass, 非 dict — 旧 mock 返 dict 假绿,
+        # 掩盖生产 space.get("owner_id") AttributeError。改用真实 Space。
+        store.get_space = AsyncMock(return_value=Space(id="s1", name="s", owner_id="other"))
         hub = CollabHub(space_store=store)
-        # 复刻 _handler 成员校验分支
         member = await hub._space_store.get_member("s1", "intruder")
         space = await hub._space_store.get_space("s1")
-        rejected = member is None and (not space or space.get("owner_id") != "intruder")
+        owner_id = getattr(space, "owner_id", "") if space else ""
+        rejected = member is None and (not space or owner_id != "intruder")
         assert rejected
 
     @pytest.mark.asyncio
     async def test_owner_allowed_when_not_member(self):
         from fusion_cowork.server.collab_ws import CollabHub
+        from fusion_cowork.space.models import Space
 
         store = AsyncMock()
         store.get_member = AsyncMock(return_value=None)
-        store.get_space = AsyncMock(return_value={"owner_id": "owner1"})
+        store.get_space = AsyncMock(return_value=Space(id="s1", name="s", owner_id="owner1"))
         hub = CollabHub(space_store=store)
         member = await hub._space_store.get_member("s1", "owner1")
         space = await hub._space_store.get_space("s1")
-        rejected = member is None and (not space or space.get("owner_id") != "owner1")
+        owner_id = getattr(space, "owner_id", "") if space else ""
+        rejected = member is None and (not space or owner_id != "owner1")
         assert not rejected
 
 

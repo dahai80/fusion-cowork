@@ -1785,8 +1785,23 @@ class DeskRPCServer:
             try:
                 handler = self._handlers.get(target_method)
                 if handler:
+                    # A-5: 经 _dispatch 的认证+IDOR 守卫 — 原 _handle_cowork_trigger 直调
+                    # handler 绕过 _authenticate (无 __principal__) + _check_space_access,
+                    # 且 call_params 无 __principal__ → 目标 handler 取 params 身份字段被冒充。
                     call_params = {**payload, "project_id": project_id}
-                    action_result = await handler(call_params)
+                    authed = self._authenticate(call_params)
+                    if isinstance(authed, dict) and "__auth_error__" in authed:
+                        result["status"] = "auth_failed"
+                        result["error"] = authed["__auth_error__"].get("message", "认证失败")
+                        logger.warning(f"cowork.trigger auth failed project={project_id}")
+                        return result
+                    space_err = await self._check_space_access(target_method, authed)
+                    if space_err is not None:
+                        result["status"] = "forbidden"
+                        result["error"] = space_err.get("error", "空间访问被拒")
+                        logger.warning(f"cowork.trigger IDOR 拒 project={project_id} method={target_method}")
+                        return result
+                    action_result = await handler(authed)
                     result["action_result"] = action_result
                     result["status"] = "completed"
                 else:
