@@ -105,6 +105,16 @@ class CrossDeviceSync:
         now = time.time()
         return [d for d in self._devices.values() if d.status == DeviceStatus.ONLINE and now - d.last_seen < 30]
 
+    def _touch_device(self, sender_id: str) -> None:
+        # R-7: 收消息时刷新 last_seen + 置 ONLINE — 旧版仅 register_device 设 last_seen,
+        # 活跃设备 30s 不重注册就被 get_online_devices 判离线 → 广播丢目标。
+        if not sender_id:
+            return
+        dev = self._devices.get(sender_id)
+        if dev:
+            dev.last_seen = time.time()
+            dev.status = DeviceStatus.ONLINE
+
     def on_message(self, msg_type: str, handler: Callable) -> None:
         """注册消息处理器。"""
         self._message_handlers.setdefault(msg_type, []).append(handler)
@@ -129,44 +139,59 @@ class CrossDeviceSync:
 
     async def _send_to_device(self, device: Device, msg: SyncMessage) -> bool:
         """发送消息到指定设备。"""
-        try:
-            ssl_ctx = None
-            if self.ssl_cert and self.ssl_key:
-                import ssl
+        # R-7: 旧版每条消息新 TCP, 一次失败即丢 (对端瞬断 5s 全丢)。加重试: 连接级瞬态失败
+        # 退避重试, 覆盖对端重启/网络抖动窗口; 持久队列非本补丁范围 (离线>重试窗口仍丢, 记 WARN)。
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                ssl_ctx = None
+                if self.ssl_cert and self.ssl_key:
+                    import ssl
 
-                ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-                ssl_ctx.load_cert_chain(self.ssl_cert, self.ssl_key)
-                if self.ssl_verify:
-                    ssl_ctx.check_hostname = True
-                    ssl_ctx.verify_mode = ssl.CERT_REQUIRED
+                    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                    ssl_ctx.load_cert_chain(self.ssl_cert, self.ssl_key)
+                    if self.ssl_verify:
+                        ssl_ctx.check_hostname = True
+                        ssl_ctx.verify_mode = ssl.CERT_REQUIRED
+                    else:
+                        # 仅用于自签名证书的开发环境
+                        logger.warning("SSL 验证已禁用 — 仅用于开发环境自签名证书")
+                        ssl_ctx.check_hostname = False
+                        ssl_ctx.verify_mode = ssl.CERT_NONE
+
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(device.host, device.port, ssl=ssl_ctx),
+                    timeout=5.0,
+                )
+                data = json.dumps(
+                    {
+                        "msg_id": msg.msg_id,
+                        "msg_type": msg.msg_type,
+                        "sender": msg.sender,
+                        "payload": msg.payload,
+                        "timestamp": msg.timestamp,
+                        "token": self.token or "",
+                    }
+                )
+                writer.write(data.encode("utf-8"))
+                await writer.drain()
+                writer.close()
+                await writer.wait_closed()
+                return True
+            except (TimeoutError, OSError, asyncio.CancelledError) as e:
+                if attempt < max_attempts:
+                    backoff = 0.5 * attempt
+                    logger.warning(f"发送消息失败 {device.name} (第{attempt}次): {e}, {backoff}s 后重试")
+                    await asyncio.sleep(backoff)
                 else:
-                    # 仅用于自签名证书的开发环境
-                    logger.warning("SSL 验证已禁用 — 仅用于开发环境自签名证书")
-                    ssl_ctx.check_hostname = False
-                    ssl_ctx.verify_mode = ssl.CERT_NONE
-
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(device.host, device.port, ssl=ssl_ctx),
-                timeout=5.0,
-            )
-            data = json.dumps(
-                {
-                    "msg_id": msg.msg_id,
-                    "msg_type": msg.msg_type,
-                    "sender": msg.sender,
-                    "payload": msg.payload,
-                    "timestamp": msg.timestamp,
-                    "token": self.token or "",
-                }
-            )
-            writer.write(data.encode("utf-8"))
-            await writer.drain()
-            writer.close()
-            await writer.wait_closed()
-            return True
-        except Exception as e:
-            logger.debug(f"发送消息失败 {device.name}: {e}")
-            return False
+                    logger.warning(
+                        f"发送消息失败 {device.name} (重试{max_attempts}次仍失败): {e}, 消息 {msg.msg_id} 丢弃"
+                    )
+                    return False
+            except Exception as e:
+                logger.debug(f"发送消息失败 {device.name}: {e}")
+                return False
+        return False
 
     async def _handle_message(self, data: dict) -> None:
         """处理接收到的消息。"""
@@ -176,6 +201,8 @@ class CrossDeviceSync:
                 logger.warning("消息认证失败: token 不匹配")
                 return
         msg_type = data.get("msg_type", "")
+        # R-7: 收消息刷新发送方 last_seen (活跃设备不被误判离线)
+        self._touch_device(data.get("sender", ""))
         # R-7: workflow_sync 冲突解决 — 旧版 last-writer-wins 静默丢数据 (并发写同 workflow)。
         # 以 payload.updated_at 为准, 旧版本直接拒收 (不覆盖本地较新版本)。
         if msg_type == "workflow_sync":
@@ -276,6 +303,8 @@ class CrossDeviceSync:
                             if self.token and data.get("token", "") != self.token:
                                 logger.warning(f"WS 消息认证失败: {remote}, token 不匹配")
                                 continue
+                            # R-7: WS 路径同样刷新发送方 last_seen
+                            self._touch_device(data.get("sender", ""))
                             msg = SyncMessage(
                                 msg_id=data.get("msg_id", f"msg_{uuid.uuid4().hex[:8]}"),
                                 msg_type=data.get("msg_type", "unknown"),
@@ -306,7 +335,11 @@ class CrossDeviceSync:
         except ImportError:
             logger.warning("websockets 库未安装 (pip install websockets), WS 入站监听降级关闭")
         except OSError as oe:
+            # R-7: 旧版仅 log, _running 留 True + _ws_server 为 None → 半死态, 调用方误以为成功。
+            # fail-visible: 回滚 _running, 抛出让调用方知启动失败。
+            self._running = False
             logger.error(f"WebSocket 监听启动失败: {oe}")
+            raise
 
     async def stop(self) -> None:
         """停止同步服务。"""
