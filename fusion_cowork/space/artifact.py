@@ -46,6 +46,19 @@ class SpaceArtifactService:
         tid = resolve_tenant_id(tenant_id)
         if not await self._perm.check(space_id, owner_user_id, "edit_artifact"):
             raise PermissionError(f"User {owner_user_id} cannot create artifact in space {space_id}")
+        # Stage 7: per-tenant artifact quota (opt-in, default 无限)
+        from ..security.quotas import get_default_quota_enforcer
+
+        try:
+            cur = await self._store._fetchval(
+                "SELECT COUNT(*) FROM space_artifacts WHERE space_id = ? AND tenant_id = ?",
+                (space_id, tid),
+            )
+            get_default_quota_enforcer().check_create_artifact(tid, space_id, int(cur or 0))
+        except Exception as e:
+            if "QuotaExceeded" in type(e).__name__:
+                raise
+            logger.debug(f"配额校验跳过: {e}")
         artifact_id = f"art_{uuid.uuid4().hex[:8]}"
         now = datetime.now().isoformat()
         # A-8: 经 store 串行写事务, 与 SpaceStore 写隔离 (单共享连接)。

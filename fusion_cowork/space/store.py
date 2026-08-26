@@ -494,8 +494,19 @@ class SpaceStore:
 
     async def create_space(self, space: Space, tenant_id: Optional[str] = None) -> Space:
         tid = resolve_tenant_id(tenant_id or getattr(space, "tenant_id", None))
-        if not getattr(space, "tenant_id", ""):
-            space.tenant_id = tid
+        # 始终用解析后的 tid 覆盖 space.tenant_id — 防调用方未显式设 (默认 DEFAULT_TENANT)
+        # 却传 tenant_id 参数时, space 对象仍带旧默认导致下游 (add_member 等) 错租户。
+        space.tenant_id = tid
+        # Stage 7: per-tenant 配额校验 (opt-in, 无 config 配额 → 无限透传)
+        from ..security.quotas import get_default_quota_enforcer
+
+        try:
+            cur = await self._fetchval("SELECT COUNT(*) FROM spaces WHERE tenant_id = ?", (tid,))
+            get_default_quota_enforcer().check_create_space(tid, int(cur or 0))
+        except Exception as e:
+            if "QuotaExceeded" in type(e).__name__:
+                raise
+            logger.debug(f"配额校验跳过: {e}")
         async with self.write_tx(tid) as h:
             await h.exec(
                 "INSERT INTO spaces (id, name, description, owner_id, status, "
@@ -689,6 +700,19 @@ class SpaceStore:
         tid = resolve_tenant_id(tenant_id or getattr(msg, "tenant_id", None))
         if not getattr(msg, "tenant_id", ""):
             msg.tenant_id = tid
+        # Stage 7: per-tenant per-space 消息配额 (opt-in)
+        from ..security.quotas import get_default_quota_enforcer
+
+        try:
+            cur = await self._fetchval(
+                "SELECT COUNT(*) FROM space_messages WHERE space_id = ? AND tenant_id = ?",
+                (msg.space_id, tid),
+            )
+            get_default_quota_enforcer().check_add_message(tid, msg.space_id, int(cur or 0))
+        except Exception as e:
+            if "QuotaExceeded" in type(e).__name__:
+                raise
+            logger.debug(f"配额校验跳过: {e}")
         async with self.write_tx(tid) as h:
             await h.exec(
                 "INSERT INTO space_messages (id, space_id, user_id, agent_id, role, content, "
@@ -757,6 +781,19 @@ class SpaceStore:
 
         tid = resolve_tenant_id(tenant_id or agent_data.get("tenant_id"))
         agent_id = agent_data.get("id") or f"agent_{uuid.uuid4().hex[:8]}"
+        # Stage 7: per-tenant agent quota (opt-in, default 无限)
+        from ..security.quotas import get_default_quota_enforcer
+
+        try:
+            cur = await self._fetchval(
+                "SELECT COUNT(*) FROM space_agents WHERE space_id = ? AND tenant_id = ?",
+                (agent_data.get("space_id", ""), tid),
+            )
+            get_default_quota_enforcer().check_create_agent(tid, agent_data.get("space_id", ""), int(cur or 0))
+        except Exception as e:
+            if "QuotaExceeded" in type(e).__name__:
+                raise
+            logger.debug(f"配额校验跳过: {e}")
         async with self.write_tx(tid) as h:
             await h.exec(
                 "INSERT INTO space_agents (id, space_id, name, agent_type, system_prompt, "

@@ -14,10 +14,26 @@ from typing import Any, Dict, List, Optional
 
 from ..engine.node import BaseNode, NodeCategory, NodeConfig, NodeRegistry, NodeResult, NodeStatus
 from .manifest import PluginManifest
+from .registry import get_plugin_registry
 
 logger = logging.getLogger(__name__)
 
 _RESULT_MARKER = "__SANDBOX_RESULT__"
+
+
+def _version_lt(a: str, b: str) -> bool:
+    """a < b 语义版本比较 (忽略非数字段)。"""
+
+    def _t(v: str) -> tuple:
+        parts = []
+        for p in v.split("."):
+            try:
+                parts.append(int(p))
+            except ValueError:
+                parts.append(0)
+        return tuple(parts)
+
+    return _t(a) < _t(b)
 
 
 class SandboxedNode(BaseNode):
@@ -246,6 +262,8 @@ class PluginLoader:
 
     def discover(self) -> List[PluginManifest]:
         manifests = []
+        require_signing = self._require_signing()
+        registry = get_plugin_registry()
         for plugin_dir in sorted(self._plugins_dir.iterdir()):
             if not plugin_dir.is_dir():
                 continue
@@ -254,10 +272,49 @@ class PluginLoader:
                 logger.debug(f"跳过无清单目录: {plugin_dir.name}")
                 continue
             manifest = PluginManifest.from_json(manifest_path)
-            if manifest:
-                manifests.append(manifest)
+            if not manifest:
+                continue
+            # Stage 7: 签名校验 — require_signing=true 时拒未签名/验签失败
+            if require_signing and not self._verify_signing(manifest):
+                logger.warning(f"插件 {manifest.name} 未签名或验签失败, require_signing 拒绝")
+                continue
+            # Stage 7: 版本降级校验 — registry 已装更高版本则跳过 (不静默降级)
+            reg_v = registry.get_version(manifest.name)
+            if reg_v and _version_lt(manifest.version, reg_v):
+                logger.warning(
+                    f"插件 {manifest.name} 磁盘版本 {manifest.version} < registry 已装 {reg_v}, 跳过 (防降级)"
+                )
+                continue
+            manifests.append(manifest)
         logger.info(f"发现 {len(manifests)} 个插件")
         return manifests
+
+    def _require_signing(self) -> bool:
+        """读 config plugins.require_signing (默认 false, opt-in)。"""
+        try:
+            from ..config_center import ConfigCenter
+
+            cc = ConfigCenter.get_instance()
+            return bool(cc.get("plugins.require_signing", False))
+        except Exception:
+            return False
+
+    def _verify_signing(self, manifest: PluginManifest) -> bool:
+        """Stage 7: 用 config 配置的公钥列表验签 manifest.signature。"""
+        from .signing import get_configured_public_keys, verify_any_key
+
+        if not manifest.signature:
+            return False
+        # 读原始 manifest dict (含 signature) 验签
+        manifest_path = self._plugins_dir / manifest.name / "manifest.json"
+        try:
+            import json
+
+            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.error(f"插件 {manifest.name} manifest 读取失败, 无法验签: {e}")
+            return False
+        return verify_any_key(raw, get_configured_public_keys())
 
     def load(self, name: str) -> List[BaseNode]:
         plugin_dir = self._plugins_dir / name
@@ -401,6 +458,28 @@ class PluginLoader:
         except Exception as e:
             logger.debug(f"读取 plugins.trusted 失败, 视为空白名单: {e}")
         return []
+
+    def _register_installed(self, name: str, manifest: Optional[PluginManifest] = None) -> None:
+        """Stage 7: 安装后登记到 registry (版本 + 签名状态 + checksum)。
+
+        manifest 缺则从 plugins_dir 重读 (zip 安装路径无 manifest 对象)。
+        """
+        registry = get_plugin_registry()
+        if manifest is None:
+            manifest_path = self._plugins_dir / name / "manifest.json"
+            if manifest_path.exists():
+                manifest = PluginManifest.from_json(manifest_path)
+        version = manifest.version if manifest else "0.0.0"
+        sig_valid = False
+        if manifest and manifest.signature:
+            sig_valid = self._verify_signing(manifest)
+        checksum = ""
+        if manifest:
+            mp = self._plugins_dir / name / "manifest.json"
+            if mp.exists():
+                checksum = hashlib.sha256(mp.read_bytes()).hexdigest()
+        if not registry.register(name, version, sig_valid, checksum):
+            logger.warning(f"插件 {name} registry 登记失败 (可能降版)")
 
     def load_all(self) -> Dict[str, List[BaseNode]]:
         results = {}
@@ -552,6 +631,7 @@ class PluginLoader:
                 for member in zf.infolist():
                     zf.extract(member, str(base))
                 logger.info(f"zip 插件已安装: {plugin_name}")
+                self._register_installed(plugin_name)
                 return True
         except zipfile.BadZipFile as e:
             logger.error(f"zip 文件无效: {e}")
@@ -594,6 +674,7 @@ class PluginLoader:
                 return False
         shutil.copytree(str(src_dir), str(target))
         logger.info(f"插件已安装: {manifest.name} -> {target}")
+        self._register_installed(manifest.name, manifest)
         return True
 
     def uninstall(self, name: str) -> bool:
@@ -604,6 +685,7 @@ class PluginLoader:
             return False
         if not self._safe_rmtree(name):
             return False
+        get_plugin_registry().unregister(name)
         logger.info(f"插件已卸载删除: {name}")
         return True
 

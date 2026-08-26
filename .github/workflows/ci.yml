@@ -7,33 +7,88 @@ on:
     branches: [main]
 
 jobs:
-  lint-and-test:
+  lint:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11"]
-
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: pip install ruff
+      - name: Ruff check
+        run: ruff check fusion_cowork/ tests/
+      - name: Ruff format check
+        run: ruff format --check fusion_cowork/ tests/
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+  test-sqlite:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[test,cloud,web]"
+      - name: Test (SQLite backend, default marks)
+        run: python -m pytest tests/ -q --tb=short -m "not slow and not chaos and not postgres"
+      - name: Coverage
+        run: python -m pytest tests/ -q -m "not slow and not chaos and not postgres" --cov=fusion_cowork --cov-report=term-missing --cov-fail-under=50
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[test]"
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: fusion
+          POSTGRES_USER: fusion
+          POSTGRES_DB: fusion
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fusion"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      FUSION_PG_DSN: postgresql://fusion:fusion@localhost:5432/fusion
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[test,cloud,web]"
+      - name: Test (Postgres backend integration)
+        run: python -m pytest tests/ -q --tb=short -m "postgres"
 
-      - name: Install ruff
-        run: pip install ruff
+  test-slow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[test,cloud,web]"
+      - name: Slow + chaos tests
+        run: python -m pytest tests/ -q --tb=short -m "slow or chaos"
 
-      - name: Lint with ruff
-        run: ruff check fusion_cowork/ tests/
-
-      - name: Test with pytest
-        run: pytest tests/ -v --tb=short
-
-      - name: Coverage report
-        run: pytest tests/ --cov=fusion_cowork --cov-report=term-missing --tb=short
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[test,cloud,web]"
+      - run: pip install pip-audit
+      - name: pip-audit (high/critical CVEs fail)
+        run: pip-audit -f columns --ignore-vuln GHSA-xxxx

@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 import traceback
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
@@ -45,6 +46,9 @@ _MAX_RPC_LINE = 1024 * 1024
 _RPC_READ_TIMEOUT = 5.0
 # HI-13: collab 消息内容上限 (16KiB), 防存储型 prompt 注入 + 撑爆 session 记录
 _MAX_COLLAB_CONTENT = 16 * 1024
+# Stage 7: collab 会话防泄漏 — idle 超时自动 evict (无心跳 leave), 上限保护
+_COLLAB_IDLE_TIMEOUT = 30 * 60  # 30 分钟无 poll/send 即视为断连
+_COLLAB_MAX_SESSIONS = 1000  # 单实例上限, 超则 evict 最旧 idle
 # HI-15: 文本知识库扩展名白名单 (KB 主要消费文本; 二进制需 allow_binary 单独路径)
 _TEXT_EXT_WHITELIST = frozenset(
     {".txt", ".md", ".markdown", ".rst", ".json", ".yaml", ".yml", ".csv", ".html", ".htm", ".log", ".py", ".js", ".ts"}
@@ -1383,6 +1387,27 @@ class DeskRPCServer:
 
         return _MockWS(), queue
 
+    def _touch_collab_session(self, session_id: str) -> None:
+        # Stage 7: 更新心跳 + evict idle/expired, 防长跑泄漏 (ResourceWarning)
+        sess = self._collab_sessions.get(session_id)
+        if sess is not None:
+            sess["last_seen"] = time.monotonic()
+        now = time.monotonic()
+        expired = [
+            sid for sid, s in self._collab_sessions.items() if now - s.get("last_seen", now) > _COLLAB_IDLE_TIMEOUT
+        ]
+        for sid in expired:
+            self._collab_sessions.pop(sid, None)
+            self._collab_queues.pop(sid, None)
+            logger.info(f"collab 会话 {sid} idle 超时 evict (泄漏防护)")
+        # 上限保护: 超 max 则 evict 最旧
+        if len(self._collab_sessions) > _COLLAB_MAX_SESSIONS:
+            oldest = sorted(self._collab_sessions.items(), key=lambda kv: kv[1].get("last_seen", 0))
+            for sid, _ in oldest[: len(self._collab_sessions) - _COLLAB_MAX_SESSIONS]:
+                self._collab_sessions.pop(sid, None)
+                self._collab_queues.pop(sid, None)
+                logger.warning(f"collab 会话 {sid} 超 _COLLAB_MAX_SESSIONS evict")
+
     async def _handle_space_collab_join(self, params: Dict[str, Any]) -> Dict[str, Any]:
         import secrets as _secrets
 
@@ -1396,9 +1421,16 @@ class DeskRPCServer:
         user_id = principal
         display_name = authed.get("display_name", "")
         session_id = authed.get("session_id") or f"sess_{_secrets.token_hex(16)}"
+        self._touch_collab_session(session_id)  # join 时先 evict idle
         ws, _ = self._mock_ws_for(session_id)
         result = await hub.join(ws, space_id, user_id, display_name=display_name)
-        self._collab_sessions[session_id] = {"space_id": space_id, "user_id": user_id, "ws": ws, "principal": principal}
+        self._collab_sessions[session_id] = {
+            "space_id": space_id,
+            "user_id": user_id,
+            "ws": ws,
+            "principal": principal,
+            "last_seen": time.monotonic(),
+        }
         result["session_id"] = session_id
         return result
 
@@ -1408,6 +1440,7 @@ class DeskRPCServer:
         sess = self._collab_sessions.get(session_id)
         if not sess:
             return {"error": "会话不存在, 请先 collab.join"}
+        self._touch_collab_session(session_id)
         # HI-13: content 限长 + 剥控制字符, 防 LLM 存储型 prompt 注入 / 撑爆记录
         content = params.get("content", "")
         if not isinstance(content, str):
@@ -1427,6 +1460,7 @@ class DeskRPCServer:
         sess = self._collab_sessions.get(session_id)
         if not sess:
             return {"error": "会话不存在, 请先 collab.join"}
+        self._touch_collab_session(session_id)
         raw = json.dumps(
             {
                 "type": "cursor_move",
@@ -1440,6 +1474,7 @@ class DeskRPCServer:
 
     async def _handle_space_collab_poll(self, params: Dict[str, Any]) -> Dict[str, Any]:
         session_id = params.get("session_id", "")
+        self._touch_collab_session(session_id)
         if session_id not in self._collab_queues:
             return {"events": []}
         queue = self._collab_queues[session_id]
