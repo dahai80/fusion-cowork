@@ -112,6 +112,12 @@ class DeskRPCServer:
         self._mlx_client = None
         self._kb_client = None
         self._engine = None  # E-7: 复用单例 engine, 避免每请求新建
+        # Stage 6: per-tenant 限流 (env FUSION_RATE_LIMIT 设了启用, 否则无限透传)。
+        from ..security.rate_limit import get_default_rate_limiter
+
+        self._rate_limiter = get_default_rate_limiter()
+        # Stage 6: MLX/KB 上游熔断在 client 层 (mlx_client.py, env FUSION_CB_MLX_THRESHOLD
+        # 门控), 非此处 — 单层熔断, 勿重复 (Rule 7)。
         self._register_handlers()
 
     def _get_mlx_client(self):
@@ -453,6 +459,15 @@ class DeskRPCServer:
         tid = authed.get("__tenant_id__") or DEFAULT_TENANT
         t_tok = set_current_tenant(tid)
         try:
+            # Stage 6: per-tenant 限流 — 超限返 -32002 (rate limit exceeded)。
+            if not self._rate_limiter.allow(tid):
+                logger.warning(f"Desk RPC 限流命中 method={method} tenant={tid}")
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32002, "message": "rate limit exceeded"},
+                }
+
             space_err = await self._check_space_access(method, authed)
             if space_err is not None:
                 if req_id is not None:

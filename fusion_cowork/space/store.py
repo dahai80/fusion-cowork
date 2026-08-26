@@ -176,6 +176,18 @@ CREATE TABLE IF NOT EXISTS sync_events (
     tenant_id TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id TEXT NOT NULL DEFAULT '',
+    actor TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL DEFAULT '',
+    resource TEXT NOT NULL DEFAULT '',
+    detail_hash TEXT NOT NULL DEFAULT '',
+    prev_hash TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    entry_hash TEXT NOT NULL DEFAULT ''
+);
+
 CREATE INDEX IF NOT EXISTS idx_space_members_space ON space_members(space_id);
 CREATE INDEX IF NOT EXISTS idx_space_members_tenant ON space_members(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_space_messages_space ON space_messages(space_id);
@@ -187,6 +199,7 @@ CREATE INDEX IF NOT EXISTS idx_space_workflows_space ON space_workflows(space_id
 CREATE INDEX IF NOT EXISTS idx_space_artifacts_space ON space_artifacts(space_id);
 CREATE INDEX IF NOT EXISTS idx_sync_events_space ON sync_events(space_id);
 CREATE INDEX IF NOT EXISTS idx_spaces_tenant ON spaces(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_tenant ON audit_log(tenant_id, created_at);
 """
 
 

@@ -222,11 +222,12 @@ class ConfigCenter:
 
     def save(self, path: str = "") -> None:
         # MD-12: 原子写 — temp + os.replace + 0o600 + flock, 防并发写撕裂/泄漏
+        # Stage 6: secret 值加密落盘 (FUSION_ENCRYPTION_KEY 设了), 非密保明文。
         target = path or self._config_file
         os.makedirs(os.path.dirname(target), exist_ok=True)
         with self._lock:
             data = {
-                "entries": {k: asdict(v) for k, v in self._store.items()},
+                "entries": {k: self._encrypt_entry(k, v) for k, v in self._store.items()},
                 "defaults": dict(self._defaults),
             }
             try:
@@ -251,6 +252,30 @@ class ConfigCenter:
                 raise
         logger.info(f"ConfigCenter.save path={target} entries={len(self._store)}")
 
+    def _encrypt_entry(self, key: str, entry: ConfigEntry) -> Dict[str, Any]:
+        """Stage 6: secret key 的 value 加密; 非密保明文。无 key 则明文 + WARN。"""
+        raw = asdict(entry)
+        value = raw.get("value")
+        if _is_secret_key(key) and isinstance(value, str) and value:
+            try:
+                from fusion_cowork.security.encryption import encrypt_at_rest
+
+                raw["value"] = encrypt_at_rest(value)
+            except ImportError:
+                logger.warning("security.encryption 不可用, secret 明文落盘")
+        return raw
+
+    def _decrypt_entry(self, key: str, value: Any) -> Any:
+        """Stage 6: 加密值解密; 非密文 (无 fernet: 前缀) 原样返 (向后兼容明文)。"""
+        if _is_secret_key(key) and isinstance(value, str) and value.startswith("fernet:"):
+            try:
+                from fusion_cowork.security.encryption import decrypt_at_rest
+
+                return decrypt_at_rest(value)
+            except ImportError:
+                logger.warning("security.encryption 不可用, 密文无法解")
+        return value
+
     def load(self, path: str = "") -> int:
         # LO-4: load 与 set/delete 互斥, 防并发改 _store
         target = path or self._config_file
@@ -268,7 +293,7 @@ class ConfigCenter:
                 if isinstance(entry_data, dict):
                     self._store[key] = ConfigEntry(
                         key=entry_data.get("key", key),
-                        value=entry_data.get("value"),
+                        value=self._decrypt_entry(key, entry_data.get("value")),
                         updated_at=entry_data.get("updated_at", 0.0),
                         source=entry_data.get("source", "user"),
                     )

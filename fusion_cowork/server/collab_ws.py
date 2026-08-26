@@ -32,6 +32,7 @@ class CollabHub:
         presence_manager: Any = None,
         space_store: Any = None,
         auth_token: Optional[str] = None,
+        max_per_tenant: int = 50,
     ):
         self._rooms: Dict[str, Set[Any]] = {}
         self._conn_meta: Dict[Any, Dict[str, str]] = {}
@@ -40,7 +41,10 @@ class CollabHub:
         # LO-13: space_store 校验成员资格; auth_token 校验 hello (防无认证注入/presence 冒充)
         self._space_store = space_store
         self._auth_token = auth_token
-        logger.debug("CollabHub 初始化")
+        # Stage 6: per-tenant 连接上限 (防单租户耗尽 WS 资源), 默认 50。
+        self._max_per_tenant = max(1, int(max_per_tenant))
+        self._tenant_conn_count: Dict[str, int] = {}
+        logger.debug(f"CollabHub 初始化 max_per_tenant={self._max_per_tenant}")
 
     async def join(self, websocket: Any, space_id: str, user_id: str, display_name: str = "") -> Dict[str, Any]:
         room = self._rooms.setdefault(space_id, set())
@@ -74,6 +78,12 @@ class CollabHub:
             return
         space_id = meta["space_id"]
         user_id = meta["user_id"]
+        # Stage 6: per-tenant 连接计数递减 (join 时 _conn_meta 记了 tenant_id)。
+        _tid = meta.get("tenant_id")
+        if _tid:
+            self._tenant_conn_count[_tid] = max(0, self._tenant_conn_count.get(_tid, 0) - 1)
+            if self._tenant_conn_count[_tid] == 0:
+                self._tenant_conn_count.pop(_tid, None)
         room = self._rooms.get(space_id)
         if room:
             room.discard(websocket)
@@ -219,15 +229,26 @@ class CollabHub:
                 first = await websocket.recv()
                 hello = json.loads(first)
                 # auth_token 配了则校验 hello.token (Stage 2: JWT 也可通过), 缺/错拒连
+                _principal = None
                 if self._auth_token:
                     from fusion_cowork.auth import verify_any_token
 
                     token = str(hello.get("token", ""))
-                    if verify_any_token(token, self._auth_token) is None:
+                    _principal = verify_any_token(token, self._auth_token)
+                    if _principal is None:
                         logger.warning("CollabHub WS 认证失败: hello token 无效")
                         await websocket.send(json.dumps({"type": "error", "error": "认证失败"}))
                         await websocket.close()
                         return
+                # Stage 6: per-tenant 连接上限 — 提 tenant_id (JWT claim 或默认租户), 超限拒。
+                _tenant_id = getattr(_principal, "tenant_id", "") or "default"
+                cur = self._tenant_conn_count.get(_tenant_id, 0)
+                if cur >= self._max_per_tenant:
+                    logger.warning(f"CollabHub WS 拒连: tenant={_tenant_id} 连接数 {cur} 达上限 {self._max_per_tenant}")
+                    await websocket.send(json.dumps({"type": "error", "error": "租户连接数已达上限"}))
+                    await websocket.close()
+                    return
+                self._tenant_conn_count[_tenant_id] = cur + 1
                 space_id = str(hello.get("space_id", "")).strip()
                 user_id = str(hello.get("user_id", "")).strip()
                 if not space_id or not user_id:
@@ -250,6 +271,7 @@ class CollabHub:
                             await websocket.close()
                             return
                 await self.join(websocket, space_id, user_id, hello.get("display_name", ""))
+                self._conn_meta[websocket]["tenant_id"] = _tenant_id
                 async for raw in websocket:
                     await self.handle_message(websocket, raw)
             except Exception as e:

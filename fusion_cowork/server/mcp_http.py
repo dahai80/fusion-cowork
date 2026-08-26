@@ -59,6 +59,18 @@ class _BodySizeLimitMiddleware:
         await self.app(scope, receive, send)
 
 
+def _apply_security_middleware(app):
+    """Stage 6: 组合安全中间件 — 先注 tenant_id (JWT), 再限流, 再 body 上限。
+
+    无 FUSION_RATE_LIMIT 配置 → 限流 unlimited 透传 (现有行为不变)。
+    """
+    from ..security.rate_limit import FastAPIRateLimitMiddleware, get_default_rate_limiter
+
+    limiter = get_default_rate_limiter()
+    wrapped = FastAPIRateLimitMiddleware(app, limiter)
+    return _BodySizeLimitMiddleware(wrapped)
+
+
 def _load_mcp_auth_token() -> Optional[str]:
     """读取 config mcp.auth_token; 未配则 None (不启用认证)。"""
     from ..config_center import ConfigCenter
@@ -83,8 +95,15 @@ def _auth_denied(request, token: Optional[str]):
             from fusion_cowork.auth import get_default_verifier
 
             verifier = get_default_verifier()
-            if verifier.active and verifier.verify_token(bearer) is not None:
-                return None
+            if verifier.active:
+                principal = verifier.verify_token(bearer)
+                if principal is not None:
+                    # Stage 6: 注 tenant_id 到 request.state, 供限流中间件 per-tenant 计量。
+                    try:
+                        request.state.tenant_id = getattr(principal, "tenant_id", "") or "anonymous"
+                    except Exception:
+                        pass
+                    return None
         except Exception as e:
             logger.warning(f"MCP HTTP JWT 校验异常: {e}")
     if not token:
@@ -307,7 +326,7 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
         result["version"] = SERVER_VERSION
         return result
 
-    return _BodySizeLimitMiddleware(app)
+    return _apply_security_middleware(app)
 
 
 # ---- P2-9: MCP Streamable HTTP (2025-03-26 spec) ----
@@ -549,4 +568,4 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
         result["protocol"] = "streamable-2025-03-26"
         return result
 
-    return _BodySizeLimitMiddleware(app)
+    return _apply_security_middleware(app)
