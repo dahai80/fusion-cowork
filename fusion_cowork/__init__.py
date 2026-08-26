@@ -339,6 +339,20 @@ _LAZY_IMPORTS: dict[str, str] = {
     "sign_manifest": "fusion_cowork.plugins.signing",
     "verify_manifest": "fusion_cowork.plugins.signing",
     "verify_any_key": "fusion_cowork.plugins.signing",
+    # V0.4.0 集群同步 (issue #61, 迁移自 fusion-multi-node)
+    "ClusterSyncManager": "fusion_cowork.cluster_sync",
+    "ModelManifest": "fusion_cowork.cluster_sync",
+    "FileEntry": "fusion_cowork.cluster_sync",
+    "NodeLoadReport": "fusion_cowork.cluster_sync",
+    "PartitionDetector": "fusion_cowork.cluster_sync",
+    "PartitionState": "fusion_cowork.cluster_sync",
+    "NodeHealth": "fusion_cowork.cluster_sync",
+    "build_manifest": "fusion_cowork.cluster_sync",
+    "compute_sync_diff": "fusion_cowork.cluster_sync",
+    "compute_file_sha256": "fusion_cowork.cluster_sync",
+    "is_safe_peer_host": "fusion_cowork.cluster_sync",
+    "is_safe_path_segment": "fusion_cowork.cluster_sync",
+    "build_safe_url": "fusion_cowork.cluster_sync",
 }
 
 _lazy_cache: dict[str, object] = {}
