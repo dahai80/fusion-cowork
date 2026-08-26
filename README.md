@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.3.1-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.4.0-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -318,6 +318,74 @@ fusion-cowork collab serve --port 11439
 | **Fusion-Code** | Auto-generated scripts | Complex logic execution |
 | **Agent-Studio** | Workflow import | Advanced pre-built workflows |
 | **Model-Hub** | Model dispatch | Auto-select optimal local model |
+
+---
+
+## ☁️ Multi-tenant Cloud SaaS (v0.4.0)
+
+Fusion-Cowork v0.4.0 extends the local-first desktop platform into a **multi-tenant cloud SaaS** — same engine, cloud-ready isolation/auth/observability/deploy. All cloud features are **opt-in** (env/config set → activate; unset → unchanged local behavior).
+
+### Tenant Isolation
+
+- **Row-level `tenant_id`** column on all 14 store tables + query guards (`WHERE tenant_id = ?`) on every CRUD path
+- **Postgres RLS** as defense-in-depth (`CREATE POLICY tenant_isolation USING (tenant_id = current_setting('app.tenant_id'))`)
+- **Single schema**, single `SpaceStore` class with backend seam: pass `dsn`/`FUSION_PG_DSN` → Postgres (asyncpg pool); pass `data_dir` → SQLite (tests/local)
+- 9 cross-tenant IDOR points sealed (delete_message, list_comments, get_invite, list_spaces, notifications, sessions, space CRUD, messages)
+
+### Authentication (JWT)
+
+- **PyJWT** verifies externally-issued **HS256/RS256** tokens, extracts `tenant_id`/`user_id`/`scopes` claims → `TenantPrincipal`
+- **Static token fallback** retained for local/desktop (`auth.static_token`); production enforces JWT (`FUSION_REQUIRE_JWT=1`)
+- JWKS remote fetch for RS256 (optional cache); failures log without leaking token plaintext
+- ConfigCenter secrets **redacted in logs** + **encrypted at rest** (Fernet, `FUSION_ENCRYPTION_KEY`)
+
+### Persistence & Migrations
+
+- **SQLite → PostgreSQL** migration (asyncpg connection pool, MVCC)
+- **Versioned migrations** (`schema_migrations` table, `MigrationRunner` — ordered apply, rollback on failure)
+- **Backup/restore** via `pg_dump` wrapper — `fusion-cowork db backup|restore`
+- Placeholder normalization helper (`?` → `$1,$2,...`) keeps 30 SQL sites backend-agnostic
+
+### Observability
+
+- **Structured logging** (structlog JSON, `setup_logger(json=True)`) + trace_id contextvar propagating across `await`
+- **OpenTelemetry** metrics (`fusion_requests_total`, `fusion_request_duration_seconds`, `fusion_active_connections`, `fusion_db_errors_total`) + tracing (OTLP exporter) + prometheus `/metrics`
+- **Deep `/health`** — checks DB (`SELECT 1`), disk threshold, upstream MLX/KB reachability → `{status, checks}`
+- **SIGTERM graceful drain** — stop accepting, drain in-flight, close store/pool
+
+### Security at Scale
+
+- **Per-tenant rate limiting** (token bucket, `FUSION_RATE_LIMIT_*`)
+- **Per-tenant quotas** (`TenantQuotas`: max_spaces/messages/artifacts/agents/storage, default unlimited)
+- **Tamper-evident audit log** (sha256 chained `prev_hash`, `verify_chain`)
+- **Upstream circuit breaker** (MLX/KB — `failure_threshold`/`recovery_timeout`, degrade instead of hang)
+- **WS connection caps** (global + per-tenant) + collab session idle eviction (ResourceWarning leak fix)
+- **Config secrets encrypted at rest**
+
+### Deployment
+
+- **Dockerfile** (multi-stage, nonroot, HEALTHCHECK) + **docker-compose** (app + postgres:16)
+- **Helm chart** (`deploy/helm/fusion-cowork/`): Deployment (liveness/readiness probes, `terminationGracePeriodSeconds`, preStop), Service, Secret (JWT/PG DSN), ConfigMap, HPA (CPU 70%, 2–10 replicas)
+- **`--container` flag**: binds `0.0.0.0`, skips UDS/venv detection — container-friendly
+- `FUSION_CONFIG_DIR` env overrides config location (volume mount)
+
+### Plugin Ecosystem Hardening
+
+- **Ed25519 manifest signing** (`plugins/signing.py`) — `signature` field, canonical bytes, `verify_any_key` against configured public keys, `require_signing` opt-in
+- **Plugin registry** (`plugins/registry.py`) — persistent `registry.json`, **downgrade rejection** (version tuple compare), checksum
+- Sandbox isolation unchanged (process-out, rlimit) — signing is additive
+
+### Install Cloud Extras
+
+```bash
+pip install -e ".[cloud,web]"   # pyjwt, asyncpg, cryptography, prometheus-client, opentelemetry, structlog
+# dev:
+pip install -e ".[dev]"         # test+web+plugins+cloud
+```
+
+### CI
+
+5-job matrix: `lint` (ruff check + format) · `test-sqlite` (3.11/3.12/3.13 × ubuntu/macos) · `test-postgres` (postgres:16 service) · `test-slow` (load/E2E/chaos) · `security` (pip-audit). Coverage gate + SBOM workflow (CycloneDX + pip-audit artifact).
 
 ---
 

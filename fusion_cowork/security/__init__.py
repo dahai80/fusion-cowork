@@ -9,6 +9,12 @@ from .encryption import (
     get_encryption_key,
     is_encrypted,
 )
+from .quotas import (
+    QuotaEnforcer,
+    QuotaExceededError,
+    TenantQuotas,
+    get_default_quota_enforcer,
+)
 from .rate_limit import (
     FastAPIRateLimitMiddleware,
     RateLimiter,
@@ -38,4 +44,8 @@ __all__ = [
     "derive_key",
     "get_encryption_key",
     "is_encrypted",
+    "TenantQuotas",
+    "QuotaEnforcer",
+    "QuotaExceededError",
+    "get_default_quota_enforcer",
 ]
