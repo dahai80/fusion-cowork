@@ -1,0 +1,83 @@
+# fusion-cowork Helm values (v0.4.0)
+
+image:
+  repository: ghcr.io/dahai80/fusion-cowork
+  tag: "0.4.0"
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+service:
+  type: ClusterIP
+  port: 11438
+
+# 容器内 HTTP 端口 (fusion-cowork serve)
+containerPort: 11438
+
+# 生产密钥用 external-secrets / sealed-secrets 注入, 此处仅占位
+secrets:
+  jwtSecret: "change-me-use-external-secret"
+  pgDsn: "postgresql://fusion:change-me@postgres:5432/fusion"
+
+config:
+  bindHost: "0.0.0.0"
+  jsonLog: "1"
+  logLevel: "INFO"
+  metricsPort: "9100"
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+probes:
+  liveness:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 15
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# 优雅关停: preStop 停收新连接 + terminationGracePeriod 给 drain
+terminationGracePeriodSeconds: 30
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: fusion-cowork.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# 外部 Postgres (本 chart 不含, 用 bitnami/postgresql 或托管 PG)
+postgresql:
+  external: true
+  host: postgres
+  port: 5432
+  database: fusion
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

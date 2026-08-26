@@ -17,6 +17,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from fusion_cowork.tenant import DEFAULT_TENANT
+
 
 class SpaceRole(Enum):
     OWNER = "owner"
@@ -87,6 +89,7 @@ class Space:
     config: SpaceConfig = field(default_factory=SpaceConfig)
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    tenant_id: str = DEFAULT_TENANT
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -101,6 +104,7 @@ class Space:
             "config": self.config.to_dict(),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "tenant_id": self.tenant_id,
         }
 
     @classmethod
@@ -119,6 +123,7 @@ class Space:
             config=config,
             created_at=data.get("created_at", datetime.now().isoformat()),
             updated_at=data.get("updated_at", datetime.now().isoformat()),
+            tenant_id=data.get("tenant_id", DEFAULT_TENANT),
         )
 
 
@@ -130,6 +135,7 @@ class SpaceMember:
     display_name: str = ""
     joined_at: str = field(default_factory=lambda: datetime.now().isoformat())
     last_active: str = field(default_factory=lambda: datetime.now().isoformat())
+    tenant_id: str = DEFAULT_TENANT
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -139,6 +145,7 @@ class SpaceMember:
             "display_name": self.display_name,
             "joined_at": self.joined_at,
             "last_active": self.last_active,
+            "tenant_id": self.tenant_id,
         }
 
     @classmethod
@@ -156,6 +163,7 @@ class SpaceMember:
             display_name=data.get("display_name", ""),
             joined_at=data.get("joined_at", datetime.now().isoformat()),
             last_active=data.get("last_active", datetime.now().isoformat()),
+            tenant_id=data.get("tenant_id", DEFAULT_TENANT),
         )
 
 
@@ -173,6 +181,7 @@ class SpaceMessage:
     thread_id: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    tenant_id: str = DEFAULT_TENANT
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -188,6 +197,7 @@ class SpaceMessage:
             "thread_id": self.thread_id,
             "metadata": self.metadata,
             "created_at": self.created_at,
+            "tenant_id": self.tenant_id,
         }
 
     @classmethod
@@ -205,6 +215,7 @@ class SpaceMessage:
             thread_id=data.get("thread_id"),
             metadata=data.get("metadata", {}),
             created_at=data.get("created_at", datetime.now().isoformat()),
+            tenant_id=data.get("tenant_id", DEFAULT_TENANT),
         )
 
 
@@ -221,6 +232,7 @@ class SpaceSnapshot:
     snapshot_data: Dict[str, Any] = field(default_factory=dict)
     created_by: str = ""
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    tenant_id: str = DEFAULT_TENANT
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -235,6 +247,7 @@ class SpaceSnapshot:
             "snapshot_data": self.snapshot_data,
             "created_by": self.created_by,
             "created_at": self.created_at,
+            "tenant_id": self.tenant_id,
         }
 
     @classmethod
@@ -251,6 +264,7 @@ class SpaceSnapshot:
             snapshot_data=data.get("snapshot_data", {}),
             created_by=data.get("created_by", ""),
             created_at=data.get("created_at", datetime.now().isoformat()),
+            tenant_id=data.get("tenant_id", DEFAULT_TENANT),
         )
 
 

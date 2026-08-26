@@ -1,6 +1,6 @@
 [project]
 name = "fusion-cowork"
-version = "0.3.1"
+version = "0.4.0"
 description = "Fusion-Cowork — macOS 原生、本地优先、零代码桌面智能自动化平台"
 authors = [
     { name = "Fusion-MLX Team" },
@@ -40,8 +40,17 @@ test = [
 plugins = [
     "fusion-plugins-ecosystem>=0.3.3",
 ]
+cloud = [
+    "pyjwt>=2.8",
+    "asyncpg>=0.29",
+    "cryptography>=42",
+    "prometheus-client>=0.20",
+    "opentelemetry-api>=1.24",
+    "opentelemetry-sdk>=1.24",
+    "structlog>=24",
+]
 dev = [
-    "fusion-cowork[test,web,plugins]",
+    "fusion-cowork[test,web,plugins,cloud]",
 ]
 
 [project.scripts]
@@ -50,6 +59,12 @@ fusion-cowork = "fusion_cowork.cli:main"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "postgres: Postgres 集成测试 (需 asyncpg + FUSION_PG_DSN)",
+    "slow: 慢测试 (负载/E2E/Docker build, CI 单独 job)",
+    "chaos: 混沌测试 (故障注入, 非常规 CI)",
+]
 
 [tool.coverage.run]
 source = ["fusion_cowork"]
@@ -66,6 +81,7 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
 ]
+fail_under = 50
 
 [tool.setuptools.packages.find]
 include = ["fusion_cowork*"]

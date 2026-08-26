@@ -124,9 +124,7 @@ class AgentMessageBus:
                 delivered += 1
             except asyncio.QueueFull:
                 full_queues += 1
-                logger.error(
-                    f"消息总线: inbox 满 receiver={receiver} msg_id={msg.msg_id} (可能死 agent, 队列未消费)"
-                )
+                logger.error(f"消息总线: inbox 满 receiver={receiver} msg_id={msg.msg_id} (可能死 agent, 队列未消费)")
 
         logger.info(f"点对点: {sender} → {receiver} (投递 {delivered}/{len(all_queues)})")
         # E-6: 全部投递失败 → raise, 调用方拿到异常不再误判 msg_id=成功 (审计: 静默丢无错误回传)

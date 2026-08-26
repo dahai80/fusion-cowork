@@ -25,6 +25,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from fusion_cowork.tenant import DEFAULT_TENANT, resolve_tenant_id
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_STORE_PATH = str(Path.home() / ".fusion-cowork" / "scheduled_tasks.json")
@@ -57,6 +59,7 @@ class ScheduledTask:
     fail_count: int = 0
     description: str = ""
     tags: List[str] = field(default_factory=list)
+    tenant_id: str = DEFAULT_TENANT
 
 
 class TaskScheduler:
@@ -111,6 +114,7 @@ class TaskScheduler:
         executor: Callable,
         description: str = "",
         tags: List[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> str:
         """添加 Cron 定时任务。
 
@@ -121,6 +125,7 @@ class TaskScheduler:
             executor: 执行回调函数
             description: 任务描述
             tags: 标签列表
+            tenant_id: 租户 ID (v0.4.0 多租户隔离, 缺则取 contextvar)
 
         Returns:
             str: 任务 ID
@@ -135,6 +140,7 @@ class TaskScheduler:
             description=description,
             tags=tags or [],
             created_at=time.time(),
+            tenant_id=resolve_tenant_id(tenant_id),
         )
         self._tasks[task_id] = task
         self._executors[task_id] = executor
@@ -170,6 +176,7 @@ class TaskScheduler:
         days: int = 0,
         executor: Callable = None,
         description: str = "",
+        tenant_id: Optional[str] = None,
     ) -> str:
         """添加间隔任务。"""
         task_id = f"task_{uuid.uuid4().hex[:8]}"
@@ -181,6 +188,7 @@ class TaskScheduler:
             trigger_config={"minutes": minutes, "hours": hours, "days": days},
             description=description,
             created_at=time.time(),
+            tenant_id=resolve_tenant_id(tenant_id),
         )
         self._tasks[task_id] = task
         if executor:
@@ -315,11 +323,17 @@ class TaskScheduler:
         """获取任务信息。"""
         return self._tasks.get(task_id)
 
-    def list_tasks(self, status: Optional[TaskStatus] = None) -> List[ScheduledTask]:
-        """列出所有任务。"""
+    def list_tasks(
+        self,
+        status: Optional[TaskStatus] = None,
+        tenant_id: Optional[str] = None,
+    ) -> List[ScheduledTask]:
+        """列出所有任务 (v0.4.0: 按 tenant_id 过滤防跨租户泄漏)。"""
+        tid = resolve_tenant_id(tenant_id)
+        tasks = [t for t in self._tasks.values() if t.tenant_id == tid]
         if status:
-            return [t for t in self._tasks.values() if t.status == status]
-        return list(self._tasks.values())
+            return [t for t in tasks if t.status == status]
+        return tasks
 
     def list_active_tasks(self) -> List[ScheduledTask]:
         """列出所有活跃任务。"""
@@ -342,6 +356,7 @@ class TaskScheduler:
             "fail_count": task.fail_count,
             "description": task.description,
             "tags": list(task.tags),
+            "tenant_id": task.tenant_id,
         }
 
     def _persist_tasks(self) -> None:
@@ -403,6 +418,7 @@ class TaskScheduler:
                     fail_count=int(item.get("fail_count", 0) or 0),
                     description=item.get("description", ""),
                     tags=list(item.get("tags", [])),
+                    tenant_id=item.get("tenant_id", DEFAULT_TENANT),
                 )
                 self._tasks[task_id] = task
                 # 仅 ACTIVE/PAUSED 重建 APScheduler job (COMPLETED/FAILED/REMOVED 不重建)。

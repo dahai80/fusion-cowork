@@ -1,0 +1,44 @@
+# fusion-cowork v0.4.0 — 本地开发多租户云栈
+# docker compose up (需 Docker Desktop)
+# 生产用 deploy/helm/fusion-cowork/
+
+services:
+  app:
+    build:
+      context: ..         # monorepo 根 (需 fusion-core in-tree 底座)
+      dockerfile: fusion-cowork/Dockerfile
+    ports:
+      - "11438:11438"     # /rpc /health /mcp /sse
+    environment:
+      FUSION_PG_DSN: postgresql://fusion:fusion_pw@postgres:5432/fusion
+      FUSION_JWT_SECRET: ${FUSION_JWT_SECRET:-dev-only-secret-change-me}
+      FUSION_BIND_HOST: 0.0.0.0
+      FUSION_JSON_LOG: "1"
+      FUSION_METRICS_PORT: "9100"
+    volumes:
+      - fc-config:/home/fcuser/.fusion-cowork
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: fusion
+      POSTGRES_USER: fusion
+      POSTGRES_PASSWORD: fusion_pw
+    ports:
+      - "5432:5432"
+    volumes:
+      - fc-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fusion -d fusion"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  fc-config:
+  fc-pgdata:

@@ -186,4 +186,5 @@ class TestRpcHttpRoute:
         async with client as c:
             resp = await c.get("/health")
             assert resp.status_code == 200
-            assert resp.json()["status"] == "ok"
+            # v0.4.0 Stage 4: 深度 /health, 上游未起 → degraded 不阻断
+            assert resp.json()["status"] in ("ok", "degraded")

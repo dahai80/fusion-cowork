@@ -13,9 +13,10 @@ Issue #48: fusion-studio 插件生态集成面板通过 POST /rpc 消费 15 个 
 from __future__ import annotations
 
 import logging
-import secrets
 import traceback
 from typing import Any, Dict, Optional
+
+from fusion_cowork.observability.trace import get_trace_id
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +222,7 @@ async def dispatch_rpc(request: Dict[str, Any]) -> Dict[str, Any]:
         return response
     except Exception as e:
         # HI-5: 不泄 str(e) 进 RPC; 仅服务端日志 + 回 trace_id 供排障
-        trace_id = secrets.token_hex(8)
+        trace_id = get_trace_id()
         logger.error(
             "rpc_bridge: dispatch 异常 trace_id=%s method=%s err=%s\n%s",
             trace_id,

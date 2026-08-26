@@ -21,6 +21,8 @@ class PluginManifest:
     sandbox: bool = False
     # LO-7: 插件声明节点执行超时 (秒); 0 = 用沙箱默认 (120s), >0 覆盖默认
     timeout_seconds: float = 0.0
+    # Stage 7: Ed25519 签名 (base64 urlsafe), 空 = 未签名; require_signing 时拒
+    signature: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -33,6 +35,7 @@ class PluginManifest:
             "entry_point": self.entry_point,
             "sandbox": self.sandbox,
             "timeout_seconds": self.timeout_seconds,
+            "signature": self.signature,
         }
 
     @classmethod
@@ -61,6 +64,7 @@ class PluginManifest:
             entry_point=data.get("entry_point", "plugin"),
             sandbox=bool(data.get("sandbox", False)),
             timeout_seconds=timeout_seconds,
+            signature=str(data.get("signature", "")),
         )
 
     @classmethod

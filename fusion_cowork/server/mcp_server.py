@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
 from typing import Any, Dict, List
+
+from fusion_cowork.observability.trace import get_trace_id
 
 logger = logging.getLogger(__name__)
 
@@ -242,7 +243,7 @@ class MCPToolRegistry:
         logger.info(f"MCP 调用: {tool_name}")
 
         # E-9: trace_id 贯穿调用, 异常对外只返 trace_id + 通用消息, 栈仅日志 (HI-5)。
-        trace_id = f"mcp_{uuid.uuid4().hex[:12]}"
+        trace_id = get_trace_id()
         try:
             result = await self._execute_tool(tool_name, arguments)
             return {
@@ -423,14 +424,13 @@ class MCPServer:
             import uvicorn
 
             logger.info(f"MCP 服务器启动 (HTTP 模式): {self.host}:{self.port}")
-            # MD-1: 限并发 + 请求体上限 1MiB, 防无界 body OOM
+            # MD-1: 限并发; 请求体上限 1MiB 由 _BodySizeLimitMiddleware (mcp_http) 在 ASGI 层强制
             config = uvicorn.Config(
                 app,
                 host=self.host,
                 port=self.port,
                 log_level="info",
                 limit_concurrency=100,
-                max_request_size=1024 * 1024,
             )
             server = uvicorn.Server(config)
             await server.serve()
@@ -448,14 +448,13 @@ class MCPServer:
             import uvicorn
 
             logger.info(f"MCP 服务器启动 (Streamable HTTP 模式): {self.host}:{self.port}")
-            # MD-1: 限并发 + 请求体上限 1MiB, 防无界 body OOM
+            # MD-1: 限并发; 请求体上限 1MiB 由 _BodySizeLimitMiddleware (mcp_http) 在 ASGI 层强制
             config = uvicorn.Config(
                 app,
                 host=self.host,
                 port=self.port,
                 log_level="info",
                 limit_concurrency=100,
-                max_request_size=1024 * 1024,
             )
             server = uvicorn.Server(config)
             await server.serve()

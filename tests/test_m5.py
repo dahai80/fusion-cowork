@@ -300,7 +300,8 @@ class TestE2EDeskRPC:
     @pytest.mark.asyncio
     async def test_health(self):
         r = await self.rpc._dispatch({"jsonrpc": "2.0", "id": 1, "method": "desk.health", "params": {}})
-        assert r["result"]["status"] == "ok"
+        # v0.4.0 Stage 4: 深度 /health, MLX 未起 → degraded 不阻断
+        assert r["result"]["status"] in ("ok", "degraded")
 
     @pytest.mark.asyncio
     async def test_nodes_list(self):

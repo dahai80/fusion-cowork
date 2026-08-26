@@ -82,6 +82,20 @@ class FusionMLXClient:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self._client: httpx.AsyncClient | None = None
+        # Stage 6: 上游熔断 (env FUSION_CB_MLX_THRESHOLD 设了启用, 否则无熔断直调)。
+        self._breaker = None
+        cb_threshold = os.environ.get("FUSION_CB_MLX_THRESHOLD", "").strip()
+        if cb_threshold:
+            try:
+                from fusion_cowork.security.circuit_breaker import CircuitBreaker
+
+                rec = os.environ.get("FUSION_CB_MLX_RECOVERY", "30").strip()
+                self._breaker = CircuitBreaker(
+                    name="mlx", failure_threshold=int(cb_threshold), recovery_timeout=float(rec)
+                )
+                logger.info(f"MLX 熔断启用 threshold={cb_threshold} recovery={rec}s")
+            except (ValueError, ImportError):
+                logger.warning("FUSION_CB_MLX_THRESHOLD 格式错或 security 缺, MLX 熔断未启")
 
     @property
     def client(self) -> httpx.AsyncClient:
@@ -139,6 +153,12 @@ class FusionMLXClient:
         if _HAS_FUSION_CORE:
             return await self._chat_core(payload, model)
 
+        # Stage 6: 熔断开启 → 拒调 (调用方捕 CircuitOpenError 降级, 不重试不挂下游)。
+        if self._breaker is not None and not self._breaker.is_call_allowed():
+            from fusion_cowork.security.circuit_breaker import CircuitOpenError
+
+            raise CircuitOpenError("circuit[mlx] open")
+
         last_exc = None
         for attempt in range(self.max_retries + 1):
             try:
@@ -152,6 +172,8 @@ class FusionMLXClient:
                     raise RuntimeError(f"模型响应无 choices: {data.get('error', data)}")
                 choice = choices[0]
                 message = choice.get("message", {})
+                if self._breaker is not None:
+                    self._breaker.on_success()
                 return self._build_llm_response(message, choice, data, model)
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.PoolTimeout) as e:
                 last_exc = e
@@ -174,6 +196,11 @@ class FusionMLXClient:
                             "settings.json 的 auth.api_key; 两者是独立鉴权"
                         )
                     raise
+        # Stage 6: 重试耗尽 → 记熔断失败 (5xx/超时类, 401/403 鉴权不记 — 上游没坏是 key 错)。
+        if self._breaker is not None and isinstance(
+            last_exc, (httpx.ConnectError, httpx.ReadTimeout, httpx.PoolTimeout)
+        ):
+            self._breaker.on_failure()
         # E-12: last_exc 可能为 None (max_retries<0 零迭代, 或未来分支遗漏设值) → raise None 抛 TypeError
         raise last_exc if last_exc is not None else RuntimeError("请求无有效响应且无异常记录")
 
@@ -195,6 +222,13 @@ class FusionMLXClient:
                     "(config.yaml 中 auth.api_keys[].key), 而非 fusion-mlx "
                     "settings.json 的 auth.api_key; 两者是独立鉴权"
                 )
+            # Stage 6: 5xx 记熔断失败 (上游坏), 4xx 鉴权不记 (key 错非上游坏)。
+            if self._breaker is not None and e.response.status_code >= 500:
+                self._breaker.on_failure()
+            raise
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.PoolTimeout):
+            if self._breaker is not None:
+                self._breaker.on_failure()
             raise
         data = resp.json()
         # E-12: choices 缺失/空 → 防御
@@ -204,6 +238,8 @@ class FusionMLXClient:
             raise RuntimeError(f"模型响应无 choices: {data.get('error', data)}")
         choice = choices[0]
         message = choice.get("message", {})
+        if self._breaker is not None:
+            self._breaker.on_success()
         return self._build_llm_response(message, choice, data, model)
 
     def _build_llm_response(self, message: dict, choice: dict, data: dict, model: str) -> LLMResponse:
@@ -331,6 +367,20 @@ class KBClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._client: httpx.AsyncClient | None = None
+        # Stage 6: KB 上游熔断 (env FUSION_CB_KB_THRESHOLD 设了启用)。
+        self._breaker = None
+        cb_threshold = os.environ.get("FUSION_CB_KB_THRESHOLD", "").strip()
+        if cb_threshold:
+            try:
+                from fusion_cowork.security.circuit_breaker import CircuitBreaker
+
+                rec = os.environ.get("FUSION_CB_KB_RECOVERY", "30").strip()
+                self._breaker = CircuitBreaker(
+                    name="kb", failure_threshold=int(cb_threshold), recovery_timeout=float(rec)
+                )
+                logger.info(f"KB 熔断启用 threshold={cb_threshold} recovery={rec}s")
+            except (ValueError, ImportError):
+                logger.warning("FUSION_CB_KB_THRESHOLD 格式错或 security 缺, KB 熔断未启")
 
     @property
     def client(self) -> httpx.AsyncClient:
@@ -374,9 +424,25 @@ class KBClient:
         question: str,
         top_k: int = 5,
     ) -> str:
+        # Stage 6: 熔断开启 → 拒调 (调用方降级, 不挂下游)。
+        if self._breaker is not None and not self._breaker.is_call_allowed():
+            from fusion_cowork.security.circuit_breaker import CircuitOpenError
+
+            raise CircuitOpenError("circuit[kb] open")
         payload = {"question": question, "top_k": top_k}
-        resp = await self.client.post(f"/kb/bases/{kb_id}/ask", json=payload)
-        resp.raise_for_status()
+        try:
+            resp = await self.client.post(f"/kb/bases/{kb_id}/ask", json=payload)
+            resp.raise_for_status()
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.PoolTimeout):
+            if self._breaker is not None:
+                self._breaker.on_failure()
+            raise
+        except httpx.HTTPStatusError as e:
+            if self._breaker is not None and e.response.status_code >= 500:
+                self._breaker.on_failure()
+            raise
+        if self._breaker is not None:
+            self._breaker.on_success()
         data = resp.json()
         return data.get("answer", "")
 

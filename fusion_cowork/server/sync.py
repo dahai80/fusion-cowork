@@ -197,8 +197,11 @@ class CrossDeviceSync:
         """处理接收到的消息。"""
         if self.token:
             incoming_token = data.get("token", "")
-            if incoming_token != self.token:
-                logger.warning("消息认证失败: token 不匹配")
+            # Stage 2: JWT 优先, 静态 token fallback
+            from fusion_cowork.auth import verify_any_token
+
+            if verify_any_token(incoming_token, self.token) is None:
+                logger.warning("消息认证失败: token 无效")
                 return
         msg_type = data.get("msg_type", "")
         # R-7: 收消息刷新发送方 last_seen (活跃设备不被误判离线)
@@ -300,9 +303,12 @@ class CrossDeviceSync:
                         try:
                             data = json.loads(raw)
                             # 认证校验 (与 _handle_message 一致): 配了 token 则逐条验
-                            if self.token and data.get("token", "") != self.token:
-                                logger.warning(f"WS 消息认证失败: {remote}, token 不匹配")
-                                continue
+                            if self.token:
+                                from fusion_cowork.auth import verify_any_token
+
+                                if verify_any_token(data.get("token", ""), self.token) is None:
+                                    logger.warning(f"WS 消息认证失败: {remote}, token 无效")
+                                    continue
                             # R-7: WS 路径同样刷新发送方 last_seen
                             self._touch_device(data.get("sender", ""))
                             msg = SyncMessage(

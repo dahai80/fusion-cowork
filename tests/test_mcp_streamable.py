@@ -184,4 +184,5 @@ class TestStreamableHealth:
         assert resp.status_code == 200
         body = resp.json()
         assert body["protocol"] == "streamable-2025-03-26"
-        assert body["status"] == "ok"
+        # v0.4.0 Stage 4: 深度 /health, 上游未起 → degraded 不阻断
+        assert body["status"] in ("ok", "degraded")

@@ -7,10 +7,11 @@
 import asyncio
 import json
 import logging
-import secrets
 import time
 import traceback
 from typing import Any, Dict, Optional
+
+from fusion_cowork.observability.trace import get_trace_id
 
 from .. import __version__ as SERVER_VERSION
 from .mcp_server import MCPToolRegistry
@@ -19,6 +20,55 @@ logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "fusion-cowork"
+
+# MD-1: 请求体上限 1MiB, 防无界 body OOM (uvicorn.Config 无此参, 用 ASGI 中间件实现)
+_MAX_BODY_BYTES = 1024 * 1024
+
+
+class _BodySizeLimitMiddleware:
+    """ASGI 中间件: 超过 _MAX_BODY_BYTES 的请求返 413 (Content Too Large)。
+
+    透明代理属性到内层 app (FastAPI), 使外部仍可访问 app.title / app.routes 等。
+    """
+
+    def __init__(self, app, max_bytes: int = _MAX_BODY_BYTES):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    def __getattr__(self, name):
+        return getattr(self.app, name)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        cl = 0
+        for k, v in scope.get("headers", []):
+            if k == b"content-length":
+                try:
+                    cl = int(v)
+                except ValueError:
+                    cl = 0
+                break
+        if cl and cl > self.max_bytes:
+            await send(
+                {"type": "http.response.start", "status": 413, "headers": [[b"content-type", b"application/json"]]}
+            )
+            await send({"type": "http.response.body", "body": b'{"error":"request body too large"}'})
+            return
+        await self.app(scope, receive, send)
+
+
+def _apply_security_middleware(app):
+    """Stage 6: 组合安全中间件 — 先注 tenant_id (JWT), 再限流, 再 body 上限。
+
+    无 FUSION_RATE_LIMIT 配置 → 限流 unlimited 透传 (现有行为不变)。
+    """
+    from ..security.rate_limit import FastAPIRateLimitMiddleware, get_default_rate_limiter
+
+    limiter = get_default_rate_limiter()
+    wrapped = FastAPIRateLimitMiddleware(app, limiter)
+    return _BodySizeLimitMiddleware(wrapped)
 
 
 def _load_mcp_auth_token() -> Optional[str]:
@@ -32,12 +82,32 @@ def _load_mcp_auth_token() -> Optional[str]:
 
 
 def _auth_denied(request, token: Optional[str]):
-    """校验 Authorization: Bearer <token>; 配了 token 则缺/错返 401 响应, 未配返 None。"""
-    if not token:
-        return None
+    """校验 Authorization: Bearer <token>; 配了 token 则缺/错返 401 响应, 未配返 None。
+
+    Stage 2: JWT active (env FUSION_JWT_SECRET/FUSION_JWKS_URL) → 有效 JWT 也放行。
+    """
     auth = request.headers.get("authorization", "")
     parts = auth.split(" ", 1)
     bearer = parts[1].strip() if len(parts) == 2 and parts[0].lower() == "bearer" else ""
+    # Stage 2: JWT 优先 — active 且有效即放行 (无需静态 token)
+    if bearer:
+        try:
+            from fusion_cowork.auth import get_default_verifier
+
+            verifier = get_default_verifier()
+            if verifier.active:
+                principal = verifier.verify_token(bearer)
+                if principal is not None:
+                    # Stage 6: 注 tenant_id 到 request.state, 供限流中间件 per-tenant 计量。
+                    try:
+                        request.state.tenant_id = getattr(principal, "tenant_id", "") or "anonymous"
+                    except Exception:
+                        pass
+                    return None
+        except Exception as e:
+            logger.warning(f"MCP HTTP JWT 校验异常: {e}")
+    if not token:
+        return None
     if not bearer or bearer != token:
         logger.warning(f"MCP HTTP 认证失败: {request.client.host if request.client else '?'}")
         from fastapi.responses import JSONResponse
@@ -161,7 +231,7 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
             return JSONResponse({"jsonrpc": "2.0", "result": result})
         except Exception as e:
             # HI-5: trace_id 入响应, 栈仅日志, 不泄 str(e) 给客户端
-            trace_id = secrets.token_hex(8)
+            trace_id = get_trace_id()
             logger.error(
                 "MCP HTTP 处理异常 trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc()
             )
@@ -249,9 +319,14 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
 
     @app.get("/health")
     async def health():
-        return {"status": "ok", "server": SERVER_NAME, "version": SERVER_VERSION}
+        from ..observability.health import run_health
 
-    return app
+        result = await run_health(None)
+        result["server"] = SERVER_NAME
+        result["version"] = SERVER_VERSION
+        return result
+
+    return _apply_security_middleware(app)
 
 
 # ---- P2-9: MCP Streamable HTTP (2025-03-26 spec) ----
@@ -420,7 +495,7 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
             return JSONResponse({"jsonrpc": "2.0", "result": {}}, headers=headers, status_code=202)
         except Exception as e:
             # HI-5: trace_id 入响应, 栈仅日志
-            trace_id = secrets.token_hex(8)
+            trace_id = get_trace_id()
             logger.error(
                 "MCP Streamable 处理异常 trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc()
             )
@@ -485,6 +560,12 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
 
     @app.get("/health")
     async def health():
-        return {"status": "ok", "server": SERVER_NAME, "version": SERVER_VERSION, "protocol": "streamable-2025-03-26"}
+        from ..observability.health import run_health
 
-    return app
+        result = await run_health(None)
+        result["server"] = SERVER_NAME
+        result["version"] = SERVER_VERSION
+        result["protocol"] = "streamable-2025-03-26"
+        return result
+
+    return _apply_security_middleware(app)

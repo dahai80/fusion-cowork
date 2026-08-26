@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  labels:
+    app.kubernetes.io/name: fusion-cowork
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  bindHost: {{ .Values.config.bindHost | quote }}
+  jsonLog: {{ .Values.config.jsonLog | quote }}
+  logLevel: {{ .Values.config.logLevel | quote }}

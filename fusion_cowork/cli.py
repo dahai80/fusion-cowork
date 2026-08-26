@@ -1041,6 +1041,8 @@ def desk_rpc(sock: str, http_port: int):
     )
 
     async def _run():
+        import signal
+
         await rpc.start()
         console.print_success(f"Desk RPC 服务已启动 (UDS): {sock}")
 
@@ -1048,10 +1050,22 @@ def desk_rpc(sock: str, http_port: int):
         if http_port > 0:
             http_task = asyncio.create_task(_serve_http(http_port))
 
+        loop = asyncio.get_running_loop()
+        stop_event = asyncio.Event()
+
+        def _request_stop():
+            console.print_info("收到停止信号, 开始优雅关停...")
+            stop_event.set()
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                loop.add_signal_handler(sig, _request_stop)
+            except (NotImplementedError, RuntimeError):
+                pass
+
         console.print_info("等待 Fusion-Studio 连接... (Ctrl+C 停止)")
         try:
-            while True:
-                await asyncio.sleep(1)
+            await stop_event.wait()
         except asyncio.CancelledError:
             pass
         finally:
@@ -1062,6 +1076,7 @@ def desk_rpc(sock: str, http_port: int):
                 except (asyncio.CancelledError, Exception):
                     pass
             await rpc.stop()
+            console.print_info("Desk RPC 服务已停止")
 
     async def _serve_http(port: int):
         try:
@@ -1070,13 +1085,14 @@ def desk_rpc(sock: str, http_port: int):
 
             import_all_nodes()
             rt = _build_runtime()
+            bind_host = os.environ.get("FUSION_BIND_HOST", "127.0.0.1")
             mcp = MCPServer(
-                host="127.0.0.1",
+                host=bind_host,
                 port=port,
                 permission_manager=rt["permission_manager"],
                 hook_manager=rt["hook_manager"],
             )
-            console.print_success(f"Desk HTTP 服务已启动: 127.0.0.1:{port} (/rpc /health /mcp /sse)")
+            console.print_success(f"Desk HTTP 服务已启动: {bind_host}:{port} (/rpc /health /mcp /sse)")
             await mcp.serve_http(event_emitter=rt["event_emitter"])
         except ImportError:
             console.print_warning("HTTP 通道未启动 (缺 [web] 依赖): pip install fusion-cowork[web]; 仅 UDS 可用")
@@ -1755,7 +1771,9 @@ def remote_serve(host: str, port: int, token: str, tls_cert: str, tls_key: str):
         scheme = "wss" if (tls_cert and tls_key) else "ws"
         console.print_success(f"远程控制服务已启动: {scheme}://{host}:{port}/control")
         if token:
-            console.print_info(f"认证令牌: {token}")
+            _t = str(token)
+            _shown = f"{_t[:4]}***{_t[-4:]}" if len(_t) > 8 else "(已设置)"
+            console.print_info(f"认证令牌: {_shown}")
         if tls_cert and tls_key:
             console.print_info(f"TLS 已启用: cert={tls_cert}")
         console.print_info("等待远程连接... (Ctrl+C 停止)")
@@ -2039,7 +2057,10 @@ def push_config(bark_url, ntfy_url, ntfy_token, sound, priority):
     if all(v is None for v in (bark_url, ntfy_url, ntfy_token, sound, priority)):
         console.print_info(f"Bark URL: {cc.get('push.bark_url', '(未设置)')}")
         console.print_info(f"ntfy URL: {cc.get('push.ntfy_url', '(未设置)')}")
-        console.print_info(f"ntfy Token: {cc.get('push.ntfy_token', '(未设置)')}")
+        # Stage 2: token 脱敏显示 (仅前4后4, 中间 *)
+        _ntfy = cc.get("push.ntfy_token", "") or ""
+        _shown = f"{_ntfy[:4]}***{_ntfy[-4:]}" if len(_ntfy) > 8 else ("(已设置)" if _ntfy else "(未设置)")
+        console.print_info(f"ntfy Token: {_shown}")
         console.print_info(f"提示音: {cc.get('push.sound', '(未设置)')}")
         console.print_info(f"优先级: {cc.get('push.priority', '(未设置)')}")
         return
@@ -2051,7 +2072,9 @@ def push_config(bark_url, ntfy_url, ntfy_token, sound, priority):
         console.print_result(f"ntfy URL 已设置: {ntfy_url}")
     if ntfy_token is not None:
         cc.set("push.ntfy_token", ntfy_token)
-        console.print_result(f"ntfy Token 已设置: {ntfy_token}")
+        _nt = str(ntfy_token)
+        _nshown = f"{_nt[:4]}***{_nt[-4:]}" if len(_nt) > 8 else "(已设置)"
+        console.print_result(f"ntfy Token 已设置: {_nshown}")
     if sound is not None:
         cc.set("push.sound", sound)
     if priority is not None:
@@ -3033,7 +3056,137 @@ async def _async_space_agent_relay(space_id: str, message: str, agents: str, use
         await store.close()
 
 
+# ── 数据库命令 (v0.4.0 Stage 3) ──
+
+
+@cli.group()
+def db():
+    """数据库备份/恢复 + 迁移管理 (postgres 后端)。"""
+
+
+@db.command("backup")
+@click.option("--dsn", default="", help="Postgres DSN (缺则读 env FUSION_PG_DSN)")
+@click.option("--dest", default="", help="备份输出路径 (.sql.gz)")
+def db_backup(dsn: str, dest: str):
+    """pg_dump 备份到 .sql.gz。"""
+    import os
+
+    dsn = dsn or os.environ.get("FUSION_PG_DSN", "")
+    if not dsn:
+        console.print_error("缺 DSN — 传 --dsn 或设 env FUSION_PG_DSN")
+        raise SystemExit(1)
+    if not dest:
+        from datetime import datetime
+
+        dest = f"fusion-cowork-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.sql.gz"
+    from .db.backup import BackupManager
+
+    mgr = BackupManager(dsn)
+    out = mgr.backup(dest)
+    console.print_success(f"备份完成: {out} ({out.stat().st_size} bytes)")
+
+
+@db.command("restore")
+@click.option("--dsn", default="", help="Postgres DSN (缺则读 env FUSION_PG_DSN)")
+@click.option("--src", required=True, help="备份文件 (.sql.gz)")
+@click.option("--confirm", is_flag=True, help="确认覆盖现有数据库 (破坏性)")
+def db_restore(dsn: str, src: str, confirm: bool):
+    """从 .sql.gz 恢复 (破坏性, 需 --confirm)。"""
+    import os
+
+    dsn = dsn or os.environ.get("FUSION_PG_DSN", "")
+    if not dsn:
+        console.print_error("缺 DSN — 传 --dsn 或设 env FUSION_PG_DSN")
+        raise SystemExit(1)
+    from .db.backup import BackupManager
+
+    mgr = BackupManager(dsn)
+    mgr.restore(src, confirm=confirm)
+    console.print_success(f"恢复完成: {src}")
+
+
+@db.command("migrate")
+@click.option("--dsn", default="", help="Postgres DSN (缺则读 env FUSION_PG_DSN)")
+def db_migrate(dsn: str):
+    """执行待应用的数据库迁移 (版本化, 幂等)。"""
+    import asyncio
+    import os
+
+    dsn = dsn or os.environ.get("FUSION_PG_DSN", "")
+    if not dsn:
+        console.print_error("缺 DSN — 传 --dsn 或设 env FUSION_PG_DSN")
+        raise SystemExit(1)
+
+    async def _run():
+        import asyncpg
+
+        from .db.migrations import MigrationRunner
+
+        conn = await asyncpg.connect(dsn)
+        try:
+            # 建基础 schema (迁移依赖表存在)
+            from .space.store import _pg_schema_sql
+
+            await conn.execute(_pg_schema_sql())
+
+            async def _exec(sql, params=(), read=False):
+                from .db.placeholders import normalize_placeholders
+
+                pgsql = normalize_placeholders(sql)
+                if read:
+                    return list(await conn.fetch(pgsql, *(params or ())))
+                await conn.execute(pgsql, *(params or ()))
+                return None
+
+            runner = MigrationRunner("postgres", executor=_exec, error_class=asyncpg.DuplicateColumnError)
+            applied = await runner.run_pending()
+            console.print_success(f"迁移完成: 应用版本 {applied or '(无待应用)'}")
+        finally:
+            await conn.close()
+
+    asyncio.run(_run())
+
+
 # ── 主入口 ──
+
+
+@cli.command("serve")
+@click.option("--host", default="", help="绑定地址 (默认读 FUSION_BIND_HOST, 再默认 0.0.0.0 容器模式)")
+@click.option("--port", default=11438, show_default=True, help="HTTP 端口 (/rpc /health /mcp /sse)")
+@click.option("--json-log", "json_log", is_flag=True, help="结构化 JSON 日志 (structlog, 生产)")
+@click.option("--metrics-port", default=0, help="prometheus /metrics 端口 (0=不启)")
+def serve(host: str, port: int, json_log: bool, metrics_port: int):
+    """容器/云部署模式 — HTTP 单通道 (无 UDS), 0.0.0.0 绑定, uvicorn 接管 SIGTERM 优雅关停。
+
+    Dockerfile CMD / k8s ENTRYPOINT 用此命令。
+    本地开发仍用 `desk rpc` (UDS + HTTP 双通道)。
+    """
+    import asyncio
+
+    from .nodes import import_all_nodes
+    from .observability.metrics import maybe_start_prometheus_endpoint
+    from .server.mcp_server import MCPServer
+
+    bind_host = host or os.environ.get("FUSION_BIND_HOST", "0.0.0.0")
+    _json_env = os.environ.get("FUSION_JSON_LOG", "").strip().lower() in ("1", "true", "yes", "on")
+    if json_log or _json_env:
+        setup_logger(json=True)
+    if metrics_port:
+        maybe_start_prometheus_endpoint(metrics_port)
+
+    import_all_nodes()
+    rt = _build_runtime()
+    mcp = MCPServer(
+        host=bind_host,
+        port=port,
+        permission_manager=rt["permission_manager"],
+        hook_manager=rt["hook_manager"],
+    )
+    console.print_success(f"fusion-cowork serve (容器模式): {bind_host}:{port} (/rpc /health /mcp /sse)")
+    try:
+        asyncio.run(mcp.serve_http(event_emitter=rt["event_emitter"]))
+    except KeyboardInterrupt:
+        console.print_info("服务已停止")
 
 
 def main():

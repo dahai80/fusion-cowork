@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 __app_name__ = "Fusion-Cowork"
 
 # ── 节点工具名称映射表（吸纳自 Squish tool_name_map.py） ──
@@ -307,6 +307,52 @@ _LAZY_IMPORTS: dict[str, str] = {
     "PresenceState": "fusion_cowork.space",
     # V0.2.14 协作层 WS 双向
     "CollabHub": "fusion_cowork.server.collab_ws",
+    # V0.4.0 多租户云 — 租户/认证/持久化
+    "TenantPrincipal": "fusion_cowork.tenant",
+    "get_current_tenant": "fusion_cowork.tenant",
+    "set_current_tenant": "fusion_cowork.tenant",
+    "tenant_context": "fusion_cowork.tenant",
+    "JWTVerifier": "fusion_cowork.auth",
+    "MigrationRunner": "fusion_cowork.db",
+    "Migration": "fusion_cowork.db",
+    "BackupManager": "fusion_cowork.db",
+    # V0.4.0 可观测性
+    "trace_context": "fusion_cowork.observability",
+    "get_trace_id": "fusion_cowork.observability",
+    "new_trace_id": "fusion_cowork.observability",
+    "HealthCheck": "fusion_cowork.observability",
+    "get_meter": "fusion_cowork.observability.metrics",
+    "get_tracer": "fusion_cowork.observability.tracing",
+    # V0.4.0 安全规模化
+    "RateLimiter": "fusion_cowork.security",
+    "TokenBucket": "fusion_cowork.security",
+    "encrypt_at_rest": "fusion_cowork.security",
+    "decrypt_at_rest": "fusion_cowork.security",
+    "AuditLog": "fusion_cowork.security",
+    "CircuitBreaker": "fusion_cowork.security",
+    "CircuitOpenError": "fusion_cowork.security",
+    "TenantQuotas": "fusion_cowork.security",
+    "QuotaEnforcer": "fusion_cowork.security",
+    "QuotaExceededError": "fusion_cowork.security",
+    # V0.4.0 插件签名/registry
+    "PluginRegistry": "fusion_cowork.plugins.registry",
+    "sign_manifest": "fusion_cowork.plugins.signing",
+    "verify_manifest": "fusion_cowork.plugins.signing",
+    "verify_any_key": "fusion_cowork.plugins.signing",
+    # V0.4.0 集群同步 (issue #61, 迁移自 fusion-multi-node)
+    "ClusterSyncManager": "fusion_cowork.cluster_sync",
+    "ModelManifest": "fusion_cowork.cluster_sync",
+    "FileEntry": "fusion_cowork.cluster_sync",
+    "NodeLoadReport": "fusion_cowork.cluster_sync",
+    "PartitionDetector": "fusion_cowork.cluster_sync",
+    "PartitionState": "fusion_cowork.cluster_sync",
+    "NodeHealth": "fusion_cowork.cluster_sync",
+    "build_manifest": "fusion_cowork.cluster_sync",
+    "compute_sync_diff": "fusion_cowork.cluster_sync",
+    "compute_file_sha256": "fusion_cowork.cluster_sync",
+    "is_safe_peer_host": "fusion_cowork.cluster_sync",
+    "is_safe_path_segment": "fusion_cowork.cluster_sync",
+    "build_safe_url": "fusion_cowork.cluster_sync",
 }
 
 _lazy_cache: dict[str, object] = {}

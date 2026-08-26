@@ -15,16 +15,26 @@ import asyncio
 import json
 import logging
 import os
-import secrets
+import time
 import traceback
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
+
+from fusion_cowork.observability.trace import get_trace_id
+from fusion_cowork.tenant import (
+    DEFAULT_TENANT,
+    LOCAL_USER,
+    TenantPrincipal,
+    reset_current_tenant,
+    resolve_tenant_id,
+    set_current_tenant,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_SOCK_PATH = "/tmp/fusion-cowork.sock"
 
-_DEFAULT_PRINCIPAL = "local_user"
+_DEFAULT_PRINCIPAL = LOCAL_USER
 _AUTH_TOKEN_KEY = "desk.auth_token"
 _IDENTITY_FIELDS = frozenset({"operator_id", "user_id", "inviter_id", "author_id", "owner_id", "from_user_id"})
 
@@ -36,6 +46,9 @@ _MAX_RPC_LINE = 1024 * 1024
 _RPC_READ_TIMEOUT = 5.0
 # HI-13: collab 消息内容上限 (16KiB), 防存储型 prompt 注入 + 撑爆 session 记录
 _MAX_COLLAB_CONTENT = 16 * 1024
+# Stage 7: collab 会话防泄漏 — idle 超时自动 evict (无心跳 leave), 上限保护
+_COLLAB_IDLE_TIMEOUT = 30 * 60  # 30 分钟无 poll/send 即视为断连
+_COLLAB_MAX_SESSIONS = 1000  # 单实例上限, 超则 evict 最旧 idle
 # HI-15: 文本知识库扩展名白名单 (KB 主要消费文本; 二进制需 allow_binary 单独路径)
 _TEXT_EXT_WHITELIST = frozenset(
     {".txt", ".md", ".markdown", ".rst", ".json", ".yaml", ".yml", ".csv", ".html", ".htm", ".log", ".py", ".js", ".ts"}
@@ -75,6 +88,7 @@ class DeskRPCServer:
         permission_manager=None,
         hook_manager=None,
         space_store=None,
+        principal_resolver: Optional[Callable] = None,
     ):
         self._sock_path = sock_path
         self._server: Optional[asyncio.AbstractServer] = None
@@ -85,17 +99,29 @@ class DeskRPCServer:
         self._permission_manager = permission_manager
         self._hook_manager = hook_manager
         self._space_store = space_store
+        # Stage 1/2: principal_resolver 供外部注入 JWT/SSO 身份解析;
+        # None 时用本地静态身份 (local_user / default tenant)。
+        self._principal_resolver = principal_resolver
         self._orchestrator = None
         self._presence_manager = None
         self._collab_hub = None
         self._collab_sessions: Dict[str, Dict[str, Any]] = {}
         self._collab_queues: Dict[str, asyncio.Queue] = {}
         self._auth_token: Optional[str] = None
+        # Stage 2: JWT verifier (env FUSION_JWT_SECRET/FUSION_JWKS_URL 配了启用)。
+        # _authenticate 优先用 resolver; resolver 缺则用 _jwt_verifier (active 时)。
+        self._jwt_verifier = None
         # A-10: 共享 MLX/KB 客户端实例 (旧版 11 处 handler 各 new FusionMLXClient() 不 close,
         # httpx 连接池泄漏)。handler 取共享实例, stop() 统一关闭。
         self._mlx_client = None
         self._kb_client = None
         self._engine = None  # E-7: 复用单例 engine, 避免每请求新建
+        # Stage 6: per-tenant 限流 (env FUSION_RATE_LIMIT 设了启用, 否则无限透传)。
+        from ..security.rate_limit import get_default_rate_limiter
+
+        self._rate_limiter = get_default_rate_limiter()
+        # Stage 6: MLX/KB 上游熔断在 client 层 (mlx_client.py, env FUSION_CB_MLX_THRESHOLD
+        # 门控), 非此处 — 单层熔断, 勿重复 (Rule 7)。
         self._register_handlers()
 
     def _get_mlx_client(self):
@@ -278,6 +304,18 @@ class DeskRPCServer:
         self._auth_token = ConfigCenter.get_instance().get(_AUTH_TOKEN_KEY) or None
         if self._auth_token:
             logger.info("Desk RPC 认证已启用: desk.auth_token 握手校验")
+        # Stage 2: JWT verifier (env FUSION_JWT_SECRET/FUSION_JWKS_URL 启用, _authenticate 优先用)
+        try:
+            from fusion_cowork.auth import get_default_verifier
+
+            self._jwt_verifier = get_default_verifier()
+            if self._jwt_verifier.active:
+                logger.info("Desk RPC JWT 认证已启用 (env FUSION_JWT_SECRET/FUSION_JWKS_URL)")
+        except Exception as e:
+            logger.warning(f"JWT verifier 构造失败 (JWT 认证降级): {e}")
+            self._jwt_verifier = None
+        if os.environ.get("FUSION_REQUIRE_JWT", "") == "1":
+            logger.info("Desk RPC 生产模式: FUSION_REQUIRE_JWT=1 (强制 JWT, 禁静默降级)")
         if os.path.exists(self._sock_path):
             if not self._is_owned_socket(self._sock_path):
                 logger.error(f"UDS {self._sock_path} 已存在但非当前用户所有, 拒绝覆盖 (可能被恶意占用)")
@@ -285,9 +323,12 @@ class DeskRPCServer:
             os.unlink(self._sock_path)
 
         self._running = True
+        max_conn = int(os.environ.get("FUSION_DESK_MAX_CONNECTIONS", "100"))
         self._server = await asyncio.start_unix_server(
             self._handle_client,
             path=self._sock_path,
+            backlog=max_conn,
+            limit=_MAX_RPC_LINE + 1024,
         )
         try:
             os.chmod(self._sock_path, 0o600)
@@ -418,66 +459,136 @@ class DeskRPCServer:
             err = authed["__auth_error__"]
             return {"jsonrpc": "2.0", "id": req_id, "error": err}
 
-        space_err = await self._check_space_access(method, authed)
-        if space_err is not None:
-            if req_id is not None:
-                return {"jsonrpc": "2.0", "id": req_id, "result": space_err}
-            return {"jsonrpc": "2.0", "result": space_err}
-
+        # Stage 1: 注入 tenant_id 到 contextvar, 下游 store.resolve_tenant_id(None) 自动取。
+        tid = authed.get("__tenant_id__") or DEFAULT_TENANT
+        t_tok = set_current_tenant(tid)
         try:
-            result = await handler(authed)
-            if req_id is not None:
-                return {"jsonrpc": "2.0", "id": req_id, "result": result}
-            return {"jsonrpc": "2.0", "result": result}
-        except Exception as e:
-            # HI-5: 对外仅 trace_id + 通用消息, 不泄内部栈/绝对路径/SQL 错误;
-            # 服务端详记 trace_id ↔ (method, params 摘要, 完整 traceback) 供排查
-            trace_id = secrets.token_hex(8)
-            param_keys = list(authed.keys()) if isinstance(authed, dict) else []
-            logger.error(
-                "Desk RPC 处理异常 trace_id=%s method=%s param_keys=%s err=%s\n%s",
-                trace_id,
-                method,
-                param_keys,
-                e,
-                traceback.format_exc(),
-            )
-            return {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "error": {
-                    "code": -32603,
-                    "message": "Internal error",
-                    "data": {"trace_id": trace_id},
-                },
-            }
+            # Stage 6: per-tenant 限流 — 超限返 -32002 (rate limit exceeded)。
+            if not self._rate_limiter.allow(tid):
+                logger.warning(f"Desk RPC 限流命中 method={method} tenant={tid}")
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32002, "message": "rate limit exceeded"},
+                }
+
+            space_err = await self._check_space_access(method, authed)
+            if space_err is not None:
+                if req_id is not None:
+                    return {"jsonrpc": "2.0", "id": req_id, "result": space_err}
+                return {"jsonrpc": "2.0", "result": space_err}
+
+            try:
+                result = await handler(authed)
+                if req_id is not None:
+                    return {"jsonrpc": "2.0", "id": req_id, "result": result}
+                return {"jsonrpc": "2.0", "result": result}
+            except Exception as e:
+                # HI-5: 对外仅 trace_id + 通用消息, 不泄内部栈/绝对路径/SQL 错误;
+                # 服务端详记 trace_id ↔ (method, params 摘要, 完整 traceback) 供排查
+                trace_id = get_trace_id()
+                param_keys = list(authed.keys()) if isinstance(authed, dict) else []
+                logger.error(
+                    "Desk RPC 处理异常 trace_id=%s method=%s param_keys=%s err=%s\n%s",
+                    trace_id,
+                    method,
+                    param_keys,
+                    e,
+                    traceback.format_exc(),
+                )
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {
+                        "code": -32603,
+                        "message": "Internal error",
+                        "data": {"trace_id": trace_id},
+                    },
+                }
+        finally:
+            reset_current_tenant(t_tok)
 
     def _authenticate(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """认证调用方, 返回带可信身份的 params (CR-5 反 IDOR)。
 
-        - desk.auth_token 配了则校验 params._auth_token, 缺/错拒。
-        - 身份字段 (operator_id/user_id/inviter_id/author_id/owner_id/from_user_id) 不信 params,
-          一律改用连接级 principal (本地单用户 = local_user, UDS 0o600 已保证连接即本机 owner)。
-        - 返回新 dict: 剥离调用方提供的身份字段, 注入可信 principal 到全部身份字段。
+        优先级 (Stage 2):
+        1. JWT: env FUSION_JWT_SECRET/FUSION_JWKS_URL 配了 → 校验 params._auth_token Bearer JWT,
+           提取 tenant_id/user_id claim。生产 (FUSION_REQUIRE_JWT=1) 强制走此路径, 无 JWT → 拒。
+        2. principal_resolver: 外部注入 (如 OIDC header 解析), 返 TenantPrincipal。
+        3. 静态 token: desk.auth_token 配了 → 等值校验 (本地/桌面保留), 通过走默认身份。
+        4. 本地无认证: 以上都无 → local_user / default tenant (单用户向后兼容)。
+
+        身份字段 (operator_id/user_id/inviter_id/author_id/owner_id/from_user_id) 不信 params,
+        一律改用连接级 principal。注入 __tenant_id__, 下游 store 据此隔离。
         """
-        if self._auth_token:
-            token = params.get("_auth_token", "")
-            if not isinstance(token, str) or token != self._auth_token:
-                logger.warning("Desk RPC 认证失败: _auth_token 缺失或不匹配")
-                return {"__auth_error__": {"code": -32001, "message": "认证失败: token 无效"}}
         sanitized = {k: v for k, v in params.items() if k not in _IDENTITY_FIELDS and k != "_auth_token"}
-        sanitized["__principal__"] = _DEFAULT_PRINCIPAL
-        sanitized["operator_id"] = _DEFAULT_PRINCIPAL
-        sanitized["user_id"] = _DEFAULT_PRINCIPAL
-        sanitized["inviter_id"] = _DEFAULT_PRINCIPAL
-        sanitized["author_id"] = _DEFAULT_PRINCIPAL
+        principal_id = _DEFAULT_PRINCIPAL
+        tenant_id = DEFAULT_TENANT
+        token = params.get("_auth_token", "")
+        if not isinstance(token, str):
+            token = ""
+        resolved_principal: Optional[TenantPrincipal] = None
+
+        # 1. JWT (env 配了 active)
+        if self._jwt_verifier is not None and self._jwt_verifier.active:
+            jwt_principal = self._jwt_verifier.verify_token(token)
+            if jwt_principal is not None:
+                resolved_principal = jwt_principal
+            elif self._require_jwt_mode():
+                logger.warning("Desk RPC 认证失败: 生产模式 JWT 校验未通过")
+                return {"__auth_error__": {"code": -32001, "message": "认证失败: JWT 无效或过期"}}
+
+        # 2. principal_resolver (外部注入, 覆盖 JWT)
+        if resolved_principal is None and self._principal_resolver is not None:
+            try:
+                resolved = self._principal_resolver(params)
+                if isinstance(resolved, TenantPrincipal):
+                    resolved_principal = resolved
+                elif isinstance(resolved, str):
+                    resolved_principal = TenantPrincipal(user_id=resolved or _DEFAULT_PRINCIPAL)
+            except Exception as e:
+                logger.warning("principal_resolver 解析失败, 回退本地身份: %s", e)
+
+        # 3. 静态 token fallback (本地/桌面)
+        if resolved_principal is None and self._auth_token:
+            from fusion_cowork.auth import verify_static_token
+
+            static_principal = verify_static_token(token, self._auth_token)
+            if static_principal is None:
+                logger.warning("Desk RPC 认证失败: 静态 token 不匹配")
+                return {"__auth_error__": {"code": -32001, "message": "认证失败: token 无效"}}
+            resolved_principal = static_principal
+
+        # 4. 生产模式 + 无任何认证通过 → 拒 (防静默降级到 local_user)
+        if resolved_principal is None and self._require_jwt_mode():
+            logger.warning("Desk RPC 认证失败: 生产模式无 JWT/静态 token")
+            return {"__auth_error__": {"code": -32001, "message": "认证失败: 需有效凭证"}}
+
+        if resolved_principal is not None:
+            principal_id = resolved_principal.user_id or _DEFAULT_PRINCIPAL
+            tenant_id = resolved_principal.tenant_id or DEFAULT_TENANT
+
+        sanitized["__principal__"] = principal_id
+        sanitized["__tenant_id__"] = tenant_id
+        sanitized["operator_id"] = principal_id
+        sanitized["user_id"] = principal_id
+        sanitized["inviter_id"] = principal_id
+        sanitized["author_id"] = principal_id
         return sanitized
 
-    async def _require_space_access(self, space_id: str, principal: str, action: str) -> Optional[Dict[str, Any]]:
+    @staticmethod
+    def _require_jwt_mode() -> bool:
+        """生产模式: env FUSION_REQUIRE_JWT=1 → 强制 JWT, 禁静默降级。"""
+        return os.environ.get("FUSION_REQUIRE_JWT", "") == "1"
+
+    async def _require_space_access(
+        self, space_id: str, principal: str, action: str, tenant_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         """校验 principal 对 space 的访问权 (CR-5 IDOR 守卫)。返回 error_dict 或 None。"""
         if not self._space_store or not space_id:
             return None
-        space = await self._space_store.get_space(space_id)
+        tid = resolve_tenant_id(tenant_id)
+        space = await self._space_store.get_space(space_id, tenant_id=tid)
         if not space:
             return {"error": f"空间不存在: {space_id}"}
         if principal == space.owner_id:
@@ -485,9 +596,9 @@ class DeskRPCServer:
         from ..space.permission import SpacePermission
 
         perm = SpacePermission(self._space_store)
-        member = await self._space_store.get_member(space_id, principal)
+        member = await self._space_store.get_member(space_id, principal, tenant_id=tid)
         if member is None:
-            logger.warning(f"IDOR 拒绝: principal={principal} 非空间 {space_id} 成员")
+            logger.warning(f"IDOR 拒绝: principal={principal} 非空间 {space_id} 成员 tenant={tid}")
             return {"error": f"无权访问空间 {space_id}"}
         if action and not await perm.check(space_id, principal, action):
             return {"error": f"权限不足: 缺 {action}"}
@@ -567,12 +678,13 @@ class DeskRPCServer:
         if not space_id:
             return None
         principal = params.get("__principal__", _DEFAULT_PRINCIPAL)
-        return await self._require_space_access(space_id, principal, action)
+        tenant_id = params.get("__tenant_id__")
+        return await self._require_space_access(space_id, principal, action, tenant_id=tenant_id)
 
     def _internal_error(self, e: Exception, method: str = "") -> Dict[str, Any]:
         """HI-5: handler 业务异常统一对外返回通用消息 + trace_id, 不泄 str(e) 内部细节
         (绝对路径/SQL 列名/httpx URL); 服务端详记 trace_id↔(method, err, traceback)。"""
-        trace_id = secrets.token_hex(8)
+        trace_id = get_trace_id()
         logger.error(
             "Desk RPC handler 异常 trace_id=%s method=%s err=%s\n%s",
             trace_id,
@@ -604,8 +716,12 @@ class DeskRPCServer:
 
     async def _handle_health(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from .. import __version__
+        from ..observability.health import run_health
 
-        return {"status": "ok", "service": "fusion-cowork", "version": __version__}
+        result = await run_health(self._space_store)
+        result["service"] = "fusion-cowork"
+        result["version"] = __version__
+        return result
 
     async def _handle_nodes_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..engine.node import NodeRegistry
@@ -1271,6 +1387,27 @@ class DeskRPCServer:
 
         return _MockWS(), queue
 
+    def _touch_collab_session(self, session_id: str) -> None:
+        # Stage 7: 更新心跳 + evict idle/expired, 防长跑泄漏 (ResourceWarning)
+        sess = self._collab_sessions.get(session_id)
+        if sess is not None:
+            sess["last_seen"] = time.monotonic()
+        now = time.monotonic()
+        expired = [
+            sid for sid, s in self._collab_sessions.items() if now - s.get("last_seen", now) > _COLLAB_IDLE_TIMEOUT
+        ]
+        for sid in expired:
+            self._collab_sessions.pop(sid, None)
+            self._collab_queues.pop(sid, None)
+            logger.info(f"collab 会话 {sid} idle 超时 evict (泄漏防护)")
+        # 上限保护: 超 max 则 evict 最旧
+        if len(self._collab_sessions) > _COLLAB_MAX_SESSIONS:
+            oldest = sorted(self._collab_sessions.items(), key=lambda kv: kv[1].get("last_seen", 0))
+            for sid, _ in oldest[: len(self._collab_sessions) - _COLLAB_MAX_SESSIONS]:
+                self._collab_sessions.pop(sid, None)
+                self._collab_queues.pop(sid, None)
+                logger.warning(f"collab 会话 {sid} 超 _COLLAB_MAX_SESSIONS evict")
+
     async def _handle_space_collab_join(self, params: Dict[str, Any]) -> Dict[str, Any]:
         import secrets as _secrets
 
@@ -1284,9 +1421,16 @@ class DeskRPCServer:
         user_id = principal
         display_name = authed.get("display_name", "")
         session_id = authed.get("session_id") or f"sess_{_secrets.token_hex(16)}"
+        self._touch_collab_session(session_id)  # join 时先 evict idle
         ws, _ = self._mock_ws_for(session_id)
         result = await hub.join(ws, space_id, user_id, display_name=display_name)
-        self._collab_sessions[session_id] = {"space_id": space_id, "user_id": user_id, "ws": ws, "principal": principal}
+        self._collab_sessions[session_id] = {
+            "space_id": space_id,
+            "user_id": user_id,
+            "ws": ws,
+            "principal": principal,
+            "last_seen": time.monotonic(),
+        }
         result["session_id"] = session_id
         return result
 
@@ -1296,6 +1440,7 @@ class DeskRPCServer:
         sess = self._collab_sessions.get(session_id)
         if not sess:
             return {"error": "会话不存在, 请先 collab.join"}
+        self._touch_collab_session(session_id)
         # HI-13: content 限长 + 剥控制字符, 防 LLM 存储型 prompt 注入 / 撑爆记录
         content = params.get("content", "")
         if not isinstance(content, str):
@@ -1315,6 +1460,7 @@ class DeskRPCServer:
         sess = self._collab_sessions.get(session_id)
         if not sess:
             return {"error": "会话不存在, 请先 collab.join"}
+        self._touch_collab_session(session_id)
         raw = json.dumps(
             {
                 "type": "cursor_move",
@@ -1328,6 +1474,7 @@ class DeskRPCServer:
 
     async def _handle_space_collab_poll(self, params: Dict[str, Any]) -> Dict[str, Any]:
         session_id = params.get("session_id", "")
+        self._touch_collab_session(session_id)
         if session_id not in self._collab_queues:
             return {"events": []}
         queue = self._collab_queues[session_id]
@@ -1691,7 +1838,7 @@ class DeskRPCServer:
                 synced.append({"name": safe_name, "result": result})
             except Exception as e:
                 logger.error("syncKnowledge: %s failed: %s", safe_name, e)
-                errors.append({"name": safe_name, "error": "上传失败", "trace_id": secrets.token_hex(8)})
+                errors.append({"name": safe_name, "error": "上传失败", "trace_id": get_trace_id()})
         logger.info("desk.project.syncKnowledge space=%s synced=%d errors=%d", space_id, len(synced), len(errors))
         return {"synced": synced, "errors": errors}
 
