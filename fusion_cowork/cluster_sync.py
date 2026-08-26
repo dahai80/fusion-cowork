@@ -44,6 +44,9 @@ _SSRF_BLOCKED_HOSTNAMES = frozenset(
     }
 )
 
+# 单文件同步大小上限 (64GB), 防 peer 回灌超大体致内存/磁盘 DoS
+_MAX_SYNC_FILE_BYTES = 64 * 1024 * 1024 * 1024
+
 
 def is_safe_path_segment(value: str) -> bool:
     """路径段安全校验 — 防 ../ 穿越与非法字符。仅允许字母数字 _ - 点。"""
@@ -78,6 +81,9 @@ def is_safe_peer_host(host: str) -> bool:
         if ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip.is_reserved:
             logger.warning(f"SSRF 拦截: 受限 IP {host!r}")
             return False
+        if not ip.is_private:
+            logger.warning(f"SSRF 拦截: 非私网 IP, 禁止出站公网 {host!r}")
+            return False
         return True
     if host.lower() == "localhost":
         logger.warning(f"SSRF 拦截: localhost {host!r}")
@@ -97,6 +103,9 @@ def is_safe_peer_host(host: str) -> bool:
             continue
         if ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip.is_reserved:
             logger.warning(f"SSRF 拦截: {host!r} 解析到受限 IP {addr!r}")
+            return False
+        if not ip.is_private:
+            logger.warning(f"SSRF 拦截: {host!r} 解析到公网 IP {addr!r}, 禁止出站")
             return False
     return True
 
@@ -408,41 +417,62 @@ class ClusterSyncManager:
         source_host: str,
         source_port: int = 11452,
     ) -> dict[str, Any]:
-        """增量同步: 对比 manifest, 仅下载差异文件。"""
+        """增量同步: 对比 manifest, 仅下载差异文件。下载后强制 SHA256 校验, 不符即拒写。"""
         local_manifest = self.get_manifest(model_name)
         diff_files = compute_sync_diff(local_manifest, remote_manifest)
         if not diff_files:
             logger.info(f"增量同步: {model_name} 无差异, 跳过")
             return {"model_name": model_name, "synced": 0, "status": "up_to_date"}
+        if not is_safe_peer_host(source_host):
+            logger.warning(f"增量同步拒绝对端: {source_host!r}")
+            return {"model_name": model_name, "synced": 0, "total_diff": len(diff_files), "status": "rejected"}
+        if not is_safe_path_segment(model_name):
+            logger.warning(f"增量同步拒绝 model_name: {model_name!r}")
+            return {"model_name": model_name, "synced": 0, "total_diff": len(diff_files), "status": "rejected"}
+        model_dir = os.path.normpath(os.path.join(self.model_cache_dir, model_name))
         synced = 0
+        rejected = 0
         for fentry in diff_files:
             if fentry.sha256 == "__deleted__":
                 continue
             client = None
             try:
-                if not is_safe_peer_host(source_host):
-                    raise ValueError(f"不安全对端主机: {source_host!r}")
                 safe_rel = _safe_rel_path(fentry.path)
-                if not is_safe_path_segment(model_name):
-                    raise ValueError(f"非法 model_name: {model_name!r}")
                 client = httpx.AsyncClient(timeout=300.0)
                 url = build_safe_url("http", source_host, source_port, f"/api/models/{model_name}/files")
                 resp = await client.get(url, params={"path": safe_rel})
-                model_dir = os.path.join(self.model_cache_dir, model_name)
+                resp.raise_for_status()
+                content = resp.content
+                if fentry.size and len(content) != fentry.size:
+                    raise ValueError(f"下载大小不符: got {len(content)} != manifest {fentry.size}")
+                if len(content) > _MAX_SYNC_FILE_BYTES:
+                    raise ValueError(f"下载超大小上限: {len(content)} > {_MAX_SYNC_FILE_BYTES}")
+                got_sha = hashlib.sha256(content).hexdigest()
+                if got_sha != fentry.sha256:
+                    raise ValueError(f"下载完整性校验失败: {got_sha} != manifest {fentry.sha256}")
                 dest = os.path.normpath(os.path.join(model_dir, safe_rel))
-                if not dest.startswith(os.path.normpath(model_dir) + os.sep) and dest != os.path.normpath(model_dir):
+                if not dest.startswith(model_dir + os.sep) and dest != model_dir:
                     raise ValueError(f"逃逸目标目录: {dest!r}")
                 os.makedirs(os.path.dirname(dest), exist_ok=True)
-                with open(dest, "wb") as f:
-                    f.write(resp.content)
+                tmp = dest + ".part"
+                with open(tmp, "wb") as f:
+                    f.write(content)
+                os.replace(tmp, dest)
                 synced += 1
             except Exception as e:
+                rejected += 1
                 logger.error(f"同步文件失败: {fentry.path}, {e}")
             finally:
                 if client is not None:
                     await client.aclose()
-        logger.info(f"增量同步完成: {model_name}, {synced}/{len(diff_files)} files")
-        return {"model_name": model_name, "synced": synced, "total_diff": len(diff_files)}
+        logger.info(f"增量同步完成: {model_name}, synced={synced} rejected={rejected}/{len(diff_files)}")
+        return {
+            "model_name": model_name,
+            "synced": synced,
+            "rejected": rejected,
+            "total_diff": len(diff_files),
+            "status": "ok" if rejected == 0 else "partial",
+        }
 
     def trigger_sync(self, model_name: str, source_host: str, source_port: int = 11452) -> None:
         """触发异步同步任务。"""
@@ -464,6 +494,7 @@ class ClusterSyncManager:
                 client = httpx.AsyncClient(timeout=30.0)
                 url = build_safe_url("http", source_host, source_port, f"/api/models/{model_name}/manifest")
                 resp = await client.get(url)
+                resp.raise_for_status()
                 remote_manifest = ModelManifest.from_dict(resp.json())
                 await self.incremental_sync(model_name, remote_manifest, source_host, source_port)
             except Exception as e:

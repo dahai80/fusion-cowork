@@ -132,6 +132,11 @@ def test_is_safe_peer_host_allows_private_lan():
     assert is_safe_peer_host("10.0.0.5")
 
 
+def test_is_safe_peer_host_blocks_public_ip():
+    assert not is_safe_peer_host("8.8.8.8")
+    assert not is_safe_peer_host("1.1.1.1")
+
+
 def test_build_safe_url_rejects_bad_host():
     with pytest.raises(ValueError):
         build_safe_url("http", "169.254.169.254", 80, "/x")
@@ -233,6 +238,45 @@ async def test_sync_manager_incremental_sync_rejects_ssrf(tmp_path):
     remote = ModelManifest(model_name="m", files=[FileEntry(path="a", sha256="1")])
     result = await mgr.incremental_sync("m", remote, source_host="169.254.169.254")
     assert result["synced"] == 0
+    assert result["status"] == "rejected"
+
+
+async def test_sync_manager_incremental_sync_rejects_tampered_bytes(tmp_path, monkeypatch):
+    import hashlib
+
+    import httpx
+
+    mgr = ClusterSyncManager(model_cache_dir=str(tmp_path), node_id="n1")
+    # manifest 声明 sha256 of "good", 但 peer 回灌 "bad" — 完整性校验须拒写
+    expected_sha = hashlib.sha256(b"good").hexdigest()
+    remote = ModelManifest(model_name="m", files=[FileEntry(path="a.bin", size=3, sha256=expected_sha)])
+
+    class _FakeResp:
+        def raise_for_status(self):
+            pass
+
+        content = b"bad"
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url, params=None):
+            return _FakeResp()
+
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _FakeClient())
+    result = await mgr.incremental_sync("m", remote, source_host="192.168.1.10")
+    assert result["synced"] == 0
+    assert result["rejected"] == 1
+    assert result["status"] == "partial"
+    # 篡改文件不应落盘
+    assert not (tmp_path / "m" / "a.bin").exists()
 
 
 async def test_sync_manager_trigger_sync_rejects_ssrf(tmp_path):
