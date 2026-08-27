@@ -107,6 +107,11 @@ NODE_NAME_ALIASES: dict[str, str] = {
     "微调": "fusion_trainer",
     "模型微调": "fusion_trainer",
     "训练模型": "fusion_trainer",
+    # 记忆互通 (fusion-memory)
+    "记忆提交": "memory_commit",
+    "提交记忆": "memory_commit",
+    "记忆检索": "memory_retrieve",
+    "召回记忆": "memory_retrieve",
 }
 
 # ── Lazy Import 注册表（吸纳自 Squish 的 __getattr__ 机制） ──
