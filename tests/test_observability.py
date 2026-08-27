@@ -136,9 +136,16 @@ class TestHealth:
         assert called["n"] == 1
 
     def test_check_disk(self):
-        r = HealthCheck.check_disk(99)
+        # 阈值须高于当前实际占用, 否则满盘机器本地 fail (CI runner 低占用不触发)
+        import shutil as _sh
+
+        cur = int(_sh.disk_usage("/").used / _sh.disk_usage("/").total * 100)
+        r = HealthCheck.check_disk(cur + 10)
         assert r["ok"] is True
         assert "pct" in r
+        # 阈值低于当前占用 → ok=False, 验比较逻辑
+        r_down = HealthCheck.check_disk(max(1, cur - 1))
+        assert r_down["ok"] is False
 
     @pytest.mark.asyncio
     async def test_check_upstream_unreachable(self):
