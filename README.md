@@ -48,6 +48,8 @@
 
 ## 🚀 Quick Start
 
+> **New to fusion-cowork?** Follow the **[Getting Started Guide](docs/guide.md)** — scenario-based walkthroughs (tidy your Desktop, AI-generate a workflow, batch docs, automate a site, schedule tasks, Claude Code MCP, collaboration, cloud deploy) with a decision table and troubleshooting tree. This README is the full command/node reference catalog; the guide is the on-ramp.
+
 ### Installation
 
 ```bash
