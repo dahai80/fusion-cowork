@@ -37,9 +37,7 @@ def _get_base_url() -> str:
 def _get_api_key() -> str:
     key = os.environ.get("FUSION_MEMORY_API_KEY", "").strip()
     if not key:
-        raise RuntimeError(
-            "FUSION_MEMORY_API_KEY 未配置 (fm-server Bearer 鉴权, B5)"
-        )
+        raise RuntimeError("FUSION_MEMORY_API_KEY 未配置 (fm-server Bearer 鉴权, B5)")
     return key
 
 
