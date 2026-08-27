@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -10,6 +11,27 @@ logger = logging.getLogger(__name__)
 
 # CR-14: navigate 仅允许 http/https, 拒危险 scheme (file/javascript/chrome/data/about)
 _ALLOWED_NAV_SCHEMES = {"http", "https"}
+
+# issue #65: fusion-browser CDP-over-WebSocket 兼容层目标开关
+# 设 FUSION_BROWSER_CDP=<port> → 连 127.0.0.1:<port> 的 fusion-browser shim (非真 Chrome)
+# 未设 → 走现有外部 Chrome 路径 (9222 调试端口), 行为不变
+_FUSION_BROWSER_CDP_ENV = "FUSION_BROWSER_CDP"
+
+
+def _resolve_fusion_browser_port() -> Optional[int]:
+    raw = os.environ.get(_FUSION_BROWSER_CDP_ENV, "").strip()
+    if not raw:
+        return None
+    try:
+        port = int(raw)
+    except ValueError:
+        logger.warning(f"{_FUSION_BROWSER_CDP_ENV}={raw!r} 非合法端口, 忽略, 走默认 Chrome 路径")
+        return None
+    if not (1 <= port <= 65535):
+        logger.warning(f"{_FUSION_BROWSER_CDP_ENV}={port} 超端口范围, 忽略")
+        return None
+    return port
+
 
 try:
     import httpx
@@ -28,9 +50,20 @@ except ImportError:
 
 class CDPClient:
     def __init__(self, host: str = "127.0.0.1", port: int = 9222, token: Optional[str] = None):
-        self.host = host
-        self.port = port
-        self.token = token
+        # issue #65: env FUSION_BROWSER_CDP 设了 → 强制切到 fusion-browser shim 目标
+        # shim 仅绑 127.0.0.1, 无 auth header (安全靠 EVALUATE origin 白名单 + UDS token)
+        fb_port = _resolve_fusion_browser_port()
+        if fb_port is not None:
+            self.host = "127.0.0.1"
+            self.port = fb_port
+            self.token = None
+            self._target = "fusion-browser"
+            logger.info(f"CDP 目标=fusion-browser shim (env {_FUSION_BROWSER_CDP_ENV}={fb_port})")
+        else:
+            self.host = host
+            self.port = port
+            self.token = token
+            self._target = "chrome"
         self._ws = None
         self._msg_id = 0
         self._connected = False
@@ -42,9 +75,10 @@ class CDPClient:
         self._console_enabled = False
         self._js_eval_confirmed = False  # CR-14: evaluate_js 须显式确认
         # CR-14: 默认限 localhost; 非 localhost 连接 9222 无认证 = 高危, 拒绝
-        if self.host not in {"127.0.0.1", "localhost", "::1"}:
+        # fusion-browser 路径强制 127.0.0.1, 跳过该校验
+        if self._target == "chrome" and self.host not in {"127.0.0.1", "localhost", "::1"}:
             raise ValueError(f"CDP host={self.host} 非本机, 拒绝连接 (9222 调试端口无认证, 仅限 localhost)")
-        if not self.token:
+        if self._target == "chrome" and not self.token:
             logger.warning("CDP 9222 调试端口未配置 token, 连接无认证 (仅限可信本机环境)")
 
     async def connect(self) -> None:

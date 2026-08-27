@@ -960,6 +960,57 @@ class TestCDPClient:
         assert client is not None
 
 
+# ── issue #65: FUSION_BROWSER_CDP env 目标切换 ──
+
+
+class TestCDPFusionBrowserEnvSwitch:
+    def test_env_set_targets_fusion_browser(self, monkeypatch):
+        from fusion_cowork.nodes.browser.cdp_client import CDPClient
+
+        monkeypatch.setenv("FUSION_BROWSER_CDP", "9222")
+        client = CDPClient(host="127.0.0.1", port=9999, token="x")
+        assert client.host == "127.0.0.1"
+        assert client.port == 9222
+        assert client.token is None
+        assert client._target == "fusion-browser"
+
+    def test_env_unset_keeps_chrome_path(self, monkeypatch):
+        from fusion_cowork.nodes.browser.cdp_client import CDPClient
+
+        monkeypatch.delenv("FUSION_BROWSER_CDP", raising=False)
+        client = CDPClient(host="127.0.0.1", port=9222, token="sek")
+        assert client.host == "127.0.0.1"
+        assert client.port == 9222
+        assert client.token == "sek"
+        assert client._target == "chrome"
+
+    def test_env_invalid_value_falls_back(self, monkeypatch):
+        from fusion_cowork.nodes.browser.cdp_client import CDPClient
+
+        monkeypatch.setenv("FUSION_BROWSER_CDP", "not-a-port")
+        client = CDPClient(host="127.0.0.1", port=9222)
+        assert client._target == "chrome"
+        assert client.port == 9222
+
+    def test_env_out_of_range_falls_back(self, monkeypatch):
+        from fusion_cowork.nodes.browser.cdp_client import CDPClient
+
+        monkeypatch.setenv("FUSION_BROWSER_CDP", "70000")
+        client = CDPClient(host="127.0.0.1", port=9222)
+        assert client._target == "chrome"
+
+    def test_env_skips_localhost_token_warnings(self, monkeypatch, caplog):
+        import logging
+
+        from fusion_cowork.nodes.browser.cdp_client import CDPClient
+
+        monkeypatch.setenv("FUSION_BROWSER_CDP", "9222")
+        with caplog.at_level(logging.WARNING):
+            client = CDPClient(host="8.8.8.8", port=9222)
+        assert client.host == "127.0.0.1"
+        assert all("未配置 token" not in r.message for r in caplog.records)
+
+
 class TestCDPNodes:
     @pytest.fixture(autouse=True)
     def _register(self):
