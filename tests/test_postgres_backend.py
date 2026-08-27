@@ -112,9 +112,16 @@ async def test_rls_blocks_cross_tenant(pg_conn, tmp_path):
     await pg_conn.execute("GRANT USAGE ON SCHEMA public TO rls_test")
     await pg_conn.execute("GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO rls_test")
     await apply_rls(pg_conn)
-    # 以 rls_test 角色另连验证 RLS 生效
-    su_dsn = PG_DSN
-    role_dsn = su_dsn.replace("postgres:x@", "rls_test:rls@")
+    # 以 rls_test 角色另连验证 RLS 生效 — 通用 DSN 凭证替换 (勿硬编码 superuser 名)
+    # CI/本地 DSN 用户名各异 (postgres / fusion / ...), 从 DSN 解析建表主用户名
+    from urllib.parse import urlparse
+
+    parsed = urlparse(PG_DSN)
+    su_user = parsed.username or "postgres"
+    su_host = parsed.hostname or "localhost"
+    su_port = parsed.port or 5432
+    su_db = parsed.path.lstrip("/") or "postgres"
+    role_dsn = f"postgresql://rls_test:rls@{su_host}:{su_port}/{su_db}"
     rls_conn = await asyncpg.connect(role_dsn)
     try:
         # tenantA 上下文应只见 1 条 (RLS 挡 tenantB)
@@ -126,7 +133,8 @@ async def test_rls_blocks_cross_tenant(pg_conn, tmp_path):
     finally:
         await rls_conn.close()
         # 清角色依赖: REASSIGN + DROP OWNED + REVOKE 再 DROP ROLE
-        await pg_conn.execute("REASSIGN OWNED BY rls_test TO postgres")
+        # REASSIGN 目标用解析出的建表主 (非硬编码 postgres, 否则角色不存在报错)
+        await pg_conn.execute(f"REASSIGN OWNED BY rls_test TO {su_user}")
         await pg_conn.execute("DROP OWNED BY rls_test")
         await pg_conn.execute("DROP ROLE IF EXISTS rls_test")
 
