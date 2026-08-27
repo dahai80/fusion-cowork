@@ -268,7 +268,7 @@ fusion-cowork collab serve --port 11439
 ├─────────────────────────────────────────────────────┤
 │                 Workflow Engine Layer                  │
 │   WorkflowEngine  │  TaskScheduler  │  NodeRegistry   │
-│   (DAG, n8n-inspired) │  (APScheduler) │  (47 nodes)   │
+│   (DAG, n8n-inspired) │  (APScheduler) │  (67 nodes)   │
 ├─────────────────────────────────────────────────────┤
 │                   AI Capability Layer                  │
 │   FusionMLXClient  │  NLWorkflowGenerator             │
@@ -287,18 +287,17 @@ fusion-cowork collab serve --port 11439
 └─────────────────────────────────────────────────────┘
 ```
 
-### Node Types (47 nodes built-in, 7 categories)
+### Node Types (67 nodes built-in, 7 categories)
 
 | Category | Count | Nodes |
 |----------|-------|-------|
-| `macos_system` | 13 | Desktop Clean, Download Organizer, Disk Cleaner, File Watcher, Screen Capture, Clipboard, Notification, App Lifecycle, OCR, **Mouse Move, Mouse Click, Keyboard Type, Keyboard Shortcut, Computer Use Loop** 🆕 |
-| `ai_processing` | 4 | AI Classify, AI Summarize, AI Generate Name, AI Vision Analyze |
-| `tool` | 10 | Shell Exec, Python REPL, Web Search, Fetch URL, Apply Edit, Browser Open, Browser Extract, Browser Automate, Trainer Node, **Push (移动推送)** 🆕 |
+| `tool` | 36 | Shell Exec, Python REPL, Web Search, Fetch URL, Apply Edit, Browser Open/Extract/Automate, **CDP** (Navigate, Snapshot, Click, Fill, Fill Form, Screenshot, Evaluate, Emulate, Network, Console, Drag, Hover, Press Key, Type Text, Upload File, Wait For, Handle Dialog, Resize Page, Heap Snapshot, Lighthouse, List Pages, New Page, Select Page, Close Page, Performance Trace), **Push, LSP, Worktree** |
+| `macos_system` | 13 | Desktop Clean, Download Organizer, Disk Cleaner, File Watcher, Screen Capture, Clipboard, Notification, App Lifecycle, OCR, Mouse Move, Mouse Click, Keyboard Type, Keyboard Shortcut |
 | `file_operation` | 6 | File Classifier, Batch Rename, Copy, Move, Delete, Find |
-| `io` | 2 | File Input, File Output |
+| `ai_processing` | 4 | AI Classify, AI Summarize, AI Generate Name, AI Vision Analyze |
 | `logic` | 3 | Filter, Loop, Merge |
-| `fusion_ecosystem` | 1 | Trainer (Fusion-Trainer 互通) |
-| **CDP browser nodes** | **10** | CDP Navigate, Snapshot, Click, Fill, Fill Form, Screenshot, Evaluate, Emulate, Network, Console (`tool` 分类下注册) |
+| `fusion_ecosystem` | 3 | Trainer (Fusion-Trainer 互通), **Memory Commit, Memory Retrieve** (Fusion-Memory 互通) |
+| `io` | 2 | File Input, File Output |
 
 ### Claude Cowork Parity (V0.2) 🆕
 

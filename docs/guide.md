@@ -414,7 +414,7 @@ Is "command not found" / plugin ImportError / desk rpc -32603?
 │        source /Users/dahai/fusion/.venv/bin/activate
 │        Then re-run.
 
-Are fewer than 47 nodes visible (e.g. only 33)?
+Are fewer than 67 nodes visible (e.g. only 33)?
 ├─ YES → Node modules self-register on import; the server must call import_all_nodes().
 │        DeskRPCServer.start() and the desk CLI do this. Custom entry point?
 │        Call fusion_cowork.nodes.import_all_nodes() first.
@@ -443,7 +443,7 @@ You've finished a scenario end to end. From here:
 
 - **Full command reference** — every CLI command and env var: [README](../README.md) / [README_CN](../README_CN.md). This guide is the on-ramp; the README is the complete catalog.
 - **API signatures** (Workflow, WorkflowEngine, Orchestrator, MCP, ReportGenerator): [api.md](api.md).
-- **All 47 nodes** with params: README → "Node Reference" tables by category.
+- **All 67 nodes** with params: README → "Node Reference" tables by category.
 - **Write your own node** (Python): subclass `BaseNode`, decorate `@register_node`, drop in `nodes/<category>/`. See existing nodes as templates.
 - **3rd-party node packages** (plugins): sign the manifest (Ed25519), `fusion-cowork plugin install /path/to/plugin`. Sandboxed plugins run out-of-process.
 - **Multi-tenant cloud** deep dive: README → "☁️ Multi-tenant Cloud SaaS (v0.4.0)".
