@@ -1036,6 +1036,7 @@ class TestCDPWSBearerForwarding:
 
         monkeypatch.setattr(mod.websockets, "connect", fake_connect)
         monkeypatch.delenv("FUSION_BROWSER_CDP", raising=False)
+        monkeypatch.delenv("FUSION_CDP_ORIGIN", raising=False)
 
         client = mod.CDPClient(host="127.0.0.1", port=9222, token="sek")
 
@@ -1066,6 +1067,7 @@ class TestCDPWSBearerForwarding:
 
         monkeypatch.setattr(mod.websockets, "connect", fake_connect)
         monkeypatch.delenv("FUSION_BROWSER_CDP", raising=False)
+        monkeypatch.delenv("FUSION_CDP_ORIGIN", raising=False)
 
         client = mod.CDPClient(host="127.0.0.1", port=9222, token=None)
 
@@ -1076,6 +1078,147 @@ class TestCDPWSBearerForwarding:
         await client.connect()
         assert "additional_headers" not in captured["kwargs"]
         await client.disconnect()
+
+
+# ── issue #77: fusion-browser E-15 fail-closed Origin gate ──
+
+
+class TestCDPOriginForwarding:
+    @pytest.mark.asyncio
+    async def test_ws_connect_forwards_origin_from_env(self, monkeypatch):
+        import fusion_cowork.nodes.browser.cdp_client as mod
+
+        captured = {}
+
+        class FakeWS:
+            async def recv(self):
+                raise asyncio.CancelledError
+
+            async def close(self):
+                pass
+
+        async def fake_connect(uri, **kwargs):
+            captured["kwargs"] = kwargs
+            return FakeWS()
+
+        monkeypatch.setattr(mod.websockets, "connect", fake_connect)
+        monkeypatch.delenv("FUSION_BROWSER_CDP", raising=False)
+        monkeypatch.setenv("FUSION_CDP_ORIGIN", "https://fusion.local")
+
+        client = mod.CDPClient(host="127.0.0.1", port=9222, token="sek")
+
+        async def fake_get_ws_url(self):
+            return "ws://127.0.0.1:9222/devtools/page/x"
+
+        monkeypatch.setattr(mod.CDPClient, "_get_ws_url", fake_get_ws_url)
+        await client.connect()
+        headers = captured["kwargs"].get("additional_headers")
+        assert headers == {"Authorization": "Bearer sek", "Origin": "https://fusion.local"}
+        await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_ws_connect_constructor_origin_overrides_env(self, monkeypatch):
+        import fusion_cowork.nodes.browser.cdp_client as mod
+
+        captured = {}
+
+        class FakeWS:
+            async def recv(self):
+                raise asyncio.CancelledError
+
+            async def close(self):
+                pass
+
+        async def fake_connect(uri, **kwargs):
+            captured["kwargs"] = kwargs
+            return FakeWS()
+
+        monkeypatch.setattr(mod.websockets, "connect", fake_connect)
+        monkeypatch.delenv("FUSION_BROWSER_CDP", raising=False)
+        monkeypatch.setenv("FUSION_CDP_ORIGIN", "https://env.local")
+
+        client = mod.CDPClient(host="127.0.0.1", port=9222, token="sek", origin="https://explicit.local")
+
+        async def fake_get_ws_url(self):
+            return "ws://127.0.0.1:9222/devtools/page/x"
+
+        monkeypatch.setattr(mod.CDPClient, "_get_ws_url", fake_get_ws_url)
+        await client.connect()
+        headers = captured["kwargs"].get("additional_headers")
+        assert headers == {"Authorization": "Bearer sek", "Origin": "https://explicit.local"}
+        await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_ws_connect_no_origin_when_unset(self, monkeypatch):
+        import fusion_cowork.nodes.browser.cdp_client as mod
+
+        captured = {}
+
+        class FakeWS:
+            async def recv(self):
+                raise asyncio.CancelledError
+
+            async def close(self):
+                pass
+
+        async def fake_connect(uri, **kwargs):
+            captured["kwargs"] = kwargs
+            return FakeWS()
+
+        monkeypatch.setattr(mod.websockets, "connect", fake_connect)
+        monkeypatch.delenv("FUSION_BROWSER_CDP", raising=False)
+        monkeypatch.delenv("FUSION_CDP_ORIGIN", raising=False)
+
+        client = mod.CDPClient(host="127.0.0.1", port=9222, token="sek")
+
+        async def fake_get_ws_url(self):
+            return "ws://127.0.0.1:9222/devtools/page/x"
+
+        monkeypatch.setattr(mod.CDPClient, "_get_ws_url", fake_get_ws_url)
+        await client.connect()
+        headers = captured["kwargs"].get("additional_headers")
+        assert "Origin" not in (headers or {})
+        await client.disconnect()
+
+    def test_origin_resolved_from_env(self, monkeypatch):
+        import fusion_cowork.nodes.browser.cdp_client as mod
+
+        monkeypatch.delenv("FUSION_BROWSER_CDP", raising=False)
+        monkeypatch.setenv("FUSION_CDP_ORIGIN", "https://fusion.local")
+        client = mod.CDPClient(host="127.0.0.1", port=9222, token="sek")
+        assert client.origin == "https://fusion.local"
+
+    def test_origin_none_when_unset(self, monkeypatch):
+        import fusion_cowork.nodes.browser.cdp_client as mod
+
+        monkeypatch.delenv("FUSION_BROWSER_CDP", raising=False)
+        monkeypatch.delenv("FUSION_CDP_ORIGIN", raising=False)
+        client = mod.CDPClient(host="127.0.0.1", port=9222, token="sek")
+        assert client.origin is None
+
+    def test_fusion_browser_warns_without_origin(self, monkeypatch, caplog):
+        import logging
+
+        import fusion_cowork.nodes.browser.cdp_client as mod
+
+        monkeypatch.setenv("FUSION_BROWSER_CDP", "9222")
+        monkeypatch.delenv("FUSION_CDP_ORIGIN", raising=False)
+        with caplog.at_level(logging.WARNING):
+            client = mod.CDPClient(host="127.0.0.1", port=9999, token="x")
+        assert client._target == "fusion-browser"
+        assert any("E-15 Origin gate" in r.message for r in caplog.records)
+
+    def test_fusion_browser_no_warn_with_origin(self, monkeypatch, caplog):
+        import logging
+
+        import fusion_cowork.nodes.browser.cdp_client as mod
+
+        monkeypatch.setenv("FUSION_BROWSER_CDP", "9222")
+        monkeypatch.setenv("FUSION_CDP_ORIGIN", "https://fusion.local")
+        with caplog.at_level(logging.WARNING):
+            client = mod.CDPClient(host="127.0.0.1", port=9999, token="x")
+        assert client._target == "fusion-browser"
+        assert not any("E-15 Origin gate" in r.message for r in caplog.records)
 
 
 class TestCDPNodes:
