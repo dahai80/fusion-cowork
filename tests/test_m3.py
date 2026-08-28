@@ -971,7 +971,8 @@ class TestCDPFusionBrowserEnvSwitch:
         client = CDPClient(host="127.0.0.1", port=9999, token="x")
         assert client.host == "127.0.0.1"
         assert client.port == 9222
-        assert client.token is None
+        # issue #72: fusion-browser WS upgrade 需 Bearer, token 保留 (非置 None) 以转发
+        assert client.token == "x"
         assert client._target == "fusion-browser"
 
     def test_env_unset_keeps_chrome_path(self, monkeypatch):
@@ -1009,6 +1010,72 @@ class TestCDPFusionBrowserEnvSwitch:
             client = CDPClient(host="8.8.8.8", port=9222)
         assert client.host == "127.0.0.1"
         assert all("未配置 token" not in r.message for r in caplog.records)
+
+
+# ── issue #72: CDP WS upgrade 要求 Authorization: Bearer ──
+
+
+class TestCDPWSBearerForwarding:
+    @pytest.mark.asyncio
+    async def test_ws_connect_forwards_bearer_with_token(self, monkeypatch):
+        import fusion_cowork.nodes.browser.cdp_client as mod
+
+        captured = {}
+
+        class FakeWS:
+            async def recv(self):
+                raise asyncio.CancelledError
+
+            async def close(self):
+                pass
+
+        async def fake_connect(uri, **kwargs):
+            captured["uri"] = uri
+            captured["kwargs"] = kwargs
+            return FakeWS()
+
+        monkeypatch.setattr(mod.websockets, "connect", fake_connect)
+        monkeypatch.delenv("FUSION_BROWSER_CDP", raising=False)
+
+        client = mod.CDPClient(host="127.0.0.1", port=9222, token="sek")
+
+        async def fake_get_ws_url(self):
+            return "ws://127.0.0.1:9222/devtools/page/x"
+
+        monkeypatch.setattr(mod.CDPClient, "_get_ws_url", fake_get_ws_url)
+        await client.connect()
+        assert captured["kwargs"].get("additional_headers") == {"Authorization": "Bearer sek"}
+        await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_ws_connect_no_header_without_token(self, monkeypatch):
+        import fusion_cowork.nodes.browser.cdp_client as mod
+
+        captured = {}
+
+        class FakeWS:
+            async def recv(self):
+                raise asyncio.CancelledError
+
+            async def close(self):
+                pass
+
+        async def fake_connect(uri, **kwargs):
+            captured["kwargs"] = kwargs
+            return FakeWS()
+
+        monkeypatch.setattr(mod.websockets, "connect", fake_connect)
+        monkeypatch.delenv("FUSION_BROWSER_CDP", raising=False)
+
+        client = mod.CDPClient(host="127.0.0.1", port=9222, token=None)
+
+        async def fake_get_ws_url(self):
+            return "ws://127.0.0.1:9222/devtools/page/x"
+
+        monkeypatch.setattr(mod.CDPClient, "_get_ws_url", fake_get_ws_url)
+        await client.connect()
+        assert "additional_headers" not in captured["kwargs"]
+        await client.disconnect()
 
 
 class TestCDPNodes:
