@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.4.5-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.4.6-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -170,6 +170,14 @@ fusion-cowork cdp click 42
 fusion-cowork cdp fill --selector "#search" --value "hello"
 fusion-cowork cdp screenshot --save ~/Desktop/shot.png
 fusion-cowork cdp evaluate "document.title"
+
+# fusion-browser CDP shim target (issue #65, issue #77)
+# FUSION_BROWSER_CDP=<port> -> drive the embedded fusion-browser shim on 127.0.0.1:<port> instead of external Chrome.
+# The shim hardens its WS upgrade with a fail-closed Origin gate (E-15): the client MUST send an
+# allowlisted Origin. Set FUSION_CDP_ORIGIN=<origin> to match the operator's allowedOrigins config
+# (e.g. https://fusion.local). Without it the WS upgrade, Page.navigate and PUT /json/new are denied.
+export FUSION_BROWSER_CDP=9223
+export FUSION_CDP_ORIGIN=https://fusion.local
 
 # Collaboration Space (M6+M7)
 fusion-cowork space create --name "Project Alpha" --owner-id user1
@@ -363,6 +371,7 @@ Fusion-Cowork v0.4.0 extends the local-first desktop platform into a **multi-ten
 ### Security at Scale
 
 - **fusion-guard integration** (issue #73) — `HIGH_RISK_NODES` delegate authorization to `guard.evaluate` via UDS JSON-RPC (`/tmp/fusion-guard.sock`); low-risk nodes stay local (no per-node IPC). Opt-in: `FUSION_GUARD_ENABLED=1` + socket present. `CONFIRM`/L3 → `guard.confirm` (pending store); L4 → block. Guard unreachable → cached rules (`guard.rules.dump` → `~/.fusion-guard/rules-cache.json`) fail-closed (deny high-risk), not fail-open. Optional `FUSION_GUARD_SHARED_SECRET`. Default OFF — zero behavior change.
+- **CDP Origin allowlisting** (issue #77) — fusion-browser's CDP-over-WS shim hardened its Origin gate to fail-closed (E-15): an empty `Origin` is rejected, an empty `allowedOrigins` denies everything except local schemes (`data:`/`about:`/`blob:`). The CDP client sends an allowlisted `Origin` header on the WS upgrade via `FUSION_CDP_ORIGIN` (must match the operator's `allowedOrigins` config). Clears Bearer (H-5, issue #72) but does not clear Origin (E-15) — the two gates are independent.
 - **Per-tenant rate limiting** (token bucket, `FUSION_RATE_LIMIT_*`)
 - **Per-tenant quotas** (`TenantQuotas`: max_spaces/messages/artifacts/agents/storage, default unlimited)
 - **Tamper-evident audit log** (sha256 chained `prev_hash`, `verify_chain`)

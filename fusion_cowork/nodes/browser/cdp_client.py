@@ -17,6 +17,11 @@ _ALLOWED_NAV_SCHEMES = {"http", "https"}
 # 未设 → 走现有外部 Chrome 路径 (9222 调试端口), 行为不变
 _FUSION_BROWSER_CDP_ENV = "FUSION_BROWSER_CDP"
 
+# issue #77: fusion-browser E-15 fail-closed Origin gate — WS upgrade 须发 allowlisted Origin
+# FUSION_CDP_ORIGIN=<origin> (如 https://fusion.local) 须与 fusion-browser allowedOrigins 配置一致
+# 非 origin 头空则被拒 (空 allowlist 仅放 data:/about:/blob: 本地 scheme)
+_FUSION_CDP_ORIGIN_ENV = "FUSION_CDP_ORIGIN"
+
 
 def _resolve_fusion_browser_port() -> Optional[int]:
     raw = os.environ.get(_FUSION_BROWSER_CDP_ENV, "").strip()
@@ -31,6 +36,11 @@ def _resolve_fusion_browser_port() -> Optional[int]:
         logger.warning(f"{_FUSION_BROWSER_CDP_ENV}={port} 超端口范围, 忽略")
         return None
     return port
+
+
+def _resolve_cdp_origin() -> Optional[str]:
+    raw = os.environ.get(_FUSION_CDP_ORIGIN_ENV, "").strip()
+    return raw or None
 
 
 try:
@@ -49,7 +59,13 @@ except ImportError:
 
 
 class CDPClient:
-    def __init__(self, host: str = "127.0.0.1", port: int = 9222, token: Optional[str] = None):
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 9222,
+        token: Optional[str] = None,
+        origin: Optional[str] = None,
+    ):
         # issue #65: env FUSION_BROWSER_CDP 设了 → 强制切到 fusion-browser shim 目标
         # issue #72: fusion-browser WS upgrade 已 fail-closed 要求 Authorization: Bearer,
         # 故 fusion-browser 路径保留 token (非置 None), connect() 时转发到 WS upgrade
@@ -65,6 +81,14 @@ class CDPClient:
             self.port = port
             self.token = token
             self._target = "chrome"
+        # issue #77: fusion-browser E-15 fail-closed Origin gate — 构造参 origin 优先,
+        # 缺省回退 FUSION_CDP_ORIGIN env。Chrome 路径不强需 Origin, 但发之无害。
+        self.origin = origin or _resolve_cdp_origin()
+        if self._target == "fusion-browser" and not self.origin:
+            logger.warning(
+                f"fusion-browser E-15 Origin gate fail-closed: {_FUSION_CDP_ORIGIN_ENV} 未设, "
+                "WS upgrade / Page.navigate / PUT /json/new 将被拒 (须与 allowedOrigins 一致)"
+            )
         self._ws = None
         self._msg_id = 0
         self._connected = False
@@ -85,9 +109,15 @@ class CDPClient:
     async def _ws_connect(self, ws_url: str):
         # issue #72: fusion-browser / Chrome CDP WS upgrade 要求 Authorization: Bearer
         # 转发 self.token (与 /json GET 同源), 无 token 则不带 (Chrome 9222 调试端口兼容)
+        # issue #77: fusion-browser E-15 fail-closed Origin gate — 须发 allowlisted Origin,
+        # 否则 WS upgrade 被拒 403。Origin 与 Bearer 合并发送 (两 gate 独立, 均须过)
         # websockets >=12 用 additional_headers, 旧版用 extra_headers — 探测兼容
+        headers: Dict[str, str] = {}
         if self.token:
-            headers = {"Authorization": f"Bearer {self.token}"}
+            headers["Authorization"] = f"Bearer {self.token}"
+        if self.origin:
+            headers["Origin"] = self.origin
+        if headers:
             try:
                 return await websockets.connect(ws_url, max_size=10 * 1024 * 1024, additional_headers=headers)
             except TypeError:
