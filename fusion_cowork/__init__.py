@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.4.4"
+__version__ = "0.4.5"
 __app_name__ = "Fusion-Cowork"
 
 # ── 节点工具名称映射表（吸纳自 Squish tool_name_map.py） ──
@@ -339,6 +339,13 @@ _LAZY_IMPORTS: dict[str, str] = {
     "TenantQuotas": "fusion_cowork.security",
     "QuotaEnforcer": "fusion_cowork.security",
     "QuotaExceededError": "fusion_cowork.security",
+    # V0.4.5 fusion-guard 集成 (issue #73, HIGH_RISK_NODES→guard.evaluate)
+    "GuardClient": "fusion_cowork.security.guard",
+    "GuardVerdict": "fusion_cowork.security.guard",
+    "guard_enabled": "fusion_cowork.security.guard",
+    "get_guard_client": "fusion_cowork.security.guard",
+    "close_guard_client": "fusion_cowork.security.guard",
+    "node_to_guard_content": "fusion_cowork.security.guard",
     # V0.4.0 插件签名/registry
     "PluginRegistry": "fusion_cowork.plugins.registry",
     "sign_manifest": "fusion_cowork.plugins.signing",

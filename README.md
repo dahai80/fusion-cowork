@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.4.4-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.4.5-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -141,6 +141,12 @@ fusion-cowork permission level <manual|auto|plan|bypass>
 fusion-cowork permission approve <tool_name> --scope <scope>
 fusion-cowork permission deny <tool_name> --scope <scope>
 fusion-cowork permission list
+
+# fusion-guard integration (issue #73, opt-in, default OFF)
+# Set FUSION_GUARD_ENABLED=1 + ensure /tmp/fusion-guard.sock exists to activate.
+# HIGH_RISK_NODES delegate to guard.evaluate (UDS JSON-RPC); low-risk nodes stay local.
+# Guard unreachable -> cached rules fail-closed (deny high-risk). Optional shared secret
+# via FUSION_GUARD_SHARED_SECRET. Confirm pending L3 approvals via desk.permission.confirm_guard.
 
 # Benchmark
 fusion-cowork benchmark report --format markdown|html|json [-o report.md]
@@ -356,6 +362,7 @@ Fusion-Cowork v0.4.0 extends the local-first desktop platform into a **multi-ten
 
 ### Security at Scale
 
+- **fusion-guard integration** (issue #73) — `HIGH_RISK_NODES` delegate authorization to `guard.evaluate` via UDS JSON-RPC (`/tmp/fusion-guard.sock`); low-risk nodes stay local (no per-node IPC). Opt-in: `FUSION_GUARD_ENABLED=1` + socket present. `CONFIRM`/L3 → `guard.confirm` (pending store); L4 → block. Guard unreachable → cached rules (`guard.rules.dump` → `~/.fusion-guard/rules-cache.json`) fail-closed (deny high-risk), not fail-open. Optional `FUSION_GUARD_SHARED_SECRET`. Default OFF — zero behavior change.
 - **Per-tenant rate limiting** (token bucket, `FUSION_RATE_LIMIT_*`)
 - **Per-tenant quotas** (`TenantQuotas`: max_spaces/messages/artifacts/agents/storage, default unlimited)
 - **Tamper-evident audit log** (sha256 chained `prev_hash`, `verify_chain`)
