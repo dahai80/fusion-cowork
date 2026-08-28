@@ -51,12 +51,13 @@ except ImportError:
 class CDPClient:
     def __init__(self, host: str = "127.0.0.1", port: int = 9222, token: Optional[str] = None):
         # issue #65: env FUSION_BROWSER_CDP 设了 → 强制切到 fusion-browser shim 目标
-        # shim 仅绑 127.0.0.1, 无 auth header (安全靠 EVALUATE origin 白名单 + UDS token)
+        # issue #72: fusion-browser WS upgrade 已 fail-closed 要求 Authorization: Bearer,
+        # 故 fusion-browser 路径保留 token (非置 None), connect() 时转发到 WS upgrade
         fb_port = _resolve_fusion_browser_port()
         if fb_port is not None:
             self.host = "127.0.0.1"
             self.port = fb_port
-            self.token = None
+            self.token = token
             self._target = "fusion-browser"
             logger.info(f"CDP 目标=fusion-browser shim (env {_FUSION_BROWSER_CDP_ENV}={fb_port})")
         else:
@@ -81,12 +82,24 @@ class CDPClient:
         if self._target == "chrome" and not self.token:
             logger.warning("CDP 9222 调试端口未配置 token, 连接无认证 (仅限可信本机环境)")
 
+    async def _ws_connect(self, ws_url: str):
+        # issue #72: fusion-browser / Chrome CDP WS upgrade 要求 Authorization: Bearer
+        # 转发 self.token (与 /json GET 同源), 无 token 则不带 (Chrome 9222 调试端口兼容)
+        # websockets >=12 用 additional_headers, 旧版用 extra_headers — 探测兼容
+        if self.token:
+            headers = {"Authorization": f"Bearer {self.token}"}
+            try:
+                return await websockets.connect(ws_url, max_size=10 * 1024 * 1024, additional_headers=headers)
+            except TypeError:
+                return await websockets.connect(ws_url, max_size=10 * 1024 * 1024, extra_headers=headers)
+        return await websockets.connect(ws_url, max_size=10 * 1024 * 1024)
+
     async def connect(self) -> None:
         if not HAS_HTTPX or not HAS_WEBSOCKETS:
             raise RuntimeError("CDP 需要 httpx 和 websockets 库: pip install httpx websockets")
 
         ws_url = await self._get_ws_url()
-        self._ws = await websockets.connect(ws_url, max_size=10 * 1024 * 1024)
+        self._ws = await self._ws_connect(ws_url)
         self._connected = True
         self._reader_task = asyncio.create_task(self._reader_loop())
         logger.info(f"CDP 已连接: {ws_url}")
@@ -365,7 +378,7 @@ class CDPClient:
         if self._ws:
             await self._ws.close()
             self._ws = None
-        self._ws = await websockets.connect(ws_url, max_size=10 * 1024 * 1024)
+        self._ws = await self._ws_connect(ws_url)
         logger.info(f"CDP 切换页面: {target_id}")
 
     async def resize_page(self, width: int, height: int) -> None:
