@@ -191,6 +191,7 @@ class DeskRPCServer:
             "desk.permission.deny": self._handle_permission_deny,
             "desk.permission.list": self._handle_permission_list,
             "desk.permission.reset": self._handle_permission_reset,
+            "desk.permission.confirm_guard": self._handle_permission_confirm_guard,
             # 协作空间
             "desk.space.create": self._handle_space_create,
             "desk.space.list": self._handle_space_list,
@@ -1152,6 +1153,19 @@ class DeskRPCServer:
             return {"error": "PermissionManager 未配置"}
         self._permission_manager.reset()
         return {"status": "reset"}
+
+    async def _handle_permission_confirm_guard(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        # issue #73: guard L3 verdict confirm — approved 则加本地 approve 规则, 否则 deny
+        if not self._permission_manager:
+            return {"error": "PermissionManager 未配置"}
+        action_id = params.get("action_id", "")
+        if not action_id:
+            return {"error": "action_id 必填"}
+        approved = bool(params.get("approved", False))
+        approved_by = params.get("approved_by", "unknown")
+        tenant_id = params.get("tenant_id", "default")
+        ok = await self._permission_manager.confirm_guard(action_id, approved, approved_by, tenant_id)
+        return {"action_id": action_id, "confirmed": ok}
 
     # ── 协作空间 ──
 

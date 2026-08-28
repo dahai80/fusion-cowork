@@ -9,6 +9,15 @@ from .encryption import (
     get_encryption_key,
     is_encrypted,
 )
+
+# issue #73: fusion-guard 集成客户端 (UDS JSON-RPC, 默认 OFF)
+from .guard import (
+    GuardClient,
+    GuardVerdict,
+    close_guard_client,
+    get_guard_client,
+    guard_enabled,
+)
 from .quotas import (
     QuotaEnforcer,
     QuotaExceededError,
@@ -48,4 +57,9 @@ __all__ = [
     "QuotaEnforcer",
     "QuotaExceededError",
     "get_default_quota_enforcer",
+    "GuardClient",
+    "GuardVerdict",
+    "guard_enabled",
+    "get_guard_client",
+    "close_guard_client",
 ]

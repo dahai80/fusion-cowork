@@ -26,6 +26,15 @@ logger = logging.getLogger(__name__)
 _PERMISSIONS_DIR = os.path.expanduser("~/.fusion-cowork")
 _PERMISSIONS_FILE = os.path.join(_PERMISSIONS_DIR, "permissions.json")
 
+
+def _guard_cached_epoch() -> int:
+    try:
+        from ..security.guard import get_cached_epoch
+
+        return get_cached_epoch()
+    except ImportError:
+        return 0
+
 HIGH_RISK_NODES = frozenset(
     {
         # 代码执行
@@ -118,6 +127,8 @@ class PermissionManager:
         self._hook_manager = hook_manager
         # R-3: rules/_pending_approvals 并发保护 — check() 遍历与 approve/deny/reset 改写竞态。
         self._lock = threading.Lock()
+        # issue #73: guard 委托待确认 — action_id → tool_name, confirm 成功后加本地 approve 规则
+        self._pending_guard_approvals: Dict[str, str] = {}
 
     async def check(self, tool_name: str, action: str = "", params: Dict[str, Any] = None) -> bool:
         # A-6: deny 规则须先于 Hook 批准判定 — 否则 Hook approve 可覆盖显式 deny (绕过)。
@@ -166,12 +177,124 @@ class PermissionManager:
             if rule.matches(tool_name, params) and rule.allowed:
                 return True
 
-        # 高风险节点无显式批准 → 拒绝 (需 approve 规则或 Hook 放行)
+        # 高风险节点无显式批准 → 委托 guard (issue #73) 或拒绝 (需 approve 规则或 Hook 放行)
         if tool_name in HIGH_RISK_NODES:
+            return await self._check_high_risk_guard(tool_name, action, params)
+
+        # 非高风险且无匹配规则 → 放行 (CONFIRM/MANUAL 亦放行低风险)
+        return True
+
+    async def _check_high_risk_guard(
+        self, tool_name: str, action: str, params: Dict[str, Any] = None
+    ) -> bool:
+        # issue #73: guard 未启用 → 退回原有逻辑 (高风险无批准 → deny), 零行为变化
+        from ..security.guard import get_guard_client, node_to_guard_content
+
+        client = get_guard_client()
+        if client is None:
             logger.info(f"高风险节点无显式批准, 拒绝: {tool_name}")
             return False
 
-        # 非高风险且无匹配规则 → 放行 (CONFIRM/MANUAL 亦放行低风险)
+        content, content_type = node_to_guard_content(tool_name, params)
+        tenant_id = "default"
+        requester = "unknown"
+        try:
+            from ..tenant import get_current_tenant, get_current_user
+
+            tid = get_current_tenant()
+            uid = get_current_user()
+            if tid:
+                tenant_id = tid
+            if uid:
+                requester = uid
+        except ImportError:
+            pass
+
+        caller_epoch = _guard_cached_epoch()
+        verdict = await client.evaluate(
+            content=content,
+            caller_epoch=caller_epoch,
+            tenant_id=tenant_id,
+            requester=requester,
+            action=action or tool_name,
+            content_type=content_type,
+        )
+        return await self._apply_verdict(tool_name, verdict)
+
+    async def _apply_verdict(self, tool_name: str, verdict) -> bool:
+        if verdict is None:
+            return self._guard_fail_closed(tool_name)
+        from ..security.guard import get_guard_client, save_cached_rules
+
+        try:
+            dumped = await get_guard_client().rules_dump()
+            if dumped is not None:
+                rules, epoch = dumped
+                save_cached_rules(rules, epoch)
+        except Exception as e:
+            logger.debug(f"guard 规则缓存刷新失败: {e}")
+
+        action = getattr(verdict, "action", "block")
+        risk = getattr(verdict, "risk_level", "l4")
+        action_id = getattr(verdict, "action_id", None)
+
+        if action == "block" or risk == "l4":
+            logger.info(f"guard 拒绝 (block/l4): {tool_name} risk={risk} reason={verdict.reason}")
+            return False
+        if action == "allow" or risk in ("l1", "l2"):
+            logger.info(f"guard 放行: {tool_name} action={action} risk={risk}")
+            return True
+        if getattr(verdict, "requires_approval", False):
+            if action_id:
+                with self._lock:
+                    self._pending_guard_approvals[action_id] = tool_name
+            logger.info(f"guard 需确认 (l3): {tool_name} action_id={action_id}")
+            return False
+        # preview / redact → 保守拒绝 (seatbelt 超出本期)
+        logger.info(f"guard 保守拒绝 (preview/redact): {tool_name} action={action}")
+        return False
+
+    def _guard_fail_closed(self, tool_name: str) -> bool:
+        from ..security.guard import load_cached_rules
+
+        cached = load_cached_rules()
+        if cached is not None:
+            rules, _epoch = cached
+            for rule in rules:
+                rule_tool = rule.get("tool") or rule.get("node") or rule.get("name")
+                rule_action = rule.get("action", "")
+                rule_allowed = rule.get("allowed")
+                if rule_tool != tool_name:
+                    continue
+                if rule_action == "block" or rule_allowed is False:
+                    logger.info(f"guard 不可达, 缓存规则拒绝: {tool_name}")
+                    return False
+                if rule_action == "allow" or rule_allowed is True:
+                    logger.info(f"guard 不可达, 缓存规则放行: {tool_name}")
+                    return True
+        logger.warning(f"guard 不可达且无匹配缓存, 高风险 fail-closed 拒绝: {tool_name}")
+        return False
+
+    async def confirm_guard(
+        self, action_id: str, approved: bool, approved_by: str = "unknown", tenant_id: str = "default"
+    ) -> bool:
+        from ..security.guard import get_guard_client
+
+        client = get_guard_client()
+        if client is None:
+            logger.warning("guard 未启用, confirm 无效")
+            return False
+        ok = await client.confirm(action_id=action_id, approved=approved, approved_by=approved_by, tenant_id=tenant_id)
+        if not ok:
+            return False
+        with self._lock:
+            tool_name = self._pending_guard_approvals.pop(action_id, None)
+        if approved and tool_name:
+            self.approve(tool_name)
+            logger.info(f"guard confirm 批准, 加本地 approve 规则: {tool_name}")
+        elif not approved and tool_name:
+            self.deny(tool_name)
+            logger.info(f"guard confirm 拒绝, 加本地 deny 规则: {tool_name}")
         return True
 
     def approve(self, tool_name: str, scope: str = "*") -> None:
