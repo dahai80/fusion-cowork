@@ -35,6 +35,7 @@ def _guard_cached_epoch() -> int:
     except ImportError:
         return 0
 
+
 HIGH_RISK_NODES = frozenset(
     {
         # 代码执行
@@ -184,9 +185,7 @@ class PermissionManager:
         # 非高风险且无匹配规则 → 放行 (CONFIRM/MANUAL 亦放行低风险)
         return True
 
-    async def _check_high_risk_guard(
-        self, tool_name: str, action: str, params: Dict[str, Any] = None
-    ) -> bool:
+    async def _check_high_risk_guard(self, tool_name: str, action: str, params: Dict[str, Any] = None) -> bool:
         # issue #73: guard 未启用 → 退回原有逻辑 (高风险无批准 → deny), 零行为变化
         from ..security.guard import get_guard_client, node_to_guard_content
 

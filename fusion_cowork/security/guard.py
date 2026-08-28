@@ -123,9 +123,7 @@ class GuardClient:
                 return None
             if "error" in reply:
                 err = reply["error"]
-                logger.warning(
-                    "guard error method=%s code=%s msg=%s", method, err.get("code"), err.get("message")
-                )
+                logger.warning("guard error method=%s code=%s msg=%s", method, err.get("code"), err.get("message"))
                 return None
             return reply.get("result")
 

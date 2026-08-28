@@ -115,7 +115,9 @@ class TestPermissionGuardWiring:
 
     @pytest.mark.asyncio
     async def test_guard_requires_approval_pends(self, monkeypatch):
-        fake = FakeGuardClient(verdict=_verdict(action="preview", risk_level="l3", requires_approval=True, action_id="aid-1"))
+        fake = FakeGuardClient(
+            verdict=_verdict(action="preview", risk_level="l3", requires_approval=True, action_id="aid-1")
+        )
         _wire_guard(monkeypatch, fake)
         pm = PermissionManager()
         ok = await pm.check("shell_exec", "execute", {"command": "ls"})
@@ -125,7 +127,9 @@ class TestPermissionGuardWiring:
 
     @pytest.mark.asyncio
     async def test_guard_confirm_approved_adds_local_rule(self, monkeypatch):
-        fake = FakeGuardClient(verdict=_verdict(action="preview", risk_level="l3", requires_approval=True, action_id="aid-2"))
+        fake = FakeGuardClient(
+            verdict=_verdict(action="preview", risk_level="l3", requires_approval=True, action_id="aid-2")
+        )
         _wire_guard(monkeypatch, fake)
         pm = PermissionManager()
         await pm.check("shell_exec", "execute", {"command": "ls"})
@@ -140,7 +144,9 @@ class TestPermissionGuardWiring:
 
     @pytest.mark.asyncio
     async def test_guard_confirm_denied_adds_deny_rule(self, monkeypatch):
-        fake = FakeGuardClient(verdict=_verdict(action="preview", risk_level="l3", requires_approval=True, action_id="aid-3"))
+        fake = FakeGuardClient(
+            verdict=_verdict(action="preview", risk_level="l3", requires_approval=True, action_id="aid-3")
+        )
         _wire_guard(monkeypatch, fake)
         pm = PermissionManager()
         await pm.check("shell_exec", "execute", {"command": "ls"})
@@ -336,7 +342,9 @@ class TestGuardClientWire:
         server = await _start_fake_guard(sock, factory)
         try:
             client = guard_mod.GuardClient(sock_path=sock)
-            v = await client.evaluate(content="ls", content_type="shell", tenant_id="t1", requester="u1", action="shell_exec")
+            v = await client.evaluate(
+                content="ls", content_type="shell", tenant_id="t1", requester="u1", action="shell_exec"
+            )
             assert v is not None
             assert v.action == "allow"
             assert v.risk_level == "l1"
@@ -389,7 +397,11 @@ class TestGuardClientWire:
         sock = _short_sock(tmp_path)
 
         def factory(req):
-            return {"jsonrpc": "2.0", "id": req["id"], "result": {"rules": [{"tool": "shell_exec", "action": "block"}], "epoch": 99}}
+            return {
+                "jsonrpc": "2.0",
+                "id": req["id"],
+                "result": {"rules": [{"tool": "shell_exec", "action": "block"}], "epoch": 99},
+            }
 
         server = await _start_fake_guard(sock, factory)
         try:
