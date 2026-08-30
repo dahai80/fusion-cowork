@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.4.6-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.0-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -403,6 +403,26 @@ pip install -e ".[dev]"         # test+web+plugins+cloud
 ### CI
 
 5-job matrix: `lint` (ruff check + format) · `test-sqlite` (3.11/3.12/3.13 × ubuntu/macos) · `test-postgres` (postgres:16 service) · `test-slow` (load/E2E/chaos) · `security` (pip-audit). Coverage gate + SBOM workflow (CycloneDX + pip-audit artifact).
+
+## 🌐 Distributed State Layer (v0.5.0)
+
+Opt-in cross-node shared state for multi-node / macOS MLX cluster deployments (issue #79). **Default OFF** — zero behavior change when unset.
+
+- **`DistributedStateStore`** (`fusion_cowork/distributed_state.py`) — atomic file-backed (JSON) cross-process store. Thread + coroutine safe (`threading.Lock` + `asyncio.Lock`), atomic `temp`+`os.replace` write, corrupt-file rebuild. Serializes: cluster node registry, vRAM allocation ledger, plugin enable/installed sets.
+- **Cluster-aware handle wrappers** — `ClusterNodeRegistry` merges local `NodeRegistry` + peer nodes from the shared store; `ClusterTaskScheduler` adds `dispatch_with_failover()` (best-node selection by free vRAM + tags, cycles candidates on failure). Injected into `DeskRuntime` when cluster enabled.
+- **vRAM ledger** — `record_vram_allocation` / `can_allocate_vram(limit_mb)` enforce a cluster-wide budget so N nodes loading MLX models can't collectively exceed physical unified memory (prevents swap avalanche).
+- **Plugin-state sync** — `record_plugin_state` / `is_plugin_enabled_anywhere` make a plugin enabled on node A visible to node B's `plugins/states`.
+
+Enable:
+
+```bash
+export FUSION_CLUSTER_ENABLED=1
+export FUSION_CLUSTER_NODE_ID=node-a        # unique per node
+export FUSION_CLUSTER_STATE_PATH=/shared/cluster-state.json  # shared volume / NFS
+```
+
+> **Note:** `DeskRuntime`'s *internal* state (`vram_allocations` / `_mcp_sessions` / `registered_plugin_ids`) is unreachable through the injected handles — that consumer-side serialization is tracked upstream at [fusion-plugins-ecosystem#13](https://github.com/dahai80/fusion-plugins-ecosystem/issues/13). This layer provides the shared store + handle wrappers the consumer will be wired into.
+
 
 ---
 
