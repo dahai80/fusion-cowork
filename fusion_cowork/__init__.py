@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.4.6"
+__version__ = "0.5.0"
 __app_name__ = "Fusion-Cowork"
 
 # ── 节点工具名称映射表（吸纳自 Squish tool_name_map.py） ──
@@ -365,6 +365,19 @@ _LAZY_IMPORTS: dict[str, str] = {
     "is_safe_peer_host": "fusion_cowork.cluster_sync",
     "is_safe_path_segment": "fusion_cowork.cluster_sync",
     "build_safe_url": "fusion_cowork.cluster_sync",
+    # V0.5.0 分布式状态层 (issue #79, 集群感知句柄包装)
+    "DistributedStateStore": "fusion_cowork.distributed_state",
+    "ClusterState": "fusion_cowork.distributed_state",
+    "ClusterNode": "fusion_cowork.distributed_state",
+    "VramAllocation": "fusion_cowork.distributed_state",
+    "PluginState": "fusion_cowork.distributed_state",
+    "ClusterNodeRegistry": "fusion_cowork.distributed_state",
+    "ClusterTaskScheduler": "fusion_cowork.distributed_state",
+    "is_cluster_enabled": "fusion_cowork.distributed_state",
+    "resolve_node_id": "fusion_cowork.distributed_state",
+    "resolve_state_path": "fusion_cowork.distributed_state",
+    "get_cluster_state_store": "fusion_cowork.distributed_state",
+    "reset_cluster_state_store": "fusion_cowork.distributed_state",
 }
 
 _lazy_cache: dict[str, object] = {}

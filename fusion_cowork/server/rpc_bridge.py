@@ -56,7 +56,12 @@ _DEFAULTS_MOUNTED: bool = False
 
 
 def _build_desk_runtime() -> Any:
-    """构造 DeskRuntime, 注入 fusion-cowork runtime 句柄。"""
+    """构造 DeskRuntime, 注入 fusion-cowork runtime 句柄。
+
+    issue #79: 集群 opt-in (FUSION_CLUSTER_ENABLED=1) 时, 用 ClusterNodeRegistry /
+    ClusterTaskScheduler 包装注入句柄, 使插件生态跨节点可见 + 任务跨节点派发。
+    默认 OFF → 注入裸 NodeRegistry + TaskScheduler (零行为变化)。
+    """
     from fusion_plugins_ecosystem.desk_runtime import DeskRuntime
 
     from ..engine.node import NodeRegistry
@@ -70,9 +75,22 @@ def _build_desk_runtime() -> Any:
         logger.warning("rpc_bridge: FusionMLXClient 构造失败, 降级为 None: %s", e)
         mlx_client = None
 
+    node_registry = NodeRegistry
+    task_scheduler = TaskScheduler()
+
+    from ..distributed_state import get_cluster_state_store
+
+    store = get_cluster_state_store()
+    if store is not None:
+        from ..distributed_state import ClusterNodeRegistry, ClusterTaskScheduler
+
+        node_registry = ClusterNodeRegistry(NodeRegistry, store)
+        task_scheduler = ClusterTaskScheduler(TaskScheduler(), store)
+        logger.info("rpc_bridge: 集群模式启用, 注入集群感知句柄包装 node=%s", store.node_id)
+
     desk = DeskRuntime(
-        node_registry=NodeRegistry,
-        task_scheduler=TaskScheduler(),
+        node_registry=node_registry,
+        task_scheduler=task_scheduler,
         mlx_client=mlx_client,
     )
     logger.info("rpc_bridge: DeskRuntime 已构造, 注入 NodeRegistry + TaskScheduler")
