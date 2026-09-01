@@ -20,7 +20,16 @@ import httpx
 logger = logging.getLogger(__name__)
 
 DEFAULT_MLX_PORT = 11432
-DEFAULT_MLX_BASE_URL = f"http://localhost:{DEFAULT_MLX_PORT}/v1"
+# env override for local single-machine direct-mlx (bypass gateway netlayer), issue #83.
+# 优先级: FUSION_MLX_URL (整 URL) > FUSION_MLX_HOST + FUSION_MLX_PORT > 默认 localhost:11432。
+# 默认不变 → 多节点/gateway 部署字节级无影响; 本地单机 export FUSION_MLX_HOST=127.0.0.1 FUSION_MLX_PORT=11434 直连 mlx。
+_env_mlx_url = os.environ.get("FUSION_MLX_URL", "").strip()
+if _env_mlx_url:
+    DEFAULT_MLX_BASE_URL = _env_mlx_url
+else:
+    _env_mlx_host = os.environ.get("FUSION_MLX_HOST", "localhost").strip() or "localhost"
+    _env_mlx_port = os.environ.get("FUSION_MLX_PORT", str(DEFAULT_MLX_PORT)).strip() or str(DEFAULT_MLX_PORT)
+    DEFAULT_MLX_BASE_URL = f"http://{_env_mlx_host}:{_env_mlx_port}/v1"
 MAX_RETRIES = 2
 RETRY_DELAY = 1.0
 

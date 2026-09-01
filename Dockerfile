@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# fusion-cowork v0.5.0 — 多租户云容器镜像
+# fusion-cowork v0.5.1 — 多租户云容器镜像
 # 多阶段: builder (装 [cloud,web]) → runtime (瘦镜像)
 
 ARG PYTHON_VERSION=3.12-slim
@@ -23,9 +23,9 @@ RUN pip install --user --no-cache-dir "/build/fusion-cowork[cloud,web]"
 
 
 FROM python:${PYTHON_VERSION} AS runtime
-LABEL version="0.5.0" \
+LABEL version="0.5.1" \
       org.opencontainers.image.title="fusion-cowork" \
-      org.opencontainers.image.version="0.5.0" \
+      org.opencontainers.image.version="0.5.1" \
       org.opencontainers.image.description="Local-first Apple Silicon AI 多租户云工作流引擎"
 
 ENV PYTHONUNBUFFERED=1 \
