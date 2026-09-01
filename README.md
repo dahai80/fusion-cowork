@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.1-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.2-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -119,6 +119,7 @@ fusion-cowork desk rpc
 | `FUSION_MLX_URL` | `http://localhost:11432/v1` | fusion-mlx base URL — full URL, highest priority (overrides host/port) |
 | `FUSION_MLX_HOST` | `localhost` | fusion-mlx host (composed with `FUSION_MLX_PORT`; used only when `FUSION_MLX_URL` unset) |
 | `FUSION_MLX_PORT` | `11432` | fusion-mlx port (composed with `FUSION_MLX_HOST`; used only when `FUSION_MLX_URL` unset) |
+| `FUSION_MLX_MODEL` | _(unset)_ | default chat model for NL workflow generation (`NLWorkflowGenerator`). Pin a chat-capable model id to avoid picking `image_gen`/`video_gen` models (issue #85) |
 | `FUSION_RAG_URL` | `http://localhost:11436` | fusion-rag (fusion-kb) base URL |
 
 > **base_url 优先级** (issue #83): `FUSION_MLX_URL` (整 URL) > `FUSION_MLX_HOST` + `FUSION_MLX_PORT` > 默认 `localhost:11432`。默认不变 → 多节点/gateway 部署字节级无影响。**本地单机直连 mlx** (绕过 gateway, 用 mlx key 而非 gateway key):

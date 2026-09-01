@@ -116,6 +116,7 @@ fusion-cowork desk rpc
 |------|--------|------|
 | `FUSION_MLX_API_KEY` | `local` | **fusion-gateway 客户端 api key**（取自 fusion-gateway `config.yaml` 中 `auth.api_keys[].key`）。**不是** fusion-mlx `settings.json` 的 `auth.api_key` —— gateway 与 mlx 是两套独立鉴权。 |
 | `FUSION_MLX_URL` | `http://localhost:11432/v1` | fusion-mlx 基础 URL (经 fusion-gateway netlayer) |
+| `FUSION_MLX_MODEL` | _(未设)_ | NL 工作流生成 (`NLWorkflowGenerator`) 默认 chat 模型。显式指定一个支持 chat 的模型 id,避免误选 `image_gen`/`video_gen` 模型 (issue #85) |
 | `FUSION_RAG_URL` | `http://localhost:11436` | fusion-rag (fusion-kb) 基础 URL |
 
 > **鉴权说明**: fusion-cowork 通过 fusion-gateway(:11432) 调 fusion-mlx,存在**两套独立鉴权**:
