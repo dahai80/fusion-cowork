@@ -799,7 +799,8 @@ class DeskRPCServer:
             return {"error": "prompt 不能为空"}
         gen = NLWorkflowGenerator(self._get_mlx_client())
         workflow = await gen.generate(prompt)
-        return {"workflow": workflow.to_dict() if workflow else None}
+        # generate() 返回 dict (workflow_def), 非 Workflow 对象, 无需 to_dict (#85)
+        return {"workflow": workflow if workflow else None}
 
     async def _handle_workflow_run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from ..engine import Workflow

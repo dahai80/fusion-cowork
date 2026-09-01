@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from .mlx_client import FusionMLXClient
@@ -58,6 +59,48 @@ SYSTEM_PROMPT = """你是一个 macOS 桌面自动化工作流生成器。将用
 只返回 JSON，不要其他解释。"""
 
 
+# #85: mlx /v1/models 不保证 chat 模型在前 (FLUX/Wan 等 image/video 模型可能排第一)。
+# 非 chat engine_type 集合; metadata.engine_type 或顶层 engine_type 均判。
+_NON_CHAT_ENGINE_TYPES = {
+    "image_gen",
+    "video_gen",
+    "image",
+    "video",
+    "tts",
+    "stt",
+    "audio",
+    "embedding",
+    "rerank",
+}
+
+
+def _pick_chat_model(models: List[Dict[str, Any]]) -> str:
+    """从 list_models() 结果选一个 chat 模型 id。
+
+    跳过 image_gen/video_gen/tts/embedding 等 engine_type;
+    优先 Qwen/Llama instruct; 否则取第一个 chat 模型。
+    """
+    chat_candidates: List[str] = []
+    for m in models or []:
+        mid = m.get("id") or m.get("model")
+        if not mid:
+            continue
+        meta = m.get("metadata") or {}
+        engine = (m.get("engine_type") or meta.get("engine_type") or "").strip().lower()
+        if engine and engine in _NON_CHAT_ENGINE_TYPES:
+            continue
+        chat_candidates.append(mid)
+    if not chat_candidates:
+        return ""
+    # 优先 instruct/chat/qwen/llama 命名
+    prefer_keywords = ("instruct", "chat", "qwen", "llama", "gemma", "mistral")
+    for mid in chat_candidates:
+        low = mid.lower()
+        if any(k in low for k in prefer_keywords):
+            return mid
+    return chat_candidates[0]
+
+
 class NLWorkflowGenerator:
     """自然语言工作流生成器。
 
@@ -83,18 +126,28 @@ class NLWorkflowGenerator:
         Returns:
             dict: 工作流定义，包含 name, description, nodes, edges
         """
-        # 先获取可用模型列表，如果没有指定模型则使用第一个
+        # 先确定 chat 模型: 用户显式 > FUSION_MLX_MODEL env > 过滤 list_models 取 chat 模型 > 默认。
+        # #85: models[0] 可能是 image_gen/video_gen (FLUX/Wan) 不支持 chat completions, 盲取会 -32603。
+        if not self.model:
+            env_model = os.environ.get("FUSION_MLX_MODEL", "").strip()
+            if env_model:
+                self.model = env_model
+                logger.info(f"使用 FUSION_MLX_MODEL env 模型: {self.model}")
+
         if not self.model:
             try:
                 models = await self.mlx.list_models()
-                if models:
-                    self.model = models[0].get("id", models[0].get("model", ""))
-                    logger.info(f"自动选择模型: {self.model}")
+                chat_model = _pick_chat_model(models)
+                if chat_model:
+                    self.model = chat_model
+                    logger.info(f"自动选择 chat 模型: {self.model}")
+                else:
+                    logger.warning(f"模型列表中未找到 chat 模型, 共 {len(models)} 个, 回退默认")
             except Exception as e:
                 logger.warning(f"获取模型列表失败: {e}，使用默认模型")
 
         if not self.model:
-            self.model = "qwen3.5-9b"  # 默认模型
+            self.model = "Qwen3.8-27B-4bit"  # 默认 chat 模型 (#85 修正: 旧 qwen3.5-9b 不存在)
 
         # 构建上下文信息
         context_str = ""
@@ -102,8 +155,6 @@ class NLWorkflowGenerator:
             ctx_parts = []
             for key, value in context.items():
                 if isinstance(value, (list, dict)):
-                    import json
-
                     ctx_parts.append(f"{key}: {json.dumps(value, ensure_ascii=False)[:500]}")
                 else:
                     ctx_parts.append(f"{key}: {value}")
