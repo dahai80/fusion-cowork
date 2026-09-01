@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.0-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.1-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -116,14 +116,21 @@ fusion-cowork desk rpc
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `FUSION_MLX_API_KEY` | `local` | **fusion-gateway client api key** (a key from `auth.api_keys[].key` in fusion-gateway `config.yaml`). NOT the fusion-mlx `settings.json` `auth.api_key` — gateway and mlx use separate auth. |
-| `FUSION_MLX_URL` | `http://localhost:11432/v1` | fusion-mlx base URL (via fusion-gateway netlayer) |
+| `FUSION_MLX_URL` | `http://localhost:11432/v1` | fusion-mlx base URL — full URL, highest priority (overrides host/port) |
+| `FUSION_MLX_HOST` | `localhost` | fusion-mlx host (composed with `FUSION_MLX_PORT`; used only when `FUSION_MLX_URL` unset) |
+| `FUSION_MLX_PORT` | `11432` | fusion-mlx port (composed with `FUSION_MLX_HOST`; used only when `FUSION_MLX_URL` unset) |
 | `FUSION_RAG_URL` | `http://localhost:11436` | fusion-rag (fusion-kb) base URL |
 
+> **base_url 优先级** (issue #83): `FUSION_MLX_URL` (整 URL) > `FUSION_MLX_HOST` + `FUSION_MLX_PORT` > 默认 `localhost:11432`。默认不变 → 多节点/gateway 部署字节级无影响。**本地单机直连 mlx** (绕过 gateway, 用 mlx key 而非 gateway key):
+> ```bash
+> export FUSION_MLX_HOST=127.0.0.1 FUSION_MLX_PORT=11434
+> ```
+>
 > **鉴权说明**: fusion-cowork 通过 fusion-gateway(:11432) 调 fusion-mlx,存在**两套独立鉴权**:
 > 1. **gateway client key** — 客户端请求 gateway 时用,即本变量 `FUSION_MLX_API_KEY`(取自 gateway `config.yaml` 的 `auth.api_keys[].key`)
 > 2. **mlx backend key** — gateway 转发到 mlx 时用,配置在 gateway `config.yaml` 的 `backends.fusion-mlx.api_key`,客户端无需关心
 >
-> 常见 401 错误:把 mlx 的 key 填进了 `FUSION_MLX_API_KEY`。应填 gateway 的 client key。
+> 常见 401 错误:把 mlx 的 key 填进了 `FUSION_MLX_API_KEY`。应填 gateway 的 client key。本地单机直连 (上面 `FUSION_MLX_PORT=11434`) 时则相反 — 此时 `FUSION_MLX_API_KEY` 应填 mlx 的 key。
 
 ```bash
 # Example: set API key to a fusion-gateway client key (from config.yaml auth.api_keys)

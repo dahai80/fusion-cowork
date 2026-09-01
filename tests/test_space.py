@@ -961,6 +961,61 @@ class TestFusionMLXClientEnhancements:
         client = FusionMLXClient()
         assert client.base_url == "http://localhost:11432/v1"
 
+    def test_base_url_env_override_url(self, monkeypatch):
+        import importlib
+        import os
+
+        monkeypatch.setenv("FUSION_MLX_URL", "http://127.0.0.1:11434/v1")
+        monkeypatch.delenv("FUSION_MLX_HOST", raising=False)
+        monkeypatch.delenv("FUSION_MLX_PORT", raising=False)
+        mod = importlib.import_module("fusion_cowork.ai.mlx_client")
+        importlib.reload(mod)
+        try:
+            assert mod.DEFAULT_MLX_BASE_URL == "http://127.0.0.1:11434/v1"
+            client = mod.FusionMLXClient()
+            assert client.base_url == "http://127.0.0.1:11434/v1"
+        finally:
+            os.environ.pop("FUSION_MLX_URL", None)
+            os.environ.pop("FUSION_MLX_HOST", None)
+            os.environ.pop("FUSION_MLX_PORT", None)
+            importlib.reload(mod)
+
+    def test_base_url_env_override_host_port(self, monkeypatch):
+        import importlib
+        import os
+
+        monkeypatch.delenv("FUSION_MLX_URL", raising=False)
+        monkeypatch.setenv("FUSION_MLX_HOST", "127.0.0.1")
+        monkeypatch.setenv("FUSION_MLX_PORT", "11434")
+        mod = importlib.import_module("fusion_cowork.ai.mlx_client")
+        importlib.reload(mod)
+        try:
+            assert mod.DEFAULT_MLX_BASE_URL == "http://127.0.0.1:11434/v1"
+            client = mod.FusionMLXClient()
+            assert client.base_url == "http://127.0.0.1:11434/v1"
+        finally:
+            os.environ.pop("FUSION_MLX_URL", None)
+            os.environ.pop("FUSION_MLX_HOST", None)
+            os.environ.pop("FUSION_MLX_PORT", None)
+            importlib.reload(mod)
+
+    def test_base_url_url_beats_host_port(self, monkeypatch):
+        import importlib
+        import os
+
+        monkeypatch.setenv("FUSION_MLX_URL", "http://mlx.internal:9000/v1")
+        monkeypatch.setenv("FUSION_MLX_HOST", "127.0.0.1")
+        monkeypatch.setenv("FUSION_MLX_PORT", "11434")
+        mod = importlib.import_module("fusion_cowork.ai.mlx_client")
+        importlib.reload(mod)
+        try:
+            assert mod.DEFAULT_MLX_BASE_URL == "http://mlx.internal:9000/v1"
+        finally:
+            os.environ.pop("FUSION_MLX_URL", None)
+            os.environ.pop("FUSION_MLX_HOST", None)
+            os.environ.pop("FUSION_MLX_PORT", None)
+            importlib.reload(mod)
+
     def test_api_key_no_local_fallback(self):
         import os
 

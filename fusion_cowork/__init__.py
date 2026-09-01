@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 __app_name__ = "Fusion-Cowork"
 
 # ── 节点工具名称映射表（吸纳自 Squish tool_name_map.py） ──
