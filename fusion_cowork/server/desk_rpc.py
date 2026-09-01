@@ -797,7 +797,7 @@ class DeskRPCServer:
         prompt = params.get("prompt", "")
         if not prompt:
             return {"error": "prompt 不能为空"}
-        gen = NLWorkflowGenerator()
+        gen = NLWorkflowGenerator(self._get_mlx_client())
         workflow = await gen.generate(prompt)
         return {"workflow": workflow.to_dict() if workflow else None}
 
