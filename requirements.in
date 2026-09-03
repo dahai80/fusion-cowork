@@ -22,8 +22,10 @@ prometheus-client>=0.20
 opentelemetry-api>=1.24
 opentelemetry-sdk>=1.24
 structlog>=24
-fusion-core>=0.1.0
-fusion-identity>=0.1.0
+# fusion-core / fusion-identity: in-tree monorepo packages (NOT on PyPI).
+# Installed via `pip install -e fusion-core` / `-e fusion-identity` from the
+# monorepo root, NOT via this project's extras. Imports guarded lazily
+# (is_identity_enabled() / try-except) so absence is a no-op, never an import error.
 # [test]
 pytest>=8.0.0
 pytest-asyncio>=0.23.0

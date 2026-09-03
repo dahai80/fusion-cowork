@@ -48,8 +48,6 @@ cloud = [
     "opentelemetry-api>=1.24",
     "opentelemetry-sdk>=1.24",
     "structlog>=24",
-    "fusion-core>=0.1.0",
-    "fusion-identity>=0.1.0",
 ]
 dev = [
     "fusion-cowork[test,web,plugins,cloud]",

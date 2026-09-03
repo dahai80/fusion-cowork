@@ -19,6 +19,18 @@ from fusion_cowork.auth.identity import (
     make_verify_jwt_callback,
 )
 
+try:
+    import fusion_core.tenant  # noqa: F401
+
+    _HAS_FUSION_CORE = True
+except ImportError:
+    _HAS_FUSION_CORE = False
+
+_skip_no_fusion_core = pytest.mark.skipif(
+    not _HAS_FUSION_CORE,
+    reason="fusion-core not installed (in-tree monorepo pkg, absent in CI single-repo checkout)",
+)
+
 
 def _make_token(tid="t1", jti="j-1", secret="secret"):
     import jwt as pyjwt
@@ -330,6 +342,7 @@ class TestDeskRpcAuthenticate:
         assert authed["__tenant_id__"] == "default"
 
 
+@_skip_no_fusion_core
 class TestSpaceApiMiddleware:
     def _build_app(self, monkeypatch, verify_resp):
         monkeypatch.setenv("FUSION_IDENTITY_ENABLED", "1")
@@ -393,6 +406,7 @@ class TestSpaceApiMiddleware:
             await client.aclose()
 
 
+@_skip_no_fusion_core
 class TestMcpHttpMiddleware:
     @pytest.mark.asyncio
     async def test_streamable_initialize_no_token_allowed(self, monkeypatch):

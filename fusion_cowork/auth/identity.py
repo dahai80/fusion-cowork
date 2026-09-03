@@ -54,9 +54,9 @@ def is_identity_enabled() -> bool:
 
 def _extract_jti(token: str) -> str:
     try:
-        from fusion_core.tenant.jwt_utils import decode_jwt_claims
+        import jwt as pyjwt
 
-        claims = decode_jwt_claims(token, verify_exp=False)
+        claims = pyjwt.decode(token, options={"verify_signature": False, "verify_exp": False})
         jti = claims.get("jti")
         if jti:
             return f"jti:{jti}"
