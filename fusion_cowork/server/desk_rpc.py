@@ -512,7 +512,10 @@ class DeskRPCServer:
     def _authenticate(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """认证调用方, 返回带可信身份的 params (CR-5 反 IDOR)。
 
-        优先级 (Stage 2):
+        优先级 (Stage 2 + issue #88):
+        0. fusion-identity: FUSION_IDENTITY_ENABLED=1 → IdentityClient.verify(token),
+           tid 从 verify 响应取, uid 从 params x-user-id (sanitized) 取 (identity 不返 uid)。
+           revoked/不可达/非活跃 → fail-closed 拒 (生产模式不静默降级)。
         1. JWT: env FUSION_JWT_SECRET/FUSION_JWKS_URL 配了 → 校验 params._auth_token Bearer JWT,
            提取 tenant_id/user_id claim。生产 (FUSION_REQUIRE_JWT=1) 强制走此路径, 无 JWT → 拒。
         2. principal_resolver: 外部注入 (如 OIDC header 解析), 返 TenantPrincipal。
@@ -530,8 +533,33 @@ class DeskRPCServer:
             token = ""
         resolved_principal: Optional[TenantPrincipal] = None
 
+        # 0. fusion-identity (issue #88) — 唯一签发者, 优先且 fail-closed
+        try:
+            from fusion_cowork.auth.identity import is_identity_enabled
+
+            if is_identity_enabled():
+                from fusion_cowork.auth.identity import get_identity_client
+
+                client = get_identity_client()
+                if client is not None:
+                    result = client.verify(token)
+                    if result is not None:
+                        uid = str(
+                            params.get("x-user-id")
+                            or params.get("X-User-Id")
+                            or params.get("_user_id")
+                            or LOCAL_USER
+                        )
+                        resolved_principal = TenantPrincipal(tenant_id=result.tid, user_id=uid)
+                    else:
+                        logger.warning("Desk RPC 认证失败: identity verify 未通过 (fail-closed)")
+                        return {"__auth_error__": {"code": -32001, "message": "认证失败: token 无效或已吊销"}}
+        except Exception as e:
+            logger.warning(f"Desk RPC identity 校验异常: {e}")
+            return {"__auth_error__": {"code": -32001, "message": "认证失败: identity 不可用"}}
+
         # 1. JWT (env 配了 active)
-        if self._jwt_verifier is not None and self._jwt_verifier.active:
+        if resolved_principal is None and self._jwt_verifier is not None and self._jwt_verifier.active:
             jwt_principal = self._jwt_verifier.verify_token(token)
             if jwt_principal is not None:
                 resolved_principal = jwt_principal

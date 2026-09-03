@@ -606,6 +606,16 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] 降级语义: `/rpc` 非 plugins 方法 → -32601 (与依赖无关); plugins 方法依赖缺失 → -32603
 - [x] 测试: 14 个 `/rpc` + `rpc_bridge` 用例, `skipif` 降级保护 CI; Py3.11 588 passed/5 skipped, Py3.14 593 passed, ruff 0 issues
 
+#### V0.5.3 (补丁) — fusion-identity 集成 (#88)
+- [x] 新增 `auth/identity.py` — `IdentityClient` 同步 `httpx.Client` 调 `POST /api/v1/auth/verify` (header `Authorization: Bearer <FUSION_IDENTITY_SERVICE_TOKEN>`, body `{"token": "<user JWT>"}`); jti→claims 缓存 (TTL 60s, cap 1024); `revoked`/`tenant_status != active`/连接失败 → fail-closed (生产模式不静默回退本地 JWT); `emit_usage()` → `POST /api/v1/tenants/{tid}/usage` (best-effort)
+- [x] 透明委托 seam — `get_default_verifier()` (jwt.py) 启用时返 `_IdentityJWTAdapter`, 所有消费方 (mcp_http `_auth_denied`/space api/rate_limit) 零改动获 identity 校验; `verify_any_token` (fallback.py) 门控静态降级: 启用 + `FUSION_REQUIRE_JWT=1` + 校验失败 → fail-closed; WS/TCP 路径 (remote/sync/collab_ws) 同 seam 覆盖
+- [x] UDS `desk_rpc` (非 FastAPI 无中间件) — `_authenticate` Step 0 直调 `IdentityClient.verify()`, revoked/不可达 fail-closed, 保留 `set_current_tenant`
+- [x] FastAPI 应用 (space/api, mcp_http ×2) — 采用 `fusion_core.tenant.install_tenant_middleware` (强制 `X-Tenant-Id` 头 + jwt.tid↔头匹配) + cowork bridge 中间件传播 `fusion_core.tenant.TenantContext` → cowork `get_current_tenant()` contextvar (双 contextvar 关键: fusion_core 源+强制, cowork bridge 传播, 非两个竞争强制器)
+- [x] 配额来自 identity — `QuotaEnforcer(identity_client=...)` 从 verify 缓存读 `VerifyResponse.quota` (替代 ConfigCenter); `record_usage()` 上报到 fusion-identity (best-effort)
+- [x] 开发降级保留 — 未启用 (或可达 + `FUSION_REQUIRE_JWT` 未设) → 现有 `verify_static_token`/本地 `JWTVerifier`/ConfigCenter 配额不变 (本地单机开发)
+- [x] 纵深防御: 所有 `fusion_core.tenant`/`install_tenant_middleware` 导入在 `is_identity_enabled()` 守卫内 (启用时懒导入), 镜像 `mlx_client.py` 守卫导入模式; fusion-identity + fusion-core 加入 `[cloud]` extra; Postgres RLS 保留
+- [x] opt-in 默认 OFF (镜像 guard #73/cluster #79 模式), 零行为变化, 1254 tests passed (29 新 identity 用例 offline httpx MockTransport), ruff 0 issues
+
 #### V0.2.9 (补丁) — 商用问题修复
 - [x] P0: Computer Use 循环截图以 `image_url` 多模态格式传入模型 (原盲调用, 致盲修复)
 - [x] P0: `ScreenCaptureNode` 视觉分析复用同一多模态通道

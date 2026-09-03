@@ -2,8 +2,8 @@ apiVersion: v2
 name: fusion-cowork
 description: Local-first Apple Silicon AI 多租户云工作流引擎
 type: application
-version: 0.5.2
-appVersion: "0.5.2"
+version: 0.5.3
+appVersion: "0.5.3"
 home: https://github.com/dahai80/fusion
 maintainers:
   - name: dahai80
