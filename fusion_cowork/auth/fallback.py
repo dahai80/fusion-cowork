@@ -46,7 +46,11 @@ def verify_static_token(token: Optional[str], expected: Optional[str]) -> Option
 def verify_any_token(token: Optional[str], expected: Optional[str]) -> Optional[TenantPrincipal]:
     """双模校验: JWT 优先, 静态 token fallback。WS/sync/remote 共用。
 
-    - JWT verifier active + token 是有效 JWT → 返 JWT claim principal
+    issue #88: FUSION_IDENTITY_ENABLED=1 → 优先 fusion-identity /verify,
+    revoked/fail-closed → None (生产模式不静默降级静态 token)。
+    禁用 → 当前 JWT-then-static 路径不变。
+
+    - JWT/identity verifier active + token 是有效 JWT → 返 JWT claim principal
     - 否则静态 token 校验 (verify_static_token)
     - require_jwt()=1 + 无 JWT 通过 + 无静态 expected → None (生产强制)
     """
@@ -59,6 +63,12 @@ def verify_any_token(token: Optional[str], expected: Optional[str]) -> Optional[
                 jwt_principal = verifier.verify_token(token)
                 if jwt_principal is not None:
                     return jwt_principal
+                # issue #88: identity 启用但校验失败 → fail-closed (不降级静态 token)
+                from fusion_cowork.auth.identity import is_identity_enabled
+
+                if is_identity_enabled() and require_jwt():
+                    logger.warning("identity 校验未通过 + 生产模式, 拒绝静态降级")
+                    return None
         except Exception as e:
-            logger.warning(f"JWT 校验异常, 回退静态 token: {e}")
+            logger.warning(f"JWT/identity 校验异常, 回退静态 token: {e}")
     return verify_static_token(token, expected)

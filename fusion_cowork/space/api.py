@@ -508,4 +508,59 @@ def create_space_api(
             await websocket.accept()
             await websocket.close(code=1011, reason="WS 协作通道未配置 (collab_hub 未注入)")
 
+    # issue #88: fusion-identity 启用 → install_tenant_middleware (fusion_core) + cowork 桥接。
+    # 桥接把 fusion_core.tenant.current() → cowork contextvar (双 ContextVar, 28+ 下游读 cowork)。
+    # WS 路径不经 HTTP middleware, 仍走 fallback.verify_any_token (identity-aware seam)。
+    _install_identity_middleware(app)
     return app
+
+
+def _install_identity_middleware(app) -> None:
+    """issue #88: identity 启用时装 fusion_core tenant middleware + cowork contextvar 桥接。
+
+    禁用 → 无操作 (保留原 _tenant_middleware, 零行为变化)。
+    """
+    try:
+        from fusion_cowork.auth.identity import get_identity_client, is_identity_enabled
+
+        if not is_identity_enabled():
+            return
+        client = get_identity_client()
+        if client is None:
+            return
+    except Exception as e:
+        logger.warning(f"space api identity middleware 装载失败, 跳过: {e}")
+        return
+    from fusion_cowork.auth.identity import make_verify_jwt_callback
+    from fusion_cowork.tenant import (
+        reset_current_tenant,
+        reset_current_user,
+        set_current_tenant,
+        set_current_user,
+    )
+
+    try:
+        from fusion_core.tenant import current, install_tenant_middleware
+    except ImportError as e:
+        logger.warning(f"fusion_core.tenant 不可用, identity middleware 跳过: {e}")
+        return
+
+    install_tenant_middleware(
+        app,
+        exempt_paths=frozenset({"/health", "/docs", "/openapi.json", "/redoc"}),
+        verify_jwt=make_verify_jwt_callback(client),
+        require_jwt=True,
+    )
+
+    @app.middleware("http")
+    async def _cowork_tenant_bridge(request: Request, call_next):
+        tctx = current()
+        t_tok = set_current_tenant(tctx.tenant_id) if tctx else set_current_tenant(DEFAULT_TENANT)
+        u_tok = set_current_user(tctx.user_id or LOCAL_USER) if tctx else set_current_user(LOCAL_USER)
+        try:
+            return await call_next(request)
+        finally:
+            reset_current_tenant(t_tok)
+            reset_current_user(u_tok)
+
+    logger.info("space api 已装 fusion-identity tenant middleware + cowork 桥接")

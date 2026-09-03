@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.5.2"
+__version__ = "0.5.3"
 __app_name__ = "Fusion-Cowork"
 
 # ── 节点工具名称映射表（吸纳自 Squish tool_name_map.py） ──
@@ -318,6 +318,13 @@ _LAZY_IMPORTS: dict[str, str] = {
     "set_current_tenant": "fusion_cowork.tenant",
     "tenant_context": "fusion_cowork.tenant",
     "JWTVerifier": "fusion_cowork.auth",
+    # V0.5.3 fusion-identity 集成 (issue #88, 统一 JWT 签发 + 租户注册中心)
+    "IdentityClient": "fusion_cowork.auth.identity",
+    "IdentityVerifyResult": "fusion_cowork.auth.identity",
+    "is_identity_enabled": "fusion_cowork.auth.identity",
+    "get_identity_client": "fusion_cowork.auth.identity",
+    "make_verify_jwt_callback": "fusion_cowork.auth.identity",
+    "reset_identity_client": "fusion_cowork.auth.identity",
     "MigrationRunner": "fusion_cowork.db",
     "Migration": "fusion_cowork.db",
     "BackupManager": "fusion_cowork.db",

@@ -25,9 +25,23 @@ _JWKS_CACHE_TTL = 600  # 10 min
 
 
 def get_default_verifier() -> JWTVerifier:
-    """单例 JWTVerifier (按 env 配置构造, 未配 secret/jwks → 空 verifier, verify_token 恒返 None)。"""
+    """单例 JWTVerifier (按 env 配置构造, 未配 secret/jwks → 空 verifier, verify_token 恒返 None)。
+
+    issue #88: FUSION_IDENTITY_ENABLED=1 → 返 _IdentityJWTAdapter (委托 fusion-identity /verify),
+    透明服务所有 get_default_verifier 消费方 (mcp_http/space api/rate_limit)。
+    """
     global _DEFAULT_VERIFIER
     if _DEFAULT_VERIFIER is None:
+        try:
+            from fusion_cowork.auth.identity import get_identity_client
+
+            client = get_identity_client()
+            if client is not None:
+                _DEFAULT_VERIFIER = _IdentityJWTAdapter(client)
+                logger.info("JWTVerifier 单例 → fusion-identity 适配器 (FUSION_IDENTITY_ENABLED=1)")
+                return _DEFAULT_VERIFIER
+        except Exception as e:
+            logger.warning(f"identity 适配器构造失败, 回退本地 JWT: {e}")
         _DEFAULT_VERIFIER = JWTVerifier.from_env()
     return _DEFAULT_VERIFIER
 
@@ -165,3 +179,25 @@ class JWTVerifier:
                     logger.warning(f"JWKS key 解析失败 kid={kid}: {e}")
                     return None
         return None
+
+
+class _IdentityJWTAdapter(JWTVerifier):
+    """issue #88: fusion-identity 委托适配器 — verify_token 转 IdentityClient.verify。
+
+    继承 JWTVerifier 以保持 active/verify_token_async 接口兼容;
+    verify_token 不本地解码 JWT, 全委托 fusion-identity 服务端校验 (唯一签发者)。
+    """
+
+    def __init__(self, identity_client):
+        super().__init__()
+        self._identity_client = identity_client
+        self._active = True
+
+    def verify_token(self, token: str) -> Optional[TenantPrincipal]:
+        if not token or not isinstance(token, str):
+            logger.warning("identity JWT 校验失败: token 缺失")
+            return None
+        result = self._identity_client.verify(token)
+        if result is None:
+            return None
+        return TenantPrincipal(tenant_id=result.tid, user_id=LOCAL_USER)

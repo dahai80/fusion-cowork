@@ -51,10 +51,14 @@ class QuotaExceededError(Exception):
 
 
 class QuotaEnforcer:
-    def __init__(self, config=None):
+    def __init__(self, config=None, identity_client=None):
         self._config = config
+        self._identity_client = identity_client
 
     def _load_quotas(self, tenant_id: str) -> TenantQuotas:
+        # issue #88: identity_client 注入 → 从 cached VerifyResponse.quota 取 (替代 ConfigCenter)
+        if self._identity_client is not None:
+            return self._load_quotas_from_identity(tenant_id)
         if self._config is None:
             return TenantQuotas()
         try:
@@ -76,6 +80,47 @@ class QuotaEnforcer:
         except Exception as e:
             logger.debug(f"读配额失败, 视为无限: {e}")
             return TenantQuotas()
+
+    def _load_quotas_from_identity(self, tenant_id: str) -> TenantQuotas:
+        """issue #88: 从 identity client 的 verify 缓存读 quota dict。
+
+        缓存可能无该 tenant (verify 未发生) → 视为无限 (不阻塞首次访问)。
+        """
+        q = TenantQuotas()
+        try:
+            quota = self._identity_client._cache  # dict[jti -> (ts, VerifyResult)]
+            for _key, (_ts, result) in getattr(quota, "items", lambda: [])():
+                if result is not None and result.tid == tenant_id and result.quota:
+                    for field_name in DEFAULT_QUOTAS:
+                        val = result.quota.get(field_name)
+                        if val is None:
+                            continue
+                        try:
+                            setattr(q, field_name, int(val))
+                        except (TypeError, ValueError):
+                            logger.warning(f"identity 配额 {field_name} 值非法 {val!r}, 视为无限")
+                            setattr(q, field_name, -1)
+                    return q
+        except Exception as e:
+            logger.debug(f"identity 配额读取失败, 视为无限: {e}")
+        return q
+
+    def record_usage(
+        self,
+        tenant_id: str,
+        metric: str,
+        value: int | float,
+        source: str = "fusion-cowork",
+        model: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
+        """issue #88: 上报用量到 fusion-identity (best-effort)。"""
+        if self._identity_client is None:
+            return
+        try:
+            self._identity_client.emit_usage(tenant_id, metric, value, source=source, model=model, user_id=user_id)
+        except Exception as e:
+            logger.debug(f"identity usage 上报失败 (best-effort): {e}")
 
     def check_create_space(self, tenant_id: str, current_count: int) -> None:
         q = self._load_quotas(tenant_id)

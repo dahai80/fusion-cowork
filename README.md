@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.2-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.3-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -121,6 +121,9 @@ fusion-cowork desk rpc
 | `FUSION_MLX_PORT` | `11432` | fusion-mlx port (composed with `FUSION_MLX_HOST`; used only when `FUSION_MLX_URL` unset) |
 | `FUSION_MLX_MODEL` | _(unset)_ | default chat model for NL workflow generation (`NLWorkflowGenerator`). Pin a chat-capable model id to avoid picking `image_gen`/`video_gen` models (issue #85) |
 | `FUSION_RAG_URL` | `http://localhost:11436` | fusion-rag (fusion-kb) base URL |
+| `FUSION_IDENTITY_ENABLED` | _(unset)_ | opt-in: set `1` to activate fusion-identity as sole JWT issuer + tenant registry (issue #88). Default OFF = zero behavior change (local JWT/static-token dev path unchanged) |
+| `FUSION_IDENTITY_URL` | `http://127.0.0.1:11470` | fusion-identity service base URL (only used when `FUSION_IDENTITY_ENABLED=1`) |
+| `FUSION_IDENTITY_SERVICE_TOKEN` | _(unset)_ | service token sent as `Authorization: Bearer` to fusion-identity `/verify`. Required when enabled (else identity client stays None) |
 
 > **base_url 优先级** (issue #83): `FUSION_MLX_URL` (整 URL) > `FUSION_MLX_HOST` + `FUSION_MLX_PORT` > 默认 `localhost:11432`。默认不变 → 多节点/gateway 部署字节级无影响。**本地单机直连 mlx** (绕过 gateway, 用 mlx key 而非 gateway key):
 > ```bash
@@ -431,6 +434,31 @@ export FUSION_CLUSTER_STATE_PATH=/shared/cluster-state.json  # shared volume / N
 
 > **Note:** `DeskRuntime`'s *internal* state (`vram_allocations` / `_mcp_sessions` / `registered_plugin_ids`) is unreachable through the injected handles — that consumer-side serialization is tracked upstream at [fusion-plugins-ecosystem#13](https://github.com/dahai80/fusion-plugins-ecosystem/issues/13). This layer provides the shared store + handle wrappers the consumer will be wired into.
 
+
+---
+
+## 🔐 fusion-identity Integration (v0.5.3)
+
+Retire the local JWT/tenant/RBAC/quota reimplementation in favor of **fusion-identity** as the sole JWT issuer + tenant registry for the ecosystem (multi-tenant PRD §3/§4, issue #88). **Default OFF** — opt-in, matches the guard (#73) / cluster (#79) pattern; zero behavior change when unset, all existing tests green.
+
+- **`IdentityClient`** (`fusion_cowork/auth/identity.py`) — sync `httpx.Client` `POST /api/v1/auth/verify` (header `Authorization: Bearer <FUSION_IDENTITY_SERVICE_TOKEN>`, body `{"token": "<user JWT>"}`). jti→claims cache (TTL 60s, cap 1024) cuts repeat calls; `revoked`/`tenant_status != active`/conn-fail → fail-closed (no silent fallback to local JWT in prod mode). `emit_usage()` → `POST /api/v1/tenants/{tid}/usage` (best-effort).
+- **Seamless delegation** — `get_default_verifier()` (jwt.py) returns an `_IdentityJWTAdapter` when enabled, so every consumer (mcp_http `_auth_denied`, space/api, rate_limit) gets identity-backed verify with no call-site change. `verify_any_token` (fallback.py) gates static-token dev fallback: enabled + `FUSION_REQUIRE_JWT=1` + verify failed → fail-closed (no static fallback in prod). WS/TCP paths (`remote.py`/`sync.py`/`collab_ws.py`) covered by the same seam.
+- **UDS `desk_rpc`** (non-FastAPI, no middleware) — `_authenticate` calls `IdentityClient.verify()` directly (Step 0), fail-closed on revoked/unreachable, keeps existing `set_current_tenant`.
+- **FastAPI apps** (space/api, mcp_http ×2) — adopt `fusion_core.tenant.install_tenant_middleware` (enforces `X-Tenant-Id` header + jwt.tid↔header match) + a cowork bridge middleware that propagates `fusion_core.tenant.TenantContext` → cowork's `get_current_tenant()` contextvar (the dual-contextvar crux: fusion_core sources+enforces, cowork bridge propagates — not two competing enforcers).
+- **Quotas from identity** — `QuotaEnforcer(identity_client=...)` reads `VerifyResponse.quota` from the verify cache (replaces ConfigCenter); `record_usage()` emits to fusion-identity (best-effort).
+- **Dev fallback retained** — disabled (or reachable + `FUSION_REQUIRE_JWT` unset) → existing `verify_static_token` / local `JWTVerifier` / ConfigCenter quotas unchanged (local-first single-machine dev).
+
+Enable:
+
+```bash
+export FUSION_IDENTITY_ENABLED=1
+export FUSION_IDENTITY_URL=http://127.0.0.1:11470
+export FUSION_IDENTITY_SERVICE_TOKEN=<service-token>
+# prod mode (no static fallback):
+export FUSION_REQUIRE_JWT=1
+```
+
+> **Defense-in-depth:** all `fusion_core.tenant` / `install_tenant_middleware` imports live inside `is_identity_enabled()` guards (lazy at enable-time), mirroring `mlx_client.py`'s guarded-import pattern — if fusion-core is ever absent, the identity path silently no-ops rather than breaking import. Postgres RLS kept (unchanged). fusion-identity + fusion-core added to the `[cloud]` extra (CI installs `.[test,cloud,web]`).
 
 ---
 
