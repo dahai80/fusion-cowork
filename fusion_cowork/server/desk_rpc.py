@@ -545,10 +545,7 @@ class DeskRPCServer:
                     result = client.verify(token)
                     if result is not None:
                         uid = str(
-                            params.get("x-user-id")
-                            or params.get("X-User-Id")
-                            or params.get("_user_id")
-                            or LOCAL_USER
+                            params.get("x-user-id") or params.get("X-User-Id") or params.get("_user_id") or LOCAL_USER
                         )
                         resolved_principal = TenantPrincipal(tenant_id=result.tid, user_id=uid)
                     else:

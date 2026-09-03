@@ -372,7 +372,9 @@ class TestSpaceApiMiddleware:
         app = self._build_app(monkeypatch, {"tid": "t1", "role": "r"})
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
         try:
-            resp = await client.post("/spaces", json={"name": "n"}, headers={"Authorization": f"Bearer {_make_token()}"})
+            resp = await client.post(
+                "/spaces", json={"name": "n"}, headers={"Authorization": f"Bearer {_make_token()}"}
+            )
             assert resp.status_code == 401
         finally:
             await client.aclose()
@@ -414,7 +416,9 @@ class TestMcpHttpMiddleware:
         monkeypatch.setenv("FUSION_IDENTITY_SERVICE_TOKEN", "svc")
         identity_mod.reset_identity_client()
         c = identity_mod.get_identity_client()
-        c._client = httpx.Client(transport=_mock_transport(lambda r: httpx.Response(200, json={"tid": "t1"})), timeout=2.0)
+        c._client = httpx.Client(
+            transport=_mock_transport(lambda r: httpx.Response(200, json={"tid": "t1"})), timeout=2.0
+        )
         from fusion_cowork.server.mcp_http import create_streamable_app
         from fusion_cowork.server.mcp_server import MCPToolRegistry
 
