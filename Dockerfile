@@ -23,9 +23,9 @@ RUN pip install --user --no-cache-dir "/build/fusion-cowork[cloud,web]"
 
 
 FROM python:${PYTHON_VERSION} AS runtime
-LABEL version="0.5.3" \
+LABEL version="0.5.4" \
       org.opencontainers.image.title="fusion-cowork" \
-      org.opencontainers.image.version="0.5.3" \
+      org.opencontainers.image.version="0.5.4" \
       org.opencontainers.image.description="Local-first Apple Silicon AI 多租户云工作流引擎"
 
 ENV PYTHONUNBUFFERED=1 \
