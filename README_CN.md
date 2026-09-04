@@ -616,6 +616,11 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] 纵深防御: 所有 `fusion_core.tenant`/`install_tenant_middleware` 导入在 `is_identity_enabled()` 守卫内 (启用时懒导入), 镜像 `mlx_client.py` 守卫导入模式; fusion-identity + fusion-core 加入 `[cloud]` extra; Postgres RLS 保留
 - [x] opt-in 默认 OFF (镜像 guard #73/cluster #79 模式), 零行为变化, 1254 tests passed (29 新 identity 用例 offline httpx MockTransport), ruff 0 issues
 
+#### V0.5.4 (补丁) — fusion-identity 生产契约文档 (#90)
+- [x] 新增 `docs/identity.md` — 完整生产契约: opt-in 环境变量表 (FUSION_IDENTITY_ENABLED/_URL/_SERVICE_TOKEN + FUSION_REQUIRE_JWT)、部署拓扑 (fusion-identity 127.0.0.1:11470 loopback)、HTTP 契约 (Authorization: Bearer + X-Tenant-Id + 可选 X-User-Id, exempt 路径)、UDS 契约 (扁平 params._auth_token + x-user-id, tid 仅来自 verify 响应, 记录与 studio `_auth:{jwt,tid}` 嵌套的差异 + flatten 适配器)、WS/sync/remote 经 verify_any_token seam、配额来自 VerifyResponse.quota、禁用开发路径
+- [x] 修正 README.md 过时声明 — fusion-core/fusion-identity 为 in-tree monorepo 包 (非 PyPI), 经 `pip install -e fusion-core`/`-e fusion-identity` 从 monorepo 根安装, 不经 extras (CI 单仓 checkout 故缺失, 中间件测试 skipif)
+- [x] 文档补丁, 无代码变更; 1254 tests 不受影响
+
 #### V0.2.9 (补丁) — 商用问题修复
 - [x] P0: Computer Use 循环截图以 `image_url` 多模态格式传入模型 (原盲调用, 致盲修复)
 - [x] P0: `ScreenCaptureNode` 视觉分析复用同一多模态通道
