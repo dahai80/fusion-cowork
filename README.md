@@ -458,7 +458,9 @@ export FUSION_IDENTITY_SERVICE_TOKEN=<service-token>
 export FUSION_REQUIRE_JWT=1
 ```
 
-> **Defense-in-depth:** all `fusion_core.tenant` / `install_tenant_middleware` imports live inside `is_identity_enabled()` guards (lazy at enable-time), mirroring `mlx_client.py`'s guarded-import pattern — if fusion-core is ever absent, the identity path silently no-ops rather than breaking import. Postgres RLS kept (unchanged). fusion-identity + fusion-core added to the `[cloud]` extra (CI installs `.[test,cloud,web]`).
+> **Production contract & defaults:** see [`docs/identity.md`](docs/identity.md) — env defaults, deploy topology, and the HTTP (`Authorization: Bearer` + `X-Tenant-Id`) / UDS (`_auth_token` flat string) header contract fusion-studio and other clients should use.
+>
+> **Defense-in-depth:** all `fusion_core.tenant` / `install_tenant_middleware` imports live inside `is_identity_enabled()` guards (lazy at enable-time), mirroring `mlx_client.py`'s guarded-import pattern — if fusion-core is ever absent, the identity path silently no-ops rather than breaking import. Postgres RLS kept (unchanged). `fusion-core` / `fusion-identity` are in-tree monorepo packages (not on PyPI); install via `pip install -e fusion-core` / `-e fusion-identity` from the monorepo root, not via extras (CI does a single-repo checkout, so they are absent there — middleware tests skipif).
 
 ---
 
