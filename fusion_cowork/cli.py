@@ -3151,7 +3151,7 @@ def db_migrate(dsn: str):
 
 
 @cli.command("serve")
-@click.option("--host", default="", help="绑定地址 (默认读 FUSION_BIND_HOST, 再默认 0.0.0.0 容器模式)")
+@click.option("--host", default="", help="绑定地址 (默认读 FUSION_BIND_HOST, 再默认 127.0.0.1 单机)")
 @click.option("--port", default=11438, show_default=True, help="HTTP 端口 (/rpc /health /mcp /sse)")
 @click.option("--json-log", "json_log", is_flag=True, help="结构化 JSON 日志 (structlog, 生产)")
 @click.option("--metrics-port", default=0, help="prometheus /metrics 端口 (0=不启)")
@@ -3167,7 +3167,7 @@ def serve(host: str, port: int, json_log: bool, metrics_port: int):
     from .observability.metrics import maybe_start_prometheus_endpoint
     from .server.mcp_server import MCPServer
 
-    bind_host = host or os.environ.get("FUSION_BIND_HOST", "0.0.0.0")
+    bind_host = host or os.environ.get("FUSION_BIND_HOST", "127.0.0.1")
     _json_env = os.environ.get("FUSION_JSON_LOG", "").strip().lower() in ("1", "true", "yes", "on")
     if json_log or _json_env:
         setup_logger(json=True)
