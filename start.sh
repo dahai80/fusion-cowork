@@ -336,7 +336,7 @@ do_container() {
         log_error "python3 not found in PATH"
         exit 1
     fi
-    local bind_host="${FUSION_BIND_HOST:-0.0.0.0}"
+    local bind_host="${FUSION_BIND_HOST:-127.0.0.1}"
     local port="${FUSION_PORT:-11438}"
     log_info "serve ${bind_host}:${port} (uvicorn native SIGTERM)"
     exec "${python_bin}" -m fusion_cowork serve \
@@ -364,7 +364,7 @@ Commands:
 
 Environment:
   SOCK_FILE          Unix Domain Socket path (default: /tmp/fusion-cowork.sock)
-  FUSION_BIND_HOST   容器模式 bind host (default: 0.0.0.0)
+  FUSION_BIND_HOST   bind host (default: 127.0.0.1, single-machine)
   FUSION_PORT        容器模式 HTTP 端口 (default: 11438)
 EOF
 }
