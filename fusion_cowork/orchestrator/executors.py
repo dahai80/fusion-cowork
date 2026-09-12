@@ -165,12 +165,31 @@ class MLXExecutor:
 class ShellExecutor:
     """Shell 执行器 — 执行命令行。"""
 
+    def __init__(self, permission_manager=None):
+        # P0-4 (audit 0912): permission gate — the orchestration path executed
+        # arbitrary shell commands with no PermissionManager/guard check, while
+        # the same shell_exec node inside the engine required three-level
+        # approval. Wire the gate here so shell delegation is subject to the
+        # same deny rules / HIGH_RISK_NODES / guard verdict as the engine.
+        self._permission_manager = permission_manager
+
     async def __call__(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         command = input_data.get("command", "")
         timeout = input_data.get("timeout", 60)
 
         if not command:
             return {"error": "缺少 command 参数"}
+
+        # P0-4: check permission before spawning any process
+        if self._permission_manager is not None:
+            try:
+                allowed = await self._permission_manager.check("shell_exec", "execute", {"command": command})
+            except Exception as e:
+                logger.error(f"ShellExecutor 权限检查异常, fail-closed: {e}")
+                return {"status": "denied", "error": f"shell 命令权限检查异常: {e}"}
+            if not allowed:
+                logger.warning(f"ShellExecutor 命令被权限系统拒绝: {command[:80]}")
+                return {"status": "denied", "error": "shell 命令被权限系统拒绝, 需人工审批"}
 
         try:
             proc = await asyncio.create_subprocess_shell(
@@ -266,15 +285,43 @@ class CoordinatorExecutor:
         except (TypeError, ValueError):
             timeout_sec = 30.0
 
-        for _ in range(max(1, int(timeout_sec * 2))):
-            await asyncio.sleep(0.5)
-            task = self._orchestrator.get_task(task_id)
-            if task and task.status in ("completed", "failed"):
-                return task.output_data if task.status == "completed" else {"error": task.error}
+        # P2-2 (audit 0912): fixed-interval polling replaced with an
+        # asyncio.Event signaled by the child's done-callback — the parent
+        # wakes the moment the child reaches a terminal state instead of
+        # waking every 0.5 s (busy-wait + up to 0.5 s added latency).
+        done_event = asyncio.Event()
 
-        logger.warning(f"CoordinatorExecutor 子任务超时 ({timeout_sec}s), 取消子任务: {task_id}")
+        def _signal(_t: asyncio.Task) -> None:
+            done_event.set()
+
+        # Fast path: the child may already be terminal (or get_task is mocked
+        # in tests) — don't wait for an event that will never fire.
+        task = self._orchestrator.get_task(task_id)
+        if task is not None and task.status in ("completed", "failed", "cancelled"):
+            return task.output_data if task.status == "completed" else {"error": task.error}
+
+        child_handle = self._orchestrator._task_handles.get(task_id)
+        if isinstance(child_handle, asyncio.Task):
+            child_handle.add_done_callback(_signal)
+
         try:
-            await self._orchestrator.cancel_task(task_id)
-        except Exception as e:
-            logger.error(f"CoordinatorExecutor 取消子任务失败: {e}")
-        return {"error": f"子任务超时 ({timeout_sec}s)", "task_id": task_id}
+            await asyncio.wait_for(done_event.wait(), timeout=timeout_sec)
+        except TimeoutError:
+            logger.warning(f"CoordinatorExecutor 子任务超时 ({timeout_sec}s), 取消子任务: {task_id}")
+            try:
+                # cancel_task is a sync API on AgentOrchestrator
+                self._orchestrator.cancel_task(task_id)
+            except Exception as e:
+                logger.error(f"CoordinatorExecutor 取消子任务失败: {e}")
+            return {"error": f"子任务超时 ({timeout_sec}s)", "task_id": task_id}
+        finally:
+            if isinstance(child_handle, asyncio.Task):
+                try:
+                    child_handle.remove_done_callback(_signal)
+                except Exception:
+                    pass
+
+        task = self._orchestrator.get_task(task_id)
+        if task is not None and task.status == "completed":
+            return task.output_data
+        return {"error": (task.error if task is not None else "子任务终态异常")}
