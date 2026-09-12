@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import tempfile
 import time
@@ -28,7 +29,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from fusion_cowork.orchestrator.orchestrator import AgentOrchestrator, AgentTask
+from fusion_cowork.orchestrator.orchestrator import AgentOrchestrator, AgentRole, AgentTask
 
 # ── A-5 (P0-2): submit_task routing ──
 
@@ -903,3 +904,178 @@ class TestDashboardArchiveVisibility:
         assert entry["status"] == "completed"
         # acceptance_status stays "" until request_acceptance is called (real contract)
         assert entry["acceptance_status"] == ""
+
+
+class TestV2SchemeOne:
+    """方案一: honest terminal states — no_executor fails, retry uses a fresh
+    plan, negative depends_on is rejected by the schema validator."""
+
+    class ShellEcho:
+        """Minimal executor_shell stand-in returning the result contract."""
+
+        async def __call__(self, input_data):
+            return {"stdout": "v2-retry-ok"}
+
+    def test_failed_statuses_includes_no_executor(self):
+        from fusion_cowork.orchestrator.orchestrator import FAILED_STATUSES
+
+        assert {"failed", "denied", "error", "no_executor"} <= FAILED_STATUSES
+
+    def test_negative_depends_on_flagged(self):
+        from fusion_cowork.orchestrator.orchestrator import AgentOrchestrator
+
+        bad = [{"description": "a", "agent_id": "executor_shell", "input_data": {"command": "x"}, "depends_on": [-1]}]
+        problems = AgentOrchestrator._planner_schema_problems(bad, set())
+        assert any("negative" in x for x in problems), problems
+
+    @pytest.mark.asyncio
+    async def test_no_executor_task_fails_not_completes(self):
+        from fusion_cowork.orchestrator.orchestrator import Agent
+
+        orch = AgentOrchestrator()
+        orch.register_agent(Agent(agent_id="ghost", name="ghost", role=AgentRole.EXECUTOR))
+        plan = await orch.create_plan("v2-noexec", "t")
+        t = orch.add_task(plan.plan_id, "ghost", "run", {"prompt": "x"})
+        # clear the DEFAULT_EXECUTORS fallback too, so _execute_task really
+        # reaches the no_executor branch (otherwise NodeExecutor runs and
+        # fails with "缺少 node_name 参数" — also a failure, but not ours)
+        with mock.patch.dict("fusion_cowork.orchestrator.executors.DEFAULT_EXECUTORS", {}, clear=True):
+            result = await orch.execute_plan(plan.plan_id)
+        assert result["status"] == "failed"
+        assert t.status == "failed"
+        assert "no_executor" in str(t.error) + str(result)
+        await orch.stop_runtimes()
+
+    @pytest.mark.asyncio
+    async def test_retry_supersedes_old_plan(self):
+        """Retry must run on a FRESH plan: the failed first planner task must
+        not leak into the retry plan's terminal status (was: partial on
+        full success)."""
+        good = json.dumps(
+            [
+                {
+                    "description": "run echo",
+                    "agent_id": "executor_shell",
+                    "input_data": {"command": "echo v2-retry-ok", "timeout": 5},
+                    "depends_on": [],
+                    "acceptance_criteria": "ok",
+                }
+            ]
+        )
+        bad = '[{"description": "d", "agent_id": "executor_node", "input_data": "str", "depends_on": [-1]}]'
+        replies = [bad, good]
+
+        class FakePlanner:
+            async def __call__(self, input_data):
+                return {"content": replies.pop(0) if replies else good}
+
+        orch = AgentOrchestrator()
+        # run_standard_pipeline requires a PLANNER-role agent (get_agents_by_role)
+        from fusion_cowork.orchestrator.orchestrator import Agent
+
+        orch.register_agent(Agent(agent_id="planner", name="planner", role=AgentRole.PLANNER))
+        orch.register_executor("planner", FakePlanner())
+        # the parsed subtask targets executor_shell — register agent + executor
+        # or the plan correctly fails with "Agent 不存在" (honest failure)
+        TestPlanFailurePropagation._register(orch, "executor_shell", TestV2SchemeOne.ShellEcho())
+        result = await orch.run_standard_pipeline({"prompt": "v2 retry drill", "description": "v2 retry"})
+        assert result.get("status") == "completed", result
+        # the retry plan (last executed) contains no failed planner residue
+        plan = orch._plans[result["plan_id"]]
+        assert all(t.status != "failed" for t in plan.tasks), [t.status for t in plan.tasks]
+        # the original plan was superseded, not left "partial"
+        superseded = [p for p in orch._plans.values() if p.status == "superseded"]
+        assert superseded
+        await orch.stop_runtimes()
+
+
+class TestV2SchemeTwo:
+    """方案二: presence reflects submit/plan paths, chain_agents delegates."""
+
+    @pytest.mark.asyncio
+    async def test_presence_busy_during_plan_execution(self):
+        started = asyncio.Event()
+
+        class SlowEx:
+            async def __call__(self, input_data):
+                started.set()
+                await asyncio.sleep(0.3)
+                return {"stdout": "slow-ok"}
+
+        orch = AgentOrchestrator()
+        TestPlanFailurePropagation._register(orch, "executor_shell", SlowEx())
+        plan = await orch.create_plan("v2-presence", "t")
+        t = orch.add_task(plan.plan_id, "executor_shell", "run", {"command": "sleep 0.2"})
+        exec_fut = asyncio.ensure_future(orch.execute_plan(plan.plan_id))
+        await asyncio.wait_for(started.wait(), timeout=5)
+        agent = orch._agents["executor_shell"]
+        assert agent.status == "busy", agent.status
+        assert agent.current_task == t.task_id
+        await exec_fut
+        assert agent.status == "idle" and agent.current_task == ""
+        await orch.stop_runtimes()
+
+    def test_chain_agents_delegates_to_relay(self):
+        import inspect
+
+        from fusion_cowork.space.agent_runtime import SpaceAgentRuntime
+
+        src = inspect.getsource(SpaceAgentRuntime.chain_agents)
+        assert "relay_agents" in src
+
+
+class TestV2SchemeThree:
+    """方案三: stream_message guard, acceptance trajectory, plan-task acceptance."""
+
+    def test_stream_message_has_interrupt_guard(self):
+        import inspect
+
+        from fusion_cowork.space.chat import SpaceChatService
+
+        src = inspect.getsource(SpaceChatService.stream_message)
+        assert "响应中断" in src and "except Exception" in src
+
+    def test_get_task_falls_back_to_plan_tasks(self):
+        orch = AgentOrchestrator()
+        orch.register_default_agents()
+        tid = TestDashboardArchiveVisibility._run_to_completion(orch)
+        assert tid  # submit-path task addressable
+        # plan-path subtask: never in _tasks/_task_archive, but get_task finds it
+        plan = orch._plans[next(iter(orch._plans))] if orch._plans else None
+        # create a fresh plan-path task deterministically
+        task = orch.add_task(next(iter(orch._plans)), "executor_node", "plan-child", {}) if plan else None
+        if task is None:
+            import asyncio as _aio
+
+            plan = _aio.run(orch.create_plan("v2-gettask", "t"))
+            task = orch.add_task(plan.plan_id, "executor_node", "plan-child", {})
+        assert task.task_id not in orch._tasks
+        assert task.task_id not in orch._task_archive
+        assert orch.get_task(task.task_id) is task
+
+    @pytest.mark.asyncio
+    async def test_acceptance_verdict_written_to_trajectory(self):
+        orch = AgentOrchestrator()
+        orch.register_default_agents()
+        plan = await orch.create_plan("v2-accept", "t")
+        t = orch.add_task(plan.plan_id, "executor_node", "run", {})
+        t.status = "completed"
+        t.started_at = 1.0
+        t.completed_at = 2.0
+        r = orch.accept_task(t.task_id, "accepted", comment="fine", acceptor="alice")
+        assert r.get("acceptance_status") == "accepted", r
+        # verify the event landed on disk
+        import glob as _glob
+        import json as _json
+
+        found = False
+        from fusion_cowork.trajectory.recorder import DEFAULT_TRAJECTORY_DIR
+
+        if os.path.isdir(DEFAULT_TRAJECTORY_DIR):
+            for fp in _glob.glob(os.path.join(DEFAULT_TRAJECTORY_DIR, "*.jsonl")):
+                for line in open(fp, encoding="utf-8"):
+                    if "task_acceptance" in line and t.task_id in line:
+                        evt = _json.loads(line)
+                        found = evt["data"]["acceptor"] == "alice"
+        assert found, "acceptance verdict not persisted to trajectory"
+        await orch.stop_runtimes()

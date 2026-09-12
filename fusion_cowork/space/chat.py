@@ -122,13 +122,32 @@ class SpaceChatService:
             model = models[0]["id"] if models else "default"
 
         full_response = []
-        async for chunk in self._mlx.stream_chat(
-            model=model,
-            messages=messages,
-        ):
-            full_response.append(chunk)
-            await self._emit(space_id, "stream", {"chunk": chunk})
-            yield chunk
+        try:
+            async for chunk in self._mlx.stream_chat(
+                model=model,
+                messages=messages,
+            ):
+                full_response.append(chunk)
+                await self._emit(space_id, "stream", {"chunk": chunk})
+                yield chunk
+        except Exception as e:
+            # v2 方案三 (P1-4): a mid-stream model failure previously dropped the
+            # partial response silently — no persistence, no error event, the
+            # SSE feed just died and the agent's "answer" was untraceable.
+            logger.error(f"stream_message 模型流中断: {e}", exc_info=True)
+            await self._emit(space_id, "error", {"agent_id": agent_id, "error": str(e), "partial": len(full_response)})
+            partial = "".join(full_response)
+            if partial:
+                interrupted = SpaceMessage(
+                    space_id=space_id,
+                    user_id="",
+                    agent_id=agent_id,
+                    content=partial + "\n[响应中断]",
+                    role="assistant",
+                )
+                await self._store.add_message(interrupted)
+                await self._emit(space_id, "message_complete", interrupted.to_dict())
+            raise
 
         complete = "".join(full_response)
         assistant_msg = SpaceMessage(

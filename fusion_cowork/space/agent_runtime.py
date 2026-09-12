@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from fusion_cowork.tenant import resolve_tenant_id
 
 from ..ai.mlx_client import FusionMLXClient
+from .chat import SpaceChatService
 from .permission import SpacePermission
 from .store import SpaceStore
 
@@ -130,28 +131,13 @@ class SpaceAgentRuntime:
         initial_message: str,
         model: str = "",
     ) -> List[Dict[str, Any]]:
-        if not await self._perm.check(space_id, user_id, "call_agent"):
-            raise PermissionError(f"User {user_id} cannot call agents in space {space_id}")
-        if len(agent_ids) < 2:
-            raise ValueError("chain_agents requires at least 2 agents")
-        results = []
-        current_message = initial_message
-        for agent_id in agent_ids:
-            agent_def = await self._store.get_agent_def(space_id, agent_id)
-            if not agent_def:
-                logger.warning(f"chain_agents: agent {agent_id} not found, skipping")
-                results.append({"agent_id": agent_id, "error": "not found"})
-                continue
-            try:
-                reply = await self.call_agent(space_id, agent_id, user_id, current_message, model=model)
-                results.append({"agent_id": agent_id, "content": reply})
-                current_message = reply
-            except Exception as e:
-                logger.error(f"chain_agents: agent {agent_id} failed: {e}")
-                results.append({"agent_id": agent_id, "error": str(e)})
-                break
-        logger.info(f"SpaceAgentRuntime.chain_agents space={space_id} agents={agent_ids} steps={len(results)}")
-        return results
+        """v2 方案二 (P1-6): delegate to the hardened SpaceChatService.relay_agents
+        instead of maintaining a second, weaker relay implementation (the old
+        inline loop broke on first failure, had no parallel groups, no context
+        trimming, and no optional-agent semantics). Return shape is compatible:
+        [{"agent_id", "content"|"error"}, ...]."""
+        chat = SpaceChatService(self._store, self._mlx, self._perm)
+        return await chat.relay_agents(space_id, user_id, agent_ids, initial_message, model=model)
 
     def _build_messages(self, agent_def: Dict[str, Any], user_message: str) -> List[dict]:
         messages = []

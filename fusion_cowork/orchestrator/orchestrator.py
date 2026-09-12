@@ -21,6 +21,10 @@ from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# v2 方案一: single source of truth for executor-reported failure — no_executor
+# (the no-executor fallback) previously fell through as success (P1-2).
+FAILED_STATUSES = {"failed", "denied", "error", "no_executor"}
+
 
 class AgentRole(Enum):
     """Agent 角色。"""
@@ -277,7 +281,13 @@ class AgentOrchestrator:
         """执行提交的任务 — HI-18: CancelledError 单独捕获, finally 置终态 + completed_at。"""
         task.status = "running"
         task.started_at = time.time()
-
+        # v2 方案二 (P1-3): presence must reflect the submit path too — it was
+        # only maintained by AgentRuntime (message-bus), so the dashboard
+        # showed every agent idle while orchestrated work was running.
+        agent = self._agents.get(task.agent_id)
+        if agent is not None:
+            agent.status = "busy"
+            agent.current_task = task.task_id
         try:
             executor = self._executors.get(task.agent_id)
             if executor:
@@ -296,7 +306,7 @@ class AgentOrchestrator:
                 # failure — previously a node returning {"status": "failed"}
                 # still marked the task completed (silent false success).
                 _err = result.get("error")
-                _failed = result.get("status") in ("failed", "denied", "error") or _err
+                _failed = result.get("status") in FAILED_STATUSES or _err
                 if _failed:
                     task.status = "failed"
                     task.error = str(_err or result.get("status") or "executor reported failure")
@@ -311,7 +321,7 @@ class AgentOrchestrator:
                     result = result if isinstance(result, dict) else {"result": result}
                     task.output_data = result
                     _err = result.get("error")
-                    _failed = result.get("status") in ("failed", "denied", "error") or _err
+                    _failed = result.get("status") in FAILED_STATUSES or _err
                     if _failed:
                         task.status = "failed"
                         task.error = str(_err or result.get("status") or "executor reported failure")
@@ -343,6 +353,9 @@ class AgentOrchestrator:
         finally:
             task.completed_at = time.time()
             self._task_handles.pop(task.task_id, None)
+            if agent is not None:
+                agent.status = "idle"
+                agent.current_task = ""
             # R-1: 终态任务从 _tasks 剔除, 防 _tasks 无界增长 (运行态保留供查询)
             if task.status in ("completed", "failed", "cancelled"):
                 self._tasks.pop(task.task_id, None)
@@ -419,6 +432,34 @@ class AgentOrchestrator:
             task.acceptor = acceptor
         task.acceptance_status = verdict
         task.acceptance_comment = comment
+        # v2 方案三 (P2): acceptance verdicts were only in-memory — the
+        # retrospective pool could not answer "which tasks did a human
+        # accept/reject". Append a durable trajectory event (best-effort).
+        try:
+            from ..trajectory.recorder import TrajectoryEvent, TrajectoryWriter
+
+            TrajectoryWriter().write(
+                TrajectoryEvent(
+                    ts=time.time(),
+                    event="task_acceptance",
+                    execution_id=task_id,
+                    workflow_id=task_id,
+                    workflow_name=f"acceptance:{verdict}",
+                    status=verdict,
+                    is_error=verdict == "rejected",
+                    data={
+                        "task_id": task_id,
+                        "agent_id": task.agent_id,
+                        "verdict": verdict,
+                        "comment": comment[:300],
+                        "acceptor": task.acceptor,
+                        "retry_count": task.retry_count,
+                        "task_status": task.status,
+                    },
+                )
+            )
+        except Exception as e:
+            logger.debug(f"acceptance trajectory skipped: {e}")
         if verdict == "accepted":
             logger.info(f"任务验收通过: {task_id} acceptor={task.acceptor}")
             return {"task_id": task_id, "acceptance_status": "accepted", "status": task.status}
@@ -510,7 +551,7 @@ class AgentOrchestrator:
             r = results.get(task_id)
             if not isinstance(r, dict):
                 return False
-            return bool(r.get("error")) or r.get("status") in ("failed", "denied", "error")
+            return bool(r.get("error")) or r.get("status") in FAILED_STATUSES
 
         # 拓扑排序执行
         executed = set()
@@ -586,9 +627,7 @@ class AgentOrchestrator:
                     results[task.task_id] = {"error": str(result)}
                     task.status = "failed"
                     task.error = str(result)
-                elif isinstance(result, dict) and (
-                    result.get("error") or result.get("status") in ("failed", "denied", "error")
-                ):
+                elif isinstance(result, dict) and (result.get("error") or result.get("status") in FAILED_STATUSES):
                     # A-4: executor-reported failure is a failed task (was "completed")
                     results[task.task_id] = result
                     task.status = "failed"
@@ -637,26 +676,32 @@ class AgentOrchestrator:
         task.status = "running"
         task.started_at = time.time()
         executor = self._executors.get(task.agent_id)
+        # v2 方案二 (P1-3): same presence sync as the submit path — plan-path
+        # subtasks previously left agents showing idle on the dashboard.
+        agent = self._agents.get(task.agent_id)
+        if agent is not None:
+            agent.status = "busy"
+            agent.current_task = task.task_id
 
-        if executor:
-            try:
-                result = executor(task.input_data)
-                # A-11 (audit 0912 follow-up): await coroutine results — see
-                # _run_submitted_task for the callable-class-instance rationale.
-                if asyncio.iscoroutine(result):
-                    # HI-8: 单任务超时, 防卡死 executor 拖垮整个 plan
-                    result = await asyncio.wait_for(result, timeout=self._task_timeout)
-                return result if isinstance(result, dict) else {"result": result}
-            except TimeoutError:
-                task.status = "failed"
-                task.error = f"任务超时 ({self._task_timeout}s)"
-                logger.warning(f"任务超时: {task.task_id} ({self._task_timeout}s)")
-                return {"error": task.error}
-            except Exception as e:
-                task.status = "failed"
-                task.error = str(e)
-                return {"error": str(e)}
-        else:
+        try:
+            if executor is not None:
+                try:
+                    result = executor(task.input_data)
+                    # A-11 (audit 0912 follow-up): await coroutine results — see
+                    # _run_submitted_task for the callable-class-instance rationale.
+                    if asyncio.iscoroutine(result):
+                        # HI-8: 单任务超时, 防卡死 executor 拖垮整个 plan
+                        result = await asyncio.wait_for(result, timeout=self._task_timeout)
+                    return result if isinstance(result, dict) else {"result": result}
+                except TimeoutError:
+                    task.status = "failed"
+                    task.error = f"任务超时 ({self._task_timeout}s)"
+                    logger.warning(f"任务超时: {task.task_id} ({self._task_timeout}s)")
+                    return {"error": task.error}
+                except Exception as e:
+                    task.status = "failed"
+                    task.error = str(e)
+                    return {"error": str(e)}
             # 无执行器时尝试默认执行器
             from .executors import DEFAULT_EXECUTORS
 
@@ -681,6 +726,10 @@ class AgentOrchestrator:
             logger.warning(f"Agent {task.agent_id} 无执行器，跳过")
             await asyncio.sleep(0.1)
             return {"status": "no_executor", "input": task.input_data}
+        finally:
+            if agent is not None:
+                agent.status = "idle"
+                agent.current_task = ""
 
     # ── 编排模板 ──
 
@@ -751,6 +800,14 @@ class AgentOrchestrator:
         last_content = ""
         problems: list = []
         for attempt in range(2):
+            if attempt > 0:
+                # v2 方案一 (P1-1): retry on a FRESH plan — reusing the old plan
+                # re-ran the failed planner task inside it, so a fully-successful
+                # retry still reported plan.status="partial" (honest-terminal
+                # mechanism sabotaged by its own retry). Supersede + recreate.
+                plan.status = "superseded"
+                logger.info(f"plan {plan.plan_id} superseded by planner retry")
+                plan = await self.create_plan("standard_pipeline_retry", "标准编排流水线(重试)")
             plan_task = self.add_task(
                 plan.plan_id,
                 planner[0].agent_id,
@@ -870,10 +927,17 @@ class AgentOrchestrator:
                 problems.append(f"subtask {i}: executor_shell input_data missing command")
             for d in st.get("depends_on") or []:
                 try:
-                    if int(d) >= i:
-                        problems.append(f"subtask {i}: depends_on {d} must reference an EARLIER index")
+                    idx = int(d)
                 except (TypeError, ValueError):
                     problems.append(f"subtask {i}: depends_on {d!r} is not an integer index")
+                    continue
+                # v2 方案一 (P1-5): negative indexes passed the old ">= i" check
+                # but were then silently dropped at materialization — validate
+                # the full legal range here so nothing slips through.
+                if idx < 0:
+                    problems.append(f"subtask {i}: depends_on {d} is negative")
+                elif idx >= i:
+                    problems.append(f"subtask {i}: depends_on {d} must reference an EARLIER index")
         return problems
 
     def get_plan_status(self, plan_id: str) -> Optional[Dict[str, Any]]:
@@ -933,8 +997,21 @@ class AgentOrchestrator:
         return self._message_bus
 
     def get_task(self, task_id: str):
-        """获取任务状态（公共 API，避免外部访问 _tasks）。"""
-        return self._tasks.get(task_id) or self._task_archive.get(task_id)
+        """获取任务状态（公共 API，避免外部访问 _tasks）。
+
+        v2 方案三: also searches plan objects — plan-path subtasks never
+        enter _tasks/_task_archive, so the acceptance gate previously
+        returned "任务不存在" for every orchestrated plan subtask (same
+        blind spot the dashboard had before the 24a89bc merge fix).
+        """
+        t = self._tasks.get(task_id) or self._task_archive.get(task_id)
+        if t is not None:
+            return t
+        for p in self._plans.values():
+            for pt in p.tasks:
+                if pt.task_id == task_id:
+                    return pt
+        return None
 
     def _archive_task(self, task) -> None:
         """Bounded LRU archive of terminal tasks (acceptance gate needs
