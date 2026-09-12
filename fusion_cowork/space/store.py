@@ -628,6 +628,43 @@ class SpaceStore:
         )
         return member
 
+    async def add_member_checked(
+        self, member: SpaceMember, max_members: int, tenant_id: Optional[str] = None
+    ) -> SpaceMember:
+        """P2-7 (audit 0912): atomic capacity-checked member insert.
+
+        The COUNT guard and the INSERT run in the same serial write
+        transaction — previously they were separate calls, so concurrent
+        joins could exceed max_members."""
+        tid = resolve_tenant_id(tenant_id or getattr(member, "tenant_id", None))
+        if not getattr(member, "tenant_id", ""):
+            member.tenant_id = tid
+        async with self.write_tx(tid) as h:
+            cur = await h.fetchval(
+                "SELECT COUNT(*) FROM space_members WHERE space_id = ? AND tenant_id = ?",
+                (member.space_id, tid),
+            )
+            if max_members > 0 and int(cur or 0) >= max_members:
+                raise ValueError(f"空间 {member.space_id} 已满 ({max_members} 人)")
+            await h.exec(
+                "INSERT INTO space_members (space_id, user_id, role, display_name, joined_at, last_active, tenant_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    member.space_id,
+                    member.user_id,
+                    member.role.value if isinstance(member.role, SpaceRole) else member.role,
+                    member.display_name,
+                    member.joined_at,
+                    member.last_active,
+                    tid,
+                ),
+            )
+        logger.info(
+            f"SpaceStore.add_member_checked space={member.space_id} user={member.user_id} "
+            f"role={member.role} count={int(cur or 0) + 1} tenant={tid}"
+        )
+        return member
+
     async def get_member(self, space_id: str, user_id: str, tenant_id: Optional[str] = None) -> Optional[SpaceMember]:
         tid = resolve_tenant_id(tenant_id)
         row = await self._fetchone(
@@ -700,20 +737,22 @@ class SpaceStore:
         tid = resolve_tenant_id(tenant_id or getattr(msg, "tenant_id", None))
         if not getattr(msg, "tenant_id", ""):
             msg.tenant_id = tid
-        # Stage 7: per-tenant per-space 消息配额 (opt-in)
+        # Stage 7 / P2-4 (audit 0912): quota COUNT + check moved INSIDE the
+        # serial write transaction — previously COUNT ran outside, so
+        # concurrent inserts could overshoot the quota.
         from ..security.quotas import get_default_quota_enforcer
 
-        try:
-            cur = await self._fetchval(
+        async with self.write_tx(tid) as h:
+            cur = await h.fetchval(
                 "SELECT COUNT(*) FROM space_messages WHERE space_id = ? AND tenant_id = ?",
                 (msg.space_id, tid),
             )
-            get_default_quota_enforcer().check_add_message(tid, msg.space_id, int(cur or 0))
-        except Exception as e:
-            if "QuotaExceeded" in type(e).__name__:
-                raise
-            logger.debug(f"配额校验跳过: {e}")
-        async with self.write_tx(tid) as h:
+            try:
+                get_default_quota_enforcer().check_add_message(tid, msg.space_id, int(cur or 0))
+            except Exception as e:
+                if "QuotaExceeded" in type(e).__name__:
+                    raise
+                logger.debug(f"配额校验跳过: {e}")
             await h.exec(
                 "INSERT INTO space_messages (id, space_id, user_id, agent_id, role, content, "
                 "content_type, attachments, parent_msg_id, thread_id, metadata, created_at, tenant_id) "

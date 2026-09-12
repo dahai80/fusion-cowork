@@ -167,6 +167,10 @@ class DeskRPCServer:
             "desk.agent.submit": self._handle_agent_submit,
             "desk.agent.status": self._handle_agent_status,
             "desk.agent.cancel": self._handle_agent_cancel,
+            "desk.agent.request_acceptance": self._handle_agent_request_acceptance,
+            "desk.agent.accept": self._handle_agent_accept,
+            "desk.agent.reopen": self._handle_agent_reopen,
+            "desk.task.dashboard": self._handle_task_dashboard,
             # MLX
             "desk.mlx.status": self._handle_mlx_status,
             "desk.mlx.models": self._handle_mlx_models,
@@ -967,6 +971,99 @@ class DeskRPCServer:
         orch = self._get_orchestrator()
         ok = orch.cancel_task(task_id)
         return {"status": "cancelled" if ok else "noop", "task_id": task_id}
+
+    async def _handle_agent_request_acceptance(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        task_id = params.get("task_id", "")
+        if not task_id:
+            return {"error": "task_id 不能为空"}
+        orch = self._get_orchestrator()
+        return orch.request_acceptance(task_id, acceptor=params.get("acceptor", ""))
+
+    async def _handle_agent_accept(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        task_id = params.get("task_id", "")
+        verdict = params.get("verdict", "")
+        if not task_id or not verdict:
+            return {"error": "task_id 与 verdict 不能为空"}
+        orch = self._get_orchestrator()
+        result = orch.accept_task(
+            task_id,
+            verdict=verdict,
+            comment=params.get("comment", ""),
+            acceptor=params.get("acceptor", ""),
+        )
+        # rejected -> auto re-run through its executor (rework loop)
+        if result.get("acceptance_status") == "rejected" and params.get("rerun", True):
+            result["rerun"] = orch.reopen_task(task_id)
+        return result
+
+    async def _handle_agent_reopen(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        task_id = params.get("task_id", "")
+        if not task_id:
+            return {"error": "task_id 不能为空"}
+        orch = self._get_orchestrator()
+        ok = orch.reopen_task(task_id)
+        return {"task_id": task_id, "rerun": ok}
+
+    async def _handle_task_dashboard(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """P0-5 (audit 0912): single aggregated view for a minimal task
+        dashboard GUI — running/completed/failed tasks, plan statuses, agent
+        busy/idle states and pending guard approvals in one payload, so the
+        UI needs only one RPC round-trip (previously there was no
+        collaboration view at all; the only 'AI: connected' status line was
+        disconnected from task reality)."""
+        orch = self._get_orchestrator()
+
+        tasks = []
+        for t in orch._tasks.values():
+            tasks.append(
+                {
+                    "task_id": t.task_id,
+                    "agent_id": t.agent_id,
+                    "parent_task": t.parent_task,
+                    "description": t.description[:200],
+                    "status": t.status,
+                    "acceptance_status": t.acceptance_status,
+                    "acceptance_criteria": t.acceptance_criteria[:200],
+                    "acceptor": t.acceptor,
+                    "retry_count": t.retry_count,
+                    "error": t.error[:300] if t.error else "",
+                    "elapsed": round(t.completed_at - t.started_at, 3) if t.completed_at and t.started_at else None,
+                }
+            )
+
+        plans = []
+        for p in orch._plans.values():
+            plans.append(
+                {
+                    "plan_id": p.plan_id,
+                    "workflow_name": p.workflow_name,
+                    "status": p.status,
+                    "total_tasks": len(p.tasks),
+                    "completed": sum(1 for x in p.tasks if x.status == "completed"),
+                    "failed": sum(1 for x in p.tasks if x.status in ("failed", "skipped")),
+                    "running": sum(1 for x in p.tasks if x.status == "running"),
+                }
+            )
+
+        agents = [
+            {"agent_id": a.agent_id, "name": a.name, "role": a.role.value, "status": a.status, "current_task": a.current_task}
+            for a in orch._agents.values()
+        ]
+
+        pending_approvals = []
+        if self._permission_manager is not None:
+            with self._permission_manager._lock:
+                pending_approvals = [
+                    {"action_id": aid, "tool_name": tool} for aid, tool in self._permission_manager._pending_guard_approvals.items()
+                ]
+
+        summary = {
+            "active_tasks": sum(1 for t in tasks if t["status"] in ("pending", "running")),
+            "running_agents": sum(1 for a in agents if a["status"] == "busy"),
+            "pending_approvals": len(pending_approvals),
+            "failed_tasks": sum(1 for t in tasks if t["status"] == "failed"),
+        }
+        return {"summary": summary, "tasks": tasks, "plans": plans, "agents": agents, "pending_approvals": pending_approvals}
 
     async def _handle_mlx_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
         client = self._get_mlx_client()

@@ -89,9 +89,8 @@ class SpaceMemberService:
         space = await self._store.get_space(space_id)
         if not space:
             raise ValueError(f"空间 {space_id} 不存在")
-        member_count = await self._store.count_members(space_id)
-        if member_count >= space.config.max_members:
-            raise ValueError(f"空间 {space_id} 已满 ({space.config.max_members} 人)")
+        # P2-7 (audit 0912): capacity guard + insert are now one serial write
+        # transaction — concurrent joins could previously exceed max_members.
         role_enum = SpaceRole(role) if isinstance(role, str) else role
         member = SpaceMember(
             space_id=space_id,
@@ -99,7 +98,7 @@ class SpaceMemberService:
             role=role_enum,
             display_name=display_name or user_id,
         )
-        member = await self._store.add_member(member)
+        member = await self._store.add_member_checked(member, max_members=space.config.max_members)
         await self._store.use_invite(code)
         logger.info(f"SpaceMemberService.join user={user_id} space={space_id} role={role}")
         return member

@@ -98,7 +98,9 @@ class AgentMessageBus:
         if dropped > 0:
             self._dropped.append(msg)
 
-        logger.info(f"消息发布: {sender} → {topic} ({len(queues)} 订阅者, 丢弃 {dropped})")
+        # P2-9 (audit 0912): per-publish INFO flooded logs under concurrent
+        # agents — demoted to DEBUG; drops stay at ERROR above.
+        logger.debug(f"消息发布: {sender} → {topic} ({len(queues)} 订阅者, 丢弃 {dropped})")
         return msg.msg_id
 
     async def send(self, sender: str, receiver: str, payload: Dict[str, Any]) -> str:
@@ -126,7 +128,7 @@ class AgentMessageBus:
                 full_queues += 1
                 logger.error(f"消息总线: inbox 满 receiver={receiver} msg_id={msg.msg_id} (可能死 agent, 队列未消费)")
 
-        logger.info(f"点对点: {sender} → {receiver} (投递 {delivered}/{len(all_queues)})")
+        logger.debug(f"点对点: {sender} → {receiver} (投递 {delivered}/{len(all_queues)})")
         # E-6: 全部投递失败 → raise, 调用方拿到异常不再误判 msg_id=成功 (审计: 静默丢无错误回传)
         if delivered == 0 and all_queues:
             self._dropped.append(msg)

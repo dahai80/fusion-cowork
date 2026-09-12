@@ -10,6 +10,7 @@ V0.3 特性：
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -58,11 +59,17 @@ class AgentTask:
     description: str = ""
     input_data: Dict[str, Any] = field(default_factory=dict)
     output_data: Dict[str, Any] = field(default_factory=dict)
-    status: str = "pending"  # pending | running | completed | failed
+    status: str = "pending"  # pending | running | completed | failed | cancelled
     created_at: float = 0.0
     started_at: float = 0.0
     completed_at: float = 0.0
     error: str = ""
+    # A-9 (audit 0912): acceptance/accountability fields — task-level quality gate
+    acceptance_criteria: str = ""
+    acceptor: str = ""
+    acceptance_status: str = ""  # "" | pending | accepted | rejected
+    acceptance_comment: str = ""
+    retry_count: int = 0
 
 
 @dataclass
@@ -178,6 +185,17 @@ class AgentOrchestrator:
         for agent_id, executor in DEFAULT_EXECUTORS.items():
             self.register_executor(agent_id, executor)
 
+        # P0-4 (audit 0912): private ShellExecutor wired to the parent
+        # permission runtime — DEFAULT_EXECUTORS is a module-level singleton
+        # and must stay ungated for backward compatibility. Registered AFTER
+        # the DEFAULT_EXECUTORS loop so it actually wins (ordering bug: the
+        # gated executor was previously overwritten by the loop).
+        if self._permission_manager is not None:
+            from .executors import ShellExecutor
+
+            self.register_executor("executor_shell", ShellExecutor(permission_manager=self._permission_manager))
+            logger.debug("orchestrator 已绑定带权限门的私有 ShellExecutor")
+
         # HI-9: 有父运行时则换私有 WorkflowExecutor (DEFAULT_EXECUTORS 是模块级单例, 共享注入会跨实例污染)
         if self._permission_manager is not None or self._hook_manager is not None or self._session_store is not None:
             from .executors import WorkflowExecutor
@@ -201,20 +219,45 @@ class AgentOrchestrator:
         logger.info(f"默认 Agent 注册完成: {len(self._agents)} 个 Agent, {len(self._executors)} 个执行器")
 
     async def submit_task(self, description: str, input_data: Dict[str, Any] = None) -> str:
-        """提交简单任务 — 自动选择执行器。
+        """Submit a task — route to the executor matching the payload shape.
+
+        Routing (A-5, audit 0912): explicit node_name -> executor_node;
+        workflow/template_name -> executor_workflow; plain prompt (no command)
+        -> coordinator (delegates by subtask_type / falls back to MLX);
+        otherwise default to executor_node. Previously everything was pinned
+        to executor_node, so natural-language tasks always failed with
+        "missing node_name" while still being reported as completed.
 
         Returns:
             task_id
         """
+        input_data = dict(input_data or {})
+        if input_data.get("node_name"):
+            agent_id = "executor_node"
+        elif input_data.get("workflow") or input_data.get("template_name"):
+            agent_id = "executor_workflow"
+        elif input_data.get("prompt") and not input_data.get("command"):
+            agent_id = "coordinator"
+        elif input_data.get("command"):
+            agent_id = "executor_shell"
+        else:
+            agent_id = "executor_node"
         task_id = f"task_{uuid.uuid4().hex[:8]}"
         task = AgentTask(
             task_id=task_id,
-            agent_id="executor_node",
+            agent_id=agent_id,
             description=description,
+            # A-9: child tasks carry their own task_id so CoordinatorExecutor
+            # can wire parent_task (fixes broken accountability chain).
             input_data=input_data or {"prompt": description},
             created_at=time.time(),
+            parent_task=input_data.get("_task_id", ""),
+            acceptance_criteria=input_data.get("acceptance_criteria", ""),
+            acceptor=input_data.get("acceptor", ""),
         )
         self._tasks[task_id] = task
+        # A-9: inject our own id for downstream delegation (parent chain)
+        task.input_data.setdefault("_task_id", task_id)
 
         # 后台执行 — HI-7: 保留 handle 进 _task_handles, 供 cancel_task 真取消协程
         handle = asyncio.create_task(self._run_submitted_task(task))
@@ -232,22 +275,42 @@ class AgentOrchestrator:
         try:
             executor = self._executors.get(task.agent_id)
             if executor:
-                if asyncio.iscoroutinefunction(executor):
-                    # R-2: 后台执行器无超时 → 卡死协程永不终态。wait_for 强制超时 + CancelledError 置终态
-                    result = await asyncio.wait_for(executor(task.input_data), timeout=self._task_timeout)
+                result = executor(task.input_data)
+                # A-11 (audit 0912 follow-up): executor may be a callable class
+                # instance with an async __call__ (ShellExecutor/NodeExecutor/
+                # CoordinatorExecutor...) — iscoroutinefunction() returns False
+                # for those, so the returned coroutine was never awaited and
+                # the task was marked completed without running anything.
+                # Await whatever the executor returned, then apply the timeout.
+                if asyncio.iscoroutine(result):
+                    result = await asyncio.wait_for(result, timeout=self._task_timeout)
+                result = result if isinstance(result, dict) else {"result": result}
+                task.output_data = result
+                # A-7 (audit 0912): executor-reported failure must map to task
+                # failure — previously a node returning {"status": "failed"}
+                # still marked the task completed (silent false success).
+                _err = result.get("error")
+                _failed = result.get("status") in ("failed", "denied", "error") or _err
+                if _failed:
+                    task.status = "failed"
+                    task.error = str(_err or result.get("status") or "executor reported failure")
                 else:
-                    result = executor(task.input_data)
-                task.output_data = result if isinstance(result, dict) else {"result": result}
-                task.status = "completed"
+                    task.status = "completed"
             else:
                 node_executor = self._executors.get("executor_node")
                 if node_executor:
-                    if asyncio.iscoroutinefunction(node_executor):
-                        result = await asyncio.wait_for(node_executor(task.input_data), timeout=self._task_timeout)
+                    result = node_executor(task.input_data)
+                    if asyncio.iscoroutine(result):
+                        result = await asyncio.wait_for(result, timeout=self._task_timeout)
+                    result = result if isinstance(result, dict) else {"result": result}
+                    task.output_data = result
+                    _err = result.get("error")
+                    _failed = result.get("status") in ("failed", "denied", "error") or _err
+                    if _failed:
+                        task.status = "failed"
+                        task.error = str(_err or result.get("status") or "executor reported failure")
                     else:
-                        result = node_executor(task.input_data)
-                    task.output_data = result if isinstance(result, dict) else {"result": result}
-                    task.status = "completed"
+                        task.status = "completed"
                 else:
                     task.error = f"无可用执行器: agent_id={task.agent_id}"
                     task.output_data = {"status": "no_executor", "agent_id": task.agent_id, "input": task.input_data}
@@ -255,8 +318,11 @@ class AgentOrchestrator:
                     logger.error(f"任务无执行器且无降级路径: {task.task_id} agent_id={task.agent_id}")
         except asyncio.CancelledError:
             # HI-18: CancelledError 是 BaseException, 旧 except Exception 不接 → status 卡 running
-            task.status = "cancelled"
-            task.error = "用户取消"
+            # P2-3 (audit 0912): don't downgrade an already-terminal status set
+            # by a racing cancel_task()/completion — first terminal write wins.
+            if task.status not in ("completed", "failed", "cancelled"):
+                task.status = "cancelled"
+                task.error = "用户取消"
             logger.info(f"提交任务被取消: {task.task_id}")
             raise
         except TimeoutError:
@@ -312,6 +378,61 @@ class AgentOrchestrator:
         """按角色获取 Agent。"""
         return [a for a in self._agents.values() if a.role == role]
 
+    def has_agent(self, agent_id: str) -> bool:
+        """A-10 (audit 0912): public membership check — avoids external access
+        to the private _agents dict (e.g. SpaceAgentRuntime.register_to_orchestrator)."""
+        return agent_id in self._agents
+
+    # ── A-9: acceptance gate (audit 0912) ──
+
+    def request_acceptance(self, task_id: str, acceptor: str = "") -> Dict[str, Any]:
+        """Mark a completed task as pending acceptance (quality gate)."""
+        task = self._tasks.get(task_id)
+        if not task:
+            return {"error": f"任务不存在: {task_id}"}
+        if task.status != "completed":
+            return {"error": f"任务未完成，不可验收: status={task.status}"}
+        task.acceptance_status = "pending"
+        if acceptor:
+            task.acceptor = acceptor
+        return {"task_id": task_id, "acceptance_status": "pending", "acceptor": task.acceptor}
+
+    def accept_task(self, task_id: str, verdict: str, comment: str = "", acceptor: str = "") -> Dict[str, Any]:
+        """Record an acceptance verdict for a task.
+
+        verdict: "accepted" -> task is confirmed done;
+                 "rejected" -> task reopens (status=pending, retry_count+1) for rework.
+        """
+        task = self._tasks.get(task_id)
+        if not task:
+            return {"error": f"任务不存在: {task_id}"}
+        if verdict not in ("accepted", "rejected"):
+            return {"error": f"非法验收结论: {verdict} (accepted|rejected)"}
+        if acceptor:
+            task.acceptor = acceptor
+        task.acceptance_status = verdict
+        task.acceptance_comment = comment
+        if verdict == "accepted":
+            logger.info(f"任务验收通过: {task_id} acceptor={task.acceptor}")
+            return {"task_id": task_id, "acceptance_status": "accepted", "status": task.status}
+        # rejected -> reopen for rework
+        task.status = "pending"
+        task.retry_count += 1
+        task.completed_at = 0.0
+        logger.info(f"任务验收驳回，重开返工: {task_id} retry={task.retry_count}")
+        return {"task_id": task_id, "acceptance_status": "rejected", "status": task.status, "retry_count": task.retry_count}
+
+    def reopen_task(self, task_id: str) -> bool:
+        """Re-run a rejected/pending task through its executor in the background."""
+        task = self._tasks.get(task_id)
+        if not task or task.status not in ("pending", "failed"):
+            return False
+        handle = asyncio.create_task(self._run_submitted_task(task))
+        self._task_handles[task.task_id] = handle
+        self._bg_tasks.add(handle)
+        handle.add_done_callback(lambda h: self._bg_tasks.discard(h))
+        return True
+
     # ── 编排计划 ──
 
     async def create_plan(
@@ -359,7 +480,12 @@ class AgentOrchestrator:
         return task
 
     async def execute_plan(self, plan_id: str) -> Dict[str, Any]:
-        """执行编排计划。"""
+        """Execute an orchestration plan.
+
+        A-4 (audit 0912): dependency readiness now requires upstream SUCCESS —
+        failed/skipped prerequisites no longer silently feed downstream tasks.
+        Plan terminal status reflects reality: completed | partial | failed.
+        """
         plan = self._plans.get(plan_id)
         if not plan:
             return {"error": f"计划不存在: {plan_id}"}
@@ -368,26 +494,77 @@ class AgentOrchestrator:
         results = {}
         start_time = time.time()
 
+        def _failed(task_id: str) -> bool:
+            r = results.get(task_id)
+            if not isinstance(r, dict):
+                return False
+            return bool(r.get("error")) or r.get("status") in ("failed", "denied", "error")
+
         # 拓扑排序执行
         executed = set()
         while len(executed) < len(plan.tasks):
-            # 找出可执行的任务
+            # 找出可执行的任务 — prerequisites must have executed successfully
             ready = []
             for task in plan.tasks:
                 if task.task_id in executed:
                     continue
                 deps = plan.dependencies.get(task.task_id, [])
-                if all(d in executed for d in deps):
+                if all(d in executed and not _failed(d) for d in deps):
                     ready.append(task)
 
             if not ready:
-                # 死锁检测
+                # 死锁检测 — distinguish "upstream failed" from a real cycle
                 remaining = [t.task_id for t in plan.tasks if t.task_id not in executed]
-                logger.error(f"任务死锁: {remaining}")
-                plan.status = "failed"
-                return {"error": f"任务死锁: {remaining}"}
+                blocked = {
+                    t.task_id: [d for d in plan.dependencies.get(t.task_id, []) if _failed(d)]
+                    for t in plan.tasks
+                    if t.task_id not in executed
+                }
+                blocked_by_failure = {tid: deps for tid, deps in blocked.items() if deps}
+                if blocked_by_failure:
+                    for tid, deps in blocked_by_failure.items():
+                        t = next((x for x in plan.tasks if x.task_id == tid), None)
+                        if t is not None:
+                            t.status = "skipped"
+                            t.error = f"skipped: upstream failed {deps}"
+                            results[tid] = {"status": "skipped", "error": t.error}
+                            executed.add(tid)
+                    # remaining tasks may now be ready — re-loop
+                    if all(t.task_id in executed for t in plan.tasks):
+                        break
+                    still_ready = [
+                        t
+                        for t in plan.tasks
+                        if t.task_id not in executed
+                        and all(d in executed and not _failed(d) for d in plan.dependencies.get(t.task_id, []))
+                    ]
+                    if still_ready:
+                        ready = still_ready
+                    else:
+                        remaining = [t.task_id for t in plan.tasks if t.task_id not in executed]
+                        logger.error(f"任务死锁: {remaining}")
+                        plan.status = "failed"
+                        return {"error": f"任务死锁: {remaining}", "results": results}
+                else:
+                    logger.error(f"任务死锁: {remaining}")
+                    plan.status = "failed"
+                    return {"error": f"任务死锁: {remaining}", "results": results}
 
             # 并行执行就绪任务
+            # A-2: aggregate-mode tasks (analyzer) receive real upstream results
+            # instead of the bare task-id list.
+            for task in ready:
+                agg_ids = task.input_data.get("_aggregate_task_ids")
+                if agg_ids:
+                    aggregated = {
+                        tid: (results.get(tid) if isinstance(results.get(tid), dict) else {"result": results.get(tid)})
+                        for tid in agg_ids
+                        if tid in results
+                    }
+                    task.input_data = {
+                        "prompt": f"Summarize the following {len(aggregated)} subtask results.",
+                        "results": aggregated,
+                    }
             tasks = [self._execute_task(task, plan) for task in ready]
             task_results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -397,19 +574,33 @@ class AgentOrchestrator:
                     results[task.task_id] = {"error": str(result)}
                     task.status = "failed"
                     task.error = str(result)
+                elif isinstance(result, dict) and (result.get("error") or result.get("status") in ("failed", "denied", "error")):
+                    # A-4: executor-reported failure is a failed task (was "completed")
+                    results[task.task_id] = result
+                    task.status = "failed"
+                    task.error = str(result.get("error") or result.get("status"))
+                    task.completed_at = time.time()
                 else:
                     results[task.task_id] = result
                     task.status = "completed"
                     task.output_data = result or {}
                     task.completed_at = time.time()
 
-        plan.status = "completed"
+        # A-4: honest plan terminal status — completed | partial | failed
+        failed_tasks = [t for t in plan.tasks if t.status in ("failed", "skipped")]
+        ok_tasks = [t for t in plan.tasks if t.status == "completed"]
+        if not ok_tasks and failed_tasks:
+            plan.status = "failed"
+        elif failed_tasks:
+            plan.status = "partial"
+        else:
+            plan.status = "completed"
         elapsed = time.time() - start_time
-        logger.info(f"编排完成: {plan_id} ({elapsed:.2f}s)")
+        logger.info(f"编排完成: {plan_id} ({elapsed:.2f}s) status={plan.status}")
 
         return {
             "plan_id": plan_id,
-            "status": "completed",
+            "status": plan.status,
             "elapsed": elapsed,
             "results": results,
         }
@@ -430,11 +621,12 @@ class AgentOrchestrator:
 
         if executor:
             try:
-                if asyncio.iscoroutinefunction(executor):
+                result = executor(task.input_data)
+                # A-11 (audit 0912 follow-up): await coroutine results — see
+                # _run_submitted_task for the callable-class-instance rationale.
+                if asyncio.iscoroutine(result):
                     # HI-8: 单任务超时, 防卡死 executor 拖垮整个 plan
-                    result = await asyncio.wait_for(executor(task.input_data), timeout=self._task_timeout)
-                else:
-                    result = executor(task.input_data)
+                    result = await asyncio.wait_for(result, timeout=self._task_timeout)
                 return result if isinstance(result, dict) else {"result": result}
             except TimeoutError:
                 task.status = "failed"
@@ -452,7 +644,10 @@ class AgentOrchestrator:
             fallback = DEFAULT_EXECUTORS.get("executor_node")
             if fallback:
                 try:
-                    result = await asyncio.wait_for(fallback(task.input_data), timeout=self._task_timeout)
+                    result = fallback(task.input_data)
+                    # A-11: same awaitable-result handling as the primary path
+                    if asyncio.iscoroutine(result):
+                        result = await asyncio.wait_for(result, timeout=self._task_timeout)
                     return result if isinstance(result, dict) else {"result": result}
                 except TimeoutError:
                     task.status = "failed"
@@ -474,37 +669,104 @@ class AgentOrchestrator:
         self,
         input_data: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """运行标准编排流水线。
+        """Run the standard pipeline: real plan-then-execute decomposition.
 
-        流程：Planner → Executor → Analyzer → Validator
+        A-2 (audit 0912): the Planner now actually runs first and its JSON
+        output is parsed into subtasks (description / agent_id / input_data /
+        depends_on / acceptance_criteria) that are added to the plan with
+        real dependencies. Previously the same input was copied verbatim to
+        the planner and three executors — the plan output was never read, so
+        "decomposition" was pure theater.
         """
-        # 1. Planner 规划
+        import re
+
         planner = self.get_agents_by_role(AgentRole.PLANNER)
         if not planner:
             return {"error": "无 Planner Agent"}
 
         plan = await self.create_plan("standard_pipeline", "标准编排流水线")
-        plan_task = self.add_task(plan.plan_id, planner[0].agent_id, "任务规划", input_data)
 
-        # 2. Executor 执行
-        executors = self.get_agents_by_role(AgentRole.EXECUTOR)
-        if executors:
-            for i, executor in enumerate(executors[:3]):
-                self.add_task(
-                    plan.plan_id,
-                    executor.agent_id,
-                    f"执行任务 {i + 1}",
-                    input_data,
-                    depends_on=[plan_task.task_id] if plan_task else [],
+        # 1. Run the Planner first, alone.
+        plan_task = self.add_task(
+            plan.plan_id,
+            planner[0].agent_id,
+            "任务规划",
+            {
+                "prompt": (
+                    "Break the following task into subtasks. Reply with ONLY a JSON array, "
+                    "each item: {\"description\": str, \"agent_id\": one of "
+                    "[executor_node, executor_workflow, executor_mlx, executor_shell], "
+                    "\"input_data\": object, \"depends_on\": [subtask indexes], "
+                    "\"acceptance_criteria\": str}.\nTASK:\n"
+                    + json.dumps(input_data, ensure_ascii=False, default=str)
                 )
+            },
+        )
+        stage = await self.execute_plan(plan.plan_id)
+        plan_output = stage.get("results", {}).get(plan_task.task_id, {})
+        content = ""
+        if isinstance(plan_output, dict):
+            data = plan_output.get("data")
+            if isinstance(data, dict):
+                content = str(data.get("content", ""))
+            else:
+                content = str(plan_output.get("result", "") or "")
+        subtasks = []
+        try:
+            match = re.search(r"\[.*\]", content, re.DOTALL)
+            if match:
+                parsed = json.loads(match.group(0))
+                if isinstance(parsed, list):
+                    subtasks = parsed
+        except (json.JSONDecodeError, TypeError):
+            subtasks = []
 
-        # 3. Analyzer 分析
+        if not subtasks:
+            # Fail loudly instead of silently faking a pipeline (A-2).
+            plan.status = "failed"
+            return {
+                "error": "Planner 未产出可解析的任务拆解",
+                "plan_id": plan.plan_id,
+                "raw_planner_output": content[:500],
+            }
+
+        # 2. Materialize the parsed subtasks as real plan tasks.
+        id_by_index: Dict[int, str] = {}
+        for i, st in enumerate(subtasks):
+            if not isinstance(st, dict):
+                continue
+            deps = []
+            for d in st.get("depends_on", []):
+                try:
+                    dep_id = id_by_index[int(d)]
+                except (KeyError, TypeError, ValueError):
+                    continue
+                deps.append(dep_id)
+            t = self.add_task(
+                plan.plan_id,
+                str(st.get("agent_id", "executor_node")),
+                str(st.get("description", f"subtask {i + 1}")),
+                dict(st.get("input_data") or {}),
+                depends_on=deps or None,
+            )
+            if t is not None:
+                t.acceptance_criteria = str(st.get("acceptance_criteria", ""))
+                t.acceptance_status = "pending" if t.acceptance_criteria else ""
+                id_by_index[i] = t.task_id
+
+        # 3. Analyzer summarizes executor outputs once all subtasks finish.
         analyzers = self.get_agents_by_role(AgentRole.ANALYZER)
         if analyzers:
-            executor_tasks = [t.task_id for t in plan.tasks if t.agent_id != (planner[0].agent_id if planner else "")]
-            self.add_task(plan.plan_id, analyzers[0].agent_id, "结果分析", {}, depends_on=executor_tasks)
+            executor_tasks = [t.task_id for t in plan.tasks if t.agent_id != planner[0].agent_id]
+            if executor_tasks:
+                self.add_task(
+                    plan.plan_id,
+                    analyzers[0].agent_id,
+                    "结果分析",
+                    {"_aggregate_task_ids": executor_tasks},
+                    depends_on=executor_tasks,
+                )
 
-        # 4. 执行
         return await self.execute_plan(plan.plan_id)
 
     def get_plan_status(self, plan_id: str) -> Optional[Dict[str, Any]]:
