@@ -83,6 +83,9 @@ class TaskScheduler:
         self._task_store_path = task_store_path or _DEFAULT_STORE_PATH
         # R-5: 连续失败上限, 超过才 FAILED+pause (避免一次瞬态失败永久停摆)。
         self._max_fail = 5
+        # P1-12 (audit 0912): task_ids restored without an executor — paused
+        # until register_executor() re-binds and resumes them.
+        self._executors_paused: Dict[str, bool] = {}
 
     def start(self) -> None:
         """启动调度器。"""
@@ -103,7 +106,15 @@ class TaskScheduler:
         self._executors[task_id] = executor
         # A-1: 恢复的任务此前无 executor (load_tasks 记 WARN); 重注册后记 INFO 可用。
         task = self._tasks.get(task_id)
-        if task:
+        # P1-12 (audit 0912): re-binding an executor resumes a task that was
+        # auto-paused at restore time (marker True). User-paused tasks have no
+        # marker and stay paused.
+        if task and self._executors_paused.pop(task_id, False) and task.status == TaskStatus.PAUSED:
+            task.status = TaskStatus.ACTIVE
+            # auto-paused tasks skipped job rebuild at restore time — rebuild now
+            self._rebuild_job(task)
+            logger.info(f"任务 '{task.name}' ({task_id}) executor 已注册, 自动恢复执行")
+        elif task:
             logger.info(f"任务 '{task.name}' ({task_id}) executor 已注册, 可执行")
 
     def add_cron_task(
@@ -421,6 +432,22 @@ class TaskScheduler:
                     tenant_id=item.get("tenant_id", DEFAULT_TENANT),
                 )
                 self._tasks[task_id] = task
+                # P1-12 (audit 0912): a restored task without a registered
+                # executor can never run — previously it stayed ACTIVE, its
+                # APScheduler job fired and silently returned ("没有注册执行器"),
+                # so the business automation died silently after a restart.
+                # Now it is paused until the app re-registers the executor,
+                # and register_executor() resumes it.
+                if task_id not in self._executors:
+                    # P1-12: only ORIGINALLY-ACTIVE tasks are auto-paused with a
+                    # marker; user-paused tasks (status == PAUSED on disk) keep
+                    # their pause without a marker and are never auto-resumed.
+                    if status == TaskStatus.ACTIVE:
+                        logger.warning(f"恢复任务 '{task.name}' ({task_id}) 暂无 executor, 已暂停待重新注册")
+                        task.status = TaskStatus.PAUSED
+                        self._executors_paused[task_id] = True
+                    restored += 1
+                    continue
                 # 仅 ACTIVE/PAUSED 重建 APScheduler job (COMPLETED/FAILED/REMOVED 不重建)。
                 if status in (TaskStatus.ACTIVE, TaskStatus.PAUSED):
                     self._rebuild_job(task)
@@ -431,8 +458,6 @@ class TaskScheduler:
                                 self._scheduler.pause_job(job_id)
                             except Exception:
                                 pass
-                if task_id not in self._executors:
-                    logger.warning(f"恢复任务 '{task.name}' ({task_id}) 暂无 executor, 待应用重新注册")
                 restored += 1
             except Exception as e:
                 logger.warning(f"恢复调度任务项失败 (跳过): {e}")

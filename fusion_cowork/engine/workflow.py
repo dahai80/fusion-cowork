@@ -623,6 +623,36 @@ class WorkflowEngine:
                         step.execution_time = 0
                         step.error = "权限拒绝: 需要手动审批"
                         execution.steps.append(step)
+                        # P1-10 (audit 0912): purge the denied node's data from
+                        # the cache so downstream nodes cannot silently consume
+                        # unauthorized intermediate results.
+                        passed_data.pop(node_id, None)
+                        for _e in workflow.edges:
+                            if _e.source_id == node_id:
+                                passed_data.pop(_e.target_id, None)
+                        # P1-11 (audit 0912): emit NODE_DENIED + notification so
+                        # approvers actually learn about the pending action
+                        # (previously only a log line — workflows died silently
+                        # waiting for an approval nobody knew about).
+                        if self._event_emitter:
+                            self._event_emitter.create_event(
+                                EventType.NODE_DENIED,
+                                execution_id=exec_id,
+                                node_id=node_id,
+                                node_name=node.name,
+                                data={"error": step.error, "input_data": node_input},
+                            )
+                        if self._hook_manager:
+                            await self._hook_manager.fire(
+                                HookEvent.NOTIFICATION,
+                                {
+                                    "kind": "permission_denied",
+                                    "execution_id": exec_id,
+                                    "node_id": node_id,
+                                    "node_name": node.name,
+                                    "message": f"节点 '{node.name}' 被权限系统拒绝, 需人工审批",
+                                },
+                            )
                         if not node.config.continue_on_error:
                             execution.status = WorkflowStatus.FAILED
                             execution.error = f"节点 '{node.name}' 权限拒绝"
