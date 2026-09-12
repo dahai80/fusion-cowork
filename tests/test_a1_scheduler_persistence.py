@@ -65,7 +65,12 @@ def test_load_restores_tasks_after_restart(tmp_path):
     assert t.name == "每日备份"
     assert t.trigger_type == "cron"
     assert t.trigger_config["cron"] == "30 3 * * *"
-    assert t.status == TaskStatus.ACTIVE
+    # P1-12 (audit 0912): restored ACTIVE task without an executor is
+    # auto-paused instead of staying ACTIVE and firing into the void.
+    assert t.status == TaskStatus.PAUSED
+    # re-registering the executor resumes it
+    sched2.register_executor(tid, lambda: None)
+    assert sched2.get_task(tid).status == TaskStatus.ACTIVE
 
 
 def test_load_warns_missing_executor_but_task_restored(tmp_path, caplog):
