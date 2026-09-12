@@ -14,6 +14,7 @@ import json
 import logging
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
@@ -111,6 +112,11 @@ class AgentOrchestrator:
         self._bg_tasks: set = set()
         # HI-8: 单任务超时上限 (秒), execute_plan/_execute_task 用 asyncio.wait_for 包裹
         self._task_timeout: float = 120.0
+        # audit E2E (0913): R-1 pops terminal tasks from _tasks, which made
+        # accept_task/reopen_task return 任务不存在 for every finished task —
+        # the acceptance gate could never fire on the submit path. Keep a
+        # bounded archive so terminal tasks stay verifiable/reopenable.
+        self._task_archive: OrderedDict[str, AgentTask] = OrderedDict()
 
     def register_default_agents(self) -> None:
         """注册默认 Agent + 执行器。"""
@@ -340,6 +346,7 @@ class AgentOrchestrator:
             # R-1: 终态任务从 _tasks 剔除, 防 _tasks 无界增长 (运行态保留供查询)
             if task.status in ("completed", "failed", "cancelled"):
                 self._tasks.pop(task.task_id, None)
+                self._archive_task(task)
 
     def cancel_task(self, task_id: str) -> bool:
         task = self._tasks.get(task_id)
@@ -387,7 +394,7 @@ class AgentOrchestrator:
 
     def request_acceptance(self, task_id: str, acceptor: str = "") -> Dict[str, Any]:
         """Mark a completed task as pending acceptance (quality gate)."""
-        task = self._tasks.get(task_id)
+        task = self.get_task(task_id)
         if not task:
             return {"error": f"任务不存在: {task_id}"}
         if task.status != "completed":
@@ -403,7 +410,7 @@ class AgentOrchestrator:
         verdict: "accepted" -> task is confirmed done;
                  "rejected" -> task reopens (status=pending, retry_count+1) for rework.
         """
-        task = self._tasks.get(task_id)
+        task = self.get_task(task_id)
         if not task:
             return {"error": f"任务不存在: {task_id}"}
         if verdict not in ("accepted", "rejected"):
@@ -429,7 +436,7 @@ class AgentOrchestrator:
 
     def reopen_task(self, task_id: str) -> bool:
         """Re-run a rejected/pending task through its executor in the background."""
-        task = self._tasks.get(task_id)
+        task = self.get_task(task_id)
         if not task or task.status not in ("pending", "failed"):
             return False
         handle = asyncio.create_task(self._run_submitted_task(task))
@@ -865,4 +872,12 @@ class AgentOrchestrator:
 
     def get_task(self, task_id: str):
         """获取任务状态（公共 API，避免外部访问 _tasks）。"""
-        return self._tasks.get(task_id)
+        return self._tasks.get(task_id) or self._task_archive.get(task_id)
+
+    def _archive_task(self, task) -> None:
+        """Bounded LRU archive of terminal tasks (acceptance gate needs
+        finished tasks addressable; capped to keep memory flat)."""
+        self._task_archive[task.task_id] = task
+        self._task_archive.move_to_end(task.task_id)
+        while len(self._task_archive) > 256:
+            self._task_archive.popitem(last=False)
