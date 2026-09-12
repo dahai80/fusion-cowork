@@ -271,7 +271,11 @@ class SpaceChatService:
     ) -> List[dict]:
         if not await self._perm.check(space_id, user_id, "call_agent"):
             raise PermissionError(f"User {user_id} cannot call agents in space {space_id}")
-        if len(agent_ids) < 2:
+        # agent_ids entries may be plain ids or nested lists (parallel groups,
+        # P1-5) — count real agents, not top-level slots, so a single parallel
+        # group like [["a", "b"]] is valid fan-out topology.
+        total_agents = sum(len(g) if isinstance(g, list) else 1 for g in agent_ids)
+        if total_agents < 2:
             raise ValueError("relay_agents requires at least 2 agents")
         user_msg = SpaceMessage(
             space_id=space_id,
