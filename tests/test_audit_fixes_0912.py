@@ -234,8 +234,18 @@ class TestRealPipelineDecomposition:
 
         planner_json = json.dumps(
             [
-                {"description": "run cmd", "agent_id": "executor_shell", "input_data": {"command": "echo a", "timeout": 5}, "depends_on": []},
-                {"description": "run cmd2", "agent_id": "executor_shell", "input_data": {"command": "echo b", "timeout": 5}, "depends_on": [0]},
+                {
+                    "description": "run cmd",
+                    "agent_id": "executor_shell",
+                    "input_data": {"command": "echo a", "timeout": 5},
+                    "depends_on": [],
+                },
+                {
+                    "description": "run cmd2",
+                    "agent_id": "executor_shell",
+                    "input_data": {"command": "echo b", "timeout": 5},
+                    "depends_on": [0],
+                },
             ]
         )
 

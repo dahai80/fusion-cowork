@@ -340,9 +340,7 @@ class SpaceChatService:
                 group_results = list(
                     await asyncio.gather(*[_run_one(aid, current_message) for aid in group_ids], return_exceptions=True)
                 )
-                group_results = [
-                    r if isinstance(r, dict) else {"error": str(r)} for r in group_results
-                ]
+                group_results = [r if isinstance(r, dict) else {"error": str(r)} for r in group_results]
 
             ok_outputs = []
             for aid, r in zip(group_ids, group_results):
@@ -368,7 +366,9 @@ class SpaceChatService:
                 "partial": had_failure,
             },
         )
-        logger.info(f"SpaceChat.relay_agents space={space_id} agents={agent_ids} steps={len(results)} partial={had_failure}")
+        logger.info(
+            f"SpaceChat.relay_agents space={space_id} agents={agent_ids} steps={len(results)} partial={had_failure}"
+        )
         return results
 
     async def list_messages(

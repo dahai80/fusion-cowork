@@ -1046,7 +1046,13 @@ class DeskRPCServer:
             )
 
         agents = [
-            {"agent_id": a.agent_id, "name": a.name, "role": a.role.value, "status": a.status, "current_task": a.current_task}
+            {
+                "agent_id": a.agent_id,
+                "name": a.name,
+                "role": a.role.value,
+                "status": a.status,
+                "current_task": a.current_task,
+            }
             for a in orch._agents.values()
         ]
 
@@ -1054,7 +1060,8 @@ class DeskRPCServer:
         if self._permission_manager is not None:
             with self._permission_manager._lock:
                 pending_approvals = [
-                    {"action_id": aid, "tool_name": tool} for aid, tool in self._permission_manager._pending_guard_approvals.items()
+                    {"action_id": aid, "tool_name": tool}
+                    for aid, tool in self._permission_manager._pending_guard_approvals.items()
                 ]
 
         summary = {
@@ -1063,7 +1070,13 @@ class DeskRPCServer:
             "pending_approvals": len(pending_approvals),
             "failed_tasks": sum(1 for t in tasks if t["status"] == "failed"),
         }
-        return {"summary": summary, "tasks": tasks, "plans": plans, "agents": agents, "pending_approvals": pending_approvals}
+        return {
+            "summary": summary,
+            "tasks": tasks,
+            "plans": plans,
+            "agents": agents,
+            "pending_approvals": pending_approvals,
+        }
 
     async def _handle_mlx_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
         client = self._get_mlx_client()

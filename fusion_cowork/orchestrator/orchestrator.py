@@ -420,7 +420,12 @@ class AgentOrchestrator:
         task.retry_count += 1
         task.completed_at = 0.0
         logger.info(f"任务验收驳回，重开返工: {task_id} retry={task.retry_count}")
-        return {"task_id": task_id, "acceptance_status": "rejected", "status": task.status, "retry_count": task.retry_count}
+        return {
+            "task_id": task_id,
+            "acceptance_status": "rejected",
+            "status": task.status,
+            "retry_count": task.retry_count,
+        }
 
     def reopen_task(self, task_id: str) -> bool:
         """Re-run a rejected/pending task through its executor in the background."""
@@ -574,7 +579,9 @@ class AgentOrchestrator:
                     results[task.task_id] = {"error": str(result)}
                     task.status = "failed"
                     task.error = str(result)
-                elif isinstance(result, dict) and (result.get("error") or result.get("status") in ("failed", "denied", "error")):
+                elif isinstance(result, dict) and (
+                    result.get("error") or result.get("status") in ("failed", "denied", "error")
+                ):
                     # A-4: executor-reported failure is a failed task (was "completed")
                     results[task.task_id] = result
                     task.status = "failed"
@@ -694,11 +701,10 @@ class AgentOrchestrator:
             {
                 "prompt": (
                     "Break the following task into subtasks. Reply with ONLY a JSON array, "
-                    "each item: {\"description\": str, \"agent_id\": one of "
+                    'each item: {"description": str, "agent_id": one of '
                     "[executor_node, executor_workflow, executor_mlx, executor_shell], "
-                    "\"input_data\": object, \"depends_on\": [subtask indexes], "
-                    "\"acceptance_criteria\": str}.\nTASK:\n"
-                    + json.dumps(input_data, ensure_ascii=False, default=str)
+                    '"input_data": object, "depends_on": [subtask indexes], '
+                    '"acceptance_criteria": str}.\nTASK:\n' + json.dumps(input_data, ensure_ascii=False, default=str)
                 )
             },
         )
