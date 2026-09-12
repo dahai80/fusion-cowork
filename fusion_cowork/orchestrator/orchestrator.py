@@ -275,11 +275,15 @@ class AgentOrchestrator:
         try:
             executor = self._executors.get(task.agent_id)
             if executor:
-                if asyncio.iscoroutinefunction(executor):
-                    # R-2: 后台执行器无超时 → 卡死协程永不终态。wait_for 强制超时 + CancelledError 置终态
-                    result = await asyncio.wait_for(executor(task.input_data), timeout=self._task_timeout)
-                else:
-                    result = executor(task.input_data)
+                result = executor(task.input_data)
+                # A-11 (audit 0912 follow-up): executor may be a callable class
+                # instance with an async __call__ (ShellExecutor/NodeExecutor/
+                # CoordinatorExecutor...) — iscoroutinefunction() returns False
+                # for those, so the returned coroutine was never awaited and
+                # the task was marked completed without running anything.
+                # Await whatever the executor returned, then apply the timeout.
+                if asyncio.iscoroutine(result):
+                    result = await asyncio.wait_for(result, timeout=self._task_timeout)
                 result = result if isinstance(result, dict) else {"result": result}
                 task.output_data = result
                 # A-7 (audit 0912): executor-reported failure must map to task
@@ -295,10 +299,9 @@ class AgentOrchestrator:
             else:
                 node_executor = self._executors.get("executor_node")
                 if node_executor:
-                    if asyncio.iscoroutinefunction(node_executor):
-                        result = await asyncio.wait_for(node_executor(task.input_data), timeout=self._task_timeout)
-                    else:
-                        result = node_executor(task.input_data)
+                    result = node_executor(task.input_data)
+                    if asyncio.iscoroutine(result):
+                        result = await asyncio.wait_for(result, timeout=self._task_timeout)
                     result = result if isinstance(result, dict) else {"result": result}
                     task.output_data = result
                     _err = result.get("error")
@@ -618,11 +621,12 @@ class AgentOrchestrator:
 
         if executor:
             try:
-                if asyncio.iscoroutinefunction(executor):
+                result = executor(task.input_data)
+                # A-11 (audit 0912 follow-up): await coroutine results — see
+                # _run_submitted_task for the callable-class-instance rationale.
+                if asyncio.iscoroutine(result):
                     # HI-8: 单任务超时, 防卡死 executor 拖垮整个 plan
-                    result = await asyncio.wait_for(executor(task.input_data), timeout=self._task_timeout)
-                else:
-                    result = executor(task.input_data)
+                    result = await asyncio.wait_for(result, timeout=self._task_timeout)
                 return result if isinstance(result, dict) else {"result": result}
             except TimeoutError:
                 task.status = "failed"
@@ -640,7 +644,10 @@ class AgentOrchestrator:
             fallback = DEFAULT_EXECUTORS.get("executor_node")
             if fallback:
                 try:
-                    result = await asyncio.wait_for(fallback(task.input_data), timeout=self._task_timeout)
+                    result = fallback(task.input_data)
+                    # A-11: same awaitable-result handling as the primary path
+                    if asyncio.iscoroutine(result):
+                        result = await asyncio.wait_for(result, timeout=self._task_timeout)
                     return result if isinstance(result, dict) else {"result": result}
                 except TimeoutError:
                     task.status = "failed"

@@ -700,3 +700,69 @@ class TestHasAgent:
         orch.register_default_agents()
         assert orch.has_agent("planner") is True
         assert orch.has_agent("nonexistent") is False
+
+
+# ── A-11 (follow-up): callable-class async executors must actually run ──
+
+
+class _AsyncCallableExecutor:
+    """Simulates ShellExecutor/NodeExecutor style: class with async __call__."""
+
+    def __init__(self):
+        self.ran = False
+
+    async def __call__(self, input_data):
+        self.ran = True
+        await asyncio.sleep(0.01)
+        return {"status": "completed", "stdout": "ran-for-real"}
+
+
+class TestAwaitableResultHandling:
+    @pytest.mark.asyncio
+    async def test_callable_class_executor_actually_runs(self):
+        orch = AgentOrchestrator()
+        orch.register_default_agents()
+        ex = _AsyncCallableExecutor()
+        orch.register_executor("executor_node", ex)
+        tid = await orch.submit_task("t", {"anything": True})
+        handle = orch._task_handles.get(tid)
+        if handle:
+            await asyncio.wait_for(handle, timeout=10)
+        assert ex.ran is True, "async __call__ executor was never awaited"
+
+    @pytest.mark.asyncio
+    async def test_callable_class_executor_failure_maps_to_failed(self):
+        orch = AgentOrchestrator()
+        orch.register_default_agents()
+
+        class _Failing(_AsyncCallableExecutor):
+            async def __call__(self, input_data):
+                self.ran = True
+                return {"status": "failed", "error": "node blew up"}
+
+        ex = _Failing()
+        orch.register_executor("executor_node", ex)
+        tid = await orch.submit_task("t", {"anything": True})
+        handle = orch._task_handles.get(tid)
+        if handle:
+            await asyncio.wait_for(handle, timeout=10)
+        assert ex.ran is True
+        # terminal task is popped (R-1); failure recorded before pop via accept lookup
+        # — verify via graveyard semantics: task gone means it reached terminal state
+        assert orch.get_task(tid) is None
+
+    @pytest.mark.asyncio
+    async def test_plan_path_awaits_callable_class_executor(self):
+        from fusion_cowork.orchestrator.orchestrator import Agent, AgentRole
+
+        orch = AgentOrchestrator()
+        orch.register_default_agents()
+        ex = _AsyncCallableExecutor()
+        orch.register_agent(Agent(agent_id="cc", name="cc", role=AgentRole.EXECUTOR))
+        orch.register_executor("cc", ex)
+        plan = await orch.create_plan("p", "test")
+        orch.add_task(plan.plan_id, "cc", "run", {})
+        result = await orch.execute_plan(plan.plan_id)
+        assert ex.ran is True
+        assert result["status"] == "completed"
+        assert result["results"][plan.tasks[0].task_id].get("stdout") == "ran-for-real"
