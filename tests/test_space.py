@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -865,14 +866,39 @@ class TestSpaceAPI:
         return mock
 
     @pytest.fixture
-    def api_app(self, store, perm, mlx_mock, kb_mock):
-        from fusion_cowork.space.api import create_space_api
+    def api_app(self, store, perm, mlx_mock, kb_mock, monkeypatch):
+        # Test-isolation guard: a stale global JWT verifier (module-level
+        # _DEFAULT_VERIFIER singleton in fusion_cowork.auth.jwt) left active by
+        # an earlier test file made every unauthenticated request here fail
+        # with 401 ("JWT 无效或缺失") under full-suite runs. Force the API
+        # fixture into a clean auth state and restore afterwards.
+        import fusion_cowork.auth.jwt as jwt_mod
 
-        space_svc = SpaceService(store)
-        member_svc = SpaceMemberService(store, perm)
-        chat_svc = SpaceChatService(store, mlx_mock, perm)
-        kb_svc = SpaceKBService(store, kb_mock, perm)
-        return create_space_api(space_svc, member_svc, chat_svc, kb_svc)
+        jwt_env_keys = [
+            "FUSION_JWT_SECRET",
+            "FUSION_JWT_PUBLIC_KEY",
+            "FUSION_JWKS_URL",
+            "FUSION_JWT_ISSUER",
+            "FUSION_JWT_AUDIENCE",
+            "FUSION_REQUIRE_JWT",
+        ]
+        saved_env = {k: os.environ.get(k) for k in jwt_env_keys if k in os.environ}
+        saved_verifier = jwt_mod._DEFAULT_VERIFIER
+        for k in jwt_env_keys:
+            monkeypatch.delenv(k, raising=False)
+        jwt_mod._DEFAULT_VERIFIER = None
+        try:
+            from fusion_cowork.space.api import create_space_api
+
+            space_svc = SpaceService(store)
+            member_svc = SpaceMemberService(store, perm)
+            chat_svc = SpaceChatService(store, mlx_mock, perm)
+            kb_svc = SpaceKBService(store, kb_mock, perm)
+            yield create_space_api(space_svc, member_svc, chat_svc, kb_svc)
+        finally:
+            jwt_mod._DEFAULT_VERIFIER = saved_verifier
+            for k, v in saved_env.items():
+                os.environ[k] = v
 
     @pytest.fixture
     def client(self, api_app):
