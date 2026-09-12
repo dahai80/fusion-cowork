@@ -694,6 +694,29 @@ class AgentOrchestrator:
         plan = await self.create_plan("standard_pipeline", "标准编排流水线")
 
         # 1. Run the Planner first, alone.
+        #    Feed the planner the real node registry so subtasks reference
+        #    executable node names instead of free-form prose (audit E2E:
+        #    without the catalog a small model produced input_data without
+        #    node_name and every subtask failed with 缺少 node_name 参数).
+        try:
+            from fusion_cowork.nodes import import_all_nodes
+
+            import_all_nodes()  # idempotent; headless callers may not have registered nodes yet
+        except Exception:
+            pass
+        try:
+            from fusion_cowork.engine.node import NodeRegistry
+
+            node_names = sorted(n["name"] for n in NodeRegistry.list())
+        except Exception:
+            node_names = []
+        node_catalog = (
+            "Available nodes for executor_node input_data.node_name (pick ONLY from these):\n"
+            + ", ".join(node_names)
+            + "\n"
+            if node_names
+            else ""
+        )
         plan_task = self.add_task(
             plan.plan_id,
             planner[0].agent_id,
@@ -703,8 +726,15 @@ class AgentOrchestrator:
                     "Break the following task into subtasks. Reply with ONLY a JSON array, "
                     'each item: {"description": str, "agent_id": one of '
                     "[executor_node, executor_workflow, executor_mlx, executor_shell], "
-                    '"input_data": object, "depends_on": [subtask indexes], '
-                    '"acceptance_criteria": str}.\nTASK:\n' + json.dumps(input_data, ensure_ascii=False, default=str)
+                    '"input_data": OBJECT (never a string; for executor_node it MUST include '
+                    '"node_name" taken from the catalog below, plus that node\'s required params; '
+                    'for executor_shell it MUST include "command"; '
+                    "depends_on indexes MUST NOT form cycles and MUST only reference earlier items), "
+                    '"depends_on": [subtask indexes], '
+                    '"acceptance_criteria": str}.\n'
+                    + node_catalog
+                    + "TASK:\n"
+                    + json.dumps(input_data, ensure_ascii=False, default=str)
                 )
             },
         )
@@ -752,7 +782,9 @@ class AgentOrchestrator:
                 plan.plan_id,
                 str(st.get("agent_id", "executor_node")),
                 str(st.get("description", f"subtask {i + 1}")),
-                dict(st.get("input_data") or {}),
+                st["input_data"]
+                if isinstance(st.get("input_data"), dict)
+                else {"prompt": str(st.get("input_data") or "")},
                 depends_on=deps or None,
             )
             if t is not None:
