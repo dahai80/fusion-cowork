@@ -23,8 +23,11 @@ jobs:
 
       - name: Generate CycloneDX SBOM
         run: |
-          cyclonedx-py environment -o sbom.cdx.json --schema-version 1.5 || \
-          cyclonedx-py requirements -i <(pip freeze) -o sbom.cdx.json
+          # cyclonedx-py v7+ renamed --schema-version to --spec-version; pin the
+          # tool so future CLI changes cannot break this workflow again.
+          pip install "cyclonedx-bom>=7,<8"
+          cyclonedx-py environment -o sbom.cdx.json --spec-version 1.5 \
+            || { pip freeze > /tmp/freeze.txt && cyclonedx-py requirements -i /tmp/freeze.txt -o sbom.cdx.json --spec-version 1.5; }
 
       - name: pip-audit report
         run: pip-audit -f json -o pip-audit.json || true
