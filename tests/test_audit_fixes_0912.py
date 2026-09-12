@@ -23,6 +23,7 @@ import json
 import shutil
 import tempfile
 import time
+from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -786,3 +787,119 @@ class TestAwaitableResultHandling:
         assert ex.ran is True
         assert result["status"] == "completed"
         assert result["results"][plan.tasks[0].task_id].get("stdout") == "ran-for-real"
+
+
+class TestPlanRetrospective:
+    """方案二③: plan terminal snapshot lands in the trajectory jsonl."""
+
+    def test_write_plan_retrospective_snapshot_shape(self):
+        from fusion_cowork.orchestrator import trajectory_writer as tw
+
+        class T:
+            task_id = "t1"
+            agent_id = "executor_node"
+            parent_task = ""
+            description = "d"
+            status = "failed"
+            error = "boom"
+            acceptance_status = "rejected"
+            acceptance_criteria = "c"
+            acceptor = "a"
+            retry_count = 1
+            started_at = 1.0
+            completed_at = 10.0
+
+        class P:
+            plan_id = "plan_x"
+            workflow_name = "wf"
+            status = "failed"
+            tasks = [T()]
+            dependencies = {"t1": []}
+
+        captured = {}
+
+        class FakeWriter:
+            def write(self, evt):
+                captured["evt"] = evt
+                return "/tmp/fake.jsonl"
+
+        with mock.patch.object(tw, "TrajectoryWriter", FakeWriter):
+            path = tw.write_plan_retrospective(P(), {"t1": {"status": "failed", "error": "boom"}}, 9.0)
+        assert path == "/tmp/fake.jsonl"
+        evt = captured["evt"]
+        assert evt.event == "plan_retrospective"
+        assert evt.status == "failed" and evt.is_error is True
+        assert evt.data["failed_tasks"] == ["t1"]
+        snap = evt.data["tasks"][0]
+        assert snap["retry_count"] == 1 and snap["acceptance_status"] == "rejected"
+        assert snap["elapsed"] == 9.0
+
+    @pytest.mark.asyncio
+    async def test_execute_plan_writes_retrospective(self):
+        class Ex:
+            async def __call__(self, input_data):
+                # executor result contract: plain payload dict (a "status" key
+                # would be interpreted as an executor-reported failure)
+                return {"stdout": "retro-ok"}
+
+        orch = AgentOrchestrator()
+        TestPlanFailurePropagation._register(orch, "executor_node", Ex())
+        plan = await orch.create_plan("retro-drill", "test")
+        orch.add_task(plan.plan_id, "executor_node", "run", {})
+        calls = []
+        orch._write_plan_retrospective = lambda plan, results, elapsed: calls.append(plan.status)
+        await orch.execute_plan(plan.plan_id)
+        assert calls == ["completed"]
+        await orch.stop_runtimes()
+
+
+class TestDashboardArchiveVisibility:
+    """Presence: terminal (archived) tasks must be visible in the dashboard,
+    otherwise the acceptance GUI has no accept/reject target."""
+
+    @staticmethod
+    def _run_to_completion(orch: AgentOrchestrator) -> str:
+        """Submit a shell task and wait until it reaches a terminal state."""
+
+        async def _run() -> str:
+            from fusion_cowork.nodes import import_all_nodes
+
+            import_all_nodes()
+            tid = await orch.submit_task(
+                "t", {"node_name": "shell_exec", "node_params": {"command": "echo hi", "timeout": 5}}
+            )
+            for _ in range(60):
+                await asyncio.sleep(0.1)
+                task = orch.get_task(tid)
+                if task is not None and task.status in ("completed", "failed"):
+                    return tid
+            return ""
+
+        return asyncio.run(_run())
+
+    def test_archive_exposed_via_get_task(self):
+        orch = AgentOrchestrator()
+        orch.register_default_agents()
+        tid = self._run_to_completion(orch)
+        assert tid
+        task = orch.get_task(tid)
+        assert task is not None and task.status == "completed"
+        assert tid not in orch._tasks  # popped from running map (R-1)
+        assert tid in orch._task_archive  # but addressable via archive
+
+    def test_dashboard_includes_archived_tasks(self):
+        from fusion_cowork.server.desk_rpc import DeskRPCServer
+
+        orch = AgentOrchestrator()
+        orch.register_default_agents()
+        tid = self._run_to_completion(orch)
+        assert tid
+        server = DeskRPCServer()
+        server._orchestrator = orch  # inject without letting the handler build its own
+        payload = asyncio.run(server._handle_task_dashboard({}))
+        ids = [t["task_id"] for t in payload["tasks"]]
+        assert tid in ids
+        entry = next(t for t in payload["tasks"] if t["task_id"] == tid)
+        assert entry["status"] == "completed"
+        # acceptance_status stays "" until request_acceptance is called (real contract)
+        assert entry["acceptance_status"] == ""

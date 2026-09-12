@@ -612,6 +612,11 @@ class AgentOrchestrator:
         elapsed = time.time() - start_time
         logger.info(f"编排完成: {plan_id} ({elapsed:.2f}s) status={plan.status}")
 
+        # Retrospective (audit 方案二③): plan terminal snapshot → trajectory
+        # jsonl, so every plan's task tree + failures + acceptance state is
+        # reviewable afterwards (zero new storage: reuses TrajectoryWriter).
+        self._write_plan_retrospective(plan, results, elapsed)
+
         return {
             "plan_id": plan_id,
             "status": plan.status,
@@ -881,3 +886,15 @@ class AgentOrchestrator:
         self._task_archive.move_to_end(task.task_id)
         while len(self._task_archive) > 256:
             self._task_archive.popitem(last=False)
+
+    def _write_plan_retrospective(self, plan, results: Dict[str, Any], elapsed: float) -> None:
+        """Retrospective (audit 方案二③): append a plan terminal snapshot to
+        the trajectory jsonl — task tree with parent links, per-task status/
+        error/acceptance, and the honest plan verdict, so every run is
+        reviewable afterwards. Best-effort: never breaks plan execution."""
+        try:
+            from .trajectory_writer import write_plan_retrospective
+
+            write_plan_retrospective(plan, results, elapsed)
+        except Exception as e:
+            logger.debug(f"plan retrospective skipped: {e}")

@@ -1014,7 +1014,10 @@ class DeskRPCServer:
         orch = self._get_orchestrator()
 
         tasks = []
-        for t in orch._tasks.values():
+        # Running tasks first, then the bounded terminal archive — the
+        # acceptance GUI needs finished tasks visible or accept/reject has
+        # no target (audit E2E: archive-only tasks were invisible).
+        for t in list(orch._tasks.values()) + list(orch._task_archive.values()):
             tasks.append(
                 {
                     "task_id": t.task_id,
@@ -1030,6 +1033,31 @@ class DeskRPCServer:
                     "elapsed": round(t.completed_at - t.started_at, 3) if t.completed_at and t.started_at else None,
                 }
             )
+
+        # Plan-path subtasks never enter orch._tasks (they live on the plan
+        # object only) — merge them in or the dashboard/presence view is
+        # blind to every orchestrated plan run (live drill 0913 evidence).
+        seen_task_ids = {t["task_id"] for t in tasks}
+        for p in orch._plans.values():
+            for t in p.tasks:
+                if t.task_id in seen_task_ids:
+                    continue
+                seen_task_ids.add(t.task_id)
+                tasks.append(
+                    {
+                        "task_id": t.task_id,
+                        "agent_id": t.agent_id,
+                        "parent_task": t.parent_task,
+                        "description": t.description[:200],
+                        "status": t.status,
+                        "acceptance_status": t.acceptance_status,
+                        "acceptance_criteria": t.acceptance_criteria[:200],
+                        "acceptor": t.acceptor,
+                        "retry_count": t.retry_count,
+                        "error": t.error[:300] if t.error else "",
+                        "elapsed": round(t.completed_at - t.started_at, 3) if t.completed_at and t.started_at else None,
+                    }
+                )
 
         plans = []
         for p in orch._plans.values():
