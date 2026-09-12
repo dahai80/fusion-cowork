@@ -171,6 +171,7 @@ class DeskRPCServer:
             "desk.agent.accept": self._handle_agent_accept,
             "desk.agent.reopen": self._handle_agent_reopen,
             "desk.task.dashboard": self._handle_task_dashboard,
+            "desk.retrospective.list": self._handle_retrospective_list,
             # MLX
             "desk.mlx.status": self._handle_mlx_status,
             "desk.mlx.models": self._handle_mlx_models,
@@ -1105,6 +1106,19 @@ class DeskRPCServer:
             "agents": agents,
             "pending_approvals": pending_approvals,
         }
+
+    async def _handle_retrospective_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """方案二③ GUI surface: recent plan retrospectives from the
+        trajectory jsonl pool (newest first) for the dashboard history view."""
+        from ..orchestrator.trajectory_writer import list_plan_retrospectives
+
+        limit = params.get("limit") or 20
+        try:
+            limit = max(1, min(int(limit), 100))
+        except (TypeError, ValueError):
+            limit = 20
+        rows = list_plan_retrospectives(limit=limit)
+        return {"retrospectives": rows, "count": len(rows)}
 
     async def _handle_mlx_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
         client = self._get_mlx_client()

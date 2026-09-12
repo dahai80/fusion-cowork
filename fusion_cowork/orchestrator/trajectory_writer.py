@@ -8,8 +8,10 @@ Reuses TrajectoryWriter (zero new storage infrastructure).
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+from pathlib import Path
 from typing import Any, Dict
 
 from ..trajectory.recorder import TrajectoryEvent, TrajectoryWriter
@@ -69,3 +71,41 @@ def write_plan_retrospective(plan, results: Dict[str, Any], elapsed: float) -> s
     path = TrajectoryWriter().write(evt)
     logger.info(f"plan retrospective written: {path} plan={plan.plan_id} status={plan.status}")
     return path
+
+
+def list_plan_retrospectives(limit: int = 20, trajectory_dir: str | None = None) -> list:
+    """Read recent plan_retrospective events from the trajectory jsonl pool
+    (newest first). Best-effort: unreadable/corrupt files are skipped."""
+    from ..trajectory.recorder import DEFAULT_TRAJECTORY_DIR
+
+    base = Path(trajectory_dir or DEFAULT_TRAJECTORY_DIR)
+    if not base.is_dir():
+        return []
+    rows = []
+    for f in base.glob("*.jsonl"):
+        try:
+            with open(f, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        evt = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if evt.get("event") != "plan_retrospective":
+                        continue
+                    rows.append(
+                        {
+                            "plan_id": evt.get("execution_id") or (evt.get("data") or {}).get("plan_id", ""),
+                            "workflow_name": evt.get("workflow_name", ""),
+                            "status": evt.get("status", ""),
+                            "ts": evt.get("ts", 0),
+                            "task_count": (evt.get("data") or {}).get("task_count", 0),
+                            "failed_tasks": (evt.get("data") or {}).get("failed_tasks", []),
+                        }
+                    )
+        except OSError:
+            continue
+    rows.sort(key=lambda r: r.get("ts", 0), reverse=True)
+    return rows[: max(1, limit)]

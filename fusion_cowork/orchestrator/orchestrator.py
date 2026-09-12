@@ -729,53 +729,74 @@ class AgentOrchestrator:
             if node_names
             else ""
         )
-        plan_task = self.add_task(
-            plan.plan_id,
-            planner[0].agent_id,
-            "任务规划",
-            {
-                "prompt": (
-                    "Break the following task into subtasks. Reply with ONLY a JSON array, "
-                    'each item: {"description": str, "agent_id": one of '
-                    "[executor_node, executor_workflow, executor_mlx, executor_shell], "
-                    '"input_data": OBJECT (never a string; for executor_node it MUST include '
-                    '"node_name" taken from the catalog below, plus that node\'s required params; '
-                    'for executor_shell it MUST include "command"; '
-                    "depends_on indexes MUST NOT form cycles and MUST only reference earlier items), "
-                    '"depends_on": [subtask indexes], '
-                    '"acceptance_criteria": str}.\n'
-                    + node_catalog
-                    + "TASK:\n"
-                    + json.dumps(input_data, ensure_ascii=False, default=str)
-                )
-            },
+        planner_prompt = (
+            "Break the following task into subtasks. Reply with ONLY a JSON array, "
+            'each item: {"description": str, "agent_id": one of '
+            "[executor_node, executor_workflow, executor_mlx, executor_shell], "
+            '"input_data": OBJECT (never a string; for executor_node it MUST include '
+            '"node_name" taken from the catalog below, plus that node\'s required params; '
+            'for executor_shell it MUST include "command"; '
+            "depends_on indexes MUST NOT form cycles and MUST only reference earlier items), "
+            '"depends_on": [subtask indexes], '
+            '"acceptance_criteria": str}.\n'
+            + node_catalog
+            + "TASK:\n"
+            + json.dumps(input_data, ensure_ascii=False, default=str)
         )
-        stage = await self.execute_plan(plan.plan_id)
-        plan_output = stage.get("results", {}).get(plan_task.task_id, {})
-        content = ""
-        if isinstance(plan_output, dict):
-            data = plan_output.get("data")
-            if isinstance(data, dict):
-                content = str(data.get("content", ""))
-            else:
-                content = str(plan_output.get("result", "") or "")
-        subtasks = []
-        try:
-            match = re.search(r"\[.*\]", content, re.DOTALL)
-            if match:
-                parsed = json.loads(match.group(0))
-                if isinstance(parsed, list):
-                    subtasks = parsed
-        except (json.JSONDecodeError, TypeError):
-            subtasks = []
-
+        # Schema-validate the planner output; on violation, retry ONCE with
+        # corrective feedback (audit 方案三: small models routinely emit
+        # string input_data / invented node names / cyclic depends_on).
+        valid_nodes = set(node_names)
+        subtasks: list = []
+        last_content = ""
+        problems: list = []
+        for attempt in range(2):
+            plan_task = self.add_task(
+                plan.plan_id,
+                planner[0].agent_id,
+                "任务规划" if attempt == 0 else "任务规划(重试)",
+                {"prompt": planner_prompt},
+            )
+            stage = await self.execute_plan(plan.plan_id)
+            plan_output = stage.get("results", {}).get(plan_task.task_id, {})
+            content = ""
+            if isinstance(plan_output, dict):
+                data = plan_output.get("data")
+                if isinstance(data, dict):
+                    content = str(data.get("content", ""))
+                else:
+                    # executor payloads vary: {"content": ...} (coordinator/mlx)
+                    # or {"result": ...} — accept both shapes
+                    content = str(plan_output.get("content", "") or plan_output.get("result", "") or "")
+            last_content = content
+            parsed = None
+            try:
+                match = re.search(r"\[.*\]", content, re.DOTALL)
+                if match:
+                    candidate = json.loads(match.group(0))
+                    if isinstance(candidate, list):
+                        parsed = candidate
+            except (json.JSONDecodeError, TypeError):
+                parsed = None
+            problems = self._planner_schema_problems(parsed, valid_nodes)
+            if not problems:
+                subtasks = parsed or []
+                break
+            if attempt == 0:
+                logger.warning(f"Planner 输出未通过 schema 校验, 纠错重试: {problems}")
+                planner_prompt = (
+                    planner_prompt
+                    + "\n\nYour previous reply was INVALID for these reasons:\n- "
+                    + "\n- ".join(problems[:8])
+                    + "\nFix ALL of them and reply again with ONLY the corrected JSON array."
+                )
         if not subtasks:
             # Fail loudly instead of silently faking a pipeline (A-2).
             plan.status = "failed"
             return {
-                "error": "Planner 未产出可解析的任务拆解",
+                "error": "Planner 未产出可解析的任务拆解" + (f" (schema: {problems})" if problems else ""),
                 "plan_id": plan.plan_id,
-                "raw_planner_output": content[:500],
+                "raw_planner_output": last_content[:500],
             }
 
         # 2. Materialize the parsed subtasks as real plan tasks.
@@ -818,6 +839,42 @@ class AgentOrchestrator:
                 )
 
         return await self.execute_plan(plan.plan_id)
+
+    @staticmethod
+    def _planner_schema_problems(parsed, valid_nodes: set) -> list:
+        """Validate a parsed planner subtask array against the execution
+        contract; returns a list of human-readable problems (empty = ok).
+        Accepts parsed=None (unparseable output) and reports it."""
+        if not isinstance(parsed, list) or not parsed:
+            return ["output is not a non-empty JSON array"]
+        known_agents = {"executor_node", "executor_workflow", "executor_mlx", "executor_shell"}
+        problems: list = []
+        for i, st in enumerate(parsed):
+            if not isinstance(st, dict):
+                problems.append(f"subtask {i}: not an object")
+                continue
+            agent = str(st.get("agent_id", "executor_node"))
+            if agent not in known_agents:
+                problems.append(f"subtask {i}: unknown agent_id '{agent}'")
+            inp = st.get("input_data")
+            if not isinstance(inp, dict):
+                problems.append(f"subtask {i}: input_data must be an OBJECT, got {type(inp).__name__}")
+                continue
+            if agent == "executor_node":
+                node = str(inp.get("node_name") or "")
+                if not node:
+                    problems.append(f"subtask {i}: executor_node input_data missing node_name")
+                elif valid_nodes and node not in valid_nodes:
+                    problems.append(f"subtask {i}: node_name '{node}' not in catalog")
+            elif agent == "executor_shell" and not inp.get("command"):
+                problems.append(f"subtask {i}: executor_shell input_data missing command")
+            for d in st.get("depends_on") or []:
+                try:
+                    if int(d) >= i:
+                        problems.append(f"subtask {i}: depends_on {d} must reference an EARLIER index")
+                except (TypeError, ValueError):
+                    problems.append(f"subtask {i}: depends_on {d!r} is not an integer index")
+        return problems
 
     def get_plan_status(self, plan_id: str) -> Optional[Dict[str, Any]]:
         """获取计划状态。"""
