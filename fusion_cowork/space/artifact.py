@@ -46,23 +46,25 @@ class SpaceArtifactService:
         tid = resolve_tenant_id(tenant_id)
         if not await self._perm.check(space_id, owner_user_id, "edit_artifact"):
             raise PermissionError(f"User {owner_user_id} cannot create artifact in space {space_id}")
-        # Stage 7: per-tenant artifact quota (opt-in, default 无限)
+        # Stage 7 / P2-4 (audit 0912): quota COUNT + check moved INSIDE the
+        # serial write transaction — previously COUNT ran outside, so
+        # concurrent creates could overshoot the quota.
         from ..security.quotas import get_default_quota_enforcer
 
-        try:
-            cur = await self._store._fetchval(
-                "SELECT COUNT(*) FROM space_artifacts WHERE space_id = ? AND tenant_id = ?",
-                (space_id, tid),
-            )
-            get_default_quota_enforcer().check_create_artifact(tid, space_id, int(cur or 0))
-        except Exception as e:
-            if "QuotaExceeded" in type(e).__name__:
-                raise
-            logger.debug(f"配额校验跳过: {e}")
         artifact_id = f"art_{uuid.uuid4().hex[:8]}"
         now = datetime.now().isoformat()
         # A-8: 经 store 串行写事务, 与 SpaceStore 写隔离 (单共享连接)。
         async with self._store.write_tx(tid) as h:
+            cur = await h.fetchval(
+                "SELECT COUNT(*) FROM space_artifacts WHERE space_id = ? AND tenant_id = ?",
+                (space_id, tid),
+            )
+            try:
+                get_default_quota_enforcer().check_create_artifact(tid, space_id, int(cur or 0))
+            except Exception as e:
+                if "QuotaExceeded" in type(e).__name__:
+                    raise
+                logger.debug(f"配额校验跳过: {e}")
             await h.exec(
                 "INSERT INTO space_artifacts "
                 "(id, space_id, name, artifact_type, content, owner_user_id, "
@@ -166,23 +168,90 @@ class SpaceArtifactService:
         space_id: str,
         artifact_id: str,
         user_id: str,
+        expires_hours: int = 0,
         tenant_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         tid = resolve_tenant_id(tenant_id)
         if not await self._perm.check(space_id, user_id, "share_artifact"):
             raise PermissionError(f"User {user_id} cannot share artifact in space {space_id}")
-        row = await self._store._fetchone(
-            "SELECT owner_user_id FROM space_artifacts WHERE id = ? AND space_id = ? AND tenant_id = ?",
-            (artifact_id, space_id, tid),
-        )
-        if not row:
-            raise ValueError(f"Artifact {artifact_id} not found")
-        if dict(row)["owner_user_id"] != user_id:
-            if not await self._perm.is_owner_or_admin(space_id, user_id):
-                raise PermissionError("Only owner/admin can share artifact")
+        now = datetime.now().isoformat()
+        # P0-3 (audit 0912): the share code is now persisted in the artifact
+        # metadata (previously it was generated and returned without any
+        # storage — an unusable, fictional delivery token).
+        expires_at = ""
+        if expires_hours:
+            from datetime import timedelta
+
+            expires_at = (datetime.now() + timedelta(hours=expires_hours)).isoformat()
         share_code = f"share_{uuid.uuid4().hex[:8]}"
+        async with self._store.write_tx(tid) as h:
+            row = await h.fetchone(
+                "SELECT owner_user_id, metadata FROM space_artifacts WHERE id = ? AND space_id = ? AND tenant_id = ?",
+                (artifact_id, space_id, tid),
+            )
+            if not row:
+                raise ValueError(f"Artifact {artifact_id} not found")
+            if dict(row)["owner_user_id"] != user_id:
+                if not await self._perm.is_owner_or_admin(space_id, user_id):
+                    raise PermissionError("Only owner/admin can share artifact")
+            try:
+                meta = json.loads(dict(row).get("metadata") or "{}")
+                if not isinstance(meta, dict):
+                    meta = {}
+            except (json.JSONDecodeError, TypeError):
+                meta = {}
+            shares = meta.setdefault("shares", [])
+            shares.append(
+                {
+                    "code": share_code,
+                    "shared_by": user_id,
+                    "shared_at": now,
+                    "expires_at": expires_at,
+                    "revoked": False,
+                }
+            )
+            await h.exec(
+                "UPDATE space_artifacts SET metadata = ?, updated_at = ? "
+                "WHERE id = ? AND space_id = ? AND tenant_id = ?",
+                (json.dumps(meta, ensure_ascii=False), now, artifact_id, space_id, tid),
+            )
         logger.info(f"SpaceArtifactService.share_artifact id={artifact_id} code={share_code} tenant={tid}")
-        return {"artifact_id": artifact_id, "share_code": share_code}
+        return {"artifact_id": artifact_id, "share_code": share_code, "expires_at": expires_at}
+
+    async def resolve_share(
+        self,
+        space_id: str,
+        share_code: str,
+        tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """P0-3 (audit 0912): redeem a share code — validate existence,
+        revocation and expiry, then return the artifact. Previously codes
+        could not be resolved at all."""
+        tid = resolve_tenant_id(tenant_id)
+        rows = await self._store._fetchall(
+            "SELECT * FROM space_artifacts WHERE space_id = ? AND tenant_id = ?",
+            (space_id, tid),
+        )
+        for r in rows:
+            art = dict(r)
+            try:
+                meta = json.loads(art.get("metadata") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                continue
+            for share in meta.get("shares", []) if isinstance(meta, dict) else []:
+                if share.get("code") != share_code:
+                    continue
+                if share.get("revoked"):
+                    raise ValueError("分享码已被撤销")
+                expires_at = share.get("expires_at") or ""
+                if expires_at:
+                    try:
+                        if datetime.now() > datetime.fromisoformat(expires_at):
+                            raise ValueError("分享码已过期")
+                    except ValueError:
+                        raise
+                return {"artifact": art, "shared_by": share.get("shared_by", "")}
+        raise ValueError("分享码无效")
 
     async def transfer_ownership(
         self,

@@ -172,7 +172,9 @@ class SpaceAgentRuntime:
         registered = 0
         for agent_def in agents:
             agent_id = agent_def.get("id", "")
-            if agent_id in orchestrator._agents:
+            # A-10 (audit 0912): use the public has_agent() API instead of
+            # reaching into the private _agents dict.
+            if orchestrator.has_agent(f"space:{space_id}:{agent_id}"):
                 continue
             role_map = {
                 "assistant": AgentRole.EXECUTOR,

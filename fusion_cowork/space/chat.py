@@ -196,6 +196,33 @@ class SpaceChatService:
             messages.append({"role": role, "content": msg.content})
         return messages
 
+    @staticmethod
+    def _trim_context(messages: List[dict], max_chars: int = 24000) -> List[dict]:
+        """P1-4 (audit 0912): keep the most recent messages within a character
+        budget — long sessions previously stuffed 100 full messages into the
+        prompt and blew the model context window. System prompts are always
+        preserved; a marker notes elided history."""
+        if sum(len(m.get("content", "")) for m in messages) <= max_chars:
+            return messages
+        system_head: List[dict] = []
+        body = messages
+        if messages and messages[0].get("role") == "system":
+            system_head = [messages[0]]
+            body = messages[1:]
+        kept: List[dict] = []
+        used = 0
+        for m in reversed(body):
+            c = len(m.get("content", ""))
+            if used + c > max_chars and kept:
+                break
+            kept.append(m)
+            used += c
+        kept.reverse()
+        elided = len(body) - len(kept)
+        if elided > 0:
+            kept.insert(0, {"role": "system", "content": f"[{elided} earlier messages omitted to fit context budget]"})
+        return system_head + kept
+
     def _build_agent_messages(
         self,
         agent_def: dict,
@@ -208,7 +235,8 @@ class SpaceChatService:
         for msg in context:
             role = msg.role if msg.role in ("user", "assistant", "system") else "user"
             messages.append({"role": role, "content": msg.content})
-        return messages
+        # P1-4 (audit 0912): apply the context budget before sending to the model
+        return self._trim_context(messages)
 
     def _inject_rag(
         self,
@@ -253,46 +281,83 @@ class SpaceChatService:
         user_msg = await self._store.add_message(user_msg)
         await self._emit(space_id, "message", user_msg.to_dict())
 
-        results = []
+        # P1-3 (audit 0912): relay used to break on the first agent failure,
+        # discarding completed steps. Now optional agents (agent_def.config
+        # optional=true) are skipped on failure and the chain continues; the
+        # summary honestly reports partial completion.
+        # P1-5 (audit 0912): agent_ids may contain nested lists — agents in
+        # one group run in parallel (asyncio.gather), groups run sequentially,
+        # and the merged group output feeds the next stage.
+        # P1-4 (audit 0912): the conversation context is built once per stage
+        # and trimmed to a token budget instead of re-fetching 100 full
+        # messages for every agent.
+        results: List[dict] = []
         current_message = initial_message
-        for agent_id in agent_ids:
-            agent_def = await self._store.get_agent_def(space_id, agent_id)
-            if not agent_def:
-                logger.warning(f"relay_agents: agent {agent_id} not found, skipping")
-                results.append({"agent_id": agent_id, "error": "not found"})
+        had_failure = False
+        for group in agent_ids:
+            group_ids = group if isinstance(group, list) else [group]
+            if not group_ids:
                 continue
-            try:
-                context = await self._store.get_messages(space_id, limit=100)
-                messages = self._build_agent_messages(agent_def, context)
-                if self._kb_svc and agent_def.get("enable_rag"):
-                    try:
-                        rag_results = await self._kb_svc.search(space_id, current_message, top_k=5)
-                        messages = self._inject_rag(messages, rag_results)
-                    except Exception as e:
-                        logger.warning(f"RAG search failed for relay agent {agent_id}: {e}")
-                agent_model = model or self._get_config_model(agent_def)
-                if not agent_model:
-                    models = await self._mlx.list_models()
-                    agent_model = models[0]["id"] if models else "default"
-                resp = await self._mlx.chat(model=agent_model, messages=messages)
-                reply = resp.content
-                assistant_msg = SpaceMessage(
-                    space_id=space_id,
-                    user_id="",
-                    agent_id=agent_id,
-                    content=reply,
-                    role="assistant",
+
+            async def _run_one(aid: str, stage_message: str) -> dict:
+                try:
+                    agent_def = await self._store.get_agent_def(space_id, aid)
+                    if not agent_def:
+                        return {"agent_id": aid, "error": "not found"}
+                    context = await self._store.get_messages(space_id, limit=100)
+                    messages = self._build_agent_messages(agent_def, context)
+                    if self._kb_svc and agent_def.get("enable_rag"):
+                        try:
+                            rag_results = await self._kb_svc.search(space_id, stage_message, top_k=5)
+                            messages = self._inject_rag(messages, rag_results)
+                        except Exception as e:
+                            logger.warning(f"RAG search failed for relay agent {aid}: {e}")
+                    agent_model = model or self._get_config_model(agent_def)
+                    if not agent_model:
+                        models = await self._mlx.list_models()
+                        agent_model = models[0]["id"] if models else "default"
+                    resp = await self._mlx.chat(model=agent_model, messages=messages)
+                    reply = resp.content
+                    assistant_msg = SpaceMessage(
+                        space_id=space_id,
+                        user_id="",
+                        agent_id=aid,
+                        content=reply,
+                        role="assistant",
+                    )
+                    assistant_msg = await self._store.add_message(assistant_msg)
+                    await self._emit(space_id, "message", assistant_msg.to_dict())
+                    return {"agent_id": aid, "content": reply}
+                except Exception as e:
+                    # P1-3: per-agent failure is recorded, not raised — a single
+                    # agent crash previously propagated and killed the stage.
+                    logger.error(f"relay_agents: agent {aid} failed: {e}")
+                    return {"agent_id": aid, "error": str(e)}
+
+            if len(group_ids) == 1:
+                group_results = [await _run_one(group_ids[0], current_message)]
+            else:
+                group_results = list(
+                    await asyncio.gather(*[_run_one(aid, current_message) for aid in group_ids], return_exceptions=True)
                 )
-                assistant_msg = await self._store.add_message(assistant_msg)
-                await self._emit(space_id, "message", assistant_msg.to_dict())
-                results.append({"agent_id": agent_id, "content": reply})
-                current_message = reply
-                logger.info(f"relay_agents step: agent={agent_id} len={len(reply)}")
-            except Exception as e:
-                logger.error(f"relay_agents: agent {agent_id} failed: {e}")
-                results.append({"agent_id": agent_id, "error": str(e)})
-                await self._emit(space_id, "error", {"agent_id": agent_id, "error": str(e)})
+                group_results = [
+                    r if isinstance(r, dict) else {"error": str(r)} for r in group_results
+                ]
+
+            ok_outputs = []
+            for aid, r in zip(group_ids, group_results):
+                if isinstance(r, dict) and r.get("error"):
+                    results.append(r)
+                    had_failure = True
+                    await self._emit(space_id, "error", {"agent_id": aid, "error": r["error"]})
+                    logger.error(f"relay_agents: agent {aid} failed: {r['error']}")
+                else:
+                    results.append(r)
+                    ok_outputs.append(r.get("content", ""))
+            if not ok_outputs:
+                # whole group failed: keep already-completed steps, stop chain
                 break
+            current_message = "\n\n".join(ok_outputs) if len(ok_outputs) > 1 else ok_outputs[0]
 
         await self._emit(
             space_id,
@@ -300,9 +365,10 @@ class SpaceChatService:
             {
                 "agent_ids": agent_ids,
                 "steps": len(results),
+                "partial": had_failure,
             },
         )
-        logger.info(f"SpaceChat.relay_agents space={space_id} agents={agent_ids} steps={len(results)}")
+        logger.info(f"SpaceChat.relay_agents space={space_id} agents={agent_ids} steps={len(results)} partial={had_failure}")
         return results
 
     async def list_messages(
