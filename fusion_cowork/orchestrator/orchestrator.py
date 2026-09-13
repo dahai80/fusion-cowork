@@ -803,6 +803,7 @@ class AgentOrchestrator:
             '"input_data": OBJECT (never a string; for executor_node it MUST include '
             '"node_name" taken from the catalog below, plus that node\'s required params; '
             'for executor_shell it MUST include "command"; '
+            'for executor_mlx it MUST include "prompt" (the instruction for the model); '
             "depends_on indexes MUST NOT form cycles and MUST only reference earlier items), "
             '"depends_on": [subtask indexes], '
             '"acceptance_criteria": str}.\n'
@@ -980,6 +981,10 @@ class AgentOrchestrator:
                     problems.append(f"subtask {i}: node_name '{node}' not in catalog")
             elif executor == "executor_shell" and not inp.get("command"):
                 problems.append(f"subtask {i}: executor_shell input_data missing command")
+            elif executor == "executor_mlx" and not inp.get("prompt"):
+                # 27B live-drill evidence: planner emitted an analyzer subtask
+                # without "prompt" -> the executor failed with 缺少 prompt 参数
+                problems.append(f"subtask {i}: executor_mlx input_data missing prompt")
             for d in st.get("depends_on") or []:
                 try:
                     idx = int(d)
