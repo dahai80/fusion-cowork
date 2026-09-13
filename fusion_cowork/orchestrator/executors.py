@@ -192,6 +192,7 @@ class ShellExecutor:
                 return {"status": "denied", "error": "shell 命令被权限系统拒绝, 需人工审批"}
 
         try:
+            proc = None
             proc = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
@@ -206,7 +207,7 @@ class ShellExecutor:
             }
         except TimeoutError:
             # HI-8: 超时后杀子进程 (旧版 except 不 kill, 进程泄漏)
-            if "proc" in locals() and proc.returncode is None:
+            if proc is not None and proc.returncode is None:
                 proc.kill()
                 await proc.wait()
                 logger.warning(f"ShellExecutor 超时杀进程: {command[:80]} ({timeout}s)")

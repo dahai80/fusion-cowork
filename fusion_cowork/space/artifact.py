@@ -228,9 +228,12 @@ class SpaceArtifactService:
         revocation and expiry, then return the artifact. Previously codes
         could not be resolved at all."""
         tid = resolve_tenant_id(tenant_id)
+        # v2 P2: prefilter candidates in SQL (metadata contains the code) —
+        # previously the FULL artifact table was fetched and every metadata
+        # blob JSON-parsed per redemption, O(n) per redeem.
         rows = await self._store._fetchall(
-            "SELECT * FROM space_artifacts WHERE space_id = ? AND tenant_id = ?",
-            (space_id, tid),
+            "SELECT * FROM space_artifacts WHERE space_id = ? AND tenant_id = ? AND metadata LIKE ?",
+            (space_id, tid, f"%{share_code}%"),
         )
         for r in rows:
             art = dict(r)

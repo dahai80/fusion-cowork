@@ -467,6 +467,9 @@ class AgentOrchestrator:
         task.status = "pending"
         task.retry_count += 1
         task.completed_at = 0.0
+        # v2 P2: reset started_at too — dashboard elapsed = completed_at -
+        # started_at; a stale started_at made rework rows show nonsense times.
+        task.started_at = 0.0
         logger.info(f"任务验收驳回，重开返工: {task_id} retry={task.retry_count}")
         return {
             "task_id": task_id,
@@ -778,16 +781,32 @@ class AgentOrchestrator:
             if node_names
             else ""
         )
+        # v2 方案五: business-role catalog — the planner may assign either an
+        # executor id or a business role id; roles carry duties/deliverables/
+        # default acceptor and map to executors at materialization.
+        try:
+            from .role_registry import get_role_registry
+
+            role_catalog = (
+                "Business roles (agent_id may be a role id; it maps to its executor "
+                "and its default acceptor is auto-bound):\n" + get_role_registry().prompt_catalog() + "\n"
+            )
+            valid_role_ids = set(get_role_registry().role_ids())
+        except Exception:
+            role_catalog = ""
+            valid_role_ids = set()
         planner_prompt = (
             "Break the following task into subtasks. Reply with ONLY a JSON array, "
-            'each item: {"description": str, "agent_id": one of '
-            "[executor_node, executor_workflow, executor_mlx, executor_shell], "
+            'each item: {"description": str, '
+            '"agent_id": executor id (executor_node/executor_workflow/executor_mlx/executor_shell) '
+            "OR a business role id from the role catalog below, "
             '"input_data": OBJECT (never a string; for executor_node it MUST include '
             '"node_name" taken from the catalog below, plus that node\'s required params; '
             'for executor_shell it MUST include "command"; '
             "depends_on indexes MUST NOT form cycles and MUST only reference earlier items), "
             '"depends_on": [subtask indexes], '
             '"acceptance_criteria": str}.\n'
+            + role_catalog
             + node_catalog
             + "TASK:\n"
             + json.dumps(input_data, ensure_ascii=False, default=str)
@@ -835,7 +854,7 @@ class AgentOrchestrator:
                         parsed = candidate
             except (json.JSONDecodeError, TypeError):
                 parsed = None
-            problems = self._planner_schema_problems(parsed, valid_nodes)
+            problems = self._planner_schema_problems(parsed, valid_nodes, valid_role_ids)
             if not problems:
                 subtasks = parsed or []
                 break
@@ -857,7 +876,16 @@ class AgentOrchestrator:
             }
 
         # 2. Materialize the parsed subtasks as real plan tasks.
+        # v2 方案五: business role ids resolve to their executor here, and the
+        # role's default acceptor is auto-bound (accountability: every task
+        # has a responsible acceptor even if the model omitted one).
         id_by_index: Dict[int, str] = {}
+        try:
+            from .role_registry import get_role_registry
+
+            role_reg = get_role_registry()
+        except Exception:
+            role_reg = None
         for i, st in enumerate(subtasks):
             if not isinstance(st, dict):
                 continue
@@ -868,9 +896,12 @@ class AgentOrchestrator:
                 except (KeyError, TypeError, ValueError):
                     continue
                 deps.append(dep_id)
+            raw_agent = str(st.get("agent_id", "executor_node"))
+            role = role_reg.get(raw_agent) if role_reg else None
+            executor = role.executor if role else raw_agent
             t = self.add_task(
                 plan.plan_id,
-                str(st.get("agent_id", "executor_node")),
+                executor,
                 str(st.get("description", f"subtask {i + 1}")),
                 st["input_data"]
                 if isinstance(st.get("input_data"), dict)
@@ -880,6 +911,11 @@ class AgentOrchestrator:
             if t is not None:
                 t.acceptance_criteria = str(st.get("acceptance_criteria", ""))
                 t.acceptance_status = "pending" if t.acceptance_criteria else ""
+                # 方案五: auto-bind the role's default acceptor; fall back to
+                # the coordinator so the task never has a blank responsible party.
+                t.acceptor = role.acceptor if (role and role.acceptor) else "coordinator"
+                if role:
+                    t.input_data.setdefault("_business_role", role.role_id)
                 id_by_index[i] = t.task_id
 
         # 3. Analyzer summarizes executor outputs once all subtasks finish.
@@ -898,32 +934,51 @@ class AgentOrchestrator:
         return await self.execute_plan(plan.plan_id)
 
     @staticmethod
-    def _planner_schema_problems(parsed, valid_nodes: set) -> list:
+    def _planner_schema_problems(parsed, valid_nodes: set, valid_role_ids: Optional[set] = None) -> list:
         """Validate a parsed planner subtask array against the execution
         contract; returns a list of human-readable problems (empty = ok).
-        Accepts parsed=None (unparseable output) and reports it."""
+        Accepts parsed=None (unparseable output) and reports it.
+
+        v2 方案五: agent_id may be an executor id OR a business role id —
+        role ids validate against valid_role_ids and resolve to their
+        executor's input contract (node_name/command requirements)."""
         if not isinstance(parsed, list) or not parsed:
             return ["output is not a non-empty JSON array"]
         known_agents = {"executor_node", "executor_workflow", "executor_mlx", "executor_shell"}
+        # 方案五: role id -> executor mapping for contract validation
+        role_map: Dict[str, str] = {}
+        if valid_role_ids:
+            try:
+                from .role_registry import get_role_registry
+
+                reg = get_role_registry()
+                role_map = {rid: reg.executor_for(rid) for rid in valid_role_ids}
+            except Exception:
+                role_map = {}
         problems: list = []
         for i, st in enumerate(parsed):
             if not isinstance(st, dict):
                 problems.append(f"subtask {i}: not an object")
                 continue
             agent = str(st.get("agent_id", "executor_node"))
-            if agent not in known_agents:
+            if agent in role_map:
+                executor = role_map[agent]  # business role id
+            elif agent in known_agents:
+                executor = agent
+            else:
                 problems.append(f"subtask {i}: unknown agent_id '{agent}'")
+                continue
             inp = st.get("input_data")
             if not isinstance(inp, dict):
                 problems.append(f"subtask {i}: input_data must be an OBJECT, got {type(inp).__name__}")
                 continue
-            if agent == "executor_node":
+            if executor == "executor_node":
                 node = str(inp.get("node_name") or "")
                 if not node:
                     problems.append(f"subtask {i}: executor_node input_data missing node_name")
                 elif valid_nodes and node not in valid_nodes:
                     problems.append(f"subtask {i}: node_name '{node}' not in catalog")
-            elif agent == "executor_shell" and not inp.get("command"):
+            elif executor == "executor_shell" and not inp.get("command"):
                 problems.append(f"subtask {i}: executor_shell input_data missing command")
             for d in st.get("depends_on") or []:
                 try:

@@ -322,12 +322,15 @@ class SpaceChatService:
             if not group_ids:
                 continue
 
-            async def _run_one(aid: str, stage_message: str) -> dict:
+            async def _run_one(aid: str, stage_message: str, context: List[SpaceMessage]) -> dict:
                 try:
                     agent_def = await self._store.get_agent_def(space_id, aid)
                     if not agent_def:
                         return {"agent_id": aid, "error": "not found"}
-                    context = await self._store.get_messages(space_id, limit=100)
+                    # v2 P2: context is fetched ONCE per group and passed in —
+                    # each agent previously re-read 100 messages from the store
+                    # (duplicated IO per relay member, contradicting the
+                    # once-per-stage note below).
                     messages = self._build_agent_messages(agent_def, context)
                     if self._kb_svc and agent_def.get("enable_rag"):
                         try:
@@ -357,11 +360,16 @@ class SpaceChatService:
                     logger.error(f"relay_agents: agent {aid} failed: {e}")
                     return {"agent_id": aid, "error": str(e)}
 
+            # v2 P2: fetch the group's context once, share across members
+            group_context = await self._store.get_messages(space_id, limit=100)
+
             if len(group_ids) == 1:
-                group_results = [await _run_one(group_ids[0], current_message)]
+                group_results = [await _run_one(group_ids[0], current_message, group_context)]
             else:
                 group_results = list(
-                    await asyncio.gather(*[_run_one(aid, current_message) for aid in group_ids], return_exceptions=True)
+                    await asyncio.gather(
+                        *[_run_one(aid, current_message, group_context) for aid in group_ids], return_exceptions=True
+                    )
                 )
                 group_results = [r if isinstance(r, dict) else {"error": str(r)} for r in group_results]
 

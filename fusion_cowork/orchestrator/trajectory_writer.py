@@ -73,9 +73,17 @@ def write_plan_retrospective(plan, results: Dict[str, Any], elapsed: float) -> s
     return path
 
 
-def list_plan_retrospectives(limit: int = 20, trajectory_dir: str | None = None) -> list:
+def list_plan_retrospectives(
+    limit: int = 20,
+    trajectory_dir: str | None = None,
+    after_ts: float = 0.0,
+) -> list:
     """Read recent plan_retrospective events from the trajectory jsonl pool
-    (newest first). Best-effort: unreadable/corrupt files are skipped."""
+    (newest first). Best-effort: unreadable/corrupt files are skipped.
+
+    v2 P2: `after_ts` enables incremental polling — files whose mtime is
+    older than after_ts are skipped entirely instead of re-parsing every
+    jsonl line on each dashboard refresh."""
     from ..trajectory.recorder import DEFAULT_TRAJECTORY_DIR
 
     base = Path(trajectory_dir or DEFAULT_TRAJECTORY_DIR)
@@ -84,6 +92,11 @@ def list_plan_retrospectives(limit: int = 20, trajectory_dir: str | None = None)
     rows = []
     for f in base.glob("*.jsonl"):
         try:
+            # v2 P2: skip cold files wholesale — a retrospective in this file
+            # can only be newer than the file's mtime, so files untouched
+            # since after_ts cannot contain new events.
+            if after_ts and f.stat().st_mtime <= after_ts:
+                continue
             with open(f, encoding="utf-8") as fh:
                 for line in fh:
                     line = line.strip()
@@ -95,12 +108,15 @@ def list_plan_retrospectives(limit: int = 20, trajectory_dir: str | None = None)
                         continue
                     if evt.get("event") != "plan_retrospective":
                         continue
+                    ts = evt.get("ts", 0)
+                    if after_ts and ts <= after_ts:
+                        continue
                     rows.append(
                         {
                             "plan_id": evt.get("execution_id") or (evt.get("data") or {}).get("plan_id", ""),
                             "workflow_name": evt.get("workflow_name", ""),
                             "status": evt.get("status", ""),
-                            "ts": evt.get("ts", 0),
+                            "ts": ts,
                             "task_count": (evt.get("data") or {}).get("task_count", 0),
                             "failed_tasks": (evt.get("data") or {}).get("failed_tasks", []),
                         }

@@ -1117,7 +1117,14 @@ class DeskRPCServer:
             limit = max(1, min(int(limit), 100))
         except (TypeError, ValueError):
             limit = 20
-        rows = list_plan_retrospectives(limit=limit)
+        # v2 P2: incremental polling — the client passes back the newest ts it
+        # has seen; older files/lines are skipped without parsing.
+        after_ts = params.get("after_ts") or 0
+        try:
+            after_ts = max(0.0, float(after_ts))
+        except (TypeError, ValueError):
+            after_ts = 0.0
+        rows = list_plan_retrospectives(limit=limit, after_ts=after_ts)
         return {"retrospectives": rows, "count": len(rows)}
 
     async def _handle_mlx_status(self, params: Dict[str, Any]) -> Dict[str, Any]:

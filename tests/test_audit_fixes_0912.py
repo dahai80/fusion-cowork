@@ -1079,3 +1079,86 @@ class TestV2SchemeThree:
                         found = evt["data"]["acceptor"] == "alice"
         assert found, "acceptance verdict not persisted to trajectory"
         await orch.stop_runtimes()
+
+
+class TestSchemeFiveRoles:
+    """方案五: business role registry — single source for planner catalog,
+    schema validation (role ids accepted, executor contract enforced), and
+    acceptor auto-bind at materialization."""
+
+    def test_registry_seed_and_catalog(self):
+        from fusion_cowork.orchestrator.role_registry import get_role_registry
+
+        reg = get_role_registry()
+        assert "shell_operator" in reg.role_ids()
+        assert reg.executor_for("shell_operator") == "executor_shell"
+        catalog = reg.prompt_catalog()
+        assert "默认验收人" in catalog and "交付物" in catalog
+
+    def test_registry_rejects_unknown_executor(self):
+        from fusion_cowork.orchestrator.role_registry import BusinessRole, RoleRegistry
+
+        with pytest.raises(ValueError):
+            r = RoleRegistry()
+            r.register(BusinessRole("bad", "bad", "executor_nope"))
+
+    def test_schema_validator_accepts_role_ids(self):
+        from fusion_cowork.orchestrator.orchestrator import AgentOrchestrator
+        from fusion_cowork.orchestrator.role_registry import get_role_registry
+
+        reg = get_role_registry()
+        ok = [{"description": "d", "agent_id": "shell_operator", "input_data": {"command": "ls"}, "depends_on": []}]
+        assert AgentOrchestrator._planner_schema_problems(ok, set(), reg.role_ids()) == []
+        bad_contract = [{"description": "d", "agent_id": "shell_operator", "input_data": {"x": 1}, "depends_on": []}]
+        assert any(
+            "missing command" in x
+            for x in AgentOrchestrator._planner_schema_problems(bad_contract, set(), reg.role_ids())
+        )
+        unknown = [{"description": "d", "agent_id": "made_up_role", "input_data": {}, "depends_on": []}]
+        assert any(
+            "unknown agent_id" in x for x in AgentOrchestrator._planner_schema_problems(unknown, set(), reg.role_ids())
+        )
+
+    @pytest.mark.asyncio
+    async def test_role_based_pipeline_acceptor_autobind(self):
+        """A role-id subtask materializes to its executor and auto-binds the
+        role's default acceptor (never a blank responsible party)."""
+        good = json.dumps(
+            [
+                {
+                    "description": "run echo",
+                    "agent_id": "shell_operator",
+                    "input_data": {"command": "echo role-ok", "timeout": 5},
+                    "depends_on": [],
+                    "acceptance_criteria": "stdout has role-ok",
+                }
+            ]
+        )
+
+        class FakePlanner:
+            async def __call__(self, input_data):
+                return {"content": good}
+
+        class ShellEcho:
+            async def __call__(self, input_data):
+                return {"stdout": "role-ok"}
+
+        class FakeAnalyzer:
+            async def __call__(self, input_data):
+                return {"summary": "ok"}
+
+        orch = AgentOrchestrator()
+        from fusion_cowork.orchestrator.orchestrator import Agent
+
+        orch.register_agent(Agent(agent_id="planner", name="planner", role=AgentRole.PLANNER))
+        orch.register_executor("planner", FakePlanner())
+        TestPlanFailurePropagation._register(orch, "executor_shell", ShellEcho())
+        TestPlanFailurePropagation._register(orch, "executor_mlx", FakeAnalyzer())
+        result = await orch.run_standard_pipeline({"prompt": "role drill", "description": "role drill"})
+        plan = orch._plans[result["plan_id"]]
+        sub = next(t for t in plan.tasks if t.description == "run echo")
+        assert sub.agent_id == "executor_shell", sub.agent_id  # role -> executor
+        assert sub.acceptor == "coordinator", sub.acceptor  # role default acceptor
+        assert sub.input_data.get("_business_role") == "shell_operator"
+        assert result["status"] == "completed"
+        await orch.stop_runtimes()
