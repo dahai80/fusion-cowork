@@ -1162,3 +1162,80 @@ class TestSchemeFiveRoles:
         assert sub.input_data.get("_business_role") == "shell_operator"
         assert result["status"] == "completed"
         await orch.stop_runtimes()
+
+
+class TestSchemaDerivedParamContract:
+    """27B drill follow-up: node REQUIRED params derived from
+    NodeRegistry.params_schema are injected into the planner prompt AND
+    enforced by the schema validator (presence check per picked node)."""
+
+    @staticmethod
+    def _node_required() -> dict:
+        from fusion_cowork.engine.node import NodeRegistry
+
+        req = {}
+        for n in NodeRegistry.list():
+            r = [str(x) for x in ((n.get("params_schema") or {}).get("required") or [])]
+            if n.get("name"):
+                req[n["name"]] = r
+        return req
+
+    def test_catalog_lists_required_params_with_types(self):
+        from fusion_cowork.engine.node import NodeRegistry
+        from fusion_cowork.nodes import import_all_nodes
+
+        import_all_nodes()
+        # rebuild the catalog snippet the pipeline emits
+        lines = []
+        for n in sorted(NodeRegistry.list(), key=lambda x: x.get("name", "")):
+            schema = n.get("params_schema") or {}
+            required = [str(r) for r in (schema.get("required") or [])]
+            if not required:
+                continue
+            props = schema.get("properties") or {}
+            parts = [f"{r} ({props.get(r, {}).get('type', 'any')})" for r in required]
+            lines.append(f"- {n.get('name')}: required params: {', '.join(parts)}")
+        assert len(lines) >= 30  # 32 nodes carry required params today
+        shell = next(line for line in lines if line.startswith("- shell_exec:"))
+        assert "command (string)" in shell
+
+    def test_validator_rejects_missing_required_param(self):
+        from fusion_cowork.nodes import import_all_nodes
+        from fusion_cowork.orchestrator.orchestrator import AgentOrchestrator
+
+        import_all_nodes()
+        node_required = self._node_required()
+        bad = [
+            {
+                "description": "d",
+                "agent_id": "executor_node",
+                "input_data": {"node_name": "shell_exec"},
+                "depends_on": [],
+            }
+        ]
+        probs = AgentOrchestrator._planner_schema_problems(bad, set(node_required), None, node_required)
+        assert any("missing required param 'command'" in x for x in probs), probs
+        ok = [
+            {
+                "description": "d",
+                "agent_id": "executor_node",
+                "input_data": {"node_name": "shell_exec", "command": "ls"},
+                "depends_on": [],
+            }
+        ]
+        assert AgentOrchestrator._planner_schema_problems(ok, set(node_required), None, node_required) == []
+
+    def test_validator_backwards_compatible_without_node_required(self):
+        from fusion_cowork.nodes import import_all_nodes
+        from fusion_cowork.orchestrator.orchestrator import AgentOrchestrator
+
+        import_all_nodes()
+        ok = [
+            {
+                "description": "d",
+                "agent_id": "executor_node",
+                "input_data": {"node_name": "shell_exec", "command": "ls"},
+                "depends_on": [],
+            }
+        ]
+        assert AgentOrchestrator._planner_schema_problems(ok, {"shell_exec"}, None, None) == []

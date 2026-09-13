@@ -770,15 +770,40 @@ class AgentOrchestrator:
             pass
         try:
             from fusion_cowork.engine.node import NodeRegistry
-
-            node_names = sorted(n["name"] for n in NodeRegistry.list())
         except Exception:
-            node_names = []
+            NodeRegistry = None
+        # v2 P2+ (27B drill follow-up): derive per-node REQUIRED params (with
+        # types) from NodeRegistry params_schema — the planner previously got
+        # bare node names only, so it could not know e.g. file_find needs
+        # search_path and invented or omitted params at execution time.
+        node_required: Dict[str, list] = {}
+        entries = []
+        if NodeRegistry is not None:
+            try:
+                entries = NodeRegistry.list()
+            except Exception:
+                entries = []
+        node_lines: list = []
+        for n in sorted(entries, key=lambda x: x.get("name", "")):
+            name = n.get("name", "")
+            schema = n.get("params_schema") or {}
+            required = [str(r) for r in (schema.get("required") or [])]
+            if name:
+                node_required[name] = required
+            if not required:
+                continue
+            props = schema.get("properties") or {}
+            parts = []
+            for r in required:
+                ptype = str((props.get(r) or {}).get("type", "any"))
+                parts.append(f"{r} ({ptype})")
+            node_lines.append(f"- {name}: required params: {', '.join(parts)}")
         node_catalog = (
-            "Available nodes for executor_node input_data.node_name (pick ONLY from these):\n"
-            + ", ".join(node_names)
+            "Available nodes for executor_node input_data.node_name (pick ONLY from these), "
+            "with their REQUIRED params — every listed param MUST be present in input_data:\n"
+            + "\n".join(node_lines)
             + "\n"
-            if node_names
+            if node_lines
             else ""
         )
         # v2 方案五: business-role catalog — the planner may assign either an
@@ -815,7 +840,7 @@ class AgentOrchestrator:
         # Schema-validate the planner output; on violation, retry ONCE with
         # corrective feedback (audit 方案三: small models routinely emit
         # string input_data / invented node names / cyclic depends_on).
-        valid_nodes = set(node_names)
+        valid_nodes = set(node_required)
         subtasks: list = []
         last_content = ""
         problems: list = []
@@ -855,7 +880,7 @@ class AgentOrchestrator:
                         parsed = candidate
             except (json.JSONDecodeError, TypeError):
                 parsed = None
-            problems = self._planner_schema_problems(parsed, valid_nodes, valid_role_ids)
+            problems = self._planner_schema_problems(parsed, valid_nodes, valid_role_ids, node_required)
             if not problems:
                 subtasks = parsed or []
                 break
@@ -935,14 +960,24 @@ class AgentOrchestrator:
         return await self.execute_plan(plan.plan_id)
 
     @staticmethod
-    def _planner_schema_problems(parsed, valid_nodes: set, valid_role_ids: Optional[set] = None) -> list:
+    def _planner_schema_problems(
+        parsed,
+        valid_nodes: set,
+        valid_role_ids: Optional[set] = None,
+        node_required: Optional[Dict[str, list]] = None,
+    ) -> list:
         """Validate a parsed planner subtask array against the execution
         contract; returns a list of human-readable problems (empty = ok).
         Accepts parsed=None (unparseable output) and reports it.
 
         v2 方案五: agent_id may be an executor id OR a business role id —
         role ids validate against valid_role_ids and resolve to their
-        executor's input contract (node_name/command requirements)."""
+        executor's input contract (node_name/command requirements).
+        v2 P2+: node_required (name -> required params, derived from
+        NodeRegistry params_schema) drives per-node required-param presence
+        checks — replaces the old node_name-only check so a subtask that
+        picks a real node but omits its mandatory params is rejected at
+        planning time instead of failing at execution time."""
         if not isinstance(parsed, list) or not parsed:
             return ["output is not a non-empty JSON array"]
         known_agents = {"executor_node", "executor_workflow", "executor_mlx", "executor_shell"}
@@ -979,6 +1014,12 @@ class AgentOrchestrator:
                     problems.append(f"subtask {i}: executor_node input_data missing node_name")
                 elif valid_nodes and node not in valid_nodes:
                     problems.append(f"subtask {i}: node_name '{node}' not in catalog")
+                else:
+                    # v2 P2+: registry-derived required-param presence check —
+                    # every mandatory param of the picked node must be present
+                    for req in (node_required or {}).get(node, []):
+                        if req not in inp:
+                            problems.append(f"subtask {i}: node '{node}' missing required param '{req}'")
             elif executor == "executor_shell" and not inp.get("command"):
                 problems.append(f"subtask {i}: executor_shell input_data missing command")
             elif executor == "executor_mlx" and not inp.get("prompt"):
