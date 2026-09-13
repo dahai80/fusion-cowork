@@ -1239,3 +1239,81 @@ class TestSchemaDerivedParamContract:
             }
         ]
         assert AgentOrchestrator._planner_schema_problems(ok, {"shell_exec"}, None, None) == []
+
+
+class TestPlannerRetryHardening:
+    """v2+: 3-attempt retry with ACCUMULATED violations + few-shot anchor."""
+
+    def test_fewshot_anchor_present_in_prompt(self):
+        import inspect
+
+        from fusion_cowork.orchestrator.orchestrator import AgentOrchestrator
+
+        src = inspect.getsource(AgentOrchestrator.run_standard_pipeline)
+        assert "EXAMPLE of a compliant reply" in src
+        assert "imitate this shape EXACTLY" in src
+
+    @pytest.mark.asyncio
+    async def test_recovers_on_second_retry(self):
+        """Two invalid rounds then a valid one — the 3-attempt loop must
+        recover instead of failing after a single retry."""
+        bad1 = '[{"description": "d", "agent_id": "executor_node", "input_data": "str", "depends_on": []}]'
+        bad2 = '[{"description": "d", "agent_id": "made_up_executor", "input_data": {}, "depends_on": []}]'
+        good = json.dumps(
+            [
+                {
+                    "description": "run echo",
+                    "agent_id": "executor_shell",
+                    "input_data": {"command": "echo retry3-ok", "timeout": 5},
+                    "depends_on": [],
+                    "acceptance_criteria": "ok",
+                }
+            ]
+        )
+        replies = [bad1, bad2, good]
+
+        class FakePlanner:
+            async def __call__(self, input_data):
+                return {"content": replies.pop(0) if replies else good}
+
+        class ShellEcho:
+            async def __call__(self, input_data):
+                return {"stdout": "retry3-ok"}
+
+        class FakeAnalyzer:
+            async def __call__(self, input_data):
+                return {"summary": "ok"}
+
+        orch = AgentOrchestrator()
+        from fusion_cowork.orchestrator.orchestrator import Agent
+
+        orch.register_agent(Agent(agent_id="planner", name="planner", role=AgentRole.PLANNER))
+        orch.register_executor("planner", FakePlanner())
+        TestPlanFailurePropagation._register(orch, "executor_shell", ShellEcho())
+        TestPlanFailurePropagation._register(orch, "executor_mlx", FakeAnalyzer())
+        result = await orch.run_standard_pipeline({"prompt": "retry3 drill", "description": "retry3"})
+        assert result.get("status") == "completed", result
+        # exactly two plans were superseded by the two failed attempts
+        assert sum(1 for p in orch._plans.values() if p.status == "superseded") == 2
+        await orch.stop_runtimes()
+
+    @pytest.mark.asyncio
+    async def test_fails_loudly_after_three_bad_rounds(self):
+        bad = '[{"description": "d", "agent_id": "executor_node", "input_data": "str", "depends_on": []}]'
+
+        class AlwaysBad:
+            async def __call__(self, input_data):
+                return {"content": bad}
+
+        orch = AgentOrchestrator()
+        from fusion_cowork.orchestrator.orchestrator import Agent
+
+        orch.register_agent(Agent(agent_id="planner", name="planner", role=AgentRole.PLANNER))
+        orch.register_executor("planner", AlwaysBad())
+        result = await orch.run_standard_pipeline({"prompt": "always-bad drill", "description": "always-bad"})
+        # no fake success: loud failure with the accumulated schema problems
+        assert "Planner 未产出可解析的任务拆解" in str(result.get("error", ""))
+        assert "schema" in str(result.get("error", ""))
+        # all three attempts ran (2 superseded + 1 final failed plan)
+        assert sum(1 for p in orch._plans.values() if p.status == "superseded") == 2
+        await orch.stop_runtimes()

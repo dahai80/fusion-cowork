@@ -834,17 +834,34 @@ class AgentOrchestrator:
             '"acceptance_criteria": str}.\n'
             + role_catalog
             + node_catalog
+            # v2+: few-shot anchor — quantized models imitate the shown shape
+            # far more reliably than they follow prose rules, so pin the
+            # contract with one compliant sample (indexes strictly increasing,
+            # every required param present, object input_data).
+            + "EXAMPLE of a compliant reply (imitate this shape EXACTLY):\n"
+            + "[\n"
+            + '  {"description": "统计 src 目录的 py 文件数", "agent_id": "executor_shell", '
+            + '"input_data": {"command": "find src -name \\"*.py\\" | wc -l", "timeout": 30}, '
+            + '"depends_on": [], "acceptance_criteria": "stdout 为非负整数"},\n'
+            + '  {"description": "汇总结果", "agent_id": "executor_mlx", '
+            + '"input_data": {"prompt": "总结上一条命令的输出并给出结论"}, '
+            + '"depends_on": [0], "acceptance_criteria": "结论明确引用数字"}\n'
+            + "]\n"
             + "TASK:\n"
             + json.dumps(input_data, ensure_ascii=False, default=str)
         )
-        # Schema-validate the planner output; on violation, retry ONCE with
+        # Schema-validate the planner output; on violation, retry with
         # corrective feedback (audit 方案三: small models routinely emit
         # string input_data / invented node names / cyclic depends_on).
+        # v2+: up to 3 attempts with ACCUMULATED violations — each round's
+        # feedback carries every distinct violation seen so far, so the model
+        # cannot repeat an earlier mistake unnoticed.
         valid_nodes = set(node_required)
         subtasks: list = []
         last_content = ""
         problems: list = []
-        for attempt in range(2):
+        all_problems: list = []
+        for attempt in range(3):
             if attempt > 0:
                 # v2 方案一 (P1-1): retry on a FRESH plan — reusing the old plan
                 # re-ran the failed planner task inside it, so a fully-successful
@@ -856,7 +873,7 @@ class AgentOrchestrator:
             plan_task = self.add_task(
                 plan.plan_id,
                 planner[0].agent_id,
-                "任务规划" if attempt == 0 else "任务规划(重试)",
+                "任务规划" if attempt == 0 else f"任务规划(重试{attempt})",
                 {"prompt": planner_prompt},
             )
             stage = await self.execute_plan(plan.plan_id)
@@ -884,12 +901,18 @@ class AgentOrchestrator:
             if not problems:
                 subtasks = parsed or []
                 break
-            if attempt == 0:
-                logger.warning(f"Planner 输出未通过 schema 校验, 纠错重试: {problems}")
+            # v2+: accumulate DISTINCT violations across rounds so each retry's
+            # feedback repeats every earlier mistake — the model cannot silently
+            # re-violate a rule it already broke in a previous attempt.
+            for pr in problems:
+                if pr not in all_problems:
+                    all_problems.append(pr)
+            if attempt < 2:
+                logger.warning(f"Planner 输出未通过 schema 校验 (attempt {attempt + 1}/3), 纠错重试: {problems}")
                 planner_prompt = (
                     planner_prompt
                     + "\n\nYour previous reply was INVALID for these reasons:\n- "
-                    + "\n- ".join(problems[:8])
+                    + "\n- ".join(all_problems[:12])
                     + "\nFix ALL of them and reply again with ONLY the corrected JSON array."
                 )
         if not subtasks:
