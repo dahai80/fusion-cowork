@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -76,8 +77,60 @@ class TrajectoryWriter:
         line = evt.to_jsonl()
         with open(path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
+        # v4 方案①: size-based rotation + retention cleanup — the writer is
+        # append-only and task_step made writes much more frequent; without
+        # this a 7x24 deployment grows the pool until disk quota dies.
+        # Best-effort: cleanup failures never break the actual write.
+        self._rotate_if_oversized(path)
+        self._cleanup_expired()
         logger.debug(f"轨迹写入: {path.name} event={evt.event} node={evt.node_id}")
         return str(path)
+
+    @staticmethod
+    def _retention_days() -> int:
+        try:
+            return max(1, int(os.environ.get("FUSION_TRAJECTORY_RETENTION_DAYS", "30")))
+        except ValueError:
+            return 30
+
+    @staticmethod
+    def _max_file_bytes() -> int:
+        try:
+            return max(1, int(os.environ.get("FUSION_TRAJECTORY_MAX_MB", "200"))) * 1024 * 1024
+        except ValueError:
+            return 200 * 1024 * 1024
+
+    def _rotate_if_oversized(self, path: Path) -> None:
+        """方案①: rename an over-limit jsonl aside (timestamped) so the
+        active file stays bounded; the rotated file ages out via retention."""
+        try:
+            if not path.exists() or path.stat().st_size < self._max_file_bytes():
+                return
+            rotated = path.with_name(f"{path.stem}.{int(time.time())}.rotated.jsonl")
+            path.rename(rotated)
+            logger.info(f"trajectory rotated (size limit): {path.name} -> {rotated.name}")
+        except OSError as e:
+            logger.debug(f"trajectory rotation skipped: {e}")
+
+    def _cleanup_expired(self) -> None:
+        """方案①: delete jsonl files older than the retention window.
+        Throttled to once per hour per writer instance; readers are
+        best-effort, so removed files degrade gracefully."""
+        now = time.time()
+        if now - getattr(self, "_last_cleanup", 0.0) < 3600:
+            return
+        self._last_cleanup = now
+        cutoff = now - self._retention_days() * 86400
+        try:
+            for f in self._dir.glob("*.jsonl"):
+                try:
+                    if f.stat().st_mtime < cutoff:
+                        f.unlink()
+                        logger.info(f"trajectory expired (>{self._retention_days()}d): {f.name}")
+                except OSError:
+                    continue
+        except OSError as e:
+            logger.debug(f"trajectory cleanup skipped: {e}")
 
     def list_trajectories(self) -> List[str]:
         if not self._dir.exists():

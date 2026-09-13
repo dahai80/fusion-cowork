@@ -913,7 +913,15 @@ class AgentOrchestrator:
                     }
                 )
                 logger.info(f"plan {plan.plan_id} superseded by planner retry")
+                # v4 方案③: drop the superseded plan from _plans — the dict
+                # was runtime-unbounded and every retry added one more entry.
+                # The violation history transfers to the successor plan (its
+                # final retrospective carries it), so no delivery-note data
+                # is lost by dropping the dead object.
+                superseded_history = plan.superseded_history
+                self._plans.pop(plan.plan_id, None)
                 plan = await self.create_plan("standard_pipeline_retry", "标准编排流水线(重试)")
+                plan.superseded_history = superseded_history
             # 方案四 (audit v3): planner model routing — the planner's
             # decomposition quality drives the whole pipeline, so allow a
             # dedicated (stronger) model for it alone via FUSION_PLANNER_MODEL;

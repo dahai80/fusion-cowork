@@ -985,8 +985,11 @@ class TestV2SchemeOne:
         plan = orch._plans[result["plan_id"]]
         assert all(t.status != "failed" for t in plan.tasks), [t.status for t in plan.tasks]
         # the original plan was superseded, not left "partial"
-        superseded = [p for p in orch._plans.values() if p.status == "superseded"]
-        assert superseded
+        # (v4 方案③: the dead plan object is dropped from _plans; its
+        # violation history now lives on the successor's superseded_history)
+        final = orch._plans[result["plan_id"]]
+        assert final.superseded_history, "supersede history must transfer to the successor"
+        assert not [p for p in orch._plans.values() if p.status == "superseded"]
         await orch.stop_runtimes()
 
 
@@ -1295,7 +1298,10 @@ class TestPlannerRetryHardening:
         result = await orch.run_standard_pipeline({"prompt": "retry3 drill", "description": "retry3"})
         assert result.get("status") == "completed", result
         # exactly two plans were superseded by the two failed attempts
-        assert sum(1 for p in orch._plans.values() if p.status == "superseded") == 2
+        # (v4 方案③: dead plans are dropped from _plans; the successor
+        # carries the transferred supersede history)
+        final = orch._plans[result["plan_id"]]
+        assert len(final.superseded_history) == 2, final.superseded_history
         await orch.stop_runtimes()
 
     @pytest.mark.asyncio
@@ -1315,8 +1321,12 @@ class TestPlannerRetryHardening:
         # no fake success: loud failure with the accumulated schema problems
         assert "Planner 未产出可解析的任务拆解" in str(result.get("error", ""))
         assert "schema" in str(result.get("error", ""))
-        # all three attempts ran (2 superseded + 1 final failed plan)
-        assert sum(1 for p in orch._plans.values() if p.status == "superseded") == 2
+        # all three attempts ran; v4 方案③ drops superseded plans from
+        # _plans, so verify via the final plan's transferred history
+        final = orch._plans.get(result.get("plan_id", ""))
+        assert final is not None and len(final.superseded_history) == 2, (
+            f"expected 2 supersede records, got {len(final.superseded_history) if final else 'no plan'}"
+        )
         await orch.stop_runtimes()
 
 
@@ -1451,3 +1461,88 @@ class TestV3SchemeImplementations:
         assert row["task_timings"] == {"tD": 2.25}
         assert row["side_effects"] == ["/tmp/x.md"]
         assert row["superseded_history"][0]["violations"] == ["v1"]
+
+
+class TestV4ResourceLifecycle:
+    """audit v4 方案①②③: trajectory retention/rotation, relay step-read
+    watermark, superseded-plan dropping — the long-running deployment trio."""
+
+    def test_scheme1_retention_and_rotation(self, tmp_path, monkeypatch):
+        import time as _time
+
+        from fusion_cowork.trajectory.recorder import TrajectoryEvent, TrajectoryWriter
+
+        monkeypatch.setenv("FUSION_TRAJECTORY_RETENTION_DAYS", "1")
+        monkeypatch.setenv("FUSION_TRAJECTORY_MAX_MB", "1")
+        w = TrajectoryWriter(trajectory_dir=str(tmp_path))
+        evt = lambda sid: TrajectoryEvent(  # noqa: E731
+            ts=_time.time(),
+            event="task_step",
+            execution_id=sid,
+            workflow_id=sid,
+            workflow_name="t",
+            status="running",
+            is_error=False,
+            data={"x": "y"},
+            session_id=sid,
+        )
+        old = w._dir / "old_session.jsonl"
+        old.write_text("{}\n")
+        two_days_ago = _time.time() - 2 * 86400
+        os.utime(old, (two_days_ago, two_days_ago))
+        w.write(evt("new_session"))
+        assert not old.exists(), "expired file must be deleted"
+        assert (w._dir / "new_session.jsonl").exists(), "fresh file must survive"
+        big = w._dir / "big_session.jsonl"
+        big.write_text("x" * (1024 * 1024 + 100))
+        w._last_cleanup = 0.0  # bypass throttle so rotation runs now
+        w.write(evt("big_session"))
+        assert list(w._dir.glob("big_session*.rotated.jsonl")), "oversized file must be rotated"
+
+    def test_scheme2_watermark_advances(self):
+        import inspect
+
+        from fusion_cowork.space.chat import SpaceChatService
+
+        src = inspect.getsource(SpaceChatService)
+        assert "_step_watermark: float = 0.0" in src
+        assert "after_ts=self._step_watermark" in src
+        assert "_step_watermark = max(" in src
+
+    @pytest.mark.asyncio
+    async def test_scheme3_superseded_plans_dropped(self):
+        from fusion_cowork.orchestrator.orchestrator import Agent, AgentOrchestrator, AgentRole
+
+        bad = '[{"description": "d", "agent_id": "executor_node", "input_data": "str", "depends_on": []}]'
+        good = json.dumps(
+            [
+                {
+                    "description": "run echo",
+                    "agent_id": "executor_shell",
+                    "input_data": {"command": "echo ok", "timeout": 5},
+                    "depends_on": [],
+                    "acceptance_criteria": "ok",
+                }
+            ]
+        )
+        replies = [bad, bad, good]
+
+        class FakePlanner:
+            async def __call__(self, input_data):
+                return {"content": replies.pop(0) if replies else good}
+
+        class ShellEcho:
+            async def __call__(self, input_data):
+                return {"stdout": "ok"}
+
+        orch = AgentOrchestrator()
+        orch.register_agent(Agent(agent_id="planner", name="planner", role=AgentRole.PLANNER))
+        orch.register_agent(Agent(agent_id="executor_shell", name="executor_shell", role=AgentRole.EXECUTOR))
+        orch.register_executor("planner", FakePlanner())
+        orch.register_executor("executor_shell", ShellEcho())
+        result = await orch.run_standard_pipeline({"prompt": "v4 bounded", "description": "bounded"})
+        assert result.get("status") == "completed", result
+        assert not [p for p in orch._plans.values() if p.status == "superseded"], "superseded plans must not linger"
+        final = orch._plans.get(result.get("plan_id"))
+        assert final is not None and len(final.superseded_history) == 2, "violation history transfers to successor"
+        await orch.stop_runtimes()

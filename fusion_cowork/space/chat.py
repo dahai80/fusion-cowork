@@ -41,6 +41,11 @@ class SpaceChatService:
         self._perm = permission
         self._events = event_emitter or EventEmitter()
         self._kb_svc = kb_service
+        # v4 方案②: incremental watermark for task_step reads — relay context
+        # assembly previously re-scanned the whole trajectory pool on every
+        # group, a latency that grew linearly with history. Same pattern as
+        # the v2 retrospective after_ts optimization.
+        self._step_watermark: float = 0.0
 
     def _get_config_model(self, agent_def: dict) -> str:
         config = agent_def.get("config", {})
@@ -385,7 +390,11 @@ class SpaceChatService:
             try:
                 from ..orchestrator.trajectory_writer import read_task_steps
 
-                steps = read_task_steps(space_id, limit=10)
+                # v4 方案②: after_ts watermark — only events newer than the
+                # last read are scanned; cold files are skipped by mtime.
+                steps = read_task_steps(space_id, limit=10, after_ts=self._step_watermark)
+                if steps:
+                    self._step_watermark = max(self._step_watermark, max(s["ts"] for s in steps))
                 if steps:
                     step_msg = SpaceMessage(
                         space_id=space_id,
