@@ -344,6 +344,14 @@ class SpaceChatService:
                         agent_model = models[0]["id"] if models else "default"
                     resp = await self._mlx.chat(model=agent_model, messages=messages)
                     reply = resp.content
+                    # 方案二 (audit v3): persist the intermediate output so the
+                    # collaboration's working history survives restarts.
+                    try:
+                        from ..orchestrator.trajectory_writer import write_task_step
+
+                        write_task_step(space_id, aid, "reply", reply)
+                    except Exception:
+                        pass
                     assistant_msg = SpaceMessage(
                         space_id=space_id,
                         user_id="",
@@ -358,10 +366,38 @@ class SpaceChatService:
                     # P1-3: per-agent failure is recorded, not raised — a single
                     # agent crash previously propagated and killed the stage.
                     logger.error(f"relay_agents: agent {aid} failed: {e}")
+                    # 方案二 (audit v3): failures are context too — the next
+                    # stage must see what broke, not just an absent reply.
+                    try:
+                        from ..orchestrator.trajectory_writer import write_task_step
+
+                        write_task_step(space_id, aid, "error", str(e))
+                    except Exception:
+                        pass
                     return {"agent_id": aid, "error": str(e)}
 
             # v2 P2: fetch the group's context once, share across members
             group_context = await self._store.get_messages(space_id, limit=100)
+            # 方案二 (audit v3): pull recent task_step events (tool outputs,
+            # per-agent failures from earlier stages) into the shared context —
+            # they never go through the chat table, so a restart wiped the
+            # collaboration's working history before this.
+            try:
+                from ..orchestrator.trajectory_writer import read_task_steps
+
+                steps = read_task_steps(space_id, limit=10)
+                if steps:
+                    step_msg = SpaceMessage(
+                        space_id=space_id,
+                        user_id="",
+                        agent_id="",
+                        content="[近期任务中间产出]\n"
+                        + "\n".join(f"- ({s['agent_id']}/{s['step']}) {s['content'][:300]}" for s in steps),
+                        role="assistant",
+                    )
+                    group_context = group_context + [step_msg]
+            except Exception as e:
+                logger.debug(f"read_task_steps for relay context failed (best-effort): {e}")
 
             if len(group_ids) == 1:
                 group_results = [await _run_one(group_ids[0], current_message, group_context)]

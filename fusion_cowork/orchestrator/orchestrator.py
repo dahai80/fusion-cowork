@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from collections import OrderedDict
@@ -48,6 +49,10 @@ class Agent:
     endpoint: str = "local"  # local | http://host:port
     status: str = "idle"  # idle | busy | error
     current_task: str = ""
+    # 方案一 (audit v3): presence heartbeat — monotonic-ish wall clock of the
+    # last liveness write; dashboard marks running agents stale when
+    # now - last_seen exceeds HEARTBEAT_STALE_SECONDS.
+    last_seen: float = 0.0
 
     @property
     def is_local(self) -> bool:
@@ -87,6 +92,10 @@ class OrchestrationPlan:
     dependencies: Dict[str, List[str]] = field(default_factory=dict)
     status: str = "pending"
     created_at: float = 0.0
+    # 方案五 (audit v3): delivery-note field — every superseded predecessor
+    # (planner corrective retry) recorded so the retrospective can explain
+    # WHY the delivered plan looks the way it does.
+    superseded_history: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class AgentOrchestrator:
@@ -277,6 +286,17 @@ class AgentOrchestrator:
 
         return task_id
 
+    async def _presence_heartbeat(self, agent: Agent) -> None:
+        """方案一 (audit v3): refresh agent.last_seen every 30s while a task
+        runs. Cancelled by the task's finally block; a hung executor stops
+        refreshing, so the dashboard can mark the agent stale."""
+        try:
+            while True:
+                await asyncio.sleep(30)
+                agent.last_seen = time.time()
+        except asyncio.CancelledError:
+            pass
+
     async def _run_submitted_task(self, task: AgentTask) -> None:
         """执行提交的任务 — HI-18: CancelledError 单独捕获, finally 置终态 + completed_at。"""
         task.status = "running"
@@ -288,6 +308,11 @@ class AgentOrchestrator:
         if agent is not None:
             agent.status = "busy"
             agent.current_task = task.task_id
+            agent.last_seen = time.time()
+        # 方案一 (audit v3): heartbeat while the task runs — a hung executor
+        # (process alive, task stuck) must become visible on the dashboard
+        # instead of showing "busy" forever.
+        heartbeat = asyncio.create_task(self._presence_heartbeat(agent)) if agent is not None else None
         try:
             executor = self._executors.get(task.agent_id)
             if executor:
@@ -353,9 +378,12 @@ class AgentOrchestrator:
         finally:
             task.completed_at = time.time()
             self._task_handles.pop(task.task_id, None)
+            if heartbeat is not None:
+                heartbeat.cancel()
             if agent is not None:
                 agent.status = "idle"
                 agent.current_task = ""
+                agent.last_seen = time.time()
             # R-1: 终态任务从 _tasks 剔除, 防 _tasks 无界增长 (运行态保留供查询)
             if task.status in ("completed", "failed", "cancelled"):
                 self._tasks.pop(task.task_id, None)
@@ -682,9 +710,13 @@ class AgentOrchestrator:
         # v2 方案二 (P1-3): same presence sync as the submit path — plan-path
         # subtasks previously left agents showing idle on the dashboard.
         agent = self._agents.get(task.agent_id)
+        heartbeat = None
         if agent is not None:
             agent.status = "busy"
             agent.current_task = task.task_id
+            agent.last_seen = time.time()
+            # 方案一 (audit v3): same heartbeat as the submit path.
+            heartbeat = asyncio.create_task(self._presence_heartbeat(agent))
 
         try:
             if executor is not None:
@@ -730,9 +762,12 @@ class AgentOrchestrator:
             await asyncio.sleep(0.1)
             return {"status": "no_executor", "input": task.input_data}
         finally:
+            if heartbeat is not None:
+                heartbeat.cancel()
             if agent is not None:
                 agent.status = "idle"
                 agent.current_task = ""
+                agent.last_seen = time.time()
 
     # ── 编排模板 ──
 
@@ -868,13 +903,31 @@ class AgentOrchestrator:
                 # retry still reported plan.status="partial" (honest-terminal
                 # mechanism sabotaged by its own retry). Supersede + recreate.
                 plan.status = "superseded"
+                # 方案五 (audit v3): record WHY this predecessor was dropped —
+                # the accumulated schema violations of the attempt it carried.
+                plan.superseded_history.append(
+                    {
+                        "superseded_at": time.time(),
+                        "attempt": attempt,
+                        "violations": list(all_problems[:12]),
+                    }
+                )
                 logger.info(f"plan {plan.plan_id} superseded by planner retry")
                 plan = await self.create_plan("standard_pipeline_retry", "标准编排流水线(重试)")
+            # 方案四 (audit v3): planner model routing — the planner's
+            # decomposition quality drives the whole pipeline, so allow a
+            # dedicated (stronger) model for it alone via FUSION_PLANNER_MODEL;
+            # executors keep using the default resolution (FUSION_MLX_MODEL /
+            # registry). MLXExecutor honors input_data["model"] as override.
+            planner_input: Dict[str, Any] = {"prompt": planner_prompt}
+            planner_model = os.environ.get("FUSION_PLANNER_MODEL", "").strip()
+            if planner_model:
+                planner_input["model"] = planner_model
             plan_task = self.add_task(
                 plan.plan_id,
                 planner[0].agent_id,
                 "任务规划" if attempt == 0 else f"任务规划(重试{attempt})",
-                {"prompt": planner_prompt},
+                planner_input,
             )
             stage = await self.execute_plan(plan.plan_id)
             plan_output = stage.get("results", {}).get(plan_task.task_id, {})

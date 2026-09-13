@@ -24,6 +24,7 @@ import os
 import shutil
 import tempfile
 import time
+import uuid
 from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 
@@ -1369,3 +1370,84 @@ class TestSchemaRuntimeDriftGuard:
         result = asyncio.run(run())
         assert result.get("status") == "success", result
         assert result.get("error") in (None, ""), result
+
+
+class TestV3SchemeImplementations:
+    """audit v3 方案一/二/四/五: planner model routing, presence heartbeat,
+    task_step persistence, retrospective delivery-note fields."""
+
+    def test_scheme4_planner_model_routing(self):
+        import inspect
+
+        from fusion_cowork.orchestrator.orchestrator import AgentOrchestrator
+
+        src = inspect.getsource(AgentOrchestrator.run_standard_pipeline)
+        assert "FUSION_PLANNER_MODEL" in src
+        assert 'planner_input["model"]' in src
+
+    def test_scheme1_heartbeat_and_stale(self):
+        import dataclasses
+        import inspect
+
+        from fusion_cowork.orchestrator.orchestrator import Agent, AgentOrchestrator
+
+        # heartbeat coroutine exists and both run paths start it
+        assert hasattr(AgentOrchestrator, "_presence_heartbeat")
+        src = inspect.getsource(AgentOrchestrator)
+        assert src.count("_presence_heartbeat(agent)") >= 2
+        # Agent carries last_seen
+        assert "last_seen" in {f.name for f in dataclasses.fields(Agent)}
+        # dashboard payload includes last_seen + stale flag
+        import fusion_cowork.server.desk_rpc as desk_rpc
+
+        rpc_src = inspect.getsource(desk_rpc)
+        assert '"stale"' in rpc_src and '"last_seen"' in rpc_src
+
+    @pytest.mark.asyncio
+    async def test_scheme2_task_step_roundtrip(self, tmp_path):
+        import os
+
+        os.environ["FUSION_TRAJECTORY_DIR"] = str(tmp_path)
+        import importlib
+
+        import fusion_cowork.trajectory.recorder as recorder
+
+        importlib.reload(recorder)
+        import fusion_cowork.orchestrator.trajectory_writer as tw
+
+        importlib.reload(tw)
+        # unique space id: the jsonl pool is shared across runs, filter by a
+        # run-unique space instead of asserting on a reusable one
+        space = f"sp-{uuid.uuid4().hex[:8]}"
+        tw.write_task_step(space, "ag1", "reply", "42 files")
+        tw.write_task_step(space, "ag2", "error", "timeout")
+        steps = tw.read_task_steps(space, limit=10)
+        assert len(steps) == 2
+        assert steps[0]["content"] == "42 files"
+        assert tw.read_task_steps("nope") == []
+
+    def test_scheme5_retrospective_delivery_notes(self, tmp_path):
+        import os
+
+        os.environ["FUSION_TRAJECTORY_DIR"] = str(tmp_path)
+        import importlib
+
+        import fusion_cowork.trajectory.recorder as recorder
+
+        importlib.reload(recorder)
+        import fusion_cowork.orchestrator.trajectory_writer as tw
+
+        importlib.reload(tw)
+        from fusion_cowork.orchestrator.orchestrator import AgentTask, OrchestrationPlan
+
+        plan = OrchestrationPlan(plan_id="pD", workflow_name="wD", status="completed")
+        plan.superseded_history.append({"attempt": 1, "violations": ["v1"]})
+        t = AgentTask(task_id="tD", agent_id="aD", description="d", status="completed")
+        t.started_at = 1.0
+        t.completed_at = 3.25
+        plan.tasks = [t]
+        tw.write_plan_retrospective(plan, {"tD": {"status": "completed", "data": {"output_path": "/tmp/x.md"}}}, 2.5)
+        row = tw.list_plan_retrospectives(limit=5)[0]
+        assert row["task_timings"] == {"tD": 2.25}
+        assert row["side_effects"] == ["/tmp/x.md"]
+        assert row["superseded_history"][0]["violations"] == ["v1"]

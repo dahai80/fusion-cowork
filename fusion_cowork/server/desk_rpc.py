@@ -1074,6 +1074,10 @@ class DeskRPCServer:
                 }
             )
 
+        # 方案一 (audit v3): stale detection — a running agent whose heartbeat
+        # stopped refreshing (last_seen older than 90s) is likely hung; the
+        # dashboard can show a "疑似卡死" marker instead of an eternal "busy".
+        now = time.time()
         agents = [
             {
                 "agent_id": a.agent_id,
@@ -1081,6 +1085,8 @@ class DeskRPCServer:
                 "role": a.role.value,
                 "status": a.status,
                 "current_task": a.current_task,
+                "last_seen": round(a.last_seen, 3),
+                "stale": a.status == "busy" and a.last_seen > 0 and (now - a.last_seen) > 90,
             }
             for a in orch._agents.values()
         ]
