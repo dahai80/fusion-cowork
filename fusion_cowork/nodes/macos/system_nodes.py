@@ -880,7 +880,9 @@ class FileWatcherNode(BaseNode):
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
+            "required": ["watch_path"],
             "properties": {
+                "watch_path": {"type": "string", "description": "监听目录路径"},
                 "watch_subdirs": {"type": "boolean", "default": True},
                 "watch_for_creation": {"type": "boolean", "default": True},
                 "watch_for_modification": {"type": "boolean", "default": False},
@@ -1020,7 +1022,10 @@ class FileCopyNode(BaseNode):
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
+            "required": ["files", "destination"],
             "properties": {
+                "files": {"type": "array", "items": {"type": "string"}, "description": "要复制的文件路径列表"},
+                "destination": {"type": "string", "description": "目标目录"},
                 "create_subdir": {"type": "boolean", "default": True, "description": "按日期创建子目录"},
                 "overwrite": {"type": "boolean", "default": False},
                 "preserve_metadata": {"type": "boolean", "default": True},
@@ -1105,7 +1110,10 @@ class FileMoveNode(BaseNode):
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
+            "required": ["files", "destination"],
             "properties": {
+                "files": {"type": "array", "items": {"type": "string"}, "description": "要移动的文件路径列表"},
+                "destination": {"type": "string", "description": "目标目录"},
                 "create_subdir": {"type": "boolean", "default": True},
                 "overwrite": {"type": "boolean", "default": False},
             },
@@ -1268,7 +1276,9 @@ class FileFindNode(BaseNode):
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
+            "required": ["search_path"],
             "properties": {
+                "search_path": {"type": "string", "description": "搜索目录路径"},
                 "patterns": {
                     "type": "string",
                     "description": "文件模式，逗号分隔，如: *.pdf,*.docx,*.md",
@@ -1734,7 +1744,7 @@ class AppLifecycleNode(BaseNode):
                 "app_name": {
                     "type": "string",
                     "default": "",
-                    "description": "应用名称（如 Finder、Safari、Terminal）",
+                    "description": "应用名称（如 Finder、Safari、Terminal）；action 为 launch/quit/activate/check 时必填，list 时可省略",
                 },
                 "save_windows": {
                     "type": "boolean",
@@ -1856,6 +1866,7 @@ class OCRNode(BaseNode):
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
+            "required": ["image_path"],
             "properties": {
                 "image_path": {"type": "string", "description": "图片文件路径"},
                 "language": {"type": "string", "default": "zh-Hans,en", "description": "识别语言"},

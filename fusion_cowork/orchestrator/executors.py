@@ -20,7 +20,12 @@ class NodeExecutor:
 
     async def __call__(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         node_name = input_data.get("node_name", "")
-        node_params = input_data.get("node_params", {})
+        # planner contract: params live at input_data TOP level (the schema
+        # validator checks them there); "node_params" stays supported as an
+        # explicit nested override for callers that use it.
+        node_params = input_data.get("node_params")
+        if not isinstance(node_params, dict) or not node_params:
+            node_params = {k: v for k, v in input_data.items() if k != "node_name"}
 
         if not node_name:
             return {"error": "缺少 node_name 参数"}

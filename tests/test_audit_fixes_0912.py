@@ -1317,3 +1317,55 @@ class TestPlannerRetryHardening:
         # all three attempts ran (2 superseded + 1 final failed plan)
         assert sum(1 for p in orch._plans.values() if p.status == "superseded") == 2
         await orch.stop_runtimes()
+
+
+class TestSchemaRuntimeDriftGuard:
+    """27B drill: planner picked real nodes but they failed at EXECUTION time
+    with 未指定/缺少 errors because params_schema.required was empty while
+    execute() unconditionally rejects missing params. This guard keeps the
+    planner contract (driven by params_schema) in sync with runtime behavior.
+    Evidence table is derived from execute() source; conditional params
+    (e.g. app_lifecycle.app_name only required for non-list actions) are
+    intentionally NOT listed — they must stay described, not required."""
+
+    RUNTIME_REQUIRED = {
+        "file_watcher": ["watch_path"],
+        "file_copy": ["files", "destination"],
+        "file_move": ["files", "destination"],
+        "file_find": ["search_path"],
+        "ocr": ["image_path"],
+    }
+
+    def test_runtime_required_params_declared_in_schema(self):
+        from fusion_cowork.engine.node import NodeRegistry
+        from fusion_cowork.nodes import import_all_nodes
+
+        import_all_nodes()
+        for name, expected in self.RUNTIME_REQUIRED.items():
+            cls = NodeRegistry.get(name)
+            assert cls is not None, f"node {name} missing from registry"
+            inst = cls() if isinstance(cls, type) else cls
+            required = (inst.get_params_schema() or {}).get("required") or []
+            for param in expected:
+                assert param in required, (
+                    f"{name}: runtime rejects missing '{param}' but "
+                    f"params_schema.required={required} — planner contract drift"
+                )
+                props = (inst.get_params_schema() or {}).get("properties") or {}
+                assert param in props, f"{name}: required param '{param}' not declared in properties"
+
+    def test_node_executor_accepts_toplevel_params(self):
+        """Planner contract puts params at input_data top level; NodeExecutor
+        must map them down to node params (was: only read nested node_params)."""
+
+        async def run():
+            from fusion_cowork.orchestrator.executors import NodeExecutor
+
+            ex = NodeExecutor()
+            return await ex({"node_name": "file_input", "path": "/tmp"})
+
+        import asyncio
+
+        result = asyncio.run(run())
+        assert result.get("status") == "success", result
+        assert result.get("error") in (None, ""), result
