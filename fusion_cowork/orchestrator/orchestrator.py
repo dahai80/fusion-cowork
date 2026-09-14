@@ -114,6 +114,10 @@ class AgentOrchestrator:
         self._plans: Dict[str, OrchestrationPlan] = {}
         self._executors: Dict[str, Callable] = {}
         self._tasks: Dict[str, AgentTask] = {}
+        # P3-2 (audit v4): resource arbitration — tasks declaring the same
+        # resource key execute serially instead of racing (two tasks writing
+        # one file / hitting one MLX backend). Unlocked tasks stay parallel.
+        self._resource_locks: Dict[str, asyncio.Lock] = {}
         self._runtimes: Dict[str, Any] = {}
         self._message_bus = None
         # HI-9: 父引擎运行时, 注入子工作流执行器, 使委托工作流受同一权限/ Hook 约束
@@ -296,6 +300,33 @@ class AgentOrchestrator:
                 agent.last_seen = time.time()
         except asyncio.CancelledError:
             pass
+
+    def _resource_keys_for(self, task: AgentTask) -> List[str]:
+        """P3-2: resource keys a task must hold during execution. Explicit
+        `_resource_keys` in input_data wins; MLX tasks default to the shared
+        "mlx" backend key (single local inference queue)."""
+        keys = task.input_data.get("_resource_keys")
+        if isinstance(keys, list) and keys:
+            return [str(k) for k in keys]
+        if "mlx" in task.agent_id.lower():
+            return ["mlx"]
+        return []
+
+    async def _execute_task_arbitrated(self, task: AgentTask, plan: OrchestrationPlan) -> Dict[str, Any]:
+        """P3-2: execute with resource-lock arbitration — tasks sharing a
+        key run serially (deterministic acquire order prevents deadlock);
+        tasks with no declared resource run straight through."""
+        keys = self._resource_keys_for(task)
+        if not keys:
+            return await self._execute_task(task, plan)
+        key_locks = sorted({k: self._resource_locks.setdefault(k, asyncio.Lock()) for k in keys}.items())
+        for _, lock in key_locks:
+            await lock.acquire()
+        try:
+            return await self._execute_task(task, plan)
+        finally:
+            for _, lock in key_locks:
+                lock.release()
 
     async def _run_submitted_task(self, task: AgentTask) -> None:
         """执行提交的任务 — HI-18: CancelledError 单独捕获, finally 置终态 + completed_at。"""
@@ -578,11 +609,31 @@ class AgentOrchestrator:
         results = {}
         start_time = time.time()
 
+        # P3-3 (audit v4): milestone acceptance gate — long plans (>= 6
+        # tasks) pause at the halfway mark: completed tasks flip to
+        # acceptance_status="pending" and downstream execution waits for a
+        # human verdict (desk.agent.accept/reopen) instead of building on
+        # unreviewed intermediate output.
+        total_tasks = len(plan.tasks)
+        # FUSION_MILESTONE_GATE=0 opts out for unattended automation — a
+        # human gate would otherwise wait forever with nobody to accept.
+        milestone_at = (
+            (total_tasks // 2) if (total_tasks >= 6 and os.environ.get("FUSION_MILESTONE_GATE", "1") != "0") else 0
+        )
+        milestone_gated = False
+
         def _failed(task_id: str) -> bool:
             r = results.get(task_id)
             if not isinstance(r, dict):
                 return False
             return bool(r.get("error")) or r.get("status") in FAILED_STATUSES
+
+        def _task_by_id(task_id: str):
+            return next((x for x in plan.tasks if x.task_id == task_id), None)
+
+        def _awaiting_verdict(task_id: str) -> bool:
+            t = _task_by_id(task_id)
+            return t is not None and t.acceptance_status in ("pending", "rejected")
 
         # 拓扑排序执行
         executed = set()
@@ -593,10 +644,36 @@ class AgentOrchestrator:
                 if task.task_id in executed:
                     continue
                 deps = plan.dependencies.get(task.task_id, [])
-                if all(d in executed and not _failed(d) for d in deps):
+                if all(d in executed and not _failed(d) and not _awaiting_verdict(d) for d in deps):
                     ready.append(task)
 
+            # P3-3: milestone trigger — halfway through a long plan, flip the
+            # completed tasks to pending acceptance; downstream readiness now
+            # also requires deps to be ACCEPTED, so execution holds here.
+            if milestone_at and not milestone_gated and len(executed) >= milestone_at:
+                milestone_gated = True
+                gated = [t for t in plan.tasks if t.status == "completed" and t.acceptance_criteria]
+                for t in gated:
+                    t.acceptance_status = "pending"
+                logger.info(f"plan {plan.plan_id} milestone gate: {len(gated)} tasks awaiting acceptance")
+
             if not ready:
+                # P3-3: milestone wait — while gated deps await a human
+                # verdict this is patience, not deadlock. A REJECTED verdict
+                # converts the task to failed so A-4 downstream skip applies.
+                if milestone_gated and any(
+                    _awaiting_verdict(d)
+                    for t in plan.tasks
+                    if t.task_id not in executed
+                    for d in plan.dependencies.get(t.task_id, [])
+                ):
+                    for t in plan.tasks:
+                        if t.acceptance_status == "rejected" and t.status == "pending":
+                            t.status = "failed"
+                            t.error = "milestone acceptance rejected"
+                            results[t.task_id] = {"status": "failed", "error": t.error}
+                    await asyncio.sleep(2)
+                    continue
                 # 死锁检测 — distinguish "upstream failed" from a real cycle
                 remaining = [t.task_id for t in plan.tasks if t.task_id not in executed]
                 blocked = {
@@ -649,7 +726,9 @@ class AgentOrchestrator:
                         "prompt": f"Summarize the following {len(aggregated)} subtask results.",
                         "results": aggregated,
                     }
-            tasks = [self._execute_task(task, plan) for task in ready]
+            # P3-2: parallel-ready tasks go through resource arbitration —
+            # same-resource tasks serialize, the rest stay parallel.
+            tasks = [self._execute_task_arbitrated(task, plan) for task in ready]
             task_results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for task, result in zip(ready, task_results):
@@ -867,6 +946,12 @@ class AgentOrchestrator:
             "depends_on indexes MUST NOT form cycles and MUST only reference earlier items), "
             '"depends_on": [subtask indexes], '
             '"acceptance_criteria": str}.\n'
+            # P3-1 (audit v4): granularity bounds — models either explode the
+            # task into slivers or cram everything into one giant step; give
+            # an explicit window and a cohesion rule.
+            "Use 2-8 subtasks (prefer the fewest that keep each subtask "
+            "single-purpose and assignable to ONE role; never merge unrelated "
+            "steps into one subtask).\n"
             + role_catalog
             + node_catalog
             # v2+: few-shot anchor — quantized models imitate the shown shape
@@ -1064,6 +1149,12 @@ class AgentOrchestrator:
         planning time instead of failing at execution time."""
         if not isinstance(parsed, list) or not parsed:
             return ["output is not a non-empty JSON array"]
+        # P3-1 (audit v4): granularity cap — enforce the prompt's task-count
+        # window at planning time so an exploded decomposition is retried
+        # with corrective feedback instead of flooding the executor pool.
+        if len(parsed) > 12:
+            problems_count = len(parsed)
+            return [f"decomposition has {problems_count} subtasks (max 12) — merge related steps"]
         known_agents = {"executor_node", "executor_workflow", "executor_mlx", "executor_shell"}
         # 方案五: role id -> executor mapping for contract validation
         role_map: Dict[str, str] = {}

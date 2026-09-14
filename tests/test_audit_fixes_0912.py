@@ -1546,3 +1546,105 @@ class TestV4ResourceLifecycle:
         final = orch._plans.get(result.get("plan_id"))
         assert final is not None and len(final.superseded_history) == 2, "violation history transfers to successor"
         await orch.stop_runtimes()
+
+
+class TestV4P3Hardening:
+    """audit v4 P3 fixes: granularity bounds, resource arbitration,
+    milestone acceptance gates, stale threshold env."""
+
+    def test_p3_1_granularity_cap(self):
+        from fusion_cowork.nodes import import_all_nodes
+        from fusion_cowork.orchestrator.orchestrator import AgentOrchestrator
+
+        import_all_nodes()
+        many = [
+            {"description": f"s{i}", "agent_id": "executor_shell", "input_data": {"command": "ls"}, "depends_on": []}
+            for i in range(13)
+        ]
+        probs = AgentOrchestrator._planner_schema_problems(many, {"shell_exec"}, None, {"shell_exec": ["command"]})
+        assert any("max 12" in p for p in probs), probs
+        assert (
+            AgentOrchestrator._planner_schema_problems(many[:8], {"shell_exec"}, None, {"shell_exec": ["command"]})
+            == []
+        )
+
+    @pytest.mark.asyncio
+    async def test_p3_2_mlx_tasks_serialize(self):
+        import asyncio as aio
+
+        from fusion_cowork.orchestrator.orchestrator import Agent, AgentOrchestrator, AgentRole, AgentTask
+
+        orch = AgentOrchestrator()
+        active = 0
+        peak = 0
+
+        class MlxEx:
+            async def __call__(self, input_data):
+                nonlocal active, peak
+                active += 1
+                peak = max(peak, active)
+                await aio.sleep(0.05)
+                active -= 1
+                return {"status": "completed"}
+
+        orch.register_agent(Agent(agent_id="executor_mlx", name="m", role=AgentRole.EXECUTOR))
+        orch.register_executor("executor_mlx", MlxEx())
+        plan = await orch.create_plan("arb", "arb")
+        for i in range(3):
+            t = AgentTask(task_id=f"m{i}", agent_id="executor_mlx", description="d")
+            plan.tasks.append(t)
+            plan.dependencies[f"m{i}"] = []
+        await orch.execute_plan(plan.plan_id)
+        assert peak == 1, f"implicit mlx key must serialize, peak={peak}"
+        await orch.stop_runtimes()
+
+    @pytest.mark.asyncio
+    async def test_p3_3_milestone_gate_holds_then_releases(self):
+        import asyncio as aio
+
+        from fusion_cowork.orchestrator.orchestrator import Agent, AgentOrchestrator, AgentRole, AgentTask
+
+        orch = AgentOrchestrator()
+
+        class OkEx:
+            async def __call__(self, input_data):
+                return {"status": "completed"}
+
+        orch.register_agent(Agent(agent_id="executor_shell", name="s", role=AgentRole.EXECUTOR))
+        orch.register_executor("executor_shell", OkEx())
+        plan = await orch.create_plan("gate", "gate")
+        for i in range(6):
+            t = AgentTask(
+                task_id=f"g{i}",
+                agent_id="executor_shell",
+                description=f"step{i}",
+                input_data={"command": "echo x"},
+                acceptance_criteria="ok",
+            )
+            plan.tasks.append(t)
+            plan.dependencies[f"g{i}"] = [f"g{i - 1}"] if i else []
+
+        async def accept_when_gated():
+            for _ in range(50):
+                await aio.sleep(0.2)
+                pend = [t for t in plan.tasks if t.acceptance_status == "pending"]
+                if pend:
+                    for t in pend:
+                        orch.accept_task(t.task_id, "accepted", acceptor="human")
+                    return
+            raise AssertionError("milestone gate never triggered")
+
+        run_t = aio.create_task(orch.execute_plan(plan.plan_id))
+        await accept_when_gated()
+        r = await run_t
+        assert r.get("status") == "completed", r
+        assert any(t.acceptance_status == "accepted" for t in plan.tasks)
+        await orch.stop_runtimes()
+
+    def test_p3_4_stale_threshold_env(self, monkeypatch):
+        import inspect
+
+        import fusion_cowork.server.desk_rpc as desk_rpc
+
+        src = inspect.getsource(desk_rpc)
+        assert "FUSION_STALE_AFTER_SECONDS" in src
