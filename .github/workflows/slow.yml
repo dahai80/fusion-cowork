@@ -19,8 +19,10 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       # test_deploy.py spawns `serve` which needs the web extras
-      # (fastapi/uvicorn/websockets); [dev] = test + web.
-      - run: pip install -e ".[dev]"
+      # (fastapi/uvicorn/websockets). Note: pyproject has NO `dev` extra
+      # (CLAUDE.md documents one, but optional-dependencies only defines
+      # web/core/test) — use the real combination test+web.
+      - run: pip install -e ".[test,web]"
       - name: Run @slow suite
         run: pytest tests/ -m slow -v
       - name: Run @chaos suite
