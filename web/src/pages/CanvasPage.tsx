@@ -78,8 +78,13 @@ function nodeDefToFlow(def: CanvasNodeDef, selectedForEdit: boolean): Node<FlowN
     } as Node<FlowNodeData>;
 }
 
-export function CanvasPage({ workflowId }: { workflowId: string }) {
+export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
     const t = useT();
+    // W3: `#/canvas/<id>?view=1` opens view-only (share/link without editing).
+    const [workflowId, viewParam] = (() => {
+        const [id, qs = ''] = rawId.split('?');
+        return [id, new URLSearchParams(qs).get('view') === '1'];
+    })();
     const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 767px)').matches);
     const [nodes, setNodes, onNodesChange] = useNodesState<Node<FlowNodeData>>([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -132,7 +137,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
         };
     }, [setEdges, setNodes, workflowId]);
 
-    const isReadonly = isMobile;
+    const isReadonly = isMobile || viewParam;
 
     function addNode(info: NodeInfo) {
         if (isReadonly) return;
@@ -290,9 +295,13 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
 
     return (
         <div className="flex h-full min-h-0 flex-col">
-            {isReadonly && isMobile ? (
+            {isReadonly ? (
                 <ReadOnlyBanner
-                    text={t('只读模式 — 画布编辑仅桌面端支持', 'Read-only — canvas editing is desktop-only')}
+                    text={
+                        viewParam
+                            ? t('查看模式 — 链接分享只读打开', 'View mode — shared link opens read-only')
+                            : t('只读模式 — 画布编辑仅桌面端支持', 'Read-only — canvas editing is desktop-only')
+                    }
                 />
             ) : null}
             <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">

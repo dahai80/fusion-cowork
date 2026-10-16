@@ -347,7 +347,7 @@ fusion-cowork collab serve --port 11439
 
 ---
 
-## 🕸️ Union Web Module (v0.5.5, issue #94; hardened v0.5.6, issues #96/#97/#98)
+## 🕸️ Union Web Module (v0.5.5, issue #94; hardened v0.5.6, issues #96/#97/#98; P0 pages v0.5.7)
 
 ### Standalone auth & gateway registration (v0.5.6, issues #96/#97)
 
@@ -357,7 +357,8 @@ fusion-cowork collab serve --port 11439
 DAG workflow canvas in the browser — fusion-cowork joins the unified web shell (PRD N-6).
 
 - **`web/` UI package** — React 18 + Vite + TS + Tailwind (preset from `@fusion/web-ui`) + Bun; `@xyflow/react` canvas. Workflow list (run/edit/delete with typed confirm), desktop DAG canvas editing (node palette from `/api/nodes`, connect edges, per-node params editor with schema hints), runs view with live polling (5s visible / 30s hidden-throttled), mobile read-only (`devices: ["desktop", "mobile-readonly"]`). Embedded mode (`?embedded=1`) hides own nav — shell owns chrome.
-- **`fusion-cowork web serve`** — Web API on :11461: nodes catalog, workflow definition CRUD (atomic JSON store), run lifecycle (async submit → poll → cancel over the shared `WorkflowEngine`). Serves `web/dist` statically for gateway `/shell/fusion-cowork/` hosting. Auth: `FUSION_COWORK_WEB_API_KEY` (gateway proxy injects; unset = allow, bind 127.0.0.1).
+- **`fusion-cowork web serve`** — Web API on :11461: nodes catalog, workflow definition CRUD (atomic JSON store), run lifecycle (async submit → poll → cancel over the shared `WorkflowEngine`), template catalog (`/api/templates`, builtin bodies with workflow snapshot), scheduled tasks (`/api/scheduler/tasks` CRUD + pause/resume, backed by the engine `TaskScheduler`; `web serve` starts it so cron/interval tasks fire on the uvicorn loop). Serves `web/dist` statically for gateway `/shell/fusion-cowork/` hosting. Auth: `FUSION_COWORK_WEB_API_KEY` (gateway proxy injects; unset = allow, bind 127.0.0.1).
+- **P0 pages (v0.5.7, migration doc §6)**: Nodes browser (W2, search + category colors + params schema), Templates catalog (W5, one-click "open in canvas" copies the template body into a user workflow), Schedule management (W6, create cron/interval tasks, pause/resume/delete), Runs status filter (W4), Canvas `?view=1` share-link read-only mode (W3).
 - **Union-web compliant**: manifest per PRD §5.1, vendored `@fusion/web-sdk`/`@fusion/web-ui` (byte-identical to shell repo), four-state views (skeleton/empty/error/retry), token colors only, no native alert/confirm, no auth logic in UI.
 - **Dev ports registered**: 11461 (web API), 11464 (vite dev) — `architecture/port-registry.yaml`.
 
