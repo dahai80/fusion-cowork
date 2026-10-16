@@ -47,6 +47,7 @@ def create_space_api(
     member_svc,
     chat_svc,
     kb_svc,
+    artifact_svc=None,
     event_emitter=None,
     agent_runtime=None,
     presence_manager=None,
@@ -470,6 +471,63 @@ def create_space_api(
             model=body.get("model", ""),
         )
         return JSONResponse({"results": results})
+
+    # ── Artifacts (P2 W10/W12: web 面暴露 — list/create/get) ──
+
+    @app.get("/spaces/{space_id}/artifacts")
+    async def list_artifacts(space_id: str, request: Request, artifact_type: str = ""):
+        if not artifact_svc:
+            return JSONResponse({"error": "artifact service not available"}, status_code=503)
+        auth_err = await _check_auth(request)
+        if auth_err:
+            return auth_err
+        principal = _resolve_principal(request)
+        try:
+            items = await artifact_svc.list_artifacts(
+                space_id, principal.user_id, artifact_type=artifact_type, tenant_id=principal.tenant_id
+            )
+        except PermissionError as e:
+            return JSONResponse({"error": str(e)}, status_code=403)
+        return JSONResponse(items)
+
+    @app.post("/spaces/{space_id}/artifacts")
+    async def create_artifact(space_id: str, request: Request):
+        if not artifact_svc:
+            return JSONResponse({"error": "artifact service not available"}, status_code=503)
+        auth_err = await _check_auth(request)
+        if auth_err:
+            return auth_err
+        principal = _resolve_principal(request)
+        body = await request.json()
+        try:
+            art = await artifact_svc.create_artifact(
+                space_id,
+                principal.user_id,
+                name=str(body.get("name") or ""),
+                artifact_type=str(body.get("artifact_type") or "document"),
+                content=str(body.get("content") or ""),
+                metadata=body.get("metadata"),
+                tenant_id=principal.tenant_id,
+            )
+        except PermissionError as e:
+            return JSONResponse({"error": str(e)}, status_code=403)
+        return JSONResponse(art, status_code=201)
+
+    @app.get("/spaces/{space_id}/artifacts/{artifact_id}")
+    async def get_artifact(space_id: str, artifact_id: str, request: Request):
+        if not artifact_svc:
+            return JSONResponse({"error": "artifact service not available"}, status_code=503)
+        auth_err = await _check_auth(request)
+        if auth_err:
+            return auth_err
+        principal = _resolve_principal(request)
+        try:
+            art = await artifact_svc.get_artifact(space_id, artifact_id, principal.user_id, tenant_id=principal.tenant_id)
+        except PermissionError as e:
+            return JSONResponse({"error": str(e)}, status_code=403)
+        if not art:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse(art)
 
     # ── Health ──
 

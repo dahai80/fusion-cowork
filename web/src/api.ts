@@ -116,6 +116,38 @@ export interface SessionInfo {
     metadata: Record<string, unknown>;
 }
 
+export interface SpaceInfo {
+    id: string;
+    name: string;
+    description: string;
+    owner_id: string;
+    status: string;
+    created_at?: string;
+}
+
+export interface SpaceMemberInfo {
+    user_id: string;
+    display_name?: string;
+    role?: string;
+}
+
+export interface SpaceMessage {
+    id: string;
+    user_id: string;
+    content: string;
+    content_type?: string;
+    created_at?: string;
+}
+
+export interface SpaceArtifact {
+    id: string;
+    name: string;
+    artifact_type: string;
+    content: string;
+    owner_user_id?: string;
+    created_at?: string;
+}
+
 async function get<T>(path: string): Promise<T> {
     return (await sdk.http.get<T>(path)).data;
 }
@@ -162,6 +194,19 @@ export const api = {
     sessions: (status = '') =>
         get<{ sessions: SessionInfo[]; count: number }>(`/api/sessions?status=${encodeURIComponent(status)}`),
     session: (id: string) => get<SessionInfo>(`/api/sessions/${encodeURIComponent(id)}`),
+    // space surface (mounted sub-app /api/space)
+    spaces: () => get<SpaceInfo[]>('/api/space/spaces'),
+    createSpace: (body: { name: string; description?: string }) => post<SpaceInfo>('/api/space/spaces', body),
+    deleteSpace: (id: string) => sdk.http.delete(`/api/space/spaces/${encodeURIComponent(id)}`),
+    spaceMembers: (id: string) => get<SpaceMemberInfo[]>(`/api/space/spaces/${encodeURIComponent(id)}/members`),
+    spaceMessages: (id: string) => get<SpaceMessage[]>(`/api/space/spaces/${encodeURIComponent(id)}/messages`),
+    sendSpaceMessage: (id: string, content: string) =>
+        post<SpaceMessage>(`/api/space/spaces/${encodeURIComponent(id)}/messages`, { user_id: 'local_user', content }),
+    spaceArtifacts: (id: string) => get<SpaceArtifact[]>(`/api/space/spaces/${encodeURIComponent(id)}/artifacts`),
+    spaceArtifact: (id: string, aid: string) =>
+        get<SpaceArtifact>(`/api/space/spaces/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(aid)}`),
+    createSpaceArtifact: (id: string, body: { name: string; artifact_type?: string; content?: string }) =>
+        post<SpaceArtifact>(`/api/space/spaces/${encodeURIComponent(id)}/artifacts`, body),
 };
 
 export function statusKind(status: string): 'success' | 'running' | 'error' | 'offline' | 'warning' {
