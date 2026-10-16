@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 _WEB_DIR = Path(__file__).resolve().parent.parent.parent / "web"
+_DEFAULT_SPACE_DATA_DIR = str(Path.home() / ".fusion-cowork" / "spaces")
 _RUN_TTL_SECONDS = 3600
 
 
@@ -202,6 +203,29 @@ class RunRegistry:
             self._runs.pop(rid, None)
 
 
+def _build_space_stack(data_dir: Optional[Path] = None):
+    """组装 space 域 (store + 4 svc + FastAPI 子应用) — web serve 与测试共用。
+
+    Returns (space_app, artifact_svc, space_store) — store 供 serve 关停时 close()。
+    """
+    from ..ai.mlx_client import FusionMLXClient, KBClient
+    from ..space import SpaceChatService, SpaceKBService, SpaceMemberService, SpaceService, SpaceStore
+    from ..space.api import create_space_api
+    from ..space.artifact import SpaceArtifactService
+    from ..space.permission import SpacePermission
+
+    store = SpaceStore(data_dir=str(data_dir) if data_dir else _DEFAULT_SPACE_DATA_DIR)
+    perm = SpacePermission(store)
+    mlx = FusionMLXClient()
+    chat_svc = SpaceChatService(store, mlx, perm)
+    kb_svc = SpaceKBService(store, KBClient(), perm)
+    artifact_svc = SpaceArtifactService(store, perm)
+    space_svc = SpaceService(store)
+    member_svc = SpaceMemberService(store, perm)
+    app = create_space_api(space_svc, member_svc, chat_svc, kb_svc, artifact_svc=artifact_svc, space_store=store)
+    return app, artifact_svc, store
+
+
 def _serialize_session(s: Any) -> Dict[str, Any]:
     return {
         "id": s.id,
@@ -224,6 +248,8 @@ def create_web_app(
     scheduler: Any = None,
     nl_generator: Any = None,
     session_store: Any = None,
+    space_api: Any = None,
+    space_data_dir: Optional[Path] = None,
 ):
     try:
         from fastapi import FastAPI, HTTPException, Request
@@ -255,10 +281,18 @@ def create_web_app(
         from ..engine.session import SessionStore
 
         session_store = SessionStore()
+    if space_api is None:
+        space_api, artifact_svc, space_store = _build_space_stack(space_data_dir)
+        logger.info("web API space 栈已构建 (默认路径)")
+    else:
+        artifact_svc, space_store = None, None
     app = FastAPI(title="Fusion-Cowork Web API", version="0.1.0")
     app.state.scheduler = scheduler
     app.state.nl_generator = nl_generator
     app.state.session_store = session_store
+    app.state.space_api = space_api
+    app.state.artifact_svc = artifact_svc
+    app.state.space_store = space_store
 
     @app.middleware("http")
     async def _auth_middleware(request: Request, call_next):
@@ -507,6 +541,9 @@ def create_web_app(
         if not s:
             raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"会话不存在: {session_id}"})
         return _serialize_session(s)
+
+    # ── P2 W12/W13 空间协作面 — space 域子应用挂载 (含 SSE / WS / artifacts) ──
+    app.mount("/api/space", space_api)
 
     dist = Path(dist_dir) if dist_dir else _WEB_DIR / "dist"
     if (dist / "index.html").exists():

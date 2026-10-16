@@ -1157,6 +1157,10 @@ def web_serve(port: int, host: str):
                 registry_task.cancel()
             if scheduler:
                 scheduler.shutdown(wait=False)
+            space_store = getattr(app.state, "space_store", None)
+            if space_store:
+                await space_store.close()
+                console.print_info("协作空间存储已关闭")
 
     asyncio.run(_serve())
 

@@ -6,6 +6,7 @@ import { NodesPage } from './pages/NodesPage';
 import { RunsPage } from './pages/RunsPage';
 import { SchedulePage } from './pages/SchedulePage';
 import { SessionsPage } from './pages/SessionsPage';
+import { SpacePage } from './pages/SpacePage';
 import { TemplatesPage } from './pages/TemplatesPage';
 import { WorkflowsPage } from './pages/WorkflowsPage';
 import { embeddedParam, isEmbedded } from './sdk';
@@ -14,9 +15,19 @@ import { embeddedParam, isEmbedded } from './sdk';
 // (#/canvas/<id>), runs, sessions, nodes, templates, schedule. Standalone
 // shows its own header tabs; when the shell embeds us (?embedded=1 or
 // iframe) the shell owns the chrome — own navigation hides (spec S7).
-type Route = 'workflows' | 'delegate' | 'canvas' | 'runs' | 'sessions' | 'nodes' | 'templates' | 'schedule';
+type Route = 'workflows' | 'delegate' | 'canvas' | 'runs' | 'sessions' | 'spaces' | 'nodes' | 'templates' | 'schedule';
 
-const ROUTES: Route[] = ['workflows', 'delegate', 'runs', 'sessions', 'schedule', 'templates', 'nodes', 'canvas'];
+const ROUTES: Route[] = [
+    'workflows',
+    'delegate',
+    'runs',
+    'sessions',
+    'spaces',
+    'schedule',
+    'templates',
+    'nodes',
+    'canvas',
+];
 
 function parseHash(): { route: Route; arg: string } {
     const h = window.location.hash.replace(/^#\/?/, '');
@@ -25,6 +36,7 @@ function parseHash(): { route: Route; arg: string } {
     if (head === 'delegate') return { route: 'delegate', arg };
     if (head === 'runs') return { route: 'runs', arg };
     if (head === 'sessions') return { route: 'sessions', arg };
+    if (head === 'spaces') return { route: 'spaces', arg };
     if (head === 'nodes') return { route: 'nodes', arg };
     if (head === 'templates') return { route: 'templates', arg };
     if (head === 'schedule') return { route: 'schedule', arg };
@@ -41,6 +53,8 @@ function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
             return t('运行', 'Runs');
         case 'sessions':
             return t('会话', 'Sessions');
+        case 'spaces':
+            return t('空间', 'Spaces');
         case 'schedule':
             return t('调度', 'Schedule');
         case 'templates':
@@ -105,6 +119,8 @@ export function App() {
                     <RunsPage />
                 ) : route === 'sessions' ? (
                     <SessionsPage />
+                ) : route === 'spaces' ? (
+                    <SpacePage />
                 ) : route === 'nodes' ? (
                     <NodesPage />
                 ) : route === 'templates' ? (
