@@ -46,6 +46,27 @@ export function RunsPage() {
         }
     }
 
+    // W8: run redirection — pause holds at the next node checkpoint, resume continues
+    async function pauseRun(row: RunListItem) {
+        try {
+            await api.pauseRun(row.run_id);
+            setReloadKey((k) => k + 1);
+        } catch (e) {
+            console.error('[cowork-web] pause failed', e);
+            sdk.toast.show({ level: 'error', message: t('暂停失败', 'Pause failed') });
+        }
+    }
+
+    async function resumeRun(row: RunListItem) {
+        try {
+            await api.resumeRun(row.run_id);
+            setReloadKey((k) => k + 1);
+        } catch (e) {
+            console.error('[cowork-web] resume failed', e);
+            sdk.toast.show({ level: 'error', message: t('恢复失败', 'Resume failed') });
+        }
+    }
+
     if (loading && !data) return <SkeletonLines rows={5} />;
     if (error)
         return (
@@ -74,7 +95,7 @@ export function RunsPage() {
                     onChange={(e) => setStatusFilter(e.target.value)}
                 >
                     <option value="">{t('全部状态', 'All statuses')}</option>
-                    {['running', 'pending', 'completed', 'failed', 'cancelled'].map((s) => (
+                    {['running', 'pending', 'paused', 'completed', 'failed', 'cancelled'].map((s) => (
                         <option key={s} value={s}>
                             {s}
                         </option>
@@ -107,7 +128,25 @@ export function RunsPage() {
                         header: '',
                         render: (r) => (
                             <div className="flex justify-end gap-2">
-                                {r.status === 'running' || r.status === 'pending' ? (
+                                {r.status === 'running' ? (
+                                    <button
+                                        type="button"
+                                        className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
+                                        onClick={() => void pauseRun(r)}
+                                    >
+                                        {t('暂停', 'Pause')}
+                                    </button>
+                                ) : null}
+                                {r.status === 'paused' ? (
+                                    <button
+                                        type="button"
+                                        className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
+                                        onClick={() => void resumeRun(r)}
+                                    >
+                                        {t('恢复', 'Resume')}
+                                    </button>
+                                ) : null}
+                                {r.status === 'running' || r.status === 'pending' || r.status === 'paused' ? (
                                     <button
                                         type="button"
                                         className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-error/10"

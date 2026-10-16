@@ -186,13 +186,36 @@ class RunRegistry:
 
     def cancel(self, run_id: str) -> bool:
         record = self._runs.get(run_id)
-        if not record or record["status"] != "running":
+        if not record or record["status"] not in ("running", "paused"):
             return False
         self._engine.cancel(run_id)
         task = self._tasks.get(run_id)
         if task and not task.done():
             task.cancel()
         logger.info(f"工作流运行已取消: {run_id}")
+        return True
+
+    def pause(self, run_id: str) -> bool:
+        # W8: 暂停 — 引擎挂起在下一节点检查点, 记录状态 paused (取消亦允许自 paused)
+        record = self._runs.get(run_id)
+        if not record or record["status"] != "running":
+            return False
+        if not self._engine.pause(run_id):
+            return False
+        record["status"] = "paused"
+        logger.info(f"工作流运行已暂停: {run_id}")
+        return True
+
+    def resume(self, run_id: str) -> bool:
+        record = self._runs.get(run_id)
+        if not record or record["status"] != "paused":
+            return False
+        if not self._engine.resume(run_id):
+            record["status"] = "running"
+            logger.warning(f"引擎无暂停事件, 记录状态回退 running: {run_id}")
+            return True
+        record["status"] = "running"
+        logger.info(f"工作流运行已恢复: {run_id}")
         return True
 
     def _gc(self) -> None:
@@ -421,6 +444,19 @@ def create_web_app(
         if not runs.cancel(run_id):
             raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"运行不可取消: {run_id}"})
         return {"status": "cancelling", "run_id": run_id}
+
+    # ── W8 运行改向: 暂停/恢复 (追加指令需 orchestrator 交互协议, 见 migration doc I2) ──
+    @app.post("/api/runs/{run_id}/pause")
+    async def runs_pause(run_id: str):
+        if not runs.pause(run_id):
+            raise HTTPException(status_code=409, detail={"code": "not_running", "message": f"运行不可暂停: {run_id}"})
+        return {"status": "paused", "run_id": run_id}
+
+    @app.post("/api/runs/{run_id}/resume")
+    async def runs_resume(run_id: str):
+        if not runs.resume(run_id):
+            raise HTTPException(status_code=409, detail={"code": "not_paused", "message": f"运行不可恢复: {run_id}"})
+        return {"status": "running", "run_id": run_id}
 
     # ── W5 模板目录 (migration doc §6 P0) ──
     @app.get("/api/templates")
