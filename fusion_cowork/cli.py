@@ -1105,6 +1105,37 @@ def desk_rpc(sock: str, http_port: int):
         console.print_info("Desk RPC 服务已停止")
 
 
+@cli.group("web")
+def web():
+    """Union Web 模块 (issue #94) — DAG 工作流画布 UI 后端。"""
+
+
+@web.command("serve")
+@click.option("--port", default=11461, show_default=True, help="Web API HTTP 端口 (port-registry: fusion-cowork-web)")
+@click.option("--host", default=None, help="绑定地址 (默认 FUSION_BIND_HOST 或 127.0.0.1)")
+def web_serve(port: int, host: str):
+    """启动 Web API 服务 — REST (nodes/workflows/runs) + web/dist 静态托管。
+
+    鉴权: FUSION_COWORK_WEB_API_KEY 配置后, 所有 /api 路径要求
+    Authorization: Bearer 或 x-api-key (gateway /shell 代理注入); 未配置放行
+    (默认仅本机绑定)。
+    """
+    bind_host = host or os.environ.get("FUSION_BIND_HOST", "127.0.0.1")
+    try:
+        import uvicorn
+
+        from .server.web_api import auth_configured, create_web_app
+    except ImportError:
+        console.print_warning("Web API 未启动 (缺 [web] 依赖): pip install fusion-cowork[web]")
+        return
+
+    app = create_web_app()
+    console.print_success(f"Cowork Web API 已启动: {bind_host}:{port} (/api /health)")
+    if not auth_configured():
+        console.print_warning("FUSION_COWORK_WEB_API_KEY 未配置 — 鉴权放行 (仅建议本机绑定使用)")
+    uvicorn.run(app, host=bind_host, port=port, log_level="info")
+
+
 # ── Session 会话管理 ──
 
 

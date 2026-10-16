@@ -280,6 +280,26 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 
 ---
 
+## 🕸️ 统一 Web 模块 (v0.5.5, issue #94)
+
+浏览器里的 DAG 工作流画布 — fusion-cowork 接入统一 Web Shell (PRD N-6)。
+
+- **`web/` UI 包** — React 18 + Vite + TS + Tailwind (preset 来自 `@fusion/web-ui`) + Bun; 画布用 `@xyflow/react`。工作流列表 (运行/编辑/删除, 删除带名称二次确认)、桌面端 DAG 画布编辑 (节点面板来自 `/api/nodes`、连线、节点参数编辑含 schema 提示)、运行视图实时轮询 (可见 5s / 后台 Tab 降频 30s)、移动端只读 (`devices: ["desktop", "mobile-readonly"]`)。内嵌模式 (`?embedded=1`) 隐藏自有导航 — Shell 管外壳。
+- **`fusion-cowork web serve`** — Web API :11461: 节点目录、工作流定义 CRUD (原子 JSON 存储)、运行生命周期 (异步提交 → 轮询 → 停止, 共享 `WorkflowEngine`)。同服务静态托管 `web/dist`, 供 gateway `/shell/fusion-cowork/` 挂载。鉴权: `FUSION_COWORK_WEB_API_KEY` (gateway 代理注入; 未配置放行, 默认仅 127.0.0.1 绑定)。
+- **Union-web 合规**: manifest 符合 PRD §5.1, vendor `@fusion/web-sdk`/`@fusion/web-ui` (与 shell 仓逐字节一致), 四态视图 (骨架/空/错误/重试), 全 token 色, 无原生 alert/confirm, UI 不含鉴权逻辑。
+- **开发端口已登记**: 11461 (web API), 11464 (vite dev) — `architecture/port-registry.yaml`。
+
+```bash
+# 后端
+fusion-cowork web serve                     # :11461 (REST + 静态托管)
+
+# 前端 (开发)
+cd web && bun install && bun run dev        # :11464, 代理 /api → :11461
+bun run build                               # dist/ → web serve / gateway 托管
+```
+
+---
+
 ## 🔧 节点参考
 
 ### macOS 系统节点

@@ -80,6 +80,24 @@ jobs:
       - name: Slow + chaos tests
         run: python -m pytest tests/ -q --tb=short -m "slow or chaos"
 
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install (web/)
+        working-directory: web
+        run: bun install --frozen-lockfile
+      - name: Lint (web/)
+        working-directory: web
+        run: bun run lint
+      - name: Typecheck (web/)
+        working-directory: web
+        run: bun run typecheck
+      - name: Build (web/)
+        working-directory: web
+        run: bun run build
+
   security:
     runs-on: ubuntu-latest
     steps:

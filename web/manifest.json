@@ -1,0 +1,15 @@
+{
+    "id": "fusion-cowork",
+    "title": "工作流画布",
+    "title_en": "Workflow Canvas",
+    "description": "DAG 工作流画布: 编排节点、保存工作流、运行并查看步骤结果。",
+    "description_en": "DAG workflow canvas: compose nodes, save workflows, run and inspect step results.",
+    "version": "0.1.0",
+    "path": "/cowork",
+    "icon": "GitBranch",
+    "entry": "/shell/fusion-cowork/",
+    "health": "http://127.0.0.1:11432/shell/fusion-cowork/health",
+    "backend": "http://127.0.0.1:11432/shell/fusion-cowork/",
+    "devices": ["desktop", "mobile-readonly"],
+    "category": "platform"
+}
