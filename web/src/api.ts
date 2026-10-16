@@ -163,6 +163,12 @@ export interface UsageInfo {
     unlimited: boolean;
 }
 
+export interface MobileOverview {
+    runs: { run_id: string; workflow_name: string; status: string; created_at: number; error: string | null }[];
+    pending_approvals: GuardApproval[];
+    generated_at: number;
+}
+
 export interface SpaceNotification {
     id: string;
     space_id: string;
@@ -310,6 +316,12 @@ export const api = {
             { approved, note }
         ),
     usage: () => get<UsageInfo>('/api/usage'),
+    mobileOverview: () => get<MobileOverview>('/api/mobile/overview'),
+    deliver: (runId: string, targetDeviceId = '') =>
+        post<{ delivered: boolean; run_id: string; receiver: string }>('/api/deliver', {
+            run_id: runId,
+            target_device_id: targetDeviceId || undefined,
+        }),
     updateSpaceMemberRole: (id: string, userId: string, role: string) =>
         sdk.http
             .put<{ user_id: string; role: string }>(

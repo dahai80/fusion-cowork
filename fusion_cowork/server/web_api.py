@@ -267,6 +267,7 @@ def create_web_app(
     space_api: Any = None,
     space_data_dir: Optional[Path] = None,
     permission_manager: Any = None,
+    cross_sync: Any = None,
 ):
     try:
         from fastapi import FastAPI, HTTPException, Request
@@ -317,6 +318,9 @@ def create_web_app(
     app.state.artifact_svc = artifact_svc
     app.state.space_store = space_store
     app.state.permission_manager = permission_manager
+    app.state.run_registry = runs
+    # W22: 跨设备同步引擎接缝 — 注入后 /api/deliver 可投递; 默认 None (503 诚实不可用)
+    app.state.cross_sync = cross_sync
 
     @app.middleware("http")
     async def _auth_middleware(request: Request, call_next):
@@ -669,6 +673,62 @@ def create_web_app(
             "quotas": quota_fields,
             "unlimited": all(v < 0 for v in quota_fields.values()),
         }
+
+    # ── W22 移动只读概览 + 投递到桌面 (remote/sync 底座, cross_sync 注入接缝) ──
+    @app.get("/api/mobile/overview")
+    async def mobile_overview():
+        recent = runs.list()[:5]
+        return {
+            "runs": [
+                {
+                    "run_id": r["run_id"],
+                    "workflow_name": r["workflow_name"],
+                    "status": r["status"],
+                    "created_at": r["created_at"],
+                    "finished_at": r.get("finished_at"),
+                    "error": r.get("error"),
+                }
+                for r in recent
+            ],
+            "pending_approvals": permission_manager.list_pending_guard(),
+            "generated_at": time.time(),
+        }
+
+    @app.post("/api/deliver")
+    async def deliver_to_desktop(request: Request):
+        cross = getattr(app.state, "cross_sync", None)
+        if cross is None:
+            return JSONResponse({"error": "跨设备同步未启用 (cross_sync 未注入)"}, status_code=503)
+        try:
+            body = await request.json()
+        except Exception as e:
+            logger.warning(f"/api/deliver JSON 解析失败: {e}")
+            return JSONResponse({"error": "invalid json"}, status_code=400)
+        run_id = str(body.get("run_id") or "")
+        record = runs.get(run_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"})
+        receiver = str(body.get("target_device_id") or "broadcast")
+        from .sync import SyncMessage
+
+        msg = SyncMessage(
+            msg_id=f"del_{uuid.uuid4().hex[:8]}",
+            msg_type="cowork_deliver",
+            sender="fusion-cowork-web",
+            receiver=receiver,
+            payload={
+                "run_id": run_id,
+                "workflow_name": record.get("workflow_name", ""),
+                "status": record.get("status", ""),
+                "deep_link": f"fusion-cowork://runs/{run_id}",
+            },
+        )
+        try:
+            delivered = await cross.send_message(msg)
+        except Exception as e:
+            logger.warning(f"/api/deliver 发送失败 (诚实返回未送达): {e}")
+            delivered = False
+        return {"delivered": delivered, "run_id": run_id, "receiver": receiver}
 
     # ── W20 插件面板 — /rpc 端点 (rpc_bridge plugins/* 委托, 依赖缺则 -32603) ──
     @app.post("/rpc")
