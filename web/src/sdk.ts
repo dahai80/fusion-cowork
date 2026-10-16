@@ -4,10 +4,16 @@ import { type FusionShellSdk, HttpError, type HttpResult, createShellSdk } from 
 // iframe): http goes through the host postMessage bridge — the host injects
 // the module api_key, the UI holds no keys (spec S8: no auth logic in UI).
 // Standalone (own Vite server / web-api static host): same-origin direct
-// fetch. Standalone + web-api auth configured: VITE_API_KEY (build-time env,
-// dev convenience only) is attached as x-api-key on every http call; in
-// embedded mode no key ever exists here.
-const DEV_API_KEY: string | undefined = import.meta.env.VITE_API_KEY;
+// fetch with a runtime key seam (issue #96) — build-time VITE_API_KEY is
+// unreachable in a keyless release build, so the key resolves at runtime:
+// window.__FUSION_COWORK_WEB_API_KEY__ > localStorage
+// ('fusion-cowork-web-api-key') > VITE_API_KEY (legacy fallback). No key →
+// headers omitted (keyless serve posture, default 127.0.0.1 bind).
+declare global {
+    interface Window {
+        __FUSION_COWORK_WEB_API_KEY__?: string;
+    }
+}
 
 export const isEmbedded = (): boolean => typeof window !== 'undefined' && window.parent !== window;
 
@@ -22,14 +28,38 @@ export const embeddedParam = (): boolean => {
     }
 };
 
-async function keyedRequest<T>(
+const RUNTIME_KEY_STORAGE = 'fusion-cowork-web-api-key';
+
+export function runtimeApiKey(): string {
+    if (typeof window !== 'undefined' && window.__FUSION_COWORK_WEB_API_KEY__) {
+        return window.__FUSION_COWORK_WEB_API_KEY__;
+    }
+    try {
+        return localStorage.getItem(RUNTIME_KEY_STORAGE) ?? '';
+    } catch {
+        return '';
+    }
+}
+
+async function directRequest<T>(
     path: string,
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     body?: unknown
 ): Promise<HttpResult<T>> {
+    const headers: Record<string, string> = {};
+    // Vendored web-sdk standalone request() omits content-type (upstream
+    // fusion-web-shell#22) — FastAPI then 422s every POST/PUT. Set it here
+    // whenever a body is present so keyless builds work too.
+    if (body !== undefined) {
+        headers['content-type'] = 'application/json';
+    }
+    const key = runtimeApiKey();
+    if (key) {
+        headers['x-api-key'] = key;
+    }
     const res = await fetch(path, {
         method,
-        headers: { 'content-type': 'application/json', 'x-api-key': DEV_API_KEY ?? '' },
+        headers,
         body: body === undefined ? undefined : JSON.stringify(body),
     });
     const data = (await res.json().catch(() => null)) as T;
@@ -39,20 +69,20 @@ async function keyedRequest<T>(
     return { status: res.status, ok: true, data };
 }
 
-function keyedHttp() {
+function directHttp() {
     return {
-        request: <T>(path: string) => keyedRequest<T>(path, 'GET'),
-        get: <T>(path: string) => keyedRequest<T>(path, 'GET'),
-        post: <T>(path: string, body?: unknown) => keyedRequest<T>(path, 'POST', body),
-        put: <T>(path: string, body?: unknown) => keyedRequest<T>(path, 'PUT', body),
-        delete: <T>(path: string) => keyedRequest<T>(path, 'DELETE'),
+        request: <T>(path: string) => directRequest<T>(path, 'GET'),
+        get: <T>(path: string) => directRequest<T>(path, 'GET'),
+        post: <T>(path: string, body?: unknown) => directRequest<T>(path, 'POST', body),
+        put: <T>(path: string, body?: unknown) => directRequest<T>(path, 'PUT', body),
+        delete: <T>(path: string) => directRequest<T>(path, 'DELETE'),
     };
 }
 
 export const sdk: FusionShellSdk = createShellSdk();
 
-if (!isEmbedded() && DEV_API_KEY) {
-    // Standalone against an auth-configured web-api: layer the dev key onto
+if (!isEmbedded()) {
+    // Standalone against the web-api: layer runtime key + content-type onto
     // the plain same-origin http. Embedded mode never enters this branch.
-    (sdk as unknown as { http: ReturnType<typeof keyedHttp> }).http = keyedHttp();
+    (sdk as unknown as { http: ReturnType<typeof directHttp> }).http = directHttp();
 }

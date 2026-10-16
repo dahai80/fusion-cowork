@@ -59,7 +59,7 @@ def client(static_key_env, store_root, tmp_path):
                 )
 
         engine = WorkflowEngine()
-        app = create_web_app(engine=engine, dist_dir=tmp_path / "no-dist")
+        app = create_web_app(engine=engine, dist_dir=tmp_path / "no-dist", store_root=store_root)
         yield TestClient(app)
     finally:
         NodeRegistry._registry.clear()
@@ -263,7 +263,7 @@ class TestManifestAndDist:
         from fusion_cowork.engine import WorkflowEngine
         from fusion_cowork.server.web_api import create_web_app
 
-        app = create_web_app(engine=WorkflowEngine(), dist_dir=dist)
+        app = create_web_app(engine=WorkflowEngine(), dist_dir=dist, store_root=tmp_path / "workflows")
         client = TestClient(app)
         resp = client.get("/", headers={"Authorization": f"Bearer {STATIC_KEY}"})
         assert resp.status_code == 200

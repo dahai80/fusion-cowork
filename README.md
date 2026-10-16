@@ -347,7 +347,12 @@ fusion-cowork collab serve --port 11439
 
 ---
 
-## 🕸️ Union Web Module (v0.5.5, issue #94)
+## 🕸️ Union Web Module (v0.5.5, issue #94; hardened v0.5.6, issues #96/#97/#98)
+
+### Standalone auth & gateway registration (v0.5.6, issues #96/#97)
+
+- **Runtime key seam**: in a standalone release build the API key resolves at runtime — `window.__FUSION_COWORK_WEB_API_KEY__` > `localStorage['fusion-cowork-web-api-key']` > build-time `VITE_API_KEY` (legacy). No key → headers omitted (keyless serve posture, 127.0.0.1 bind). The standalone HTTP wrapper always sets `content-type: application/json` on bodied requests (upstream fusion-web-shell#22).
+- **Gateway shell registration**: `web serve` registers `web/manifest.json` with fusion-gateway and keeps a heartbeat when both `FUSION_SHELL_GATEWAY_URL` + `FUSION_GATEWAY_ADMIN_KEY` are set (`FUSION_SHELL_MANIFEST` overrides the manifest path). Unset → fully skipped. Mirrors agent-studio's `shell_registry`.
 
 DAG workflow canvas in the browser — fusion-cowork joins the unified web shell (PRD N-6).
 

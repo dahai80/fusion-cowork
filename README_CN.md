@@ -280,7 +280,12 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 
 ---
 
-## 🕸️ 统一 Web 模块 (v0.5.5, issue #94)
+## 🕸️ 统一 Web 模块 (v0.5.5, issue #94; v0.5.6 加固, issue #96/#97/#98)
+
+### 独立模式鉴权与网关注册 (v0.5.6, issue #96/#97)
+
+- **运行时密钥接缝**: 独立发布构建下 API key 运行时解析 — `window.__FUSION_COWORK_WEB_API_KEY__` > `localStorage['fusion-cowork-web-api-key']` > 构建期 `VITE_API_KEY` (遗留回退)。无 key 则省略鉴权头 (keyless serve 姿态, 127.0.0.1 绑定)。独立 HTTP 包装器对带 body 请求始终补 `content-type: application/json` (上游 fusion-web-shell#22)。
+- **网关 shell 注册**: `web serve` 启动后向 fusion-gateway 注册 `web/manifest.json` 并心跳保活 — 需同时配置 `FUSION_SHELL_GATEWAY_URL` + `FUSION_GATEWAY_ADMIN_KEY` (`FUSION_SHELL_MANIFEST` 覆盖 manifest 路径)。未配置则完全跳过。对齐 agent-studio 的 `shell_registry`。
 
 浏览器里的 DAG 工作流画布 — fusion-cowork 接入统一 Web Shell (PRD N-6)。
 
