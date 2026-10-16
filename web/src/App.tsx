@@ -5,6 +5,7 @@ import { ApprovalsPage } from './pages/ApprovalsPage';
 import { CanvasPage } from './pages/CanvasPage';
 import { ClusterPage } from './pages/ClusterPage';
 import { DelegatePage } from './pages/DelegatePage';
+import { MobilePage } from './pages/MobilePage';
 import { NodesPage } from './pages/NodesPage';
 import { PluginsPage } from './pages/PluginsPage';
 import { RunsPage } from './pages/RunsPage';
@@ -33,7 +34,8 @@ type Route =
     | 'plugins'
     | 'approvals'
     | 'cluster'
-    | 'usage';
+    | 'usage'
+    | 'm';
 
 const ROUTES: Route[] = [
     'workflows',
@@ -66,6 +68,7 @@ function parseHash(): { route: Route; arg: string } {
     if (head === 'approvals') return { route: 'approvals', arg };
     if (head === 'cluster') return { route: 'cluster', arg };
     if (head === 'usage') return { route: 'usage', arg };
+    if (head === 'm') return { route: 'm', arg };
     return { route: 'workflows', arg };
 }
 
@@ -97,6 +100,8 @@ function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
             return t('集群', 'Cluster');
         case 'usage':
             return t('用量', 'Usage');
+        case 'm':
+            return t('移动端', 'Mobile');
     }
 }
 
@@ -168,6 +173,8 @@ export function App() {
                     <ClusterPage />
                 ) : route === 'usage' ? (
                     <UsagePage />
+                ) : route === 'm' ? (
+                    <MobilePage />
                 ) : route === 'templates' ? (
                     <TemplatesPage />
                 ) : (

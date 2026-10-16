@@ -190,3 +190,84 @@ class TestUsageOverview:
         body = tc.get("/api/usage", headers=_auth()).json()
         assert body["usage"]["spaces"] >= 1
         assert body["usage"]["artifacts"] >= 1
+
+
+class TestMobileOverview:
+    def test_overview_empty_shape(self, client):
+        tc, _ = client
+        resp = tc.get("/api/mobile/overview", headers=_auth())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["runs"] == []
+        assert body["pending_approvals"] == []
+        assert body["generated_at"] > 0
+
+    def test_overview_reflects_runs_and_approvals(self, client):
+        tc, app = client
+        app.state.run_registry._runs["run_x"] = {
+            "run_id": "run_x",
+            "workflow_id": "wf-1",
+            "workflow_name": "wf",
+            "status": "running",
+            "created_at": 1.0,
+            "finished_at": None,
+            "error": None,
+        }
+        app.state.permission_manager._pending_guard_approvals["act-9"] = "ShellExec"
+        body = tc.get("/api/mobile/overview", headers=_auth()).json()
+        assert [r["run_id"] for r in body["runs"]] == ["run_x"]
+        assert body["pending_approvals"] == [{"action_id": "act-9", "tool_name": "ShellExec"}]
+
+
+class TestDeliverToDesktop:
+    def test_deliver_sync_not_injected(self, client):
+        tc, _ = client
+        resp = tc.post("/api/deliver", headers=_auth(), json={"run_id": "run_x"})
+        assert resp.status_code == 503
+
+    def test_deliver_run_not_found(self, client, tmp_path):
+        from fastapi.testclient import TestClient
+
+        from fusion_cowork.server import web_api
+        from fusion_cowork.server.sync import CrossDeviceSync
+
+        app = web_api.create_web_app(
+            dist_dir=tmp_path / "no-dist",
+            store_root=tmp_path / "wf2",
+            cross_sync=CrossDeviceSync(),
+        )
+        tc2 = TestClient(app)
+        resp = tc2.post("/api/deliver", headers=_auth(), json={"run_id": "run_missing"})
+        assert resp.status_code == 404
+
+    def test_deliver_offline_unknown_broadcast(self, client, tmp_path):
+        from fastapi.testclient import TestClient
+
+        from fusion_cowork.server import web_api
+        from fusion_cowork.server.sync import CrossDeviceSync, Device, DeviceStatus
+
+        sync = CrossDeviceSync()
+        sync.register_device(Device(device_id="phone-2", name="iPad", device_type="ipad", status=DeviceStatus.OFFLINE))
+
+        app = web_api.create_web_app(dist_dir=tmp_path / "no-dist", store_root=tmp_path / "wf2", cross_sync=sync)
+        tc2 = TestClient(app)
+        tc2.app.state.run_registry._runs["run_y"] = {
+            "run_id": "run_y",
+            "workflow_name": "wf",
+            "status": "completed",
+            "created_at": 1.0,
+            "finished_at": None,
+            "error": None,
+        }
+        # 离线设备 → delivered=False (诚实, 不假装送达)
+        r_off = tc2.post("/api/deliver", headers=_auth(), json={"run_id": "run_y", "target_device_id": "phone-2"})
+        assert r_off.status_code == 200
+        assert r_off.json()["delivered"] is False
+        # 未知设备 → False
+        r_unknown = tc2.post("/api/deliver", headers=_auth(), json={"run_id": "run_y", "target_device_id": "nope"})
+        assert r_unknown.json()["delivered"] is False
+        # 广播 (无在线设备, 零连接尝试) → True (广播语义)
+        r_b = tc2.post("/api/deliver", headers=_auth(), json={"run_id": "run_y"})
+        assert r_b.status_code == 200
+        assert r_b.json()["receiver"] == "broadcast"
+        assert r_b.json()["delivered"] is True
