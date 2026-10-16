@@ -1,22 +1,47 @@
 import { useEffect, useState } from 'react';
 import { useT } from './i18n';
 import { CanvasPage } from './pages/CanvasPage';
+import { NodesPage } from './pages/NodesPage';
 import { RunsPage } from './pages/RunsPage';
+import { SchedulePage } from './pages/SchedulePage';
+import { TemplatesPage } from './pages/TemplatesPage';
 import { WorkflowsPage } from './pages/WorkflowsPage';
 import { embeddedParam, isEmbedded } from './sdk';
 
-// Hash router (no router dep). Three routes: workflow list, DAG canvas
-// (optionally #/canvas/<id> to edit a saved workflow), runs. Standalone
-// shows its own header tabs; when the shell embeds us (?embedded=1 or
-// iframe) the shell owns the chrome — own navigation hides (spec S7).
-type Route = 'workflows' | 'canvas' | 'runs';
+// Hash router (no router dep). Routes: workflows, canvas (#/canvas/<id>),
+// runs, nodes, templates, schedule. Standalone shows its own header tabs;
+// when the shell embeds us (?embedded=1 or iframe) the shell owns the
+// chrome — own navigation hides (spec S7).
+type Route = 'workflows' | 'canvas' | 'runs' | 'nodes' | 'templates' | 'schedule';
+
+const ROUTES: Route[] = ['workflows', 'runs', 'schedule', 'templates', 'nodes', 'canvas'];
 
 function parseHash(): { route: Route; arg: string } {
     const h = window.location.hash.replace(/^#\/?/, '');
     const [head, arg = ''] = h.split('/');
     if (head === 'canvas') return { route: 'canvas', arg };
     if (head === 'runs') return { route: 'runs', arg };
+    if (head === 'nodes') return { route: 'nodes', arg };
+    if (head === 'templates') return { route: 'templates', arg };
+    if (head === 'schedule') return { route: 'schedule', arg };
     return { route: 'workflows', arg };
+}
+
+function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
+    switch (r) {
+        case 'workflows':
+            return t('工作流', 'Workflows');
+        case 'runs':
+            return t('运行', 'Runs');
+        case 'schedule':
+            return t('调度', 'Schedule');
+        case 'templates':
+            return t('模板', 'Templates');
+        case 'nodes':
+            return t('节点', 'Nodes');
+        case 'canvas':
+            return t('画布', 'Canvas');
+    }
 }
 
 export function App() {
@@ -40,7 +65,7 @@ export function App() {
                 <header className="flex items-center justify-between border-b border-border px-4 py-2">
                     <div className="text-sm font-medium">Fusion Cowork</div>
                     <nav className="flex gap-1">
-                        {(['workflows', 'canvas', 'runs'] as Route[]).map((r) => (
+                        {ROUTES.map((r) => (
                             <button
                                 type="button"
                                 key={r}
@@ -51,11 +76,7 @@ export function App() {
                                 }`}
                                 onClick={() => go(r)}
                             >
-                                {r === 'workflows'
-                                    ? t('工作流', 'Workflows')
-                                    : r === 'canvas'
-                                      ? t('画布', 'Canvas')
-                                      : t('运行', 'Runs')}
+                                {routeLabel(r, t)}
                             </button>
                         ))}
                     </nav>
@@ -70,8 +91,14 @@ export function App() {
                     />
                 ) : route === 'canvas' ? (
                     <CanvasPage workflowId={arg} />
-                ) : (
+                ) : route === 'runs' ? (
                     <RunsPage />
+                ) : route === 'nodes' ? (
+                    <NodesPage />
+                ) : route === 'templates' ? (
+                    <TemplatesPage />
+                ) : (
+                    <SchedulePage />
                 )}
             </main>
         </div>

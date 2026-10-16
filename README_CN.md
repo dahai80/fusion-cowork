@@ -282,7 +282,7 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 
 ## 🕸️ 统一 Web 模块 (v0.5.5, issue #94; v0.5.6 加固, issue #96/#97/#98)
 
-### 独立模式鉴权与网关注册 (v0.5.6, issue #96/#97)
+### 独立模式鉴权与网关注册 (v0.5.6, issue #96/#97) + P0 页面 (v0.5.7)
 
 - **运行时密钥接缝**: 独立发布构建下 API key 运行时解析 — `window.__FUSION_COWORK_WEB_API_KEY__` > `localStorage['fusion-cowork-web-api-key']` > 构建期 `VITE_API_KEY` (遗留回退)。无 key 则省略鉴权头 (keyless serve 姿态, 127.0.0.1 绑定)。独立 HTTP 包装器对带 body 请求始终补 `content-type: application/json` (上游 fusion-web-shell#22)。
 - **网关 shell 注册**: `web serve` 启动后向 fusion-gateway 注册 `web/manifest.json` 并心跳保活 — 需同时配置 `FUSION_SHELL_GATEWAY_URL` + `FUSION_GATEWAY_ADMIN_KEY` (`FUSION_SHELL_MANIFEST` 覆盖 manifest 路径)。未配置则完全跳过。对齐 agent-studio 的 `shell_registry`。
@@ -290,7 +290,8 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 浏览器里的 DAG 工作流画布 — fusion-cowork 接入统一 Web Shell (PRD N-6)。
 
 - **`web/` UI 包** — React 18 + Vite + TS + Tailwind (preset 来自 `@fusion/web-ui`) + Bun; 画布用 `@xyflow/react`。工作流列表 (运行/编辑/删除, 删除带名称二次确认)、桌面端 DAG 画布编辑 (节点面板来自 `/api/nodes`、连线、节点参数编辑含 schema 提示)、运行视图实时轮询 (可见 5s / 后台 Tab 降频 30s)、移动端只读 (`devices: ["desktop", "mobile-readonly"]`)。内嵌模式 (`?embedded=1`) 隐藏自有导航 — Shell 管外壳。
-- **`fusion-cowork web serve`** — Web API :11461: 节点目录、工作流定义 CRUD (原子 JSON 存储)、运行生命周期 (异步提交 → 轮询 → 停止, 共享 `WorkflowEngine`)。同服务静态托管 `web/dist`, 供 gateway `/shell/fusion-cowork/` 挂载。鉴权: `FUSION_COWORK_WEB_API_KEY` (gateway 代理注入; 未配置放行, 默认仅 127.0.0.1 绑定)。
+- **`fusion-cowork web serve`** — Web API :11461: 节点目录、工作流定义 CRUD (原子 JSON 存储)、运行生命周期 (异步提交 → 轮询 → 停止, 共享 `WorkflowEngine`)、模板目录 (`/api/templates`, 内置模板含 workflow 体快照)、定时任务 (`/api/scheduler/tasks` CRUD + 暂停/恢复, 底层引擎 `TaskScheduler`; `web serve` 启动调度器, cron/间隔任务随 uvicorn 事件循环触发)。同服务静态托管 `web/dist`, 供 gateway `/shell/fusion-cowork/` 挂载。鉴权: `FUSION_COWORK_WEB_API_KEY` (gateway 代理注入; 未配置放行, 默认仅 127.0.0.1 绑定)。
+- **P0 页面 (v0.5.7, 迁移方案 §6)**: 节点浏览 (W2, 搜索 + 分类色标 + 参数 schema)、模板目录 (W5, 一键「用画布打开」把模板体复制为用户工作流)、调度管理 (W6, 创建 cron/间隔任务、暂停/恢复/删除)、运行状态过滤 (W4)、画布 `?view=1` 分享链接只读 (W3)。
 - **Union-web 合规**: manifest 符合 PRD §5.1, vendor `@fusion/web-sdk`/`@fusion/web-ui` (与 shell 仓逐字节一致), 四态视图 (骨架/空/错误/重试), 全 token 色, 无原生 alert/confirm, UI 不含鉴权逻辑。
 - **开发端口已登记**: 11461 (web API), 11464 (vite dev) — `architecture/port-registry.yaml`。
 

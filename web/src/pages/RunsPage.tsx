@@ -19,6 +19,7 @@ export function RunsPage() {
     const lang = sdk.i18n.lang();
     const [reloadKey, setReloadKey] = useState(0);
     const [selected, setSelected] = useState<string>('');
+    const [statusFilter, setStatusFilter] = useState('');
     const { data, error, loading, attempt, manualRetry } = useAutoRetry(() => api.runs(), [reloadKey]);
 
     // Live refresh while a run is active (poller pauses with tab hidden — SDK visibility-aware)
@@ -56,14 +57,29 @@ export function RunsPage() {
             />
         );
 
-    const rows = data?.runs ?? [];
+    // W4: client-side status filter over the runs list (all data already fetched)
+    const rows = (data?.runs ?? []).filter((r) => !statusFilter || r.status === statusFilter);
     return (
         <div className="flex flex-col gap-4">
-            <div>
-                <div className="text-lg font-medium text-text-primary">{t('运行记录', 'Runs')}</div>
-                <div className="text-xs text-text-muted">
-                    {t('工作流运行状态与步骤结果', 'Workflow run status and step results')}
+            <div className="flex items-end justify-between">
+                <div>
+                    <div className="text-lg font-medium text-text-primary">{t('运行记录', 'Runs')}</div>
+                    <div className="text-xs text-text-muted">
+                        {t('工作流运行状态与步骤结果', 'Workflow run status and step results')}
+                    </div>
                 </div>
+                <select
+                    className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                >
+                    <option value="">{t('全部状态', 'All statuses')}</option>
+                    {['running', 'pending', 'completed', 'failed', 'cancelled'].map((s) => (
+                        <option key={s} value={s}>
+                            {s}
+                        </option>
+                    ))}
+                </select>
             </div>
             <DataTable<RunListItem>
                 columns={[

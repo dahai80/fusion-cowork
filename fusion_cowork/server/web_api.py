@@ -202,7 +202,9 @@ class RunRegistry:
             self._runs.pop(rid, None)
 
 
-def create_web_app(engine: Any = None, dist_dir: Optional[Path] = None, store_root: Optional[Path] = None):
+def create_web_app(
+    engine: Any = None, dist_dir: Optional[Path] = None, store_root: Optional[Path] = None, scheduler: Any = None
+):
     try:
         from fastapi import FastAPI, HTTPException, Request
         from fastapi.responses import JSONResponse
@@ -219,8 +221,12 @@ def create_web_app(engine: Any = None, dist_dir: Optional[Path] = None, store_ro
 
         engine = WorkflowEngine()
     runs = RunRegistry(engine)
+    if scheduler is None:
+        from ..engine.scheduler import TaskScheduler
 
+        scheduler = TaskScheduler()
     app = FastAPI(title="Fusion-Cowork Web API", version="0.1.0")
+    app.state.scheduler = scheduler
 
     @app.middleware("http")
     async def _auth_middleware(request: Request, call_next):
@@ -321,6 +327,124 @@ def create_web_app(engine: Any = None, dist_dir: Optional[Path] = None, store_ro
         if not runs.cancel(run_id):
             raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"运行不可取消: {run_id}"})
         return {"status": "cancelling", "run_id": run_id}
+
+    # ── W5 模板目录 (migration doc §6 P0) ──
+    @app.get("/api/templates")
+    async def templates_list(category: str = ""):
+        from ..templates import TemplateManager
+
+        items = TemplateManager().list_templates(category=category or "")
+        return {"templates": items, "count": len(items)}
+
+    @app.get("/api/templates/{template_id}")
+    async def templates_get(template_id: str):
+        from ..templates import TemplateManager
+
+        tpl = TemplateManager().get_template(template_id)
+        if not tpl:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"})
+        return tpl
+
+    # ── W6 调度任务 (migration doc §6 P0) ──
+    def _make_task_executor(workflow_id: str):
+        async def _exec(task_id: str) -> None:
+            record = store.get(workflow_id)
+            if not record:
+                logger.error(f"定时任务执行器找不到工作流: {workflow_id}")
+                return
+            runs.start(
+                record.get("workflow") or {}, workflow_id=workflow_id, workflow_name=record.get("name", workflow_id)
+            )
+            logger.info(f"定时任务 {task_id} 已触发工作流 {workflow_id}")
+
+        return _exec
+
+    @app.get("/api/scheduler/tasks")
+    async def scheduler_tasks_list():
+        tasks = scheduler.list_tasks()
+        return {
+            "tasks": [
+                {
+                    "id": t.id,
+                    "name": t.name,
+                    "workflow_id": t.workflow_id,
+                    "trigger_type": t.trigger_type,
+                    "trigger_config": t.trigger_config,
+                    "status": t.status.value if hasattr(t.status, "value") else str(t.status),
+                    "created_at": t.created_at,
+                    "last_run": t.last_run,
+                    "next_run": t.next_run,
+                    "run_count": t.run_count,
+                    "fail_count": t.fail_count,
+                    "description": t.description,
+                    "tags": list(t.tags),
+                }
+                for t in tasks
+            ],
+            "count": len(tasks),
+        }
+
+    @app.post("/api/scheduler/tasks", status_code=201)
+    async def scheduler_tasks_create(body: Dict[str, Any]):
+        name = str(body.get("name") or "").strip()
+        workflow_id = str(body.get("workflow_id") or "").strip()
+        if not name or not workflow_id:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "name 与 workflow_id 必填"})
+        if not store.get(workflow_id):
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"工作流不存在: {workflow_id}"}
+            )
+        cron = str(body.get("cron") or "").strip()
+        interval_minutes = body.get("interval_minutes")
+        if cron and isinstance(interval_minutes, (int, float)) and interval_minutes > 0:
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "cron 与 interval_minutes 只能二选一"}
+            )
+        try:
+            if cron:
+                task_id = scheduler.add_cron_task(
+                    name,
+                    workflow_id,
+                    cron,
+                    _make_task_executor(workflow_id),
+                    description=str(body.get("description") or ""),
+                )
+            elif isinstance(interval_minutes, (int, float)) and interval_minutes > 0:
+                task_id = scheduler.add_interval_task(
+                    name,
+                    workflow_id,
+                    minutes=int(interval_minutes),
+                    executor=_make_task_executor(workflow_id),
+                    description=str(body.get("description") or ""),
+                )
+            else:
+                raise HTTPException(
+                    status_code=400, detail={"code": "bad_request", "message": "cron 或 interval_minutes 必填其一"}
+                )
+        except HTTPException:
+            raise
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": f"触发器无效: {e}"}) from e
+        t = scheduler.get_task(task_id)
+        return {"id": task_id, "name": name, "workflow_id": workflow_id, "status": t.status.value if t else "active"}
+
+    @app.post("/api/scheduler/tasks/{task_id}/pause")
+    async def scheduler_tasks_pause(task_id: str):
+        if not scheduler.pause_task(task_id):
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"})
+        return {"id": task_id, "status": "paused"}
+
+    @app.post("/api/scheduler/tasks/{task_id}/resume")
+    async def scheduler_tasks_resume(task_id: str):
+        if not scheduler.resume_task(task_id):
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"})
+        return {"id": task_id, "status": "active"}
+
+    @app.delete("/api/scheduler/tasks/{task_id}")
+    async def scheduler_tasks_delete(task_id: str):
+        if not scheduler.remove_task(task_id):
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"})
+        return {"deleted": True}
 
     dist = Path(dist_dir) if dist_dir else _WEB_DIR / "dist"
     if (dist / "index.html").exists():

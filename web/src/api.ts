@@ -78,6 +78,31 @@ export interface RunRecord extends RunListItem {
     result: { summary?: string } | null;
 }
 
+export interface TemplateInfo {
+    id: string;
+    name: string;
+    description?: string;
+    category?: string;
+    tags?: string[];
+    needs_ai?: boolean;
+}
+
+export interface SchedulerTask {
+    id: string;
+    name: string;
+    workflow_id: string;
+    trigger_type: string;
+    trigger_config: Record<string, unknown>;
+    status: string;
+    created_at: number;
+    last_run: number | null;
+    next_run: number | null;
+    run_count: number;
+    fail_count: number;
+    description: string;
+    tags: string[];
+}
+
 async function get<T>(path: string): Promise<T> {
     return (await sdk.http.get<T>(path)).data;
 }
@@ -100,6 +125,22 @@ export const api = {
     runs: () => get<{ runs: RunListItem[]; count: number }>('/api/runs'),
     run: (id: string) => get<RunRecord>(`/api/runs/${encodeURIComponent(id)}`),
     cancelRun: (id: string) => post<{ status: string }>(`/api/runs/${encodeURIComponent(id)}/cancel`),
+    templates: (category = '') =>
+        get<{ templates: TemplateInfo[]; count: number }>(`/api/templates?category=${encodeURIComponent(category)}`),
+    template: (id: string) => get<TemplateInfo>(`/api/templates/${encodeURIComponent(id)}`),
+    schedulerTasks: () => get<{ tasks: SchedulerTask[]; count: number }>('/api/scheduler/tasks'),
+    createSchedulerTask: (body: {
+        name: string;
+        workflow_id: string;
+        cron?: string;
+        interval_minutes?: number;
+        description?: string;
+    }) => post<{ id: string; status: string }>('/api/scheduler/tasks', body),
+    pauseSchedulerTask: (id: string) =>
+        post<{ id: string; status: string }>(`/api/scheduler/tasks/${encodeURIComponent(id)}/pause`),
+    resumeSchedulerTask: (id: string) =>
+        post<{ id: string; status: string }>(`/api/scheduler/tasks/${encodeURIComponent(id)}/resume`),
+    deleteSchedulerTask: (id: string) => sdk.http.delete(`/api/scheduler/tasks/${encodeURIComponent(id)}`),
 };
 
 export function statusKind(status: string): 'success' | 'running' | 'error' | 'offline' | 'warning' {

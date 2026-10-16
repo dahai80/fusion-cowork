@@ -1143,6 +1143,10 @@ def web_serve(port: int, host: str):
         console.print_info("shell 网关注册未启用 (FUSION_SHELL_GATEWAY_URL / FUSION_GATEWAY_ADMIN_KEY 未配置)")
 
     async def _serve():
+        scheduler = getattr(app.state, "scheduler", None)
+        if scheduler:
+            scheduler.start()
+            console.print_info("任务调度器已启动 (定时任务生效)")
         registry_task = asyncio.create_task(shell_registry_loop()) if register_enabled else None
         config = uvicorn.Config(app, host=bind_host, port=port, log_level="info")
         server = uvicorn.Server(config)
@@ -1151,6 +1155,8 @@ def web_serve(port: int, host: str):
         finally:
             if registry_task:
                 registry_task.cancel()
+            if scheduler:
+                scheduler.shutdown(wait=False)
 
     asyncio.run(_serve())
 
