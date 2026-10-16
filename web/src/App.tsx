@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { NotificationBell } from './NotificationBell';
 import { useT } from './i18n';
 import { CanvasPage } from './pages/CanvasPage';
 import { DelegatePage } from './pages/DelegatePage';
@@ -86,22 +87,25 @@ export function App() {
             {!embedded ? (
                 <header className="flex items-center justify-between border-b border-border px-4 py-2">
                     <div className="text-sm font-medium">Fusion Cowork</div>
-                    <nav className="flex gap-1">
-                        {ROUTES.map((r) => (
-                            <button
-                                type="button"
-                                key={r}
-                                className={`rounded-md px-3 py-1 text-sm ${
-                                    route === r
-                                        ? 'bg-bg-muted text-text-primary'
-                                        : 'text-text-secondary hover:bg-bg-muted'
-                                }`}
-                                onClick={() => go(r)}
-                            >
-                                {routeLabel(r, t)}
-                            </button>
-                        ))}
-                    </nav>
+                    <div className="flex items-center gap-2">
+                        <NotificationBell />
+                        <nav className="flex gap-1">
+                            {ROUTES.map((r) => (
+                                <button
+                                    type="button"
+                                    key={r}
+                                    className={`rounded-md px-3 py-1 text-sm ${
+                                        route === r
+                                            ? 'bg-bg-muted text-text-primary'
+                                            : 'text-text-secondary hover:bg-bg-muted'
+                                    }`}
+                                    onClick={() => go(r)}
+                                >
+                                    {routeLabel(r, t)}
+                                </button>
+                            ))}
+                        </nav>
+                    </div>
                 </header>
             ) : null}
             <main className={`min-h-0 flex-1 ${route === 'canvas' ? 'overflow-hidden' : 'overflow-y-auto p-4'}`}>

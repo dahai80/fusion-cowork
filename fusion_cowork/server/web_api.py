@@ -209,7 +209,14 @@ def _build_space_stack(data_dir: Optional[Path] = None):
     Returns (space_app, artifact_svc, space_store) — store 供 serve 关停时 close()。
     """
     from ..ai.mlx_client import FusionMLXClient, KBClient
-    from ..space import SpaceChatService, SpaceKBService, SpaceMemberService, SpaceService, SpaceStore
+    from ..space import (
+        NotificationService,
+        SpaceChatService,
+        SpaceKBService,
+        SpaceMemberService,
+        SpaceService,
+        SpaceStore,
+    )
     from ..space.api import create_space_api
     from ..space.artifact import SpaceArtifactService
     from ..space.permission import SpacePermission
@@ -220,9 +227,18 @@ def _build_space_stack(data_dir: Optional[Path] = None):
     chat_svc = SpaceChatService(store, mlx, perm)
     kb_svc = SpaceKBService(store, KBClient(), perm)
     artifact_svc = SpaceArtifactService(store, perm)
+    notification_svc = NotificationService(store)
     space_svc = SpaceService(store)
     member_svc = SpaceMemberService(store, perm)
-    app = create_space_api(space_svc, member_svc, chat_svc, kb_svc, artifact_svc=artifact_svc, space_store=store)
+    app = create_space_api(
+        space_svc,
+        member_svc,
+        chat_svc,
+        kb_svc,
+        artifact_svc=artifact_svc,
+        notification_svc=notification_svc,
+        space_store=store,
+    )
     return app, artifact_svc, store
 
 

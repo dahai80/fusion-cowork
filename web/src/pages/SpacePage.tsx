@@ -10,7 +10,7 @@ import { sdk } from '../sdk';
 // proxying), members (W12), artifacts list + content preview (W10).
 // Data: mounted sub-app /api/space/*.
 
-type Tab = 'messages' | 'members' | 'artifacts';
+type Tab = 'messages' | 'members' | 'artifacts' | 'knowledge';
 
 export function SpacePage() {
     const t = useT();
@@ -172,10 +172,35 @@ function SpaceDetail({ spaceId }: { spaceId: string }) {
         }
     }
 
+    async function changeRole(userId: string, role: string) {
+        try {
+            await api.updateSpaceMemberRole(spaceId, userId, role);
+            sdk.toast.show({ level: 'success', message: t('角色已更新', 'Role updated') });
+            members.manualRetry();
+        } catch (e) {
+            console.error('[cowork-web] role update failed', e);
+            sdk.toast.show({ level: 'error', message: t('角色更新失败', 'Role update failed') });
+        }
+    }
+
+    async function removeMember(userId: string) {
+        try {
+            const res = await sdk.http.delete(
+                `/api/space/spaces/${encodeURIComponent(spaceId)}/members/${encodeURIComponent(userId)}`
+            );
+            if (res.status >= 400) throw new Error(String(res.status));
+            members.manualRetry();
+        } catch (e) {
+            console.error('[cowork-web] member remove failed', e);
+            sdk.toast.show({ level: 'error', message: t('移除失败', 'Remove failed') });
+        }
+    }
+
     const tabs: { key: Tab; label: string }[] = [
         { key: 'messages', label: t('聊天', 'Chat') },
         { key: 'members', label: t('成员', 'Members') },
         { key: 'artifacts', label: t('产物', 'Artifacts') },
+        { key: 'knowledge', label: t('知识库', 'Knowledge') },
     ];
 
     return (
@@ -249,14 +274,40 @@ function SpaceDetail({ spaceId }: { spaceId: string }) {
                                 className="flex items-center justify-between rounded-md border border-border bg-bg px-2 py-1.5"
                             >
                                 <div className="text-sm text-text-primary">{m.display_name || m.user_id}</div>
-                                <span className="rounded bg-bg-muted px-1.5 py-0.5 text-[10px] text-text-secondary">
-                                    {m.role || 'member'}
-                                </span>
+                                <div className="flex items-center gap-1">
+                                    {m.role === 'owner' ? (
+                                        <span className="rounded bg-bg-muted px-1.5 py-0.5 text-[10px] text-text-secondary">
+                                            owner
+                                        </span>
+                                    ) : (
+                                        <select
+                                            className="rounded border border-border bg-bg px-1 py-0.5 text-xs text-text-primary"
+                                            value={m.role || 'member'}
+                                            onChange={(e) => void changeRole(m.user_id, e.target.value)}
+                                        >
+                                            <option value="admin">admin</option>
+                                            <option value="member">member</option>
+                                            <option value="viewer">viewer</option>
+                                        </select>
+                                    )}
+                                    {m.role === 'owner' ? null : (
+                                        <button
+                                            type="button"
+                                            className="rounded px-1 text-xs text-error hover:bg-error/10"
+                                            aria-label={`remove ${m.user_id}`}
+                                            onClick={() => void removeMember(m.user_id)}
+                                        >
+                                            ×
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                         ))
                     )}
+                    <MemberMatrix spaceId={spaceId} />
                 </div>
             ) : null}
+            {tab === 'knowledge' ? <KbPanel spaceId={spaceId} /> : null}
             {tab === 'artifacts' ? (
                 <div className="py-2">
                     {artifactPreview ? (
@@ -296,6 +347,183 @@ function SpaceDetail({ spaceId }: { spaceId: string }) {
                     )}
                 </div>
             ) : null}
+        </div>
+    );
+}
+
+// W16: role-permission matrix (15 actions x 4 roles, read-only display).
+function MemberMatrix({ spaceId }: { spaceId: string }) {
+    const t = useT();
+    const retry = useAutoRetry(() => api.spacePermissions(spaceId), [spaceId]);
+    if (retry.loading && !retry.data) return null;
+    if (retry.error || !retry.data) return null;
+    const actions = Object.keys(retry.data.matrix.owner ?? {});
+    return (
+        <details className="rounded-md border border-border bg-bg px-2 py-1.5">
+            <summary className="cursor-pointer text-xs text-text-secondary">
+                {t('权限矩阵 (角色 x 动作)', 'Permission matrix (role x action)')}
+            </summary>
+            <div className="mt-2 overflow-x-auto">
+                <table className="w-full border-collapse text-left text-[11px]">
+                    <thead>
+                        <tr className="text-text-secondary">
+                            <th className="py-1 pr-3 font-medium">{t('动作', 'Action')}</th>
+                            {retry.data.roles.map((r) => (
+                                <th key={r} className="py-1 pr-3 font-medium">
+                                    {r}
+                                </th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {actions.map((a) => (
+                            <tr key={a} className="border-t border-border">
+                                <td className="py-0.5 pr-3 font-mono text-text-secondary">{a}</td>
+                                {retry.data!.roles.map((r) => (
+                                    <td key={r} className="py-0.5 pr-3">
+                                        {retry.data!.matrix[r]?.[a] ? (
+                                            <span className="text-success">✓</span>
+                                        ) : (
+                                            <span className="text-text-muted">·</span>
+                                        )}
+                                    </td>
+                                ))}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </details>
+    );
+}
+
+// W14: KB retrieval panel — status + bind/unbind + search + document list.
+// Real search needs fusion-kb :11436 live; errors surface as 502-style toasts.
+function KbPanel({ spaceId }: { spaceId: string }) {
+    const t = useT();
+    const [query, setQuery] = useState('');
+    const [searching, setSearching] = useState(false);
+    const [results, setResults] = useState<{ document_name?: string; content?: string; score?: number }[] | null>(null);
+    const status = useAutoRetry(() => api.kbStatus(spaceId), [spaceId]);
+    const docs = useAutoRetry(() => api.kbDocuments(spaceId), [spaceId]);
+
+    async function bind(unbind: boolean) {
+        try {
+            if (unbind) {
+                await api.kbUnbind(spaceId);
+            } else {
+                await api.kbBind(spaceId);
+            }
+            status.manualRetry();
+        } catch (e) {
+            console.error('[cowork-web] kb toggle failed', e);
+            sdk.toast.show({ level: 'error', message: t('知识库操作失败', 'KB operation failed') });
+        }
+    }
+
+    async function search() {
+        if (searching || !query.trim()) return;
+        setSearching(true);
+        try {
+            setResults(await api.kbSearch(spaceId, query.trim()));
+        } catch (e) {
+            console.error('[cowork-web] kb search failed', e);
+            sdk.toast.show({
+                level: 'error',
+                message: t('检索失败 (需 fusion-kb 在线)', 'Search failed (fusion-kb required)'),
+            });
+        } finally {
+            setSearching(false);
+        }
+    }
+
+    return (
+        <div className="space-y-2 py-2">
+            <div className="flex items-center gap-2">
+                <span className="text-xs text-text-secondary">
+                    {status.data?.bound ? t('已绑定知识库', 'KB bound') : t('未绑定知识库', 'No KB bound')}
+                </span>
+                {status.data?.bound ? (
+                    <button
+                        type="button"
+                        className="rounded-md border border-border px-2 py-0.5 text-xs text-text-primary hover:bg-bg-muted"
+                        onClick={() => void bind(true)}
+                    >
+                        {t('解绑', 'Unbind')}
+                    </button>
+                ) : (
+                    <button
+                        type="button"
+                        className="rounded-md border border-border px-2 py-0.5 text-xs text-text-primary hover:bg-bg-muted"
+                        onClick={() => void bind(false)}
+                    >
+                        {t('绑定知识库', 'Bind KB')}
+                    </button>
+                )}
+            </div>
+            <div className="flex gap-2">
+                <input
+                    className="min-w-0 flex-1 rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
+                    placeholder={t('检索知识库…', 'Search knowledge base…')}
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') void search();
+                    }}
+                />
+                <button
+                    type="button"
+                    className="rounded-md bg-brand px-3 py-1 text-sm text-white hover:opacity-90 disabled:opacity-50"
+                    disabled={searching || !query.trim()}
+                    onClick={() => void search()}
+                >
+                    {searching ? t('检索中…', 'Searching…') : t('检索', 'Search')}
+                </button>
+            </div>
+            {results ? (
+                <div className="space-y-1">
+                    {results.length === 0 ? (
+                        <div className="text-xs text-text-muted">{t('无结果', 'No results')}</div>
+                    ) : (
+                        results.map((r, i) => (
+                            <div key={i} className="rounded-md border border-border bg-bg p-2">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-xs font-medium text-text-primary">
+                                        {r.document_name || t('文档', 'Document')}
+                                    </span>
+                                    {typeof r.score === 'number' ? (
+                                        <span className="font-mono text-[10px] text-text-muted">
+                                            {r.score.toFixed(3)}
+                                        </span>
+                                    ) : null}
+                                </div>
+                                {r.content ? (
+                                    <div className="mt-1 line-clamp-4 whitespace-pre-wrap text-xs text-text-secondary">
+                                        {r.content}
+                                    </div>
+                                ) : null}
+                            </div>
+                        ))
+                    )}
+                </div>
+            ) : null}
+            <div className="pt-1">
+                <div className="pb-1 text-xs text-text-secondary">{t('文档列表', 'Documents')}</div>
+                {(docs.data ?? []).length === 0 ? (
+                    <div className="text-xs text-text-muted">{t('暂无文档', 'No documents')}</div>
+                ) : (
+                    <div className="space-y-1">
+                        {(docs.data ?? []).map((d, i) => (
+                            <div
+                                key={d.document_id || d.id || i}
+                                className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
+                            >
+                                {d.file_name || d.name || d.document_id || d.id}
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
         </div>
     );
 }

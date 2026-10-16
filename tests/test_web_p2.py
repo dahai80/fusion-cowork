@@ -23,7 +23,14 @@ def static_key_env(monkeypatch):
 @pytest.fixture
 def space_stack(tmp_path):
     from fusion_cowork.ai.mlx_client import FusionMLXClient, KBClient
-    from fusion_cowork.space import SpaceChatService, SpaceKBService, SpaceMemberService, SpaceService, SpaceStore
+    from fusion_cowork.space import (
+        NotificationService,
+        SpaceChatService,
+        SpaceKBService,
+        SpaceMemberService,
+        SpaceService,
+        SpaceStore,
+    )
     from fusion_cowork.space.api import create_space_api
     from fusion_cowork.space.artifact import SpaceArtifactService
     from fusion_cowork.space.permission import SpacePermission
@@ -36,7 +43,16 @@ def space_stack(tmp_path):
     chat_svc = SpaceChatService(store, mlx, perm)
     kb_svc = SpaceKBService(store, KBClient(), perm)
     artifact_svc = SpaceArtifactService(store, perm)
-    space_api = create_space_api(space_svc, member_svc, chat_svc, kb_svc, artifact_svc=artifact_svc, space_store=store)
+    notification_svc = NotificationService(store)
+    space_api = create_space_api(
+        space_svc,
+        member_svc,
+        chat_svc,
+        kb_svc,
+        artifact_svc=artifact_svc,
+        notification_svc=notification_svc,
+        space_store=store,
+    )
     return space_api, artifact_svc, store
 
 
@@ -127,3 +143,77 @@ class TestSpaceSurface:
         assert client.get("/api/space/spaces").status_code == 401
         assert client.get("/api/space/health").status_code == 401
         assert client.get("/api/space/health", headers=_auth(client)).status_code == 200
+
+
+class TestSpaceNotifications:
+    def _svc(self, space_stack):
+        from fusion_cowork.space import NotificationService
+
+        _, _, store = space_stack
+        return NotificationService(store)
+
+    def test_list_and_mark_read(self, client, space_stack):
+        import asyncio
+
+        svc = self._svc(space_stack)
+        asyncio.run(svc.push_notification("s1", "local_user", "run_done", "r1 finished", content="ok"))
+        asyncio.run(svc.push_notification("s1", "local_user", "mention", "ping", content="hi"))
+        listed = client.get("/api/space/notifications", headers=_auth(client))
+        assert listed.status_code == 200
+        assert len(listed.json()) == 2
+        unread = client.get("/api/space/notifications?unread_only=true", headers=_auth(client))
+        assert len(unread.json()) == 2
+        nid = listed.json()[0]["id"]
+        marked = client.post(f"/api/space/notifications/{nid}/read", headers=_auth(client))
+        assert marked.status_code == 200
+        assert marked.json()["marked"] is True
+        unread2 = client.get("/api/space/notifications?unread_only=true", headers=_auth(client))
+        assert len(unread2.json()) == 1
+
+    def test_unauthorized(self, client):
+        assert client.get("/api/space/notifications").status_code == 401
+        assert client.post("/api/space/notifications/x/read").status_code == 401
+
+
+class TestSpaceMembersPermissions:
+    def test_role_update_and_matrix(self, client):
+        sid = _mk_space(client)
+        added = client.post(
+            f"/api/space/spaces/{sid}/members",
+            headers=_auth(client),
+            json={"user_id": "alice", "role": "admin"},
+        )
+        assert added.status_code == 201, added.text
+        updated = client.put(
+            f"/api/space/spaces/{sid}/members/alice",
+            headers=_auth(client),
+            json={"role": "viewer"},
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["role"] == "viewer"
+        missing_role = client.put(f"/api/space/spaces/{sid}/members/alice", headers=_auth(client), json={})
+        assert missing_role.status_code == 400
+        matrix = client.get(f"/api/space/spaces/{sid}/permissions", headers=_auth(client))
+        assert matrix.status_code == 200
+        body = matrix.json()
+        assert set(body["roles"]) == {"owner", "admin", "member", "viewer"}
+        assert len(body["matrix"]["owner"]) == 15
+        assert body["matrix"]["viewer"]["send_message"] is False
+
+    def test_remove_member(self, client):
+        sid = _mk_space(client)
+        client.post(
+            f"/api/space/spaces/{sid}/members",
+            headers=_auth(client),
+            json={"user_id": "bob", "role": "member"},
+        )
+        removed = client.delete(f"/api/space/spaces/{sid}/members/bob", headers=_auth(client))
+        assert removed.status_code == 200
+        members = client.get(f"/api/space/spaces/{sid}/members", headers=_auth(client)).json()
+        assert all(m["user_id"] != "bob" for m in members)
+
+    def test_unauthorized(self, client):
+        sid = _mk_space(client)
+        assert client.get(f"/api/space/spaces/{sid}/permissions").status_code == 401
+        assert client.put(f"/api/space/spaces/{sid}/members/x", json={"role": "admin"}).status_code == 401
+        assert client.delete(f"/api/space/spaces/{sid}/members/x").status_code == 401
