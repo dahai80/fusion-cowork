@@ -273,6 +273,8 @@ export const api = {
     runs: () => get<{ runs: RunListItem[]; count: number }>('/api/runs'),
     run: (id: string) => get<RunRecord>(`/api/runs/${encodeURIComponent(id)}`),
     cancelRun: (id: string) => post<{ status: string }>(`/api/runs/${encodeURIComponent(id)}/cancel`),
+    pauseRun: (id: string) => post<{ status: string }>(`/api/runs/${encodeURIComponent(id)}/pause`),
+    resumeRun: (id: string) => post<{ status: string }>(`/api/runs/${encodeURIComponent(id)}/resume`),
     templates: (category = '') =>
         get<{ templates: TemplateInfo[]; count: number }>(`/api/templates?category=${encodeURIComponent(category)}`),
     template: (id: string) => get<TemplateInfo>(`/api/templates/${encodeURIComponent(id)}`),
@@ -370,6 +372,8 @@ export function statusKind(status: string): 'success' | 'running' | 'error' | 'o
         case 'pending':
         case 'cancelling':
             return 'running';
+        case 'paused':
+            return 'warning';
         case 'failed':
             return 'error';
         case 'cancelled':

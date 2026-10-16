@@ -388,6 +388,8 @@ class WorkflowEngine:
     ):
         self._executions: Dict[str, WorkflowExecution] = {}
         self._cancel_flags: Dict[str, bool] = {}
+        # W8: 按执行粒度暂停 — asyncio.Event, set=运行 / clear=暂停; 节点间检查点等待
+        self._pause_events: Dict[str, asyncio.Event] = {}
         self._progress_callbacks: List[callable] = []
         self._permission_manager = permission_manager
         self._hook_manager = hook_manager
@@ -433,6 +435,8 @@ class WorkflowEngine:
         )
         self._executions[exec_id] = execution
         self._cancel_flags[exec_id] = False
+        self._pause_events[exec_id] = asyncio.Event()
+        self._pause_events[exec_id].set()
         # R-1: _executions 超上限淘汰最旧终态项, 防 long-running 引擎内存泄漏
         self._trim_executions()
 
@@ -547,6 +551,16 @@ class WorkflowEngine:
                 if self._cancel_flags.get(exec_id, False):
                     execution.status = WorkflowStatus.CANCELLED
                     break
+
+                # W8: 暂停检查点 — 当前节点完成后挂起, resume/cancel 唤醒
+                pause_evt = self._pause_events.get(exec_id)
+                if pause_evt is not None and not pause_evt.is_set():
+                    logger.info(f"执行已暂停, 等待恢复: {exec_id}")
+                    await pause_evt.wait()
+                    if self._cancel_flags.get(exec_id, False):
+                        execution.status = WorkflowStatus.CANCELLED
+                        break
+                    logger.info(f"执行已恢复: {exec_id}")
 
                 # HI-19: 预算检查 — enforce 且已超预算则中止 (BudgetTracker 无 exhausted 方法, 用 _enforce+cost 判)
                 if self._budget_tracker is not None and self._budget_tracker._enforce:
@@ -930,6 +944,7 @@ class WorkflowEngine:
             )
 
             del self._cancel_flags[exec_id]
+            self._pause_events.pop(exec_id, None)
 
         return execution
 
@@ -937,8 +952,34 @@ class WorkflowEngine:
         """取消正在执行的工作流。"""
         if execution_id in self._cancel_flags:
             self._cancel_flags[execution_id] = True
+            # W8: 暂停中的执行也要唤醒, 否则 cancel 后仍阻塞在暂停检查点
+            evt = self._pause_events.get(execution_id)
+            if evt is not None:
+                evt.set()
             return True
         return False
+
+    def pause(self, execution_id: str) -> bool:
+        """W8: 暂停执行 — 当前节点完成后在下一节点检查点挂起。"""
+        evt = self._pause_events.get(execution_id)
+        if evt is None:
+            return False
+        evt.clear()
+        logger.info(f"引擎暂停执行: {execution_id}")
+        return True
+
+    def resume(self, execution_id: str) -> bool:
+        """W8: 恢复暂停中的执行。"""
+        evt = self._pause_events.get(execution_id)
+        if evt is None or evt.is_set():
+            return False
+        evt.set()
+        logger.info(f"引擎恢复执行: {execution_id}")
+        return True
+
+    def is_paused(self, execution_id: str) -> bool:
+        evt = self._pause_events.get(execution_id)
+        return evt is not None and not evt.is_set()
 
     def get_execution(self, execution_id: str) -> Optional[WorkflowExecution]:
         """获取执行记录。"""
