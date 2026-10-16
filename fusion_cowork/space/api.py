@@ -48,6 +48,7 @@ def create_space_api(
     chat_svc,
     kb_svc,
     artifact_svc=None,
+    notification_svc=None,
     event_emitter=None,
     agent_runtime=None,
     presence_manager=None,
@@ -256,9 +257,55 @@ def create_space_api(
         return JSONResponse([m.to_dict() for m in members])
 
     @app.delete("/spaces/{space_id}/members/{user_id}")
-    async def remove_member(space_id: str, user_id: str, operator_id: str = ""):
-        await member_svc.remove(space_id, user_id, operator_id=operator_id)
+    async def remove_member(space_id: str, user_id: str, request: Request):
+        # A-5: operator 取可信 principal (不信 query/body 身份字段, CR-5 反冒充)。
+        auth_err = await _check_auth(request)
+        if auth_err:
+            return auth_err
+        operator_principal = _resolve_principal(request)
+        access_err = await _require_access(
+            space_id, operator_principal.user_id, "manage_members", tenant_id=operator_principal.tenant_id
+        )
+        if access_err:
+            return access_err
+        await member_svc.remove(space_id, user_id, operator_id=operator_principal.user_id)
         return JSONResponse({"status": "removed"})
+
+    @app.put("/spaces/{space_id}/members/{user_id}")
+    async def update_member_role(space_id: str, user_id: str, request: Request):
+        auth_err = await _check_auth(request)
+        if auth_err:
+            return auth_err
+        operator_principal = _resolve_principal(request)
+        access_err = await _require_access(
+            space_id, operator_principal.user_id, "manage_members", tenant_id=operator_principal.tenant_id
+        )
+        if access_err:
+            return access_err
+        body = await request.json()
+        if not body.get("role"):
+            return JSONResponse({"error": "role is required"}, status_code=400)
+        try:
+            m = await member_svc.update_role(space_id, user_id, body["role"], operator_id=operator_principal.user_id)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=404)
+        except PermissionError as e:
+            return JSONResponse({"error": str(e)}, status_code=403)
+        if not m:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse(m.to_dict())
+
+    # ── Permission Matrix (W16) ──
+
+    @app.get("/spaces/{space_id}/permissions")
+    async def get_permission_matrix(space_id: str, request: Request):
+        auth_err = await _check_auth(request)
+        if auth_err:
+            return auth_err
+        from .permission import SpacePermission
+
+        matrix = {role: SpacePermission.get_permissions_for_role(role) for role in SpacePermission.list_roles()}
+        return JSONResponse({"roles": SpacePermission.list_roles(), "matrix": matrix})
 
     # ── Messages ──
 
@@ -530,6 +577,32 @@ def create_space_api(
         if not art:
             return JSONResponse({"error": "not found"}, status_code=404)
         return JSONResponse(art)
+
+    # ── Notifications (W15) ──
+
+    @app.get("/notifications")
+    async def list_notifications(request: Request, unread_only: bool = False):
+        if not notification_svc:
+            return JSONResponse({"error": "notification service not available"}, status_code=503)
+        auth_err = await _check_auth(request)
+        if auth_err:
+            return auth_err
+        principal = _resolve_principal(request)
+        items = await notification_svc.list_notifications(
+            principal.user_id, unread_only=unread_only, tenant_id=principal.tenant_id
+        )
+        return JSONResponse(items)
+
+    @app.post("/notifications/{notification_id}/read")
+    async def mark_notification_read(notification_id: str, request: Request):
+        if not notification_svc:
+            return JSONResponse({"error": "notification service not available"}, status_code=503)
+        auth_err = await _check_auth(request)
+        if auth_err:
+            return auth_err
+        principal = _resolve_principal(request)
+        ok = await notification_svc.mark_read(notification_id, tenant_id=principal.tenant_id)
+        return JSONResponse({"marked": ok})
 
     # ── Health ──
 

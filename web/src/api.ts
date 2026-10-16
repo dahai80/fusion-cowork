@@ -148,6 +148,43 @@ export interface SpaceArtifact {
     created_at?: string;
 }
 
+export interface SpaceNotification {
+    id: string;
+    space_id: string;
+    user_id: string;
+    notification_type: string;
+    title: string;
+    content?: string;
+    read?: number;
+    created_at?: string;
+}
+
+export interface PermissionMatrix {
+    roles: string[];
+    matrix: Record<string, Record<string, boolean>>;
+}
+
+export interface KbSearchResult {
+    document_id?: string;
+    document_name?: string;
+    content?: string;
+    score?: number;
+}
+
+export interface KbStatusInfo {
+    kb_id?: string | null;
+    bound?: boolean;
+    document_count?: number;
+}
+
+export interface KbDocumentInfo {
+    id?: string;
+    document_id?: string;
+    file_name?: string;
+    name?: string;
+    created_at?: string;
+}
+
 async function get<T>(path: string): Promise<T> {
     return (await sdk.http.get<T>(path)).data;
 }
@@ -207,6 +244,30 @@ export const api = {
         get<SpaceArtifact>(`/api/space/spaces/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(aid)}`),
     createSpaceArtifact: (id: string, body: { name: string; artifact_type?: string; content?: string }) =>
         post<SpaceArtifact>(`/api/space/spaces/${encodeURIComponent(id)}/artifacts`, body),
+    updateSpaceMemberRole: (id: string, userId: string, role: string) =>
+        sdk.http
+            .put<{ user_id: string; role: string }>(
+                `/api/space/spaces/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`,
+                { role }
+            )
+            .then((r) => r.data),
+    spacePermissions: (id: string) => get<PermissionMatrix>(`/api/space/spaces/${encodeURIComponent(id)}/permissions`),
+    spaceNotifications: (unreadOnly = false) =>
+        get<SpaceNotification[]>(`/api/space/notifications?unread_only=${unreadOnly}`),
+    markSpaceNotificationRead: (nid: string) =>
+        post<{ marked: boolean }>(`/api/space/notifications/${encodeURIComponent(nid)}/read`),
+    kbSearch: (id: string, q: string, topK = 5) =>
+        get<KbSearchResult[]>(
+            `/api/space/spaces/${encodeURIComponent(id)}/kb/search?q=${encodeURIComponent(q)}&top_k=${topK}`
+        ),
+    kbStatus: (id: string) => get<KbStatusInfo>(`/api/space/spaces/${encodeURIComponent(id)}/kb/status`),
+    kbDocuments: (id: string) => get<KbDocumentInfo[]>(`/api/space/spaces/${encodeURIComponent(id)}/kb/documents`),
+    kbBind: (id: string) =>
+        post<{ kb_id: string }>(`/api/space/spaces/${encodeURIComponent(id)}/kb/bind`, { operator_id: 'local_user' }),
+    kbUnbind: (id: string) =>
+        post<{ unbound: boolean }>(`/api/space/spaces/${encodeURIComponent(id)}/kb/unbind`, {
+            operator_id: 'local_user',
+        }),
 };
 
 export function statusKind(status: string): 'success' | 'running' | 'error' | 'offline' | 'warning' {
