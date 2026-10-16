@@ -139,6 +139,13 @@ export interface SpaceMessage {
     created_at?: string;
 }
 
+export interface ArtifactReview {
+    status: 'approved' | 'rejected';
+    reviewed_by: string;
+    reviewed_at: string;
+    note: string;
+}
+
 export interface SpaceArtifact {
     id: string;
     name: string;
@@ -146,6 +153,14 @@ export interface SpaceArtifact {
     content: string;
     owner_user_id?: string;
     created_at?: string;
+    metadata?: string | Record<string, unknown>;
+}
+
+export interface UsageInfo {
+    tenant_id: string;
+    usage: { spaces: number; messages: number; artifacts: number; agents: number };
+    quotas: Record<string, number>;
+    unlimited: boolean;
 }
 
 export interface SpaceNotification {
@@ -289,6 +304,12 @@ export const api = {
         get<SpaceArtifact>(`/api/space/spaces/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(aid)}`),
     createSpaceArtifact: (id: string, body: { name: string; artifact_type?: string; content?: string }) =>
         post<SpaceArtifact>(`/api/space/spaces/${encodeURIComponent(id)}/artifacts`, body),
+    reviewArtifact: (id: string, aid: string, approved: boolean, note = '') =>
+        post<{ artifact_id: string; review: ArtifactReview }>(
+            `/api/space/spaces/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(aid)}/review`,
+            { approved, note }
+        ),
+    usage: () => get<UsageInfo>('/api/usage'),
     updateSpaceMemberRole: (id: string, userId: string, role: string) =>
         sdk.http
             .put<{ user_id: string; role: string }>(

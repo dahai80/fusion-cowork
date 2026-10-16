@@ -1,7 +1,7 @@
 import { EmptyState, ErrorState, SkeletonLines } from '@fusion/web-ui';
 import { useAutoRetry } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
-import { type SpaceArtifact, type SpaceInfo, type SpaceMessage, api } from '../api';
+import { type ArtifactReview, type SpaceArtifact, type SpaceInfo, type SpaceMessage, api } from '../api';
 import { useT } from '../i18n';
 import { sdk } from '../sdk';
 
@@ -331,17 +331,29 @@ function SpaceDetail({ spaceId }: { spaceId: string }) {
                     ) : (
                         <div className="space-y-1">
                             {(artifacts.data ?? []).map((a) => (
-                                <button
-                                    type="button"
+                                <div
                                     key={a.id}
-                                    className="flex w-full items-center gap-2 rounded-md border border-border bg-bg px-2 py-1.5 text-left hover:bg-bg-muted"
-                                    onClick={() => void openArtifact(a.id)}
+                                    className="flex w-full items-center gap-2 rounded-md border border-border bg-bg px-2 py-1.5 hover:bg-bg-muted"
                                 >
-                                    <span className="rounded bg-bg-muted px-1.5 py-0.5 text-[10px] text-text-secondary">
-                                        {a.artifact_type}
-                                    </span>
-                                    <span className="min-w-0 flex-1 truncate text-sm text-text-primary">{a.name}</span>
-                                </button>
+                                    <button
+                                        type="button"
+                                        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                                        onClick={() => void openArtifact(a.id)}
+                                    >
+                                        <span className="rounded bg-bg-muted px-1.5 py-0.5 text-[10px] text-text-secondary">
+                                            {a.artifact_type}
+                                        </span>
+                                        <span className="min-w-0 flex-1 truncate text-sm text-text-primary">
+                                            {a.name}
+                                        </span>
+                                    </button>
+                                    <ArtifactReviewBadge artifact={a} />
+                                    <ArtifactReviewButtons
+                                        spaceId={spaceId}
+                                        artifactId={a.id}
+                                        onDone={() => artifacts.manualRetry()}
+                                    />
+                                </div>
                             ))}
                         </div>
                     )}
@@ -525,5 +537,86 @@ function KbPanel({ spaceId }: { spaceId: string }) {
                 )}
             </div>
         </div>
+    );
+}
+
+// W9 delivery review: badge shows metadata.review status (unreviewed by
+// default); owner/admin approve/reject via review_artifact state machine.
+function parseReview(artifact: SpaceArtifact): ArtifactReview | null {
+    let meta: unknown = artifact.metadata;
+    if (typeof meta === 'string') {
+        try {
+            meta = JSON.parse(meta);
+        } catch {
+            return null;
+        }
+    }
+    const review = (meta as Record<string, unknown> | null)?.review;
+    if (!review || typeof review !== 'object') return null;
+    const r = review as Record<string, unknown>;
+    if (r.status !== 'approved' && r.status !== 'rejected') return null;
+    return r as unknown as ArtifactReview;
+}
+
+function ArtifactReviewBadge({ artifact }: { artifact: SpaceArtifact }) {
+    const t = useT();
+    const review = parseReview(artifact);
+    if (!review) return null;
+    return (
+        <span
+            className={
+                review.status === 'approved'
+                    ? 'rounded bg-status-success-bg px-1.5 py-0.5 text-[10px] text-status-success'
+                    : 'rounded bg-status-error-bg px-1.5 py-0.5 text-[10px] text-status-error'
+            }
+        >
+            {review.status === 'approved' ? t('已通过', 'Approved') : t('已退回', 'Rejected')}
+        </span>
+    );
+}
+
+function ArtifactReviewButtons({
+    spaceId,
+    artifactId,
+    onDone,
+}: { spaceId: string; artifactId: string; onDone: () => void }) {
+    const t = useT();
+    const [busy, setBusy] = useState(false);
+    async function review(approved: boolean) {
+        if (busy) return;
+        setBusy(true);
+        try {
+            await api.reviewArtifact(spaceId, artifactId, approved);
+            sdk.toast.show({ level: 'success', message: approved ? t('已通过', 'Approved') : t('已退回', 'Rejected') });
+            onDone();
+        } catch (e) {
+            console.error('[cowork-web] artifact review failed', e);
+            sdk.toast.show({
+                level: 'error',
+                message: t('审查失败 (需空间 owner/admin)', 'Review failed (owner/admin only)'),
+            });
+        } finally {
+            setBusy(false);
+        }
+    }
+    return (
+        <span className="flex shrink-0 gap-1">
+            <button
+                type="button"
+                disabled={busy}
+                className="rounded border border-border px-1.5 py-0.5 text-[10px] text-text-secondary hover:bg-bg-muted disabled:opacity-50"
+                onClick={() => void review(true)}
+            >
+                {t('通过', 'Approve')}
+            </button>
+            <button
+                type="button"
+                disabled={busy}
+                className="rounded border border-border px-1.5 py-0.5 text-[10px] text-text-secondary hover:bg-bg-muted disabled:opacity-50"
+                onClick={() => void review(false)}
+            >
+                {t('退回', 'Reject')}
+            </button>
+        </span>
     );
 }

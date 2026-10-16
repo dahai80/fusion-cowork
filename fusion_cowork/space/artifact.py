@@ -163,6 +163,52 @@ class SpaceArtifactService:
         logger.info(f"SpaceArtifactService.update_artifact id={artifact_id} v={new_version} tenant={tid}")
         return {"id": artifact_id, "version": new_version, "updated_at": now}
 
+    async def review_artifact(
+        self,
+        space_id: str,
+        artifact_id: str,
+        reviewer_id: str,
+        approved: bool,
+        note: str = "",
+        tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        # W9 交付审查状态机: unreviewed → approved/rejected (可重审, 幂等覆盖)。
+        # 状态存 metadata.review (无 schema 变更), 审查权限同 delete (owner/admin)。
+        tid = resolve_tenant_id(tenant_id)
+        if not await self._perm.is_owner_or_admin(space_id, reviewer_id):
+            raise PermissionError(f"Only owner/admin can review artifact: {artifact_id}")
+        now = datetime.now().isoformat()
+        review = {
+            "status": "approved" if approved else "rejected",
+            "reviewed_by": reviewer_id,
+            "reviewed_at": now,
+            "note": note,
+        }
+        async with self._store.write_tx(tid) as h:
+            row = await h.fetchone(
+                "SELECT metadata FROM space_artifacts WHERE id = ? AND space_id = ? AND tenant_id = ?",
+                (artifact_id, space_id, tid),
+            )
+            if not row:
+                raise ValueError(f"Artifact {artifact_id} not found")
+            try:
+                meta = json.loads(dict(row).get("metadata") or "{}")
+                if not isinstance(meta, dict):
+                    meta = {}
+            except (json.JSONDecodeError, TypeError):
+                meta = {}
+            meta["review"] = review
+            await h.exec(
+                "UPDATE space_artifacts SET metadata = ?, updated_at = ? "
+                "WHERE id = ? AND space_id = ? AND tenant_id = ?",
+                (json.dumps(meta, ensure_ascii=False), now, artifact_id, space_id, tid),
+            )
+        logger.info(
+            f"SpaceArtifactService.review_artifact id={artifact_id} status={review['status']} "
+            f"reviewer={reviewer_id} tenant={tid}"
+        )
+        return {"artifact_id": artifact_id, "review": review}
+
     async def share_artifact(
         self,
         space_id: str,
