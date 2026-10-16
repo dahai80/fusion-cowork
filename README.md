@@ -347,6 +347,26 @@ fusion-cowork collab serve --port 11439
 
 ---
 
+## 🕸️ Union Web Module (v0.5.5, issue #94)
+
+DAG workflow canvas in the browser — fusion-cowork joins the unified web shell (PRD N-6).
+
+- **`web/` UI package** — React 18 + Vite + TS + Tailwind (preset from `@fusion/web-ui`) + Bun; `@xyflow/react` canvas. Workflow list (run/edit/delete with typed confirm), desktop DAG canvas editing (node palette from `/api/nodes`, connect edges, per-node params editor with schema hints), runs view with live polling (5s visible / 30s hidden-throttled), mobile read-only (`devices: ["desktop", "mobile-readonly"]`). Embedded mode (`?embedded=1`) hides own nav — shell owns chrome.
+- **`fusion-cowork web serve`** — Web API on :11461: nodes catalog, workflow definition CRUD (atomic JSON store), run lifecycle (async submit → poll → cancel over the shared `WorkflowEngine`). Serves `web/dist` statically for gateway `/shell/fusion-cowork/` hosting. Auth: `FUSION_COWORK_WEB_API_KEY` (gateway proxy injects; unset = allow, bind 127.0.0.1).
+- **Union-web compliant**: manifest per PRD §5.1, vendored `@fusion/web-sdk`/`@fusion/web-ui` (byte-identical to shell repo), four-state views (skeleton/empty/error/retry), token colors only, no native alert/confirm, no auth logic in UI.
+- **Dev ports registered**: 11461 (web API), 11464 (vite dev) — `architecture/port-registry.yaml`.
+
+```bash
+# Backend
+fusion-cowork web serve                     # :11461 (REST + static hosting)
+
+# Frontend (dev)
+cd web && bun install && bun run dev        # :11464, proxies /api → :11461
+bun run build                               # dist/ → served by web serve / gateway
+```
+
+---
+
 ## ☁️ Multi-tenant Cloud SaaS (v0.4.0)
 
 Fusion-Cowork v0.4.0 extends the local-first desktop platform into a **multi-tenant cloud SaaS** — same engine, cloud-ready isolation/auth/observability/deploy. All cloud features are **opt-in** (env/config set → activate; unset → unchanged local behavior).
@@ -407,8 +427,7 @@ Fusion-Cowork v0.4.0 extends the local-first desktop platform into a **multi-ten
 
 ```bash
 pip install -e ".[cloud,web]"   # pyjwt, asyncpg, cryptography, prometheus-client, opentelemetry, structlog
-# dev:
-pip install -e ".[dev]"         # test+web+plugins+cloud
+pip install -e ".[plugins]"     # fusion-plugins-ecosystem integration panel
 ```
 
 ### CI
