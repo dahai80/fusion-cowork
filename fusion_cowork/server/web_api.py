@@ -266,6 +266,7 @@ def create_web_app(
     session_store: Any = None,
     space_api: Any = None,
     space_data_dir: Optional[Path] = None,
+    permission_manager: Any = None,
 ):
     try:
         from fastapi import FastAPI, HTTPException, Request
@@ -278,10 +279,16 @@ def create_web_app(
 
     import_all_nodes()
     store = WorkflowDefStore(root=store_root)
+    if permission_manager is None:
+        from ..engine import PermissionManager
+
+        permission_manager = PermissionManager()
     if engine is None:
         from ..engine import WorkflowEngine
 
-        engine = WorkflowEngine()
+        engine = WorkflowEngine(permission_manager=permission_manager)
+    else:
+        permission_manager = getattr(engine, "_permission_manager", None) or permission_manager
     runs = RunRegistry(engine)
     if scheduler is None:
         from ..engine.scheduler import TaskScheduler
@@ -309,6 +316,7 @@ def create_web_app(
     app.state.space_api = space_api
     app.state.artifact_svc = artifact_svc
     app.state.space_store = space_store
+    app.state.permission_manager = permission_manager
 
     @app.middleware("http")
     async def _auth_middleware(request: Request, call_next):
@@ -566,6 +574,42 @@ def create_web_app(
                 status_code=503, detail={"code": "upstream_error", "message": f"模型列表获取失败: {e}"}
             ) from e
         return {"models": models, "count": len(models)}
+
+    # ── W19 guard L3 审批队列 (migration doc §6 P3) ──
+    @app.get("/api/permissions/pending")
+    async def permissions_pending():
+        if permission_manager is None:
+            raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"})
+        return {"approvals": permission_manager.list_pending_guard()}
+
+    @app.post("/api/permissions/pending/{action_id}/confirm")
+    async def permissions_confirm(action_id: str, body: Dict[str, Any]):
+        if permission_manager is None:
+            raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"})
+        approved = bool(body.get("approved"))
+        confirmed = await permission_manager.confirm_guard(action_id, approved, approved_by="web")
+        return {"action_id": action_id, "approved": approved, "confirmed": confirmed}
+
+    # ── W21 集群面板 (migration doc §6 P3, FUSION_CLUSTER_ENABLED opt-in) ──
+    @app.get("/api/cluster/state")
+    async def cluster_state():
+        from ..distributed_state import get_cluster_state_store
+
+        cluster_store = get_cluster_state_store()
+        if cluster_store is None:
+            return {
+                "cluster_enabled": False,
+                "nodes": [],
+                "vram": {},
+                "total_allocated_mb": 0,
+            }
+        nodes = [n.to_dict() for n in cluster_store.list_all_nodes()]
+        return {
+            "cluster_enabled": True,
+            "nodes": nodes,
+            "vram": cluster_store.cluster_vram_usage(),
+            "total_allocated_mb": cluster_store.total_vram_allocated_mb(),
+        }
 
     # ── W20 插件面板 — /rpc 端点 (rpc_bridge plugins/* 委托, 依赖缺则 -32603) ──
     @app.post("/rpc")

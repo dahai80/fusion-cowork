@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { NotificationBell } from './NotificationBell';
 import { useT } from './i18n';
+import { ApprovalsPage } from './pages/ApprovalsPage';
 import { CanvasPage } from './pages/CanvasPage';
+import { ClusterPage } from './pages/ClusterPage';
 import { DelegatePage } from './pages/DelegatePage';
 import { NodesPage } from './pages/NodesPage';
 import { PluginsPage } from './pages/PluginsPage';
@@ -27,7 +29,9 @@ type Route =
     | 'nodes'
     | 'templates'
     | 'schedule'
-    | 'plugins';
+    | 'plugins'
+    | 'approvals'
+    | 'cluster';
 
 const ROUTES: Route[] = [
     'workflows',
@@ -40,6 +44,8 @@ const ROUTES: Route[] = [
     'nodes',
     'canvas',
     'plugins',
+    'approvals',
+    'cluster',
 ];
 
 function parseHash(): { route: Route; arg: string } {
@@ -54,6 +60,8 @@ function parseHash(): { route: Route; arg: string } {
     if (head === 'templates') return { route: 'templates', arg };
     if (head === 'schedule') return { route: 'schedule', arg };
     if (head === 'plugins') return { route: 'plugins', arg };
+    if (head === 'approvals') return { route: 'approvals', arg };
+    if (head === 'cluster') return { route: 'cluster', arg };
     return { route: 'workflows', arg };
 }
 
@@ -79,6 +87,10 @@ function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
             return t('画布', 'Canvas');
         case 'plugins':
             return t('插件', 'Plugins');
+        case 'approvals':
+            return t('审批', 'Approvals');
+        case 'cluster':
+            return t('集群', 'Cluster');
     }
 }
 
@@ -144,6 +156,10 @@ export function App() {
                     <NodesPage />
                 ) : route === 'plugins' ? (
                     <PluginsPage />
+                ) : route === 'approvals' ? (
+                    <ApprovalsPage />
+                ) : route === 'cluster' ? (
+                    <ClusterPage />
                 ) : route === 'templates' ? (
                     <TemplatesPage />
                 ) : (

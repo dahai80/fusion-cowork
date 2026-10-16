@@ -296,6 +296,14 @@ class PermissionManager:
             logger.info(f"guard confirm 拒绝, 加本地 deny 规则: {tool_name}")
         return True
 
+    def list_pending_guard(self) -> List[Dict[str, str]]:
+        # W19: guard L3 待审批队列 — action_id → tool_name 快照 (confirm 后移除)
+        with self._lock:
+            return [
+                {"action_id": action_id, "tool_name": tool_name}
+                for action_id, tool_name in self._pending_guard_approvals.items()
+            ]
+
     def approve(self, tool_name: str, scope: str = "*") -> None:
         rule = Permission(tool_name=tool_name, allowed=True, scope=scope)
         with self._lock:

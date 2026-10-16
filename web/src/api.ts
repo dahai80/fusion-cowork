@@ -207,6 +207,29 @@ export interface RpcResponse<T> {
     error?: { code: number; message: string; data?: unknown };
 }
 
+export interface GuardApproval {
+    action_id: string;
+    tool_name: string;
+}
+
+export interface ClusterNodeInfo {
+    node_id: string;
+    host?: string;
+    port?: number;
+    role?: string;
+    vram_total_mb?: number;
+    vram_used_mb?: number;
+    last_heartbeat_at?: number;
+    tags?: string[];
+}
+
+export interface ClusterStateInfo {
+    cluster_enabled: boolean;
+    nodes: ClusterNodeInfo[];
+    vram: Record<string, number>;
+    total_allocated_mb: number;
+}
+
 async function get<T>(path: string): Promise<T> {
     return (await sdk.http.get<T>(path)).data;
 }
@@ -291,6 +314,13 @@ export const api = {
             operator_id: 'local_user',
         }),
     models: () => get<{ models: ModelInfo[]; count: number }>('/api/models'),
+    pendingApprovals: () => get<{ approvals: GuardApproval[] }>('/api/permissions/pending'),
+    confirmApproval: (actionId: string, approved: boolean) =>
+        post<{ action_id: string; approved: boolean; confirmed: boolean }>(
+            `/api/permissions/pending/${encodeURIComponent(actionId)}/confirm`,
+            { approved }
+        ),
+    clusterState: () => get<ClusterStateInfo>('/api/cluster/state'),
     rpc: <T>(method: string, params?: Record<string, unknown>) =>
         post<RpcResponse<T>>('/rpc', { jsonrpc: '2.0', id: Date.now(), method, params: params ?? {} }).then((resp) => {
             if (resp.error) throw new Error(resp.error.message || `rpc error ${resp.error.code}`);
