@@ -578,6 +578,31 @@ def create_space_api(
             return JSONResponse({"error": "not found"}, status_code=404)
         return JSONResponse(art)
 
+    @app.post("/spaces/{space_id}/artifacts/{artifact_id}/review")
+    async def review_artifact(space_id: str, artifact_id: str, request: Request):
+        # W9 交付审查: approved=true→通过 / false→退回 (owner/admin, 状态存 metadata.review)
+        if not artifact_svc:
+            return JSONResponse({"error": "artifact service not available"}, status_code=503)
+        auth_err = await _check_auth(request)
+        if auth_err:
+            return auth_err
+        principal = _resolve_principal(request)
+        body = await request.json()
+        try:
+            res = await artifact_svc.review_artifact(
+                space_id,
+                artifact_id,
+                principal.user_id,
+                approved=bool(body.get("approved")),
+                note=str(body.get("note") or ""),
+                tenant_id=principal.tenant_id,
+            )
+        except PermissionError as e:
+            return JSONResponse({"error": str(e)}, status_code=403)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=404)
+        return JSONResponse(res)
+
     # ── Notifications (W15) ──
 
     @app.get("/notifications")

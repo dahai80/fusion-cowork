@@ -611,6 +611,65 @@ def create_web_app(
             "total_allocated_mb": cluster_store.total_vram_allocated_mb(),
         }
 
+    # ── W18 用量/配额指示 — 空间域计数 + QuotaEnforcer 配额 (migration doc §6 P3) ──
+    @app.get("/api/usage")
+    async def usage_overview():
+        quotas_usage = {
+            "spaces": 0,
+            "messages": 0,
+            "artifacts": 0,
+            "agents": 0,
+        }
+        tenant_id = "default"
+        space_store = getattr(app.state, "space_store", None)
+        if space_store is not None:
+            from ..tenant import get_current_tenant
+
+            tenant_id = get_current_tenant() or "default"
+            try:
+                row = await space_store._fetchone("SELECT COUNT(*) AS c FROM spaces WHERE tenant_id = ?", (tenant_id,))
+                quotas_usage["spaces"] = int(row["c"] or 0)
+                row = await space_store._fetchone(
+                    "SELECT COUNT(*) AS c FROM space_messages WHERE tenant_id = ?", (tenant_id,)
+                )
+                quotas_usage["messages"] = int(row["c"] or 0)
+                row = await space_store._fetchone(
+                    "SELECT COUNT(*) AS c FROM space_artifacts WHERE tenant_id = ?", (tenant_id,)
+                )
+                quotas_usage["artifacts"] = int(row["c"] or 0)
+                row = await space_store._fetchone(
+                    "SELECT COUNT(*) AS c FROM space_agents WHERE tenant_id = ?", (tenant_id,)
+                )
+                quotas_usage["agents"] = int(row["c"] or 0)
+            except Exception as e:
+                logger.warning(f"用量计数失败 (返回零值): {e}")
+        from ..security.quotas import get_default_quota_enforcer
+
+        try:
+            quotas = get_default_quota_enforcer()._load_quotas(tenant_id)
+            quota_fields = {
+                "max_spaces": quotas.max_spaces,
+                "max_messages_per_space": quotas.max_messages_per_space,
+                "max_artifacts_per_space": quotas.max_artifacts_per_space,
+                "max_agents_per_space": quotas.max_agents_per_space,
+                "max_storage_mb": quotas.max_storage_mb,
+            }
+        except Exception as e:
+            logger.warning(f"配额读取失败 (返回 unlimited): {e}")
+            quota_fields = {
+                "max_spaces": -1,
+                "max_messages_per_space": -1,
+                "max_artifacts_per_space": -1,
+                "max_agents_per_space": -1,
+                "max_storage_mb": -1,
+            }
+        return {
+            "tenant_id": tenant_id,
+            "usage": quotas_usage,
+            "quotas": quota_fields,
+            "unlimited": all(v < 0 for v in quota_fields.values()),
+        }
+
     # ── W20 插件面板 — /rpc 端点 (rpc_bridge plugins/* 委托, 依赖缺则 -32603) ──
     @app.post("/rpc")
     async def rpc_endpoint(request: Request):

@@ -12,6 +12,7 @@ import { SchedulePage } from './pages/SchedulePage';
 import { SessionsPage } from './pages/SessionsPage';
 import { SpacePage } from './pages/SpacePage';
 import { TemplatesPage } from './pages/TemplatesPage';
+import { UsagePage } from './pages/UsagePage';
 import { WorkflowsPage } from './pages/WorkflowsPage';
 import { embeddedParam, isEmbedded } from './sdk';
 
@@ -31,7 +32,8 @@ type Route =
     | 'schedule'
     | 'plugins'
     | 'approvals'
-    | 'cluster';
+    | 'cluster'
+    | 'usage';
 
 const ROUTES: Route[] = [
     'workflows',
@@ -46,6 +48,7 @@ const ROUTES: Route[] = [
     'plugins',
     'approvals',
     'cluster',
+    'usage',
 ];
 
 function parseHash(): { route: Route; arg: string } {
@@ -62,6 +65,7 @@ function parseHash(): { route: Route; arg: string } {
     if (head === 'plugins') return { route: 'plugins', arg };
     if (head === 'approvals') return { route: 'approvals', arg };
     if (head === 'cluster') return { route: 'cluster', arg };
+    if (head === 'usage') return { route: 'usage', arg };
     return { route: 'workflows', arg };
 }
 
@@ -91,6 +95,8 @@ function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
             return t('审批', 'Approvals');
         case 'cluster':
             return t('集群', 'Cluster');
+        case 'usage':
+            return t('用量', 'Usage');
     }
 }
 
@@ -160,6 +166,8 @@ export function App() {
                     <ApprovalsPage />
                 ) : route === 'cluster' ? (
                     <ClusterPage />
+                ) : route === 'usage' ? (
+                    <UsagePage />
                 ) : route === 'templates' ? (
                     <TemplatesPage />
                 ) : (

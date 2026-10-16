@@ -364,6 +364,7 @@ DAG workflow canvas in the browser — fusion-cowork joins the unified web shell
 - **P2.5 space completion (v0.5.10)**: KB panel (W14 — status + bind/unbind + retrieval search + document list over the existing `/api/space/.../kb/*` routes; live search needs fusion-kb :11436), notification center (W15 — top-bar bell with unread count 30s poll + dropdown mark-read over new `GET /notifications` + `POST /notifications/{id}/read` on the mounted sub-app; `create_space_api` gains `notification_svc=` param wired to `NotificationService` in `_build_space_stack`), members-permission matrix (W16 — role `<select>` + remove per member over new `PUT /spaces/{id}/members/{user_id}` (auth + `manage_members` gate) and read-only 15-action × 4-role matrix via `GET /spaces/{id}/permissions`; existing `DELETE .../members/{user_id}` hardened to take the operator from the trusted principal instead of a query param, A-5/CR-5).
 - **P3-1 ops surface (v0.5.11)**: model catalog (W17 — `GET /api/models` over `FusionMLXClient.list_models()`, 503 when fusion-mlx offline; delegate page gains a model dropdown persisted in `localStorage` and passed as optional `model` override to `/api/ai/generate-workflow` which builds a per-request generator without mutating shared state), plugins panel (W20 — new page over the existing `rpc_bridge` delegation: web API gains `POST /rpc` JSON-RPC 2.0 endpoint routing `plugins/*` (non-plugins → -32601, missing `fusion-plugins-ecosystem` → -32603, parse error → 400/-32700); plugins list with install/uninstall actions). W19 guard approvals / W18 quotas / W21 cluster / W22 mobile delivery still pending.
 - **P3-2 approvals + cluster (v0.5.12)**: guard approval queue (W19 — `PermissionManager.list_pending_guard()` snapshot + `GET /api/permissions/pending` + `POST /api/permissions/pending/{action_id}/confirm` (confirm lands only when fusion-guard is enabled; `create_web_app` gains `permission_manager=` seam and injects the manager into the default engine)), cluster panel (W21 — read-only `GET /api/cluster/state` over the distributed state layer: node registry with heartbeat status + vRAM ledger by plugin; `cluster_enabled: false` when `FUSION_CLUSTER_ENABLED` unset). W8/W9 (interaction protocols), W18 quotas, W22 mobile delivery remain.
+- **P4 delivery review + usage (v0.5.13)**: artifact review state machine (W9 — `SpaceArtifactService.review_artifact()` owner/admin approve/reject persisted to `metadata.review` (no schema change), `POST /api/space/spaces/{id}/artifacts/{aid}/review`; approve/reject buttons + status badge on the artifacts tab), usage/quotas indicator (W18 — `GET /api/usage` aggregating tenant counts (spaces/messages/artifacts/agents) + QuotaEnforcer quotas, UsagePage table). Remaining: W8 run redirection, W22 mobile delivery.
 - **Union-web compliant**: manifest per PRD §5.1, vendored `@fusion/web-sdk`/`@fusion/web-ui` (byte-identical to shell repo), four-state views (skeleton/empty/error/retry), token colors only, no native alert/confirm, no auth logic in UI.
 - **Dev ports registered**: 11461 (web API), 11464 (vite dev) — `architecture/port-registry.yaml`.
 
@@ -565,7 +566,7 @@ Plugin system allows extending Fusion-Cowork with custom nodes:
     "description": "Custom nodes",
     "nodes": ["my_custom_node"],
     "entry_point": "plugin",
-    "sandbox": true
+    "sandbox": true,
 }
 ```
 
