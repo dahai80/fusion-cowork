@@ -566,7 +566,7 @@ Plugin system allows extending Fusion-Cowork with custom nodes:
     "description": "Custom nodes",
     "nodes": ["my_custom_node"],
     "entry_point": "plugin",
-    "sandbox": true
+    "sandbox": true,
 }
 ```
 

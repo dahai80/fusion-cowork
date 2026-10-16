@@ -124,9 +124,7 @@ class TestClusterPanel:
 
 def _seed_space_with_artifact(tc):
     """建 space + artifact, 返回 (space_id, artifact_id)。"""
-    space = tc.post(
-        "/api/space/spaces", headers=_auth(), json={"name": "review-space", "description": "w9"}
-    ).json()
+    space = tc.post("/api/space/spaces", headers=_auth(), json={"name": "review-space", "description": "w9"}).json()
     sid = space["id"]
     art = tc.post(
         f"/api/space/spaces/{sid}/artifacts",
@@ -154,9 +152,7 @@ class TestArtifactReview:
         assert review["status"] == "approved"
         assert review["note"] == "ok"
         # 退回 — 重审覆盖
-        r2 = tc.post(
-            f"/api/space/spaces/{sid}/artifacts/{aid}/review", headers=_auth(), json={"approved": False}
-        )
+        r2 = tc.post(f"/api/space/spaces/{sid}/artifacts/{aid}/review", headers=_auth(), json={"approved": False})
         assert r2.status_code == 200
         art2 = tc.get(f"/api/space/spaces/{sid}/artifacts/{aid}", headers=_auth()).json()
         assert _json.loads(art2["metadata"])["review"]["status"] == "rejected"
@@ -164,9 +160,7 @@ class TestArtifactReview:
     def test_review_not_found(self, client):
         tc, _ = client
         sid, _aid = _seed_space_with_artifact(tc)
-        r = tc.post(
-            f"/api/space/spaces/{sid}/artifacts/art_missing/review", headers=_auth(), json={"approved": True}
-        )
+        r = tc.post(f"/api/space/spaces/{sid}/artifacts/art_missing/review", headers=_auth(), json={"approved": True})
         assert r.status_code == 404
 
     def test_review_non_reviewer_denied(self, client):
