@@ -30,7 +30,7 @@ UI 消费 cowork web API (`fusion-cowork web serve`, 端口 11461):
 节点目录 / 工作流定义 CRUD / 运行生命周期 (提交 / 轮询 / 停止)。
 同一服务内置 `web/dist` 静态托管。
 
-鉴权: `FUSION_COWORK_WEB_API_KEY` — gateway `/shell/fusion-cowork/` 代理注入模块密钥; UI 本身不持有密钥 (spec S8)。独立开发便利: `VITE_API_KEY` (构建期 env, 内嵌模式绝不使用)。
+鉴权: `FUSION_COWORK_WEB_API_KEY` — gateway `/shell/fusion-cowork/` 代理注入模块密钥; UI 本身不持有密钥 (spec S8)。独立模式密钥接缝 (issue #96): 运行时解析 — `window.__FUSION_COWORK_WEB_API_KEY__` > `localStorage['fusion-cowork-web-api-key']` > 构建期 `VITE_API_KEY` (遗留回退)。无 key 则省略鉴权头 (keyless serve 姿态)。
 
 ## Manifest
 

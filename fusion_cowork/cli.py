@@ -1119,11 +1119,16 @@ def web_serve(port: int, host: str):
     鉴权: FUSION_COWORK_WEB_API_KEY 配置后, 所有 /api 路径要求
     Authorization: Bearer 或 x-api-key (gateway /shell 代理注入); 未配置放行
     (默认仅本机绑定)。
+    shell 注册 (issue #97): FUSION_SHELL_GATEWAY_URL + FUSION_GATEWAY_ADMIN_KEY
+    同时配置时, 后台任务向网关注册 web/manifest.json 并心跳保活。
     """
+    import asyncio
+
     bind_host = host or os.environ.get("FUSION_BIND_HOST", "127.0.0.1")
     try:
         import uvicorn
 
+        from .server.shell_registry import shell_registration_enabled, shell_registry_loop
         from .server.web_api import auth_configured, create_web_app
     except ImportError:
         console.print_warning("Web API 未启动 (缺 [web] 依赖): pip install fusion-cowork[web]")
@@ -1133,7 +1138,21 @@ def web_serve(port: int, host: str):
     console.print_success(f"Cowork Web API 已启动: {bind_host}:{port} (/api /health)")
     if not auth_configured():
         console.print_warning("FUSION_COWORK_WEB_API_KEY 未配置 — 鉴权放行 (仅建议本机绑定使用)")
-    uvicorn.run(app, host=bind_host, port=port, log_level="info")
+    register_enabled = shell_registration_enabled()
+    if not register_enabled:
+        console.print_info("shell 网关注册未启用 (FUSION_SHELL_GATEWAY_URL / FUSION_GATEWAY_ADMIN_KEY 未配置)")
+
+    async def _serve():
+        registry_task = asyncio.create_task(shell_registry_loop()) if register_enabled else None
+        config = uvicorn.Config(app, host=bind_host, port=port, log_level="info")
+        server = uvicorn.Server(config)
+        try:
+            await server.serve()
+        finally:
+            if registry_task:
+                registry_task.cancel()
+
+    asyncio.run(_serve())
 
 
 # ── Session 会话管理 ──

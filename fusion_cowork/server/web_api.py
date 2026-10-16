@@ -202,7 +202,7 @@ class RunRegistry:
             self._runs.pop(rid, None)
 
 
-def create_web_app(engine: Any = None, dist_dir: Optional[Path] = None):
+def create_web_app(engine: Any = None, dist_dir: Optional[Path] = None, store_root: Optional[Path] = None):
     try:
         from fastapi import FastAPI, HTTPException, Request
         from fastapi.responses import JSONResponse
@@ -213,7 +213,7 @@ def create_web_app(engine: Any = None, dist_dir: Optional[Path] = None):
     from ..nodes import import_all_nodes
 
     import_all_nodes()
-    store = WorkflowDefStore()
+    store = WorkflowDefStore(root=store_root)
     if engine is None:
         from ..engine import WorkflowEngine
 

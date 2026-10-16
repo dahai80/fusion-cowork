@@ -31,8 +31,10 @@ nodes catalog, workflow definition CRUD, run lifecycle (submit / poll / cancel).
 Static hosting of `web/dist` is built into the same server.
 
 Auth: `FUSION_COWORK_WEB_API_KEY` — the gateway `/shell/fusion-cowork/` proxy
-injects the module key; the UI itself holds no keys (spec S8). Standalone dev
-convenience: `VITE_API_KEY` (build-time env, embedded mode never uses it).
+injects the module key; the UI itself holds no keys (spec S8). Standalone key
+seam (issue #96): runtime resolution — `window.__FUSION_COWORK_WEB_API_KEY__`
+> `localStorage['fusion-cowork-web-api-key']` > build-time `VITE_API_KEY`
+(legacy). No key → auth headers omitted (keyless serve posture).
 
 ## Manifest
 
