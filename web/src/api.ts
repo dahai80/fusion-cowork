@@ -103,6 +103,19 @@ export interface SchedulerTask {
     tags: string[];
 }
 
+export interface SessionInfo {
+    id: string;
+    workflow_id: string;
+    workflow_name: string;
+    status: string;
+    initial_input: Record<string, unknown>;
+    execution_id: string;
+    created_at: number;
+    updated_at: number;
+    completed_at: number | null;
+    metadata: Record<string, unknown>;
+}
+
 async function get<T>(path: string): Promise<T> {
     return (await sdk.http.get<T>(path)).data;
 }
@@ -141,6 +154,14 @@ export const api = {
     resumeSchedulerTask: (id: string) =>
         post<{ id: string; status: string }>(`/api/scheduler/tasks/${encodeURIComponent(id)}/resume`),
     deleteSchedulerTask: (id: string) => sdk.http.delete(`/api/scheduler/tasks/${encodeURIComponent(id)}`),
+    generateWorkflow: (body: { prompt: string; context?: Record<string, unknown> }) =>
+        post<{ workflow: { name?: string; description?: string; nodes: CanvasNodeDef[]; edges: CanvasEdgeDef[] } }>(
+            '/api/ai/generate-workflow',
+            body
+        ),
+    sessions: (status = '') =>
+        get<{ sessions: SessionInfo[]; count: number }>(`/api/sessions?status=${encodeURIComponent(status)}`),
+    session: (id: string) => get<SessionInfo>(`/api/sessions/${encodeURIComponent(id)}`),
 };
 
 export function statusKind(status: string): 'success' | 'running' | 'error' | 'offline' | 'warning' {

@@ -1,26 +1,30 @@
 import { useEffect, useState } from 'react';
 import { useT } from './i18n';
 import { CanvasPage } from './pages/CanvasPage';
+import { DelegatePage } from './pages/DelegatePage';
 import { NodesPage } from './pages/NodesPage';
 import { RunsPage } from './pages/RunsPage';
 import { SchedulePage } from './pages/SchedulePage';
+import { SessionsPage } from './pages/SessionsPage';
 import { TemplatesPage } from './pages/TemplatesPage';
 import { WorkflowsPage } from './pages/WorkflowsPage';
 import { embeddedParam, isEmbedded } from './sdk';
 
-// Hash router (no router dep). Routes: workflows, canvas (#/canvas/<id>),
-// runs, nodes, templates, schedule. Standalone shows its own header tabs;
-// when the shell embeds us (?embedded=1 or iframe) the shell owns the
-// chrome — own navigation hides (spec S7).
-type Route = 'workflows' | 'canvas' | 'runs' | 'nodes' | 'templates' | 'schedule';
+// Hash router (no router dep). Routes: workflows, delegate, canvas
+// (#/canvas/<id>), runs, sessions, nodes, templates, schedule. Standalone
+// shows its own header tabs; when the shell embeds us (?embedded=1 or
+// iframe) the shell owns the chrome — own navigation hides (spec S7).
+type Route = 'workflows' | 'delegate' | 'canvas' | 'runs' | 'sessions' | 'nodes' | 'templates' | 'schedule';
 
-const ROUTES: Route[] = ['workflows', 'runs', 'schedule', 'templates', 'nodes', 'canvas'];
+const ROUTES: Route[] = ['workflows', 'delegate', 'runs', 'sessions', 'schedule', 'templates', 'nodes', 'canvas'];
 
 function parseHash(): { route: Route; arg: string } {
     const h = window.location.hash.replace(/^#\/?/, '');
     const [head, arg = ''] = h.split('/');
     if (head === 'canvas') return { route: 'canvas', arg };
+    if (head === 'delegate') return { route: 'delegate', arg };
     if (head === 'runs') return { route: 'runs', arg };
+    if (head === 'sessions') return { route: 'sessions', arg };
     if (head === 'nodes') return { route: 'nodes', arg };
     if (head === 'templates') return { route: 'templates', arg };
     if (head === 'schedule') return { route: 'schedule', arg };
@@ -31,8 +35,12 @@ function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
     switch (r) {
         case 'workflows':
             return t('工作流', 'Workflows');
+        case 'delegate':
+            return t('委托', 'Delegate');
         case 'runs':
             return t('运行', 'Runs');
+        case 'sessions':
+            return t('会话', 'Sessions');
         case 'schedule':
             return t('调度', 'Schedule');
         case 'templates':
@@ -91,8 +99,12 @@ export function App() {
                     />
                 ) : route === 'canvas' ? (
                     <CanvasPage workflowId={arg} />
+                ) : route === 'delegate' ? (
+                    <DelegatePage />
                 ) : route === 'runs' ? (
                     <RunsPage />
+                ) : route === 'sessions' ? (
+                    <SessionsPage />
                 ) : route === 'nodes' ? (
                     <NodesPage />
                 ) : route === 'templates' ? (
