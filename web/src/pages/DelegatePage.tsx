@@ -1,4 +1,4 @@
-import { EmptyState, ErrorState, SkeletonLines } from '@fusion/web-ui';
+import { EmptyState, ErrorState, SkeletonLines, useAutoRetry } from '@fusion/web-ui';
 import { useState } from 'react';
 import { type CanvasEdgeDef, type CanvasNodeDef, api } from '../api';
 import { useT } from '../i18n';
@@ -26,6 +26,8 @@ interface GeneratedWorkflow {
     edges: CanvasEdgeDef[];
 }
 
+const MODEL_KEY = 'fc-preferred-model';
+
 export function DelegatePage() {
     const t = useT();
     const [prompt, setPrompt] = useState('');
@@ -33,6 +35,8 @@ export function DelegatePage() {
     const [error, setError] = useState('');
     const [wf, setWf] = useState<GeneratedWorkflow | null>(null);
     const [saving, setSaving] = useState(false);
+    const [model, setModel] = useState(() => window.localStorage.getItem(MODEL_KEY) || '');
+    const models = useAutoRetry(() => api.models(), []);
 
     async function generate() {
         if (busy || !prompt.trim()) return;
@@ -40,7 +44,7 @@ export function DelegatePage() {
         setError('');
         setWf(null);
         try {
-            const res = await api.generateWorkflow({ prompt: prompt.trim() });
+            const res = await api.generateWorkflow({ prompt: prompt.trim(), model: model || undefined });
             setWf(res.workflow);
         } catch (e) {
             console.error('[cowork-web] nl generate failed', e);
@@ -77,6 +81,30 @@ export function DelegatePage() {
 
     return (
         <div className="mx-auto max-w-4xl">
+            <div className="flex items-center gap-2 pb-2">
+                <span className="text-xs text-text-secondary">{t('模型', 'Model')}</span>
+                <select
+                    className="rounded-md border border-border bg-bg px-2 py-1 text-xs text-text-primary"
+                    value={model}
+                    onChange={(e) => {
+                        setModel(e.target.value);
+                        window.localStorage.setItem(MODEL_KEY, e.target.value);
+                    }}
+                >
+                    <option value="">{t('自动选择', 'Auto')}</option>
+                    {(models.data?.models ?? []).map((m) => (
+                        <option key={m.id} value={m.id}>
+                            {m.id}
+                        </option>
+                    ))}
+                </select>
+                {models.loading && !models.data ? (
+                    <span className="text-xs text-text-muted">{t('加载中…', 'Loading…')}</span>
+                ) : null}
+                {models.error ? (
+                    <span className="text-xs text-text-muted">{t('模型列表不可用', 'Models unavailable')}</span>
+                ) : null}
+            </div>
             <div className="flex items-end gap-2 pb-4">
                 <textarea
                     className="min-h-16 flex-1 rounded-md border border-border bg-bg px-2 py-1.5 text-sm text-text-primary"

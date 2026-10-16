@@ -535,15 +535,52 @@ def create_web_app(
         if not prompt:
             raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "prompt 必填"})
         context = body.get("context") if isinstance(body.get("context"), dict) else None
-        logger.info(f"web API NL 生成请求: {prompt[:80]}")
+        # W17: 可选 model 覆盖 — 用请求自带 mlx 客户端构造临时生成器 (不改共享实例状态)
+        model = str(body.get("model") or "").strip()
+        generator = nl_generator
+        if model:
+            from ..ai.nl_parser import NLWorkflowGenerator
+
+            generator = NLWorkflowGenerator(getattr(nl_generator, "mlx", None), model=model)
+        logger.info(f"web API NL 生成请求: {prompt[:80]} model={model or '(auto)'}")
         try:
-            workflow = await nl_generator.generate(prompt, context)
+            workflow = await generator.generate(prompt, context)
         except Exception as e:
             logger.error(f"web API NL 生成失败: {e}")
             raise HTTPException(status_code=502, detail={"code": "upstream_error", "message": f"生成失败: {e}"}) from e
         if not isinstance(workflow, dict) or not workflow.get("nodes"):
             raise HTTPException(status_code=502, detail={"code": "upstream_error", "message": "生成结果缺少 nodes"})
         return {"workflow": workflow}
+
+    # ── W17 模型目录 (migration doc §6 P3) ──
+    @app.get("/api/models")
+    async def models_list():
+        mlx = getattr(nl_generator, "mlx", None)
+        if mlx is None:
+            raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "模型客户端不可用"})
+        try:
+            models = await mlx.list_models()
+        except Exception as e:
+            logger.warning(f"web API 模型列表获取失败 (fusion-mlx 不在线?): {e}")
+            raise HTTPException(
+                status_code=503, detail={"code": "upstream_error", "message": f"模型列表获取失败: {e}"}
+            ) from e
+        return {"models": models, "count": len(models)}
+
+    # ── W20 插件面板 — /rpc 端点 (rpc_bridge plugins/* 委托, 依赖缺则 -32603) ──
+    @app.post("/rpc")
+    async def rpc_endpoint(request: Request):
+        from .rpc_bridge import dispatch_rpc
+
+        try:
+            body = await request.json()
+        except Exception as e:
+            logger.warning(f"/rpc JSON 解析失败: {e}")
+            return JSONResponse(
+                {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}},
+                status_code=400,
+            )
+        return JSONResponse(await dispatch_rpc(body))
 
     # ── W11 会话统一列表 (migration doc §6 P1) ──
     @app.get("/api/sessions")
