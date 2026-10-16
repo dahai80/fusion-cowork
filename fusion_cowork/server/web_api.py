@@ -202,8 +202,28 @@ class RunRegistry:
             self._runs.pop(rid, None)
 
 
+def _serialize_session(s: Any) -> Dict[str, Any]:
+    return {
+        "id": s.id,
+        "workflow_id": s.workflow_id,
+        "workflow_name": s.workflow_name,
+        "status": s.status,
+        "initial_input": s.initial_input,
+        "execution_id": s.execution_id,
+        "created_at": s.created_at,
+        "updated_at": s.updated_at,
+        "completed_at": s.completed_at,
+        "metadata": s.metadata,
+    }
+
+
 def create_web_app(
-    engine: Any = None, dist_dir: Optional[Path] = None, store_root: Optional[Path] = None, scheduler: Any = None
+    engine: Any = None,
+    dist_dir: Optional[Path] = None,
+    store_root: Optional[Path] = None,
+    scheduler: Any = None,
+    nl_generator: Any = None,
+    session_store: Any = None,
 ):
     try:
         from fastapi import FastAPI, HTTPException, Request
@@ -225,8 +245,20 @@ def create_web_app(
         from ..engine.scheduler import TaskScheduler
 
         scheduler = TaskScheduler()
+    if nl_generator is None:
+        from ..ai.mlx_client import FusionMLXClient
+        from ..ai.nl_parser import NLWorkflowGenerator
+
+        nl_generator = NLWorkflowGenerator(FusionMLXClient())
+        logger.info("web API NL 生成器未注入, 使用默认 FusionMLXClient")
+    if session_store is None:
+        from ..engine.session import SessionStore
+
+        session_store = SessionStore()
     app = FastAPI(title="Fusion-Cowork Web API", version="0.1.0")
     app.state.scheduler = scheduler
+    app.state.nl_generator = nl_generator
+    app.state.session_store = session_store
 
     @app.middleware("http")
     async def _auth_middleware(request: Request, call_next):
@@ -445,6 +477,36 @@ def create_web_app(
         if not scheduler.remove_task(task_id):
             raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"})
         return {"deleted": True}
+
+    # ── W7 NL 委托 (migration doc §6 P1) ──
+    @app.post("/api/ai/generate-workflow")
+    async def ai_generate_workflow(body: Dict[str, Any]):
+        prompt = str(body.get("prompt") or "").strip()
+        if not prompt:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "prompt 必填"})
+        context = body.get("context") if isinstance(body.get("context"), dict) else None
+        logger.info(f"web API NL 生成请求: {prompt[:80]}")
+        try:
+            workflow = await nl_generator.generate(prompt, context)
+        except Exception as e:
+            logger.error(f"web API NL 生成失败: {e}")
+            raise HTTPException(status_code=502, detail={"code": "upstream_error", "message": f"生成失败: {e}"}) from e
+        if not isinstance(workflow, dict) or not workflow.get("nodes"):
+            raise HTTPException(status_code=502, detail={"code": "upstream_error", "message": "生成结果缺少 nodes"})
+        return {"workflow": workflow}
+
+    # ── W11 会话统一列表 (migration doc §6 P1) ──
+    @app.get("/api/sessions")
+    async def sessions_list(status: str = "", limit: int = 50):
+        sessions = session_store.list_sessions(status=status or None, limit=min(max(limit, 1), 200))
+        return {"sessions": [_serialize_session(s) for s in sessions], "count": len(sessions)}
+
+    @app.get("/api/sessions/{session_id}")
+    async def sessions_get(session_id: str):
+        s = session_store.get(session_id)
+        if not s:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"会话不存在: {session_id}"})
+        return _serialize_session(s)
 
     dist = Path(dist_dir) if dist_dir else _WEB_DIR / "dist"
     if (dist / "index.html").exists():
