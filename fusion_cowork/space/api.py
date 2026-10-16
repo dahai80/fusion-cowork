@@ -522,7 +522,9 @@ def create_space_api(
             return auth_err
         principal = _resolve_principal(request)
         try:
-            art = await artifact_svc.get_artifact(space_id, artifact_id, principal.user_id, tenant_id=principal.tenant_id)
+            art = await artifact_svc.get_artifact(
+                space_id, artifact_id, principal.user_id, tenant_id=principal.tenant_id
+            )
         except PermissionError as e:
             return JSONResponse({"error": str(e)}, status_code=403)
         if not art:
