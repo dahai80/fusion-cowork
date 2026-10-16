@@ -185,6 +185,28 @@ export interface KbDocumentInfo {
     created_at?: string;
 }
 
+export interface ModelInfo {
+    id: string;
+    engine_type?: string;
+}
+
+export interface PluginInfo {
+    id: string;
+    name: string;
+    category: string;
+    version: string;
+    description?: string;
+    enabled?: boolean;
+    installed?: boolean;
+}
+
+export interface RpcResponse<T> {
+    jsonrpc: string;
+    id?: unknown;
+    result?: T;
+    error?: { code: number; message: string; data?: unknown };
+}
+
 async function get<T>(path: string): Promise<T> {
     return (await sdk.http.get<T>(path)).data;
 }
@@ -223,7 +245,7 @@ export const api = {
     resumeSchedulerTask: (id: string) =>
         post<{ id: string; status: string }>(`/api/scheduler/tasks/${encodeURIComponent(id)}/resume`),
     deleteSchedulerTask: (id: string) => sdk.http.delete(`/api/scheduler/tasks/${encodeURIComponent(id)}`),
-    generateWorkflow: (body: { prompt: string; context?: Record<string, unknown> }) =>
+    generateWorkflow: (body: { prompt: string; model?: string; context?: Record<string, unknown> }) =>
         post<{ workflow: { name?: string; description?: string; nodes: CanvasNodeDef[]; edges: CanvasEdgeDef[] } }>(
             '/api/ai/generate-workflow',
             body
@@ -267,6 +289,12 @@ export const api = {
     kbUnbind: (id: string) =>
         post<{ unbound: boolean }>(`/api/space/spaces/${encodeURIComponent(id)}/kb/unbind`, {
             operator_id: 'local_user',
+        }),
+    models: () => get<{ models: ModelInfo[]; count: number }>('/api/models'),
+    rpc: <T>(method: string, params?: Record<string, unknown>) =>
+        post<RpcResponse<T>>('/rpc', { jsonrpc: '2.0', id: Date.now(), method, params: params ?? {} }).then((resp) => {
+            if (resp.error) throw new Error(resp.error.message || `rpc error ${resp.error.code}`);
+            return resp.result as T;
         }),
 };
 

@@ -4,6 +4,7 @@ import { useT } from './i18n';
 import { CanvasPage } from './pages/CanvasPage';
 import { DelegatePage } from './pages/DelegatePage';
 import { NodesPage } from './pages/NodesPage';
+import { PluginsPage } from './pages/PluginsPage';
 import { RunsPage } from './pages/RunsPage';
 import { SchedulePage } from './pages/SchedulePage';
 import { SessionsPage } from './pages/SessionsPage';
@@ -16,7 +17,17 @@ import { embeddedParam, isEmbedded } from './sdk';
 // (#/canvas/<id>), runs, sessions, nodes, templates, schedule. Standalone
 // shows its own header tabs; when the shell embeds us (?embedded=1 or
 // iframe) the shell owns the chrome — own navigation hides (spec S7).
-type Route = 'workflows' | 'delegate' | 'canvas' | 'runs' | 'sessions' | 'spaces' | 'nodes' | 'templates' | 'schedule';
+type Route =
+    | 'workflows'
+    | 'delegate'
+    | 'canvas'
+    | 'runs'
+    | 'sessions'
+    | 'spaces'
+    | 'nodes'
+    | 'templates'
+    | 'schedule'
+    | 'plugins';
 
 const ROUTES: Route[] = [
     'workflows',
@@ -28,6 +39,7 @@ const ROUTES: Route[] = [
     'templates',
     'nodes',
     'canvas',
+    'plugins',
 ];
 
 function parseHash(): { route: Route; arg: string } {
@@ -41,6 +53,7 @@ function parseHash(): { route: Route; arg: string } {
     if (head === 'nodes') return { route: 'nodes', arg };
     if (head === 'templates') return { route: 'templates', arg };
     if (head === 'schedule') return { route: 'schedule', arg };
+    if (head === 'plugins') return { route: 'plugins', arg };
     return { route: 'workflows', arg };
 }
 
@@ -64,6 +77,8 @@ function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
             return t('节点', 'Nodes');
         case 'canvas':
             return t('画布', 'Canvas');
+        case 'plugins':
+            return t('插件', 'Plugins');
     }
 }
 
@@ -127,6 +142,8 @@ export function App() {
                     <SpacePage />
                 ) : route === 'nodes' ? (
                     <NodesPage />
+                ) : route === 'plugins' ? (
+                    <PluginsPage />
                 ) : route === 'templates' ? (
                     <TemplatesPage />
                 ) : (
