@@ -61,6 +61,13 @@ class EventEmitter:
         self._buffer: List[WorkflowEvent] = []
         self._buffer_size = buffer_size
         self._callbacks: List[Callable] = []
+        self._lifecycle_bus = None
+
+    def attach_lifecycle_bus(self, bus) -> None:
+        # 111: mirror workflow events into the shared LifecycleBus. Fail-open
+        # by design — the bus is an observability sink, not a control gate.
+        self._lifecycle_bus = bus
+        logger.info("EventEmitter lifecycle bus attached")
 
     def subscribe(self, sub_id: Optional[str] = None) -> tuple:
         sub_id = sub_id or f"sub_{uuid.uuid4().hex[:6]}"
@@ -90,6 +97,16 @@ class EventEmitter:
                 cb(event)
             except Exception as e:
                 logger.error(f"事件回调异常: {e}")
+        if self._lifecycle_bus is not None:
+            try:
+                self._lifecycle_bus.emit(
+                    "session",
+                    event.event_type,
+                    event.to_dict(),
+                    session_id=event.execution_id,
+                )
+            except Exception as e:
+                logger.warning(f"lifecycle mirror failed: {e}")
 
     def get_buffered(self, since: float = 0.0) -> List[WorkflowEvent]:
         if since <= 0:

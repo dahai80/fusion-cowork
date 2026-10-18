@@ -17,8 +17,10 @@ V0.4 新增：
 """
 
 from .ast_diff import apply_ast_diff, compute_ast_diff
+from .compactor import CompactionConfig, Compactor, RetentionList
 from .enhanced_scheduler import EnhancedScheduler, TaskDependency, TaskExecution
 from .events import EventEmitter, EventType, WorkflowEvent
+from .funnels import EventDomain, LifecycleBus, LifecycleEvent, LLMFunnel, ToolFunnel
 from .hooks import HookContext, HookEvent, HookManager
 from .node import (
     BaseNode,
@@ -81,6 +83,15 @@ __all__ = [
     "PermissionManager",
     "PermissionLevel",
     "Permission",
+    # 111: fusion-harness kernel adapters
+    "Compactor",
+    "CompactionConfig",
+    "RetentionList",
+    "LifecycleBus",
+    "LifecycleEvent",
+    "EventDomain",
+    "LLMFunnel",
+    "ToolFunnel",
     # V0.3 Hook
     "HookManager",
     "HookEvent",

@@ -11,10 +11,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, AsyncIterator, List, Optional
 
 from ..ai.mlx_client import FusionMLXClient
+from ..engine.compactor import CompactionConfig, Compactor
 from ..engine.events import EventEmitter, WorkflowEvent
+from ..engine.funnels import LLMFunnel
+from ..engine.lifecycle import get_lifecycle_bus
 from .models import SpaceMessage
 from .permission import SpacePermission
 from .store import SpaceStore
@@ -41,6 +45,13 @@ class SpaceChatService:
         self._perm = permission
         self._events = event_emitter or EventEmitter()
         self._kb_svc = kb_service
+        # 111: single LLM admission path — lifecycle events + context
+        # compaction. context_window 9000 tokens (warning at 6000 tokens =
+        # ~24000 chars) matches the pre-existing _trim_context budget.
+        self._compactor = Compactor(CompactionConfig(context_window=9000))
+        self._lifecycle_bus = get_lifecycle_bus()
+        self._llm_funnel = LLMFunnel(lifecycle_bus=self._lifecycle_bus, compactor=self._compactor)
+        self._events.attach_lifecycle_bus(self._lifecycle_bus)
         # v4 方案②: incremental watermark for task_step reads — relay context
         # assembly previously re-scanned the whole trajectory pool on every
         # group, a latency that grew linearly with history. Same pattern as
@@ -126,6 +137,11 @@ class SpaceChatService:
             models = await self._mlx.list_models()
             model = models[0]["id"] if models else "default"
 
+        prepared, funnel_ctx = await self._pre_llm(space_id, "space_stream", model, messages)
+        if prepared is None:
+            return
+        messages = prepared
+
         full_response = []
         try:
             async for chunk in self._mlx.stream_chat(
@@ -164,6 +180,7 @@ class SpaceChatService:
         )
         assistant_msg = await self._store.add_message(assistant_msg)
         await self._emit(space_id, "message_complete", assistant_msg.to_dict())
+        self._llm_funnel.post_llm(funnel_ctx, node_label="space_stream", model=model)
         logger.info(f"SpaceChat.stream_message space={space_id} agent={agent_id} len={len(complete)}")
 
     async def _agent_respond(
@@ -193,6 +210,11 @@ class SpaceChatService:
                 models = await self._mlx.list_models()
                 model = models[0]["id"] if models else "default"
 
+            prepared, funnel_ctx = await self._pre_llm(space_id, "space_agent", model, messages)
+            if prepared is None:
+                return
+            messages = prepared
+
             full_response = []
             async for chunk in self._mlx.stream_chat(model=model, messages=messages):
                 full_response.append(chunk)
@@ -208,10 +230,27 @@ class SpaceChatService:
             )
             assistant_msg = await self._store.add_message(assistant_msg)
             await self._emit(space_id, "message_complete", assistant_msg.to_dict())
+            self._llm_funnel.post_llm(funnel_ctx, node_label="space_agent", model=model)
             logger.info(f"SpaceChat._agent_respond space={space_id} agent={agent_id}")
         except Exception as e:
             logger.error(f"Agent respond failed: {e}", exc_info=True)
             await self._emit(space_id, "error", {"agent_id": agent_id, "error": str(e)})
+
+    async def _pre_llm(self, space_id: str, node_label: str, model: str, messages: List[dict]):
+        # 111: every space LLM call goes through the funnel (lifecycle emit +
+        # compaction), then the legacy char budget acts as the final guard.
+        ctx = SimpleNamespace(session_id=space_id)
+        proceed, reason, prepared = await self._llm_funnel.pre_llm(
+            ctx,
+            node_label=node_label,
+            model=model,
+            messages=messages,
+        )
+        if not proceed:
+            logger.warning(f"LLM funnel blocked node={node_label} space={space_id}: {reason}")
+            await self._emit(space_id, "error", {"error": reason, "node": node_label})
+            return None, ctx
+        return self._trim_context(prepared), ctx
 
     def _build_messages(self, context: List[SpaceMessage]) -> List[dict]:
         messages = []
