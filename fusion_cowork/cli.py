@@ -37,6 +37,7 @@ from .engine import (
     WorkflowEngine,
     WorkflowStatus,
 )
+from .engine.lifecycle import get_lifecycle_bus
 
 # LO-3: nodes.browser/input_nodes 顶层 import 耦合 — 移入用到的命令函数内延迟导入,
 # 防 nodes.browser 将来拉缺失可选依赖致 import fusion_cowork.cli 全坏 (每个子命令挂)
@@ -60,6 +61,7 @@ def _build_runtime():
         hook_manager = HookManager()
         session_store = SessionStore()
         event_emitter = EventEmitter()
+        event_emitter.attach_lifecycle_bus(get_lifecycle_bus())
         space_store = None
         try:
             from .space import SpaceStore
