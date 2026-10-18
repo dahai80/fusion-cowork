@@ -1,6 +1,6 @@
 [project]
 name = "fusion-cowork"
-version = "0.5.15"
+version = "0.5.16"
 description = "Fusion-Cowork — macOS 原生、本地优先、零代码桌面智能自动化平台"
 authors = [
     { name = "Fusion-MLX Team" },
@@ -39,6 +39,12 @@ test = [
 ]
 plugins = [
     "fusion-plugins-ecosystem>=0.3.3",
+]
+# #109: canonical harness kernel shared with fusion-agent-studio / fusion-code.
+# fusion-harness is a local sibling package (not on PyPI); install with
+# `.[harness]`. Shims fall back to in-tree copies when absent (CI-safe).
+harness = [
+    "fusion-harness>=0.1.0",
 ]
 cloud = [
     "pyjwt>=2.8",
