@@ -78,6 +78,7 @@ class SpaceChatService:
         attachments: Optional[list] = None,
         content_type: str = "text",
         parent_msg_id: Optional[str] = None,
+        model: str = "",
     ) -> SpaceMessage:
         if not await self._perm.check(space_id, user_id, "send_message"):
             raise PermissionError(f"用户 {user_id} 无权在空间 {space_id} 发送消息")
@@ -93,7 +94,7 @@ class SpaceChatService:
         await self._emit(space_id, "message", msg.to_dict())
         logger.info(f"SpaceChat.send_message space={space_id} user={user_id} msg={msg.id}")
         if agent_id:
-            asyncio.create_task(self._agent_respond(space_id, agent_id, msg))
+            asyncio.create_task(self._agent_respond(space_id, agent_id, msg, model=model))
         return msg
 
     async def stream_message(
@@ -188,6 +189,7 @@ class SpaceChatService:
         space_id: str,
         agent_id: str,
         trigger_msg: SpaceMessage,
+        model: str = "",
     ) -> None:
         try:
             context = await self._store.get_messages(space_id, limit=100)
@@ -205,7 +207,8 @@ class SpaceChatService:
                 except Exception as e:
                     logger.warning(f"RAG search failed: {e}")
 
-            model = self._get_config_model(agent_def)
+            if not model:
+                model = self._get_config_model(agent_def)
             if not model:
                 models = await self._mlx.list_models()
                 model = models[0]["id"] if models else "default"

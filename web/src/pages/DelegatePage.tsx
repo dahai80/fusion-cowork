@@ -1,7 +1,8 @@
 import { EmptyState, ErrorState, SkeletonLines, useAutoRetry } from '@fusion/web-ui';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { type CanvasEdgeDef, type CanvasNodeDef, api } from '../api';
 import { useT } from '../i18n';
+import { onPreferredModelChange, preferredModel, setPreferredModel } from '../modelPref';
 import { sdk } from '../sdk';
 
 // W7: NL delegation entry — prompt → NLWorkflowGenerator (/api/ai/generate-workflow)
@@ -26,8 +27,6 @@ interface GeneratedWorkflow {
     edges: CanvasEdgeDef[];
 }
 
-const MODEL_KEY = 'fc-preferred-model';
-
 export function DelegatePage() {
     const t = useT();
     const [prompt, setPrompt] = useState('');
@@ -35,8 +34,10 @@ export function DelegatePage() {
     const [error, setError] = useState('');
     const [wf, setWf] = useState<GeneratedWorkflow | null>(null);
     const [saving, setSaving] = useState(false);
-    const [model, setModel] = useState(() => window.localStorage.getItem(MODEL_KEY) || '');
+    const [model, setModel] = useState(preferredModel);
     const models = useAutoRetry(() => api.models(), []);
+
+    useEffect(() => onPreferredModelChange(setModel), []);
 
     async function generate() {
         if (busy || !prompt.trim()) return;
@@ -88,7 +89,7 @@ export function DelegatePage() {
                     value={model}
                     onChange={(e) => {
                         setModel(e.target.value);
-                        window.localStorage.setItem(MODEL_KEY, e.target.value);
+                        setPreferredModel(e.target.value);
                     }}
                 >
                     <option value="">{t('自动选择', 'Auto')}</option>

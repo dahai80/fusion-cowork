@@ -79,6 +79,52 @@ function directHttp() {
     };
 }
 
+// W13/B2: SSE over fetch (EventSource cannot send the runtime api key header).
+// Resolves when the stream closes; throws on non-2xx / network error so the
+// caller can fall back to polling.
+export async function streamSse(
+    path: string,
+    onEvent: (event: string, data: unknown) => void,
+    signal: AbortSignal
+): Promise<void> {
+    if (isEmbedded()) throw new Error('sse-unavailable-embedded');
+    const headers: Record<string, string> = { accept: 'text/event-stream' };
+    const key = runtimeApiKey();
+    if (key) headers['x-api-key'] = key;
+    const res = await fetch(path, { headers, signal });
+    if (!res.ok || !res.body) throw new Error(`sse failed: ${res.status}`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx = buf.indexOf('\n\n');
+        while (idx >= 0) {
+            const chunk = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            let event = 'message';
+            const dataLines: string[] = [];
+            for (const line of chunk.split('\n')) {
+                if (line.startsWith('event:')) event = line.slice(6).trim();
+                else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+            }
+            if (dataLines.length) {
+                const raw = dataLines.join('\n');
+                let parsed: unknown = raw;
+                try {
+                    parsed = JSON.parse(raw);
+                } catch {
+                    // keep raw text
+                }
+                onEvent(event, parsed);
+            }
+            idx = buf.indexOf('\n\n');
+        }
+    }
+}
+
 export const sdk: FusionShellSdk = createShellSdk();
 
 if (!isEmbedded()) {
