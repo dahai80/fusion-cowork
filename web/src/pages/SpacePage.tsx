@@ -3,7 +3,8 @@ import { useAutoRetry } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
 import { type ArtifactReview, type SpaceArtifact, type SpaceInfo, type SpaceMessage, api } from '../api';
 import { useT } from '../i18n';
-import { sdk } from '../sdk';
+import { preferredModel } from '../modelPref';
+import { sdk, streamSse } from '../sdk';
 
 // W12/W13/W10: collaboration space surface — list + create (W12), chat with
 // 5s polling (W13; SSE stream exists server-side, polling survives gateway
@@ -142,17 +143,45 @@ function SpaceDetail({ spaceId }: { spaceId: string }) {
     const members = useAutoRetry(() => api.spaceMembers(spaceId), [spaceId]);
     const artifacts = useAutoRetry(() => api.spaceArtifacts(spaceId), [spaceId, reloadKey]);
 
-    // W13: 5s chat polling while visible
+    // W13/B2: SSE 实时聊天; 连不上回落 5s 轮询
+    const [sseOk, setSseOk] = useState(false);
     useEffect(() => {
+        const ac = new AbortController();
+        setSseOk(false);
+        streamSse(
+            `/api/space/spaces/${encodeURIComponent(spaceId)}/stream`,
+            (event) => {
+                if (event === 'ready') {
+                    setSseOk(true);
+                    return;
+                }
+                if (event.endsWith(':message')) {
+                    setReloadKey((k) => k + 1);
+                }
+            },
+            ac.signal
+        )
+            .then(() => setSseOk(false))
+            .catch((e) => {
+                if (!ac.signal.aborted) {
+                    console.warn('[cowork-web] space SSE unavailable, polling fallback', e);
+                    setSseOk(false);
+                }
+            });
+        return () => ac.abort();
+    }, [spaceId]);
+
+    useEffect(() => {
+        if (sseOk) return;
         const timer = window.setInterval(() => setReloadKey((k) => k + 1), 5000);
         return () => window.clearInterval(timer);
-    }, []);
+    }, [sseOk]);
 
     async function send() {
         if (sending || !draft.trim()) return;
         setSending(true);
         try {
-            await api.sendSpaceMessage(spaceId, draft.trim());
+            await api.sendSpaceMessage(spaceId, draft.trim(), preferredModel());
             setDraft('');
             setReloadKey((k) => k + 1);
         } catch (e) {

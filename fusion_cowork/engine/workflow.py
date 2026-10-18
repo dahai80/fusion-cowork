@@ -22,7 +22,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Set
 
 from .hooks import HookEvent
-from .node import BaseNode, NodeRegistry, NodeResult, NodeStatus
+from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus
 
 logger = logging.getLogger(__name__)
 
@@ -390,6 +390,8 @@ class WorkflowEngine:
         self._cancel_flags: Dict[str, bool] = {}
         # W8: 按执行粒度暂停 — asyncio.Event, set=运行 / clear=暂停; 节点间检查点等待
         self._pause_events: Dict[str, asyncio.Event] = {}
+        # W8/B1: 运行改向指令队列 — 节点边界应用 (set_params/skip_remaining/insert_node)
+        self._directives: Dict[str, List[Dict[str, Any]]] = {}
         self._progress_callbacks: List[callable] = []
         self._permission_manager = permission_manager
         self._hook_manager = hook_manager
@@ -546,7 +548,8 @@ class WorkflowEngine:
                 return execution
 
         try:
-            for node_id in order:
+            order_idx = 0
+            while order_idx < len(order):
                 # 检查取消
                 if self._cancel_flags.get(exec_id, False):
                     execution.status = WorkflowStatus.CANCELLED
@@ -561,6 +564,15 @@ class WorkflowEngine:
                         execution.status = WorkflowStatus.CANCELLED
                         break
                     logger.info(f"执行已恢复: {exec_id}")
+
+                # W8/B1: 在节点边界应用排队中的运行改向指令, 再取下一个节点
+                order_idx = self._apply_directives(
+                    exec_id, workflow, order, order_idx, node_results, passed_data, execution
+                )
+                if order_idx >= len(order):
+                    break
+                node_id = order[order_idx]
+                order_idx += 1
 
                 # HI-19: 预算检查 — enforce 且已超预算则中止 (BudgetTracker 无 exhausted 方法, 用 _enforce+cost 判)
                 if self._budget_tracker is not None and self._budget_tracker._enforce:
@@ -945,6 +957,7 @@ class WorkflowEngine:
 
             del self._cancel_flags[exec_id]
             self._pause_events.pop(exec_id, None)
+            self._directives.pop(exec_id, None)
 
         return execution
 
@@ -980,6 +993,101 @@ class WorkflowEngine:
     def is_paused(self, execution_id: str) -> bool:
         evt = self._pause_events.get(execution_id)
         return evt is not None and not evt.is_set()
+
+    def add_directive(self, execution_id: str, directive: Dict[str, Any]) -> bool:
+        """W8/B1: 排队一条运行改向指令, 在下一节点边界生效。
+
+        action: set_params (覆盖未执行节点参数) / insert_node (插入临时节点) /
+        skip_remaining (跳过剩余节点)。
+        """
+        action = str((directive or {}).get("action", ""))
+        if action not in ("set_params", "skip_remaining", "insert_node"):
+            logger.warning(f"未知运行改向指令: action={action} exec={execution_id}")
+            return False
+        if execution_id not in self._pause_events:
+            logger.warning(f"运行改向指令目标不存在: exec={execution_id}")
+            return False
+        payload = dict(directive)
+        self._directives.setdefault(execution_id, []).append(payload)
+        logger.info(f"运行改向指令已排队: exec={execution_id} action={action}")
+        if self._trajectory_recorder is not None:
+            try:
+                self._trajectory_recorder.record_directive(execution_id, payload)
+            except Exception as e:
+                logger.error(f"运行改向指令轨迹写入失败: {e}")
+        return True
+
+    def _apply_directives(
+        self,
+        exec_id: str,
+        workflow: Workflow,
+        order: List[str],
+        cursor: int,
+        node_results: Dict[str, NodeResult],
+        passed_data: Dict[str, Dict[str, Any]],
+        execution: WorkflowExecution,
+    ) -> int:
+        """应用排队中的改向指令, 返回调整后的下一个待执行下标 (order[cursor])。"""
+        directives = self._directives.pop(exec_id, [])
+        for directive in directives:
+            action = str(directive.get("action", ""))
+            if action == "set_params":
+                target = str(directive.get("node_id") or (order[cursor] if cursor < len(order) else ""))
+                node = workflow.nodes.get(target)
+                if node is None:
+                    logger.warning(f"运行改向 目标节点不存在: exec={exec_id} node={target}")
+                    continue
+                if target in node_results:
+                    logger.warning(f"运行改向 节点已执行, 参数覆盖忽略: exec={exec_id} node={target}")
+                    continue
+                params = directive.get("params") or {}
+                if not isinstance(params, dict) or not params:
+                    logger.warning(f"运行改向 参数为空或非法: exec={exec_id} node={target}")
+                    continue
+                node.config.params.update(params)
+                logger.info(f"运行改向 参数覆盖: exec={exec_id} node={target} keys={list(params)}")
+            elif action == "insert_node":
+                spec = directive.get("node") or {}
+                name = str(spec.get("name") or "")
+                node = NodeRegistry.create(
+                    name,
+                    config=NodeConfig(label=str(spec.get("label") or ""), params=dict(spec.get("params") or {})),
+                )
+                if node is None:
+                    logger.warning(f"运行改向 插入节点失败, 未知类型: exec={exec_id} name={name}")
+                    continue
+                new_id = workflow.add_node(node)
+                source = str(directive.get("after_node_id") or "")
+                pos = cursor
+                if source and source in workflow.nodes:
+                    workflow.connect(source, new_id)
+                    if source in order:
+                        pos = max(pos, order.index(source) + 1)
+                order.insert(pos, new_id)
+                if isinstance(directive.get("input"), dict):
+                    passed_data[new_id] = dict(directive["input"])
+                logger.info(f"运行改向 插入节点: exec={exec_id} name={name} id={new_id} pos={pos}")
+            elif action == "skip_remaining":
+                remaining = list(order[cursor:])
+                for rid in remaining:
+                    rnode = workflow.nodes.get(rid)
+                    if rnode is None:
+                        continue
+                    skip_step = WorkflowStep(
+                        node_id=rid,
+                        node_name=rnode.name,
+                        node_display_name=rnode.config.label or rnode.display_name,
+                        status=NodeStatus.SKIPPED,
+                        started_at=time.time(),
+                        input_data=passed_data.get(rid, {}),
+                    )
+                    skip_step.completed_at = time.time()
+                    skip_step.summary = "运行改向: 跳过剩余节点"
+                    execution.steps.append(skip_step)
+                    self._notify_progress(execution, skip_step)
+                del order[cursor:]
+                logger.info(f"运行改向 跳过剩余节点: exec={exec_id} count={len(remaining)}")
+        return cursor
 
     def get_execution(self, execution_id: str) -> Optional[WorkflowExecution]:
         """获取执行记录。"""

@@ -286,6 +286,26 @@ class TrajectoryRecorder:
             # CR-12: 执行结束无条件清理状态槽防内存增长 (与 session_store 无关)
             self._execs.pop(exec_id, None)
 
+    def record_directive(self, execution_id: str, directive: Dict[str, Any]) -> None:
+        """W8/B1: 运行改向指令单独落轨迹, 供复盘/训练流水线消费。"""
+        state = self._execs.get(execution_id) or {}
+        traj = TrajectoryEvent(
+            ts=time.time(),
+            event="directive",
+            execution_id=execution_id,
+            workflow_id=state.get("workflow_id", ""),
+            workflow_name=state.get("workflow_name", ""),
+            session_id=self._session_id,
+            status="queued",
+            data=_json_safe(dict(directive)),
+        )
+        try:
+            self._writer.write(traj)
+        except Exception as e:
+            logger.error(f"改向指令轨迹写入失败: exec={execution_id} -> {e}")
+            raise
+        logger.info(f"改向指令已落轨迹: exec={execution_id} action={directive.get('action', '')}")
+
     @property
     def steps_snapshot(self) -> List[Dict[str, Any]]:
         # CR-12: 无 exec_id 上下文时返回最后已知执行快照 (兼容旧调用)

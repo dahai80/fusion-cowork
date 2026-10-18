@@ -54,12 +54,17 @@ def _client_with_transport(handler, **kw):
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
+    import fusion_cowork.auth.jwt as jwt_mod
+
     monkeypatch.delenv("FUSION_IDENTITY_ENABLED", raising=False)
     monkeypatch.delenv("FUSION_IDENTITY_URL", raising=False)
     monkeypatch.delenv("FUSION_IDENTITY_SERVICE_TOKEN", raising=False)
     identity_mod.reset_identity_client()
+    # 单例 verifier 会缓存 identity 适配器 — 不重置会泄漏到后续模块
+    jwt_mod._DEFAULT_VERIFIER = None
     yield
     identity_mod.reset_identity_client()
+    jwt_mod._DEFAULT_VERIFIER = None
 
 
 class TestOptInOff:

@@ -1,6 +1,9 @@
+import { useAutoRetry } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
 import { NotificationBell } from './NotificationBell';
+import { api } from './api';
 import { useT } from './i18n';
+import { onPreferredModelChange, preferredModel, setPreferredModel } from './modelPref';
 import { ApprovalsPage } from './pages/ApprovalsPage';
 import { CanvasPage } from './pages/CanvasPage';
 import { ClusterPage } from './pages/ClusterPage';
@@ -109,12 +112,16 @@ export function App() {
     const t = useT();
     const [{ route, arg }, setNav] = useState(parseHash);
     const embedded = isEmbedded() || embeddedParam();
+    const [model, setModel] = useState(preferredModel);
+    const models = useAutoRetry(() => api.models(), []);
 
     useEffect(() => {
         const onHash = () => setNav(parseHash());
         window.addEventListener('hashchange', onHash);
         return () => window.removeEventListener('hashchange', onHash);
     }, []);
+
+    useEffect(() => onPreferredModelChange(setModel), []);
 
     function go(next: Route) {
         window.location.hash = `#/${next}`;
@@ -126,6 +133,26 @@ export function App() {
                 <header className="flex items-center justify-between border-b border-border px-4 py-2">
                     <div className="text-sm font-medium">Fusion Cowork</div>
                     <div className="flex items-center gap-2">
+                        <select
+                            aria-label={t('模型', 'Model')}
+                            title={models.error ? t('模型列表不可用', 'Models unavailable') : undefined}
+                            className="rounded-md border border-border bg-bg px-2 py-1 text-xs text-text-primary"
+                            value={model}
+                            onChange={(e) => {
+                                setModel(e.target.value);
+                                setPreferredModel(e.target.value);
+                            }}
+                        >
+                            <option value="">{t('默认模型', 'Default model')}</option>
+                            {model && !(models.data?.models ?? []).some((m) => m.id === model) ? (
+                                <option value={model}>{model}</option>
+                            ) : null}
+                            {(models.data?.models ?? []).map((m) => (
+                                <option key={m.id} value={m.id}>
+                                    {m.id}
+                                </option>
+                            ))}
+                        </select>
                         <NotificationBell />
                         <nav className="flex gap-1">
                             {ROUTES.map((r) => (

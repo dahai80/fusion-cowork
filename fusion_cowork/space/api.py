@@ -71,6 +71,7 @@ def create_space_api(
 
     app = FastAPI(title="Fusion-Cowork Space API", version="0.8.0")
     _event_emitter = event_emitter
+    app.state.event_emitter = event_emitter
 
     # Stage 1: 每请求注入 tenant_id 到 contextvar, 下游 store.resolve_tenant_id(None) 自动取。
     # Stage 2 接通 JWT 后 _resolve_principal 返 JWT claim tenant_id。
@@ -319,6 +320,7 @@ def create_space_api(
             agent_id=body.get("agent_id"),
             content_type=body.get("content_type", "text"),
             attachments=body.get("attachments"),
+            model=body.get("model", ""),
         )
         return JSONResponse(msg.to_dict(), status_code=201)
 
@@ -345,6 +347,8 @@ def create_space_api(
                 sub_id, queue = _event_emitter.subscribe()
                 prefix = f"space:{space_id}:"
                 try:
+                    # B2: 立即 ready 帧 — 前端据此关闭轮询降级
+                    yield f"event: ready\ndata: {json.dumps({'space_id': space_id}, ensure_ascii=False)}\n\n"
                     while True:
                         if await request.is_disconnected():
                             break

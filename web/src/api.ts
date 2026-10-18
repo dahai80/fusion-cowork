@@ -52,6 +52,12 @@ export interface CanvasEdgeDef {
     label?: string;
 }
 
+export interface RunReview {
+    status: 'pending_review' | 'approved' | 'rejected';
+    note: string;
+    reviewed_at: number | null;
+}
+
 export interface RunListItem {
     run_id: string;
     workflow_id: string;
@@ -60,6 +66,7 @@ export interface RunListItem {
     created_at: number;
     finished_at: number | null;
     error: string | null;
+    review: RunReview | null;
 }
 
 export interface RunStep {
@@ -76,6 +83,17 @@ export interface RunStep {
 export interface RunRecord extends RunListItem {
     steps: RunStep[];
     result: { summary?: string } | null;
+}
+
+export interface RunArtifact {
+    artifact_id: string;
+    node_id: string;
+    node_name: string;
+    name: string;
+    type: string;
+    path: string;
+    content: string;
+    truncated: boolean;
 }
 
 export interface TemplateInfo {
@@ -103,6 +121,8 @@ export interface SchedulerTask {
     tags: string[];
 }
 
+export type SessionSource = 'engine' | 'space' | 'scheduler';
+
 export interface SessionInfo {
     id: string;
     workflow_id: string;
@@ -114,6 +134,11 @@ export interface SessionInfo {
     updated_at: number;
     completed_at: number | null;
     metadata: Record<string, unknown>;
+    source: SessionSource;
+    title: string;
+    space_id: string;
+    space_name: string;
+    href: string;
 }
 
 export interface SpaceInfo {
@@ -272,9 +297,30 @@ export const api = {
         post<{ run_id: string; status: string }>('/api/runs', body),
     runs: () => get<{ runs: RunListItem[]; count: number }>('/api/runs'),
     run: (id: string) => get<RunRecord>(`/api/runs/${encodeURIComponent(id)}`),
+    runArtifacts: (id: string) =>
+        get<{ artifacts: RunArtifact[]; count: number; review: RunReview | null }>(
+            `/api/runs/${encodeURIComponent(id)}/artifacts`
+        ),
+    reviewRun: (id: string, approved: boolean, note = '') =>
+        post<{ run_id: string; review: RunReview; workflow?: unknown }>(`/api/runs/${encodeURIComponent(id)}/review`, {
+            approved,
+            note,
+        }),
     cancelRun: (id: string) => post<{ status: string }>(`/api/runs/${encodeURIComponent(id)}/cancel`),
     pauseRun: (id: string) => post<{ status: string }>(`/api/runs/${encodeURIComponent(id)}/pause`),
     resumeRun: (id: string) => post<{ status: string }>(`/api/runs/${encodeURIComponent(id)}/resume`),
+    directive: (
+        id: string,
+        body: {
+            action: 'set_params' | 'insert_node' | 'skip_remaining';
+            node_id?: string;
+            params?: Record<string, unknown>;
+            node?: Record<string, unknown>;
+            after_node_id?: string;
+            input?: Record<string, unknown>;
+        }
+    ) =>
+        post<{ status: string; run_id: string; action: string }>(`/api/runs/${encodeURIComponent(id)}/directive`, body),
     templates: (category = '') =>
         get<{ templates: TemplateInfo[]; count: number }>(`/api/templates?category=${encodeURIComponent(category)}`),
     template: (id: string) => get<TemplateInfo>(`/api/templates/${encodeURIComponent(id)}`),
@@ -296,8 +342,10 @@ export const api = {
             '/api/ai/generate-workflow',
             body
         ),
-    sessions: (status = '') =>
-        get<{ sessions: SessionInfo[]; count: number }>(`/api/sessions?status=${encodeURIComponent(status)}`),
+    sessions: (status = '', source = '') =>
+        get<{ sessions: SessionInfo[]; count: number }>(
+            `/api/sessions?status=${encodeURIComponent(status)}&source=${encodeURIComponent(source)}`
+        ),
     session: (id: string) => get<SessionInfo>(`/api/sessions/${encodeURIComponent(id)}`),
     // space surface (mounted sub-app /api/space)
     spaces: () => get<SpaceInfo[]>('/api/space/spaces'),
@@ -305,8 +353,12 @@ export const api = {
     deleteSpace: (id: string) => sdk.http.delete(`/api/space/spaces/${encodeURIComponent(id)}`),
     spaceMembers: (id: string) => get<SpaceMemberInfo[]>(`/api/space/spaces/${encodeURIComponent(id)}/members`),
     spaceMessages: (id: string) => get<SpaceMessage[]>(`/api/space/spaces/${encodeURIComponent(id)}/messages`),
-    sendSpaceMessage: (id: string, content: string) =>
-        post<SpaceMessage>(`/api/space/spaces/${encodeURIComponent(id)}/messages`, { user_id: 'local_user', content }),
+    sendSpaceMessage: (id: string, content: string, model = '') =>
+        post<SpaceMessage>(`/api/space/spaces/${encodeURIComponent(id)}/messages`, {
+            user_id: 'local_user',
+            content,
+            model: model || undefined,
+        }),
     spaceArtifacts: (id: string) => get<SpaceArtifact[]>(`/api/space/spaces/${encodeURIComponent(id)}/artifacts`),
     spaceArtifact: (id: string, aid: string) =>
         get<SpaceArtifact>(`/api/space/spaces/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(aid)}`),

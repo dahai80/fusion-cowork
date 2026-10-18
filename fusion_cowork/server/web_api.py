@@ -104,11 +104,165 @@ class WorkflowDefStore:
             return False
 
 
+_TEXT_EXTS = {".md", ".markdown", ".txt", ".html", ".htm", ".csv", ".json", ".yaml", ".yml"}
+_MAX_ARTIFACT_BYTES = 64 * 1024
+_MAX_ARTIFACTS = 20
+
+
+def _iso_to_epoch(value: Any) -> float:
+    """ISO 时间字符串转 epoch; 非法/空值返回 0。"""
+    if not isinstance(value, str) or not value:
+        return 0.0
+    try:
+        from datetime import datetime
+
+        return datetime.fromisoformat(value).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _artifact_type(suffix: str) -> str:
+    if suffix in (".md", ".markdown"):
+        return "markdown"
+    if suffix in (".html", ".htm"):
+        return "html"
+    if suffix == ".csv":
+        return "csv"
+    if suffix == ".json":
+        return "json"
+    return "text"
+
+
+def _collect_artifacts(steps: List[Any]) -> List[Dict[str, Any]]:
+    """W10: 从步骤输出提取可预览产物 (文件路径优先, 其次内联文本)。"""
+    artifacts: List[Dict[str, Any]] = []
+    for step in steps or []:
+        if len(artifacts) >= _MAX_ARTIFACTS:
+            break
+        out = getattr(step, "output_data", None) or {}
+        if not isinstance(out, dict):
+            continue
+        node_id = getattr(step, "node_id", "")
+        node_name = getattr(step, "node_display_name", "") or getattr(step, "node_name", "")
+        path_val = next(
+            (out[k] for k in ("file_path", "output_path", "path") if isinstance(out.get(k), str) and out.get(k)),
+            "",
+        )
+        if path_val:
+            p = Path(path_val).expanduser()
+            suffix = p.suffix.lower()
+            item: Dict[str, Any] = {
+                "artifact_id": f"{node_id}:path",
+                "node_id": node_id,
+                "node_name": node_name,
+                "name": p.name,
+                "type": _artifact_type(suffix),
+                "path": str(p),
+                "content": "",
+                "truncated": False,
+            }
+            if suffix in _TEXT_EXTS:
+                try:
+                    raw = p.read_text(encoding="utf-8", errors="replace")
+                    item["content"] = raw[:_MAX_ARTIFACT_BYTES]
+                    item["truncated"] = len(raw) > _MAX_ARTIFACT_BYTES
+                except OSError as e:
+                    logger.warning(f"产物读取失败 {p}: {e}")
+            artifacts.append(item)
+            continue
+        for key in ("markdown", "html", "content", "report", "text"):
+            val = out.get(key)
+            if not isinstance(val, str) or not val.strip():
+                continue
+            artifacts.append(
+                {
+                    "artifact_id": f"{node_id}:{key}",
+                    "node_id": node_id,
+                    "node_name": node_name,
+                    "name": f"{node_name} · {key}",
+                    "type": "markdown" if key in ("markdown", "report") else key,
+                    "path": "",
+                    "content": val[:_MAX_ARTIFACT_BYTES],
+                    "truncated": len(val) > _MAX_ARTIFACT_BYTES,
+                }
+            )
+            break
+    return artifacts
+
+
 class RunRegistry:
-    def __init__(self, engine: Any):
+    def __init__(self, engine: Any, event_emitter: Any = None):
         self._engine = engine
         self._runs: Dict[str, Dict[str, Any]] = {}
         self._tasks: Dict[str, asyncio.Task] = {}
+        # B2: 运行事件订阅 — 每个 SSE 客户端一个队列
+        self._subs: Dict[str, List[asyncio.Queue]] = {}
+        self._emitter = event_emitter
+        if event_emitter is not None:
+            event_emitter.on_event(self._on_event)
+
+    @staticmethod
+    def _public(record: Dict[str, Any]) -> Dict[str, Any]:
+        return {k: v for k, v in record.items() if k != "workflow_def"}
+
+    def subscribe(self, run_id: str) -> asyncio.Queue:
+        queue: asyncio.Queue = asyncio.Queue(maxsize=500)
+        self._subs.setdefault(run_id, []).append(queue)
+        return queue
+
+    def unsubscribe(self, run_id: str, queue: asyncio.Queue) -> None:
+        queues = self._subs.get(run_id)
+        if not queues:
+            return
+        try:
+            queues.remove(queue)
+        except ValueError:
+            pass
+        if not queues:
+            self._subs.pop(run_id, None)
+
+    def _broadcast(self, run_id: str, item: Dict[str, Any]) -> None:
+        for queue in list(self._subs.get(run_id, [])):
+            try:
+                queue.put_nowait(item)
+            except asyncio.QueueFull:
+                logger.warning(f"SSE 队列已满, 丢帧: {run_id}")
+
+    def _on_event(self, event: Any) -> None:
+        run_id = getattr(event, "execution_id", "")
+        record = self._runs.get(run_id)
+        if record is None:
+            return
+        try:
+            execution = self._engine.get_execution(run_id)
+        except Exception:
+            execution = None
+        if execution is not None:
+            record["steps"] = [RunRegistry._step_dict(s) for s in execution.steps]
+            status = execution.status.value if hasattr(execution.status, "value") else str(execution.status)
+            record["status"] = status
+        self._broadcast(
+            run_id,
+            {
+                "event": getattr(event, "event_type", "run_update"),
+                "node_id": getattr(event, "node_id", ""),
+                "at": getattr(event, "timestamp", time.time()),
+                "run": self._public(record),
+            },
+        )
+
+    @staticmethod
+    def _step_dict(s: Any) -> Dict[str, Any]:
+        return {
+            "node_id": s.node_id,
+            "node_name": s.node_name,
+            "node_display_name": s.node_display_name,
+            "status": s.status.value if hasattr(s.status, "value") else str(s.status),
+            "execution_time": s.execution_time,
+            "summary": s.summary,
+            "error": s.error,
+            "output_data": s.output_data,
+        }
 
     def list(self) -> List[Dict[str, Any]]:
         self._gc()
@@ -121,6 +275,7 @@ class RunRegistry:
                 "created_at": r["created_at"],
                 "finished_at": r.get("finished_at"),
                 "error": r.get("error"),
+                "review": r.get("review"),
             }
             for r in sorted(self._runs.values(), key=lambda x: -x["created_at"])
         ]
@@ -143,6 +298,9 @@ class RunRegistry:
             "steps": [],
             "result": None,
             "error": None,
+            "review": None,
+            "workflow_def": workflow_def,
+            "artifacts": [],
         }
         self._runs[run_id] = record
         task = asyncio.create_task(self._execute(run_id, wf))
@@ -154,19 +312,8 @@ class RunRegistry:
         record = self._runs[run_id]
         try:
             execution = await self._engine.execute(wf, execution_id=run_id)
-            record["steps"] = [
-                {
-                    "node_id": s.node_id,
-                    "node_name": s.node_name,
-                    "node_display_name": s.node_display_name,
-                    "status": s.status.value if hasattr(s.status, "value") else str(s.status),
-                    "execution_time": s.execution_time,
-                    "summary": s.summary,
-                    "error": s.error,
-                    "output_data": s.output_data,
-                }
-                for s in execution.steps
-            ]
+            record["steps"] = [RunRegistry._step_dict(s) for s in execution.steps]
+            record["artifacts"] = _collect_artifacts(execution.steps)
             status = execution.status.value if hasattr(execution.status, "value") else str(execution.status)
             record["status"] = status
             record["result"] = {
@@ -182,7 +329,32 @@ class RunRegistry:
             record["error"] = str(e)
         finally:
             record["finished_at"] = time.time()
+            # W9: 成功完成的运行进入交付审查队列; 失败/取消不进入
+            if record["status"] == "success" and record.get("review") is None:
+                record["review"] = {"status": "pending_review", "note": "", "reviewed_at": None}
+                logger.info(f"运行待交付审查: {run_id}")
+            self._broadcast(run_id, {"event": "run_end", "at": time.time(), "run": self._public(record)})
             self._tasks.pop(run_id, None)
+
+    def review(self, run_id: str, approved: bool, note: str = "") -> tuple[Optional[str], Optional[Dict[str, Any]]]:
+        """W9: 交付审查 — pending_review → approved/rejected (带意见)。"""
+        record = self._runs.get(run_id)
+        if not record:
+            return "not_found", None
+        review = record.get("review")
+        if not review or review.get("status") != "pending_review":
+            return "not_pending", None
+        review["status"] = "approved" if approved else "rejected"
+        review["note"] = note
+        review["reviewed_at"] = time.time()
+        record["review"] = review
+        self._broadcast(run_id, {"event": "run_reviewed", "at": time.time(), "run": self._public(record)})
+        logger.info(f"运行交付审查: {run_id} status={review['status']} note_len={len(note)}")
+        result: Dict[str, Any] = {"run_id": run_id, "review": review}
+        if not approved:
+            # B1: 退回附工作流定义, 供客户端直接编辑迭代
+            result["workflow"] = record.get("workflow_def")
+        return None, result
 
     def cancel(self, run_id: str) -> bool:
         record = self._runs.get(run_id)
@@ -203,6 +375,7 @@ class RunRegistry:
         if not self._engine.pause(run_id):
             return False
         record["status"] = "paused"
+        self._broadcast(run_id, {"event": "run_paused", "at": time.time(), "run": self._public(record)})
         logger.info(f"工作流运行已暂停: {run_id}")
         return True
 
@@ -215,8 +388,26 @@ class RunRegistry:
             logger.warning(f"引擎无暂停事件, 记录状态回退 running: {run_id}")
             return True
         record["status"] = "running"
+        self._broadcast(run_id, {"event": "run_resumed", "at": time.time(), "run": self._public(record)})
         logger.info(f"工作流运行已恢复: {run_id}")
         return True
+
+    DIRECTIVE_ACTIONS = ("set_params", "insert_node", "skip_remaining")
+
+    def directive(self, run_id: str, directive: Dict[str, Any]) -> Optional[str]:
+        """W8/B1: 排队运行改向指令; 返回 None 表示已排队, 否则错误码。"""
+        record = self._runs.get(run_id)
+        if not record or record["status"] not in ("running", "paused"):
+            return "not_running"
+        action = str((directive or {}).get("action", ""))
+        if action not in self.DIRECTIVE_ACTIONS:
+            return "bad_action"
+        if not self._engine.add_directive(run_id, directive):
+            return "rejected"
+        record.setdefault("directives", []).append({"action": action, "at": time.time()})
+        self._broadcast(run_id, {"event": "run_directive", "at": time.time(), "run": self._public(record)})
+        logger.info(f"运行改向指令已排队: {run_id} action={action}")
+        return None
 
     def _gc(self) -> None:
         now = time.time()
@@ -247,7 +438,12 @@ def _build_space_stack(data_dir: Optional[Path] = None):
     store = SpaceStore(data_dir=str(data_dir) if data_dir else _DEFAULT_SPACE_DATA_DIR)
     perm = SpacePermission(store)
     mlx = FusionMLXClient()
-    chat_svc = SpaceChatService(store, mlx, perm)
+    # W13/B2: chat 服务与 SSE 端点共用同一事件总线 (此前 chat 自建 emitter,
+    # /stream 的 _event_emitter 为 None, SSE 只会发 ping)
+    from ..engine.events import EventEmitter
+
+    emitter = EventEmitter()
+    chat_svc = SpaceChatService(store, mlx, perm, event_emitter=emitter)
     kb_svc = SpaceKBService(store, KBClient(), perm)
     artifact_svc = SpaceArtifactService(store, perm)
     notification_svc = NotificationService(store)
@@ -260,6 +456,7 @@ def _build_space_stack(data_dir: Optional[Path] = None):
         kb_svc,
         artifact_svc=artifact_svc,
         notification_svc=notification_svc,
+        event_emitter=emitter,
         space_store=store,
     )
     return app, artifact_svc, store
@@ -294,7 +491,7 @@ def create_web_app(
 ):
     try:
         from fastapi import FastAPI, HTTPException, Request
-        from fastapi.responses import JSONResponse
+        from fastapi.responses import JSONResponse, StreamingResponse
         from fastapi.staticfiles import StaticFiles
     except ImportError as e:
         raise ImportError("web API 需要 [web] 依赖: pip install fusion-cowork[web]") from e
@@ -309,11 +506,14 @@ def create_web_app(
         permission_manager = PermissionManager()
     if engine is None:
         from ..engine import WorkflowEngine
+        from ..engine.events import EventEmitter
 
-        engine = WorkflowEngine(permission_manager=permission_manager)
+        emitter = EventEmitter()
+        engine = WorkflowEngine(permission_manager=permission_manager, event_emitter=emitter)
     else:
         permission_manager = getattr(engine, "_permission_manager", None) or permission_manager
-    runs = RunRegistry(engine)
+        emitter = getattr(engine, "_event_emitter", None)
+    runs = RunRegistry(engine, event_emitter=emitter)
     if scheduler is None:
         from ..engine.scheduler import TaskScheduler
 
@@ -439,6 +639,45 @@ def create_web_app(
             raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"})
         return record
 
+    # ── W10/B5 运行产物预览 (右栏, 实时随步骤输出刷新) ──
+    @app.get("/api/runs/{run_id}/artifacts")
+    async def runs_artifacts(run_id: str):
+        record = runs.get(run_id)
+        if not record:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"})
+        artifacts = record.get("artifacts") or []
+        return {"artifacts": artifacts, "count": len(artifacts), "review": record.get("review")}
+
+    # ── B2 运行步骤日志 SSE — events.py 总线 → 前端实时步骤 (轮询为降级) ──
+    @app.get("/api/runs/{run_id}/events")
+    async def runs_events(run_id: str, request: Request):
+        record = runs.get(run_id)
+        if not record:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"})
+
+        async def event_stream():
+            queue = runs.subscribe(run_id)
+            try:
+                snapshot = json.dumps({"run": runs._public(record)}, ensure_ascii=False)
+                yield f"event: snapshot\ndata: {snapshot}\n\n"
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    try:
+                        item = await asyncio.wait_for(queue.get(), timeout=20)
+                    except TimeoutError:
+                        yield "event: ping\ndata: \n\n"
+                        continue
+                    yield f"event: {item.get('event', 'run_update')}\ndata: {json.dumps(item, ensure_ascii=False)}\n\n"
+            finally:
+                runs.unsubscribe(run_id, queue)
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     @app.post("/api/runs/{run_id}/cancel")
     async def runs_cancel(run_id: str):
         if not runs.cancel(run_id):
@@ -457,6 +696,41 @@ def create_web_app(
         if not runs.resume(run_id):
             raise HTTPException(status_code=409, detail={"code": "not_paused", "message": f"运行不可恢复: {run_id}"})
         return {"status": "running", "run_id": run_id}
+
+    # ── W9 交付审查: 成功运行 pending_review → approved/rejected (节点级 guard 审批另属 W19) ──
+    @app.post("/api/runs/{run_id}/review")
+    async def runs_review(run_id: str, body: Dict[str, Any]):
+        approved = body.get("approved")
+        if not isinstance(approved, bool):
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "approved 必须是布尔值"})
+        err, result = runs.review(run_id, approved, str(body.get("note") or ""))
+        if err == "not_found":
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"})
+        if err == "not_pending":
+            raise HTTPException(
+                status_code=409, detail={"code": "not_pending", "message": f"运行不在待审查状态: {run_id}"}
+            )
+        return result
+
+    # ── W8/B1 运行改向: 暂停态追加指令 (换参/插节点/跳过剩余) ──
+    @app.post("/api/runs/{run_id}/directive", status_code=202)
+    async def runs_directive(run_id: str, body: Dict[str, Any]):
+        err = runs.directive(run_id, body)
+        if err == "bad_action":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "bad_action",
+                    "message": f"action 必须是 {', '.join(RunRegistry.DIRECTIVE_ACTIONS)}",
+                },
+            )
+        if err == "not_running":
+            raise HTTPException(
+                status_code=409, detail={"code": "not_running", "message": f"运行不在运行/暂停态: {run_id}"}
+            )
+        if err:
+            raise HTTPException(status_code=409, detail={"code": err, "message": f"运行改向被拒绝: {run_id}"})
+        return {"status": "queued", "run_id": run_id, "action": body.get("action")}
 
     # ── W5 模板目录 (migration doc §6 P0) ──
     @app.get("/api/templates")
@@ -782,10 +1056,103 @@ def create_web_app(
         return JSONResponse(await dispatch_rpc(body))
 
     # ── W11 会话统一列表 (migration doc §6 P1) ──
+    # ── W11/A12 统一会话列表: engine session + space chat + 调度历史 ──
     @app.get("/api/sessions")
-    async def sessions_list(status: str = "", limit: int = 50):
-        sessions = session_store.list_sessions(status=status or None, limit=min(max(limit, 1), 200))
-        return {"sessions": [_serialize_session(s) for s in sessions], "count": len(sessions)}
+    async def sessions_list(status: str = "", source: str = "", limit: int = 50):
+        if source not in ("", "engine", "space", "scheduler"):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "bad_request", "message": "source 必须是 engine/space/scheduler"},
+            )
+        lim = min(max(limit, 1), 200)
+        items: List[Dict[str, Any]] = []
+        if source in ("", "engine"):
+            for s in session_store.list_sessions(status=status or None, limit=lim):
+                item = _serialize_session(s)
+                item.update(
+                    {
+                        "source": "engine",
+                        "title": s.workflow_name or s.id,
+                        "space_id": "",
+                        "space_name": "",
+                        "href": "#/runs",
+                    }
+                )
+                items.append(item)
+        if source in ("", "space"):
+            space_store = getattr(app.state, "space_store", None)
+            if space_store is not None:
+                from ..tenant import resolve_tenant_id
+
+                tid = resolve_tenant_id(None)
+                try:
+                    for sp in await space_store.list_spaces(limit=lim):
+                        last = await space_store._fetchone(
+                            "SELECT content, role, created_at FROM space_messages "
+                            "WHERE space_id = ? AND tenant_id = ? ORDER BY created_at DESC LIMIT 1",
+                            (sp.id, tid),
+                        )
+                        last_ts = _iso_to_epoch(last["created_at"]) if last else 0.0
+                        created = _iso_to_epoch(sp.created_at)
+                        item = {
+                            "id": f"space_{sp.id}",
+                            "workflow_id": "",
+                            "workflow_name": sp.name,
+                            "status": sp.status,
+                            "initial_input": {},
+                            "execution_id": "",
+                            "created_at": created,
+                            "updated_at": last_ts or _iso_to_epoch(sp.updated_at) or created,
+                            "completed_at": None,
+                            "metadata": {
+                                "space_id": sp.id,
+                                "last_message": (last["content"][:200] if last else ""),
+                                "last_role": (last["role"] if last else ""),
+                            },
+                            "tenant_id": sp.tenant_id,
+                            "source": "space",
+                            "title": sp.name,
+                            "space_id": sp.id,
+                            "space_name": sp.name,
+                            "href": "#/spaces",
+                        }
+                        items.append(item)
+                except Exception as e:
+                    logger.warning(f"space 会话合并失败 (跳过): {e}")
+        if source in ("", "scheduler") and scheduler is not None:
+            try:
+                for task in scheduler.list_tasks():
+                    item = {
+                        "id": f"sched_{task.id}",
+                        "workflow_id": task.workflow_id,
+                        "workflow_name": task.name,
+                        "status": task.status.value if hasattr(task.status, "value") else str(task.status),
+                        "initial_input": {},
+                        "execution_id": "",
+                        "created_at": task.created_at,
+                        "updated_at": task.last_run or task.created_at,
+                        "completed_at": None,
+                        "metadata": {
+                            "task_id": task.id,
+                            "trigger_type": task.trigger_type,
+                            "run_count": task.run_count,
+                            "fail_count": task.fail_count,
+                        },
+                        "tenant_id": getattr(task, "tenant_id", "default"),
+                        "source": "scheduler",
+                        "title": task.name,
+                        "space_id": "",
+                        "space_name": "",
+                        "href": "#/schedule",
+                    }
+                    items.append(item)
+            except Exception as e:
+                logger.warning(f"调度会话合并失败 (跳过): {e}")
+        if status:
+            items = [i for i in items if i.get("status") == status]
+        items.sort(key=lambda i: i.get("updated_at") or i.get("created_at") or 0, reverse=True)
+        items = items[:lim]
+        return {"sessions": items, "count": len(items)}
 
     @app.get("/api/sessions/{session_id}")
     async def sessions_get(session_id: str):
