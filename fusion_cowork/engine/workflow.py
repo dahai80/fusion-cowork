@@ -26,6 +26,53 @@ from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus
 
 logger = logging.getLogger(__name__)
 
+# issue #120: run-scoped step logs — `grep "[<run_id>]"` 重建执行时间线。
+# params 仅保留标量, 复杂值汇总, 敏感键脱敏; verdict 区分业务门控 (gated/blocked) 与失败。
+_LOG_SECRET_MARKERS = ("secret", "token", "password", "passwd", "api_key", "apikey", "authorization", "credential")
+_LOG_STR_CAP = 200
+_LOG_MAX_KEYS = 20
+
+
+def _sanitize_log_value(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:_LOG_STR_CAP]
+    if isinstance(value, dict):
+        return f"<dict:{len(value)}>"
+    if isinstance(value, (list, tuple, set)):
+        return f"<{type(value).__name__}:{len(value)}>"
+    return f"<{type(value).__name__}>"
+
+
+def _sanitize_params(params: Any) -> str:
+    if not isinstance(params, dict):
+        return str(_sanitize_log_value(params))
+    out: Dict[str, Any] = {}
+    for k, v in list(params.items())[:_LOG_MAX_KEYS]:
+        key = str(k)
+        if any(m in key.lower() for m in _LOG_SECRET_MARKERS):
+            out[key] = "***"
+            continue
+        out[key] = _sanitize_log_value(v)
+    if len(params) > _LOG_MAX_KEYS:
+        out["..."] = f"<+{len(params) - _LOG_MAX_KEYS} more>"
+    return json.dumps(out, ensure_ascii=False, default=str)
+
+
+def _node_verdict(status: NodeStatus, output: Any) -> str:
+    # verdict ≠ 状态: 节点输出可标记业务门控 (blocked/passed=false/gated)
+    if status == NodeStatus.FAILED:
+        return "failed"
+    if status == NodeStatus.DENIED:
+        return "gated"
+    data = output if isinstance(output, dict) else {}
+    if data.get("blocked") is True:
+        return "blocked"
+    if data.get("passed") is False or data.get("gated") is True or data.get("requires_approval") is True:
+        return "gated"
+    return "success"
+
 
 class WorkflowStatus(Enum):
     """工作流执行状态。"""
@@ -442,6 +489,9 @@ class WorkflowEngine:
         # R-1: _executions 超上限淘汰最旧终态项, 防 long-running 引擎内存泄漏
         self._trim_executions()
 
+        # issue #120: run-scoped 日志头 — grep "[<run_id>]" 重建时间线
+        logger.info(f"[{exec_id}] run start: workflow={workflow.name} nodes={len(workflow.nodes)}")
+
         # Session: auto-create
         session = None
         if self._session_store:
@@ -649,6 +699,10 @@ class WorkflowEngine:
                         step.execution_time = 0
                         step.error = "权限拒绝: 需要手动审批"
                         execution.steps.append(step)
+                        logger.warning(
+                            f"[{exec_id}] step end:   node={node.name} verdict=gated duration={step.execution_time:.3f}s "
+                            f"params={_sanitize_params(node_input)} error={step.error}"
+                        )
                         # P1-10 (audit 0912): purge the denied node's data from
                         # the cache so downstream nodes cannot silently consume
                         # unauthorized intermediate results.
@@ -710,6 +764,10 @@ class WorkflowEngine:
                         step.execution_time = 0
                         step.error = "被Hook取消"
                         execution.steps.append(step)
+                        logger.warning(
+                            f"[{exec_id}] step end:   node={node.name} verdict=blocked duration={step.execution_time:.3f}s "
+                            f"params={_sanitize_params(node_input)} error={step.error}"
+                        )
                         if not node.config.continue_on_error:
                             execution.status = WorkflowStatus.CANCELLED
                             break
@@ -727,6 +785,9 @@ class WorkflowEngine:
                     input_data=node_input,
                 )
                 execution.steps.append(step)
+
+                # issue #120: run-scoped step start — INFO
+                logger.info(f"[{exec_id}] step start: node={node.name} node_id={node_id}")
 
                 # 执行节点 — CR-11: 状态只存 WorkflowStep, 不在共享 BaseNode 上写
                 # (并发执行同一 Workflow 时原地改 node.status/result 会互相覆盖)
@@ -825,6 +886,19 @@ class WorkflowEngine:
                                 break
 
                     # 通知进度
+                    verdict = _node_verdict(result.status, result.data)
+                    if verdict == "success":
+                        logger.info(
+                            f"[{exec_id}] step end:   node={node.name} verdict={verdict} "
+                            f"duration={step.execution_time:.3f}s params={_sanitize_params(node_input)} error="
+                        )
+                    else:
+                        logger.warning(
+                            f"[{exec_id}] step end:   node={node.name} verdict={verdict} "
+                            f"duration={step.execution_time:.3f}s params={_sanitize_params(node_input)} "
+                            f"error={result.error or ''}"
+                        )
+
                     self._notify_progress(execution, step)
 
                     # Event: NODE_END
@@ -863,6 +937,10 @@ class WorkflowEngine:
                     step.execution_time = step.completed_at - step.started_at
                     step.error = str(e)
                     logger.error(f"节点 '{node.config.label or node.name}' 执行异常: {e}")
+                    logger.warning(
+                        f"[{exec_id}] step end:   node={node.name} verdict=failed duration={step.execution_time:.3f}s "
+                        f"params={_sanitize_params(node_input)} error={step.error}"
+                    )
 
                     if self._hook_manager:
                         await self._hook_manager.fire(
@@ -945,6 +1023,12 @@ class WorkflowEngine:
                 ]
                 self._session_store.update_steps(session.id, steps_data)
                 self._session_store.update_status(session.id, execution.status.value, completed_at=time.time())
+
+            # issue #120: run-scoped run end — outcome/total/steps
+            logger.info(
+                f"[{exec_id}] run end:    outcome={execution.status.value} "
+                f"total={execution.total_time:.3f}s steps={len(execution.steps)}"
+            )
 
             # 生成摘要
             success_count = sum(1 for s in execution.steps if s.status == NodeStatus.SUCCESS)
