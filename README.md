@@ -345,6 +345,21 @@ fusion-cowork collab serve --port 11439
 | **Agent-Studio** | Workflow import | Advanced pre-built workflows |
 | **Model-Hub** | Model dispatch | Auto-select optimal local model |
 
+### Run-Scoped Execution Logs (v0.5.19, issue #120)
+
+`WorkflowEngine` emits structured, run-scoped log lines so a failed run is diagnosable from logs alone — `grep "[<run_id>]"` reconstructs the full execution timeline:
+
+```
+[<run_id>] run start: workflow=<name> nodes=<n>
+[<run_id>] step start: node=<node_type> node_id=<id>
+[<run_id>] step end:   node=<node_type> verdict=<success|gated|blocked|failed> duration=<s> params=<sanitized> error=<...>
+[<run_id>] run end:    outcome=<status> total=<s> steps=<n>
+```
+
+- **Verdict ≠ status** — node output flags (`blocked=true`, `passed=false`, `gated`/`requires_approval`) distinguish business gates (L2 hard-rule blocks, L3 approval gates) from errors; permission-denied steps log `verdict=gated`.
+- **Sanitized params** — scalar values only, strings capped at 200 chars, complex values summarized (`<dict:N>`), secret-named keys (`*key*`/`*token*`/`*password*`/...) redacted, 20-key cap.
+- **Log levels** — step start/end at INFO, failures and gates at WARNING, engine-internal errors at ERROR. `AgentOrchestrator` task execution follows the same `[<task_id>]` convention.
+
 ---
 
 ## 🕸️ Union Web Module (v0.5.5, issue #94; hardened v0.5.6, issues #96/#97/#98; P0 pages v0.5.7; P1 delegation v0.5.8)

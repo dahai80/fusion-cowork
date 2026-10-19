@@ -332,6 +332,8 @@ class AgentOrchestrator:
         """执行提交的任务 — HI-18: CancelledError 单独捕获, finally 置终态 + completed_at。"""
         task.status = "running"
         task.started_at = time.time()
+        # issue #120: task-scoped logs — 与引擎 step 日志同一 grep 约定
+        logger.info(f"[{task.task_id}] task start: agent={task.agent_id} desc={task.description[:80]}")
         # v2 方案二 (P1-3): presence must reflect the submit path too — it was
         # only maintained by AgentRuntime (message-bus), so the dashboard
         # showed every agent idle while orchestrated work was running.
@@ -408,6 +410,10 @@ class AgentOrchestrator:
             logger.error(f"提交任务执行异常: {e}")
         finally:
             task.completed_at = time.time()
+            logger.info(
+                f"[{task.task_id}] task end: outcome={task.status} "
+                f"total={task.completed_at - task.started_at:.3f}s error={task.error or ''}"
+            )
             self._task_handles.pop(task.task_id, None)
             if heartbeat is not None:
                 heartbeat.cancel()

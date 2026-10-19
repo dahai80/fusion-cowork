@@ -278,6 +278,21 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 | **Agent-Studio** | 工作流导入 | 调用高级编排的工作流 |
 | **Model-Hub** | 模型调度 | 自动选择最优本地模型 |
 
+### Run 级结构化执行日志 (v0.5.19, issue #120)
+
+`WorkflowEngine` 输出 run 级结构化日志 — 失败的运行只看日志即可定位, `grep "[<run_id>]"` 重建完整执行时间线:
+
+```
+[<run_id>] run start: workflow=<名称> nodes=<n>
+[<run_id>] step start: node=<节点类型> node_id=<id>
+[<run_id>] step end:   node=<节点类型> verdict=<success|gated|blocked|failed> duration=<秒> params=<脱敏> error=<...>
+[<run_id>] run end:    outcome=<状态> total=<秒> steps=<n>
+```
+
+- **verdict ≠ 状态** — 节点输出标记 (`blocked=true`、`passed=false`、`gated`/`requires_approval`) 区分业务门控 (L2 硬规则拦截、L3 审批门) 与错误; 权限拒绝步骤记 `verdict=gated`。
+- **params 脱敏** — 默认仅保留标量, 字符串截断 200 字符, 复杂值汇总 (`<dict:N>`), 敏感键名 (`*key*`/`*token*`/`*password*`/...) 置 `***`, 最多 20 键。
+- **日志级别** — step start/end 用 INFO, 失败与门控用 WARNING, 引擎内部错误用 ERROR。`AgentOrchestrator` 任务执行遵循同一 `[<task_id>]` 约定。
+
 ---
 
 ## 🕸️ 统一 Web 模块 (v0.5.5, issue #94; v0.5.6 加固, issue #96/#97/#98)
