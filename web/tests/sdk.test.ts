@@ -1,8 +1,9 @@
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
-import { runtimeApiKey, sdk } from '../src/sdk';
+import { apiBase, runtimeApiKey, sdk } from '../src/sdk';
 
 // issue #127: minimal regression coverage for the #96 runtime-key seam +
 // vendored #20 content-type fix (mirror of web-shell standalone.test.ts).
+// issue #129: /shell/<id> module-prefix contract for shell-proxied topologies.
 // Bun test has no window, so the sdk import always takes the standalone path.
 const calls: Array<{ input: string; init?: RequestInit }> = [];
 const originalFetch = globalThis.fetch;
@@ -53,6 +54,36 @@ describe('standalone http contract (issue #96/#127)', () => {
         (globalThis as { window?: unknown }).window = { __FUSION_COWORK_WEB_API_KEY__: 'k-win' };
         try {
             expect(runtimeApiKey()).toBe('k-win');
+        } finally {
+            delete (globalThis as { window?: unknown }).window;
+        }
+    });
+});
+
+describe('apiBase module prefix (issue #129)', () => {
+    it('derives /shell/<id> from pathname, empty standalone', () => {
+        (globalThis as { window?: unknown }).window = { location: { pathname: '/shell/fusion-cowork/runs' } };
+        try {
+            expect(apiBase()).toBe('/shell/fusion-cowork');
+        } finally {
+            delete (globalThis as { window?: unknown }).window;
+        }
+    });
+
+    it('direct http requests carry the module prefix', async () => {
+        (globalThis as { window?: unknown }).window = { location: { pathname: '/shell/fusion-cowork/' } };
+        try {
+            await sdk.http.get('/api/models');
+            expect(calls[0]!.input).toBe('/shell/fusion-cowork/api/models');
+        } finally {
+            delete (globalThis as { window?: unknown }).window;
+        }
+    });
+
+    it('standalone root gets no prefix', () => {
+        (globalThis as { window?: unknown }).window = { location: { pathname: '/' } };
+        try {
+            expect(apiBase()).toBe('');
         } finally {
             delete (globalThis as { window?: unknown }).window;
         }

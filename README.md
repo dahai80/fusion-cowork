@@ -371,6 +371,13 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
 
+### Shell-Embedded API Base (v0.5.21, issue #129)
+
+Under the unified shell the module is served at `/shell/<id>/` — origin-root `/api/...` paths 404ed (gateway has no generic `/api/*` routes). The API layer now derives the module prefix from the document pathname (mirrors agent-studio's `apiBase()`):
+
+- **`web/src/sdk.ts::apiBase()`** — `/shell/fusion-cowork/runs` → `/shell/fusion-cowork`, standalone root → `""`. Applied to standalone `directRequest`, `streamSse`, and the embedded postMessage bridge path (the host fetches the path as-is, so the prefix rides on it). One build serves both topologies.
+- **Contract tests** — `web/tests/sdk.test.ts` gains an `apiBase` describe block (prefix derivation, prefixed direct request, no prefix at standalone root).
+
 ---
 
 ## 🕸️ Union Web Module (v0.5.5, issue #94; hardened v0.5.6, issues #96/#97/#98; P0 pages v0.5.7; P1 delegation v0.5.8)

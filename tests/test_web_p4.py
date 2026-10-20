@@ -248,7 +248,18 @@ class TestDeliverToDesktop:
         from fusion_cowork.server.sync import CrossDeviceSync, Device, DeviceStatus
 
         sync = CrossDeviceSync()
-        sync.register_device(Device(device_id="phone-2", name="iPad", device_type="ipad", status=DeviceStatus.OFFLINE))
+        # host/port 指向必拒端口 — 默认 localhost:11437 在本机真有同步服务时
+        # 连接会成功, 测试变环境相关 (register_device 强制 ONLINE)
+        sync.register_device(
+            Device(
+                device_id="phone-2",
+                name="iPad",
+                device_type="ipad",
+                host="127.0.0.1",
+                port=1,
+                status=DeviceStatus.OFFLINE,
+            )
+        )
 
         app = web_api.create_web_app(dist_dir=tmp_path / "no-dist", store_root=tmp_path / "wf2", cross_sync=sync)
         tc2 = TestClient(app)
