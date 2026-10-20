@@ -254,7 +254,7 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 | `file_operation` | 6 | 文件分类、批量重命名、复制、移动、删除、查找 |
 | `io` | 2 | 文件输入、文件输出 |
 | `logic` | 3 | 条件过滤、循环处理、数据合并 |
-| `fusion_ecosystem` | 1 | Trainer（Fusion-Trainer 互通） |
+| `fusion_ecosystem` | 4 | Trainer（Fusion-Trainer 互通）、记忆提交/记忆检索（Fusion-Memory 互通）、**Studio 运行**（Fusion-Agent-Studio 互通, issue #133）🆕 |
 | **CDP 浏览器节点** | **10** | CDP 导航、快照、点击、填写、批量填写、截图、执行JS、模拟设备、网络、控制台（注册在 `tool` 分类下） |
 
 ### Claude Cowork 对等能力 (V0.2) 🆕
@@ -275,7 +275,7 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 | **fusion-mlx** | HTTP API (经 fusion-gateway :11432) | LLM 推理、文本生成、嵌入 |
 | **Fusion-RAG** | HTTP API (端口 11436) | 知识库语义检索、RAG |
 | **Fusion-Code** | 自动生成脚本 | 复杂逻辑自动执行 |
-| **Agent-Studio** | 工作流导入 | 调用高级编排的工作流 |
+| **Agent-Studio** | HTTP API (:11442) + 工作流导入 | `studio_run` 节点提交 graph/agent 运行；调用高级编排的工作流 |
 | **Model-Hub** | 模型调度 | 自动选择最优本地模型 |
 
 ### Run 级结构化执行日志 (v0.5.19, issue #120)
@@ -303,6 +303,16 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#125 (P2) — manifest upstream/api_key**: `web/manifest.json` 声明 `upstream` (`http://127.0.0.1:11461`) + `api_key_env`; `shell_registry.load_manifest()` 注册时从该 env 解析 `api_key`, 并支持 `FUSION_COWORK_WEB_UPSTREAM` 覆盖。网关动态代理 (#232 契约) 可解析本模块。
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
+
+### Agent-Studio 运行节点 (v0.5.23, issue #133)
+
+跨模块组合：cowork DAG 现在可以把 fusion-agent-studio 的 graph/agent 作为一步调用。`StudioRunNode` (`fusion_cowork/nodes/ecosystem/studio_node.py`, 节点名 `studio_run`, 别名 `运行Studio`/`Studio运行`, ecosystem 分类 3→4 节点 / 总数 68):
+
+- **路径** — `graph_id` + `mode=sync` → `POST /v1/graphs/{id}/execute` (全量 `events` 内联返回); 其余走 `POST /v1/runs` 提交 — `mode=async` 立即返回 `run_id` 交上游编排, `mode=sync` 轮询 `GET /v1/runs/{id}` 至终态 (`completed`/`failed`/`canceled`) 后取 `GET /v1/runs/{id}/result`。sync 超时尽力经 `POST /v1/runs/{id}/cancel` 取消, 带 `run_id` 显式失败。
+- **配置** — env `FUSION_AGENT_STUDIO_URL` (默认 `http://127.0.0.1:11442`), 可选 `FUSION_AGENT_STUDIO_API_KEY` 以 `x-api-key` 携带 (上游本地受信模式鉴权可选)。参数: `graph_id`/`agent_id` (二选一), `input`, `mode`, `timeout` (300s), `poll_interval` (2s), `title`, `idempotency_key`。输出: `run_id`, `status`, `result`。
+- **门控** — `studio_run` 加入 `HIGH_RISK_NODES` (触发远端多步 agent 执行, 与 `fetch_url` 同级须显式放行); guard 内容映射走 JSON fallback。
+
+测试: `tests/test_issue_133_studio_node.py` (18 例, httpx MockTransport 离线桩)。
 
 ### 模型 chat 过滤加固 (v0.5.22, issue #131)
 

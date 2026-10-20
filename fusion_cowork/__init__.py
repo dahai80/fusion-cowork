@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.5.22"
+__version__ = "0.5.23"
 __app_name__ = "Fusion-Cowork"
 
 # ── 节点工具名称映射表（吸纳自 Squish tool_name_map.py） ──
@@ -112,6 +112,9 @@ NODE_NAME_ALIASES: dict[str, str] = {
     "提交记忆": "memory_commit",
     "记忆检索": "memory_retrieve",
     "召回记忆": "memory_retrieve",
+    # Studio 互通 (fusion-agent-studio, issue #133)
+    "运行Studio": "studio_run",
+    "Studio运行": "studio_run",
 }
 
 # ── Lazy Import 注册表（吸纳自 Squish 的 __getattr__ 机制） ──
