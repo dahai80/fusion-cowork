@@ -21,6 +21,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set
 
+from ._permission_local import reset_approval_context, set_approval_context
 from .hooks import HookEvent
 from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus
 
@@ -682,7 +683,10 @@ class WorkflowEngine:
 
                 # Permission check
                 if self._permission_manager:
+                    # issue #138: 写审批上下文 (workflow/node_id) 供高风险拒绝的审批卡展示
+                    token = set_approval_context({'workflow': workflow.name, 'node_id': node_id})
                     allowed = await self._permission_manager.check(node.name, "execute", node_input)
+                    reset_approval_context(token)
                     if not allowed:
                         logger.warning(f"节点 '{node.name}' 被权限系统拒绝执行")
                         step = WorkflowStep(

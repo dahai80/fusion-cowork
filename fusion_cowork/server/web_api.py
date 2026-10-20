@@ -262,6 +262,7 @@ class RunRegistry:
             "summary": s.summary,
             "error": s.error,
             "output_data": s.output_data,
+            "input_data": s.input_data,
         }
 
     def list(self) -> List[Dict[str, Any]]:
@@ -504,6 +505,13 @@ def create_web_app(
         from ..engine import PermissionManager
 
         permission_manager = PermissionManager()
+        # issue #138: 审批规则持久化 — serve 启动加载已批准/拒绝规则
+        loader = getattr(permission_manager, "load", None)
+        if callable(loader):
+            try:
+                loader()
+            except Exception as e:
+                logger.warning(f"web API 权限规则加载失败 (继续空规则): {e}")
     if engine is None:
         from ..engine import WorkflowEngine
         from ..engine.events import EventEmitter
@@ -968,6 +976,29 @@ def create_web_app(
         logger.info(f"web API 通知源 runs 轮询: {len(items)} 条终态运行")
         return {"items": items}
 
+
+    # ── issue #138 G10: 空间知识层 — space 级 instructions (system-prompt 注入) ──
+    @app.get("/api/space/spaces/{space_id}/instructions")
+    async def instructions_get(space_id: str):
+        if space_store is None:
+            raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "空间存储不可用"})
+        sp = await space_store.get_space(space_id)
+        if not sp:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": "空间不存在"})
+        return {"space_id": space_id, "instructions": getattr(sp.config, "instructions", "") or ""}
+
+    @app.put("/api/space/spaces/{space_id}/instructions")
+    async def instructions_put(space_id: str, body: Dict[str, Any]):
+        if space_store is None:
+            raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "空间存储不可用"})
+        sp = await space_store.get_space(space_id)
+        if not sp:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": "空间不存在"})
+        existing = sp.config.to_dict()
+        existing["instructions"] = str(body.get("instructions") or "")
+        await space_store.update_space(space_id, config=existing)
+        logger.info(f"web API space instructions 已更新: {space_id} ({len(existing['instructions'])} 字符)")
+        return {"space_id": space_id, "instructions": existing["instructions"]}
     # ── W19 guard L3 审批队列 (migration doc §6 P3; #124 起 guard+本地 CONFIRM 合并) ──
     @app.get("/api/permissions/pending")
     async def permissions_pending():
@@ -982,7 +1013,14 @@ def create_web_app(
         if permission_manager is None:
             raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"})
         approved = bool(body.get("approved"))
-        confirmed = await permission_manager.confirm_guard(action_id, approved, approved_by="web")
+        confirmed = await permission_manager.confirm_guard(action_id, approved, approved_by="web", scope=str(body.get("scope") or "*"))
+        # issue #138: 确认落规则后立即持久化 (重启不丢)
+        try:
+            saver = getattr(permission_manager, "save", None)
+            if confirmed and callable(saver):
+                saver()
+        except Exception as e:
+            logger.warning(f"web API 权限规则保存失败: {e}")
         return {"action_id": action_id, "approved": approved, "confirmed": confirmed}
 
     # ── W21 集群面板 (migration doc §6 P3, FUSION_CLUSTER_ENABLED opt-in) ──

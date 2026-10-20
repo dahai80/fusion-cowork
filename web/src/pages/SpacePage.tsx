@@ -447,6 +447,39 @@ function KbPanel({ spaceId }: { spaceId: string }) {
     const [results, setResults] = useState<{ document_name?: string; content?: string; score?: number }[] | null>(null);
     const status = useAutoRetry(() => api.kbStatus(spaceId), [spaceId]);
     const docs = useAutoRetry(() => api.kbDocuments(spaceId), [spaceId]);
+    const [instr, setInstr] = useState('');
+    const [instrLoaded, setInstrLoaded] = useState(false);
+    const [savingInstr, setSavingInstr] = useState(false);
+
+    useEffect(() => {
+        let alive = true;
+        api
+            .spaceInstructions(spaceId)
+            .then((r) => {
+                if (!alive) return;
+                setInstr(r.instructions || '');
+                setInstrLoaded(true);
+            })
+            .catch((e) => console.warn('[cowork-web] space instructions load failed', e));
+        return () => {
+            alive = false;
+        };
+    }, [spaceId]);
+
+    async function saveInstructions() {
+        if (savingInstr) return;
+        setSavingInstr(true);
+        try {
+            const r = await api.saveSpaceInstructions(spaceId, instr);
+            setInstr(r.instructions || '');
+            sdk.toast.show({ level: 'success', message: t('空间指令已保存', 'Instructions saved') });
+        } catch (e) {
+            console.error('[cowork-web] space instructions save failed', e);
+            sdk.toast.show({ level: 'error', message: t('保存失败', 'Save failed') });
+        } finally {
+            setSavingInstr(false);
+    }
+    }
 
     async function bind(unbind: boolean) {
         try {
@@ -480,6 +513,29 @@ function KbPanel({ spaceId }: { spaceId: string }) {
 
     return (
         <div className="space-y-2 py-2">
+            <div className="rounded-lg border border-border bg-bg-elevated p-3">
+                <div className="text-xs font-medium text-text-primary">{t('空间指令', 'Space instructions')}</div>
+                <div className="mt-1 text-[10px] text-text-muted">
+                    {t('注入该空间所有 agent 聊天的 system prompt', 'Injected into every agent chat system prompt in this space')}
+                </div>
+                <textarea
+                    className="min-h-20 w-full rounded-md border border-border bg-bg px-2 py-1.5 text-xs text-text-primary"
+                    placeholder={t('例: 用中文回答, 引用知识库内容时标注来源', 'e.g. answer in Chinese, cite KB sources')}
+                    value={instr}
+                    onChange={(e) => setInstr(e.target.value)}
+                    disabled={!instrLoaded}
+                />
+                <div className="mt-1 flex justify-end">
+                    <button
+                        type="button"
+                        className="rounded-md bg-brand px-2 py-1 text-xs text-white hover:opacity-90 disabled:opacity-50"
+                        disabled={!instrLoaded || savingInstr}
+                        onClick={() => void saveInstructions()}
+                    >
+                        {savingInstr ? t('保存中…', 'Saving…') : t('保存指令', 'Save instructions')}
+                    </button>
+                </div>
+            </div>
             <div className="flex items-center gap-2">
                 <span className="text-xs text-text-secondary">
                     {status.data?.bound ? t('已绑定知识库', 'KB bound') : t('未绑定知识库', 'No KB bound')}

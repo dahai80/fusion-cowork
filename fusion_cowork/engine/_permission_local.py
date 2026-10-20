@@ -21,6 +21,8 @@ import json
 import logging
 import os
 import threading
+import time
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List
@@ -28,6 +30,37 @@ from typing import Any, Dict, List
 logger = logging.getLogger(__name__)
 
 _PERMISSIONS_DIR = os.path.expanduser("~/.fusion-cowork")
+
+# issue #138: 引擎侧审批上下文 (workflow/node) — WorkflowEngine 在 check 前写入,
+# 高风险拒绝落待审批队列时附带卡片展示所需上下文。
+_approval_context: ContextVar = ContextVar("fc_approval_context")
+
+
+def set_approval_context(ctx: Dict[str, Any]):
+    return _approval_context.set({str(k): str(v) for k, v in dict(ctx).items()})
+
+
+def reset_approval_context(token) -> None:
+    _approval_context.reset(token)
+
+
+def _sanitize_approval_params(params: Dict[str, Any] = None) -> Dict[str, Any]:
+    # 审批卡参数快照: 仅标量, 字符串 200 字上限, 秘钥类键名脱敏, 20 键上限
+    if not isinstance(params, dict):
+        return {}
+    snapshot: Dict[str, Any] = {}
+    for key, val in list(params.items())[:20]:
+        low = str(key).lower()
+        if any(marker in low for marker in ("key", "token", "password", "secret")):
+            snapshot[str(key)] = "***"
+            continue
+        if isinstance(val, (str, int, float, bool)):
+            text = str(val)
+            snapshot[str(key)] = text[:200]
+        else:
+            snapshot[str(key)] = f"<{type(val).__name__}>"
+    return snapshot
+
 _PERMISSIONS_FILE = os.path.join(_PERMISSIONS_DIR, "permissions.json")
 
 
@@ -139,6 +172,8 @@ class PermissionManager:
         self._pending_guard_approvals: Dict[str, str] = {}
         # issue #124: 本地 CONFIRM 拒绝待审批 — guard OFF 时高风险节点拒绝也要进 GUI 审批队列
         self._pending_local_approvals: Dict[str, str] = {}
+        # issue #138: 待审批卡片上下文 — action_id → {tool_name/params/ts/workflow/node_id}
+        self._pending_local_details: Dict[str, Dict[str, Any]] = {}
 
     async def check(self, tool_name: str, action: str = "", params: Dict[str, Any] = None) -> bool:
         # A-6: deny 规则须先于 Hook 批准判定 — 否则 Hook approve 可覆盖显式 deny (绕过)。
@@ -206,6 +241,15 @@ class PermissionManager:
             action_id = f"local_{uuid.uuid4().hex[:8]}"
             with self._lock:
                 self._pending_local_approvals[action_id] = tool_name
+            ctx = _approval_context.get({})
+
+            self._pending_local_details[action_id] = {
+                "tool_name": tool_name,
+                "params": _sanitize_approval_params(params),
+                "ts": time.time(),
+                "workflow": str(ctx.get("workflow", "")),
+                "node_id": str(ctx.get("node_id", "")),
+            }
             logger.info(f"高风险节点无显式批准, 拒绝: {tool_name} (action_id={action_id} 已入本地待审批队列)")
             return False
 
@@ -290,15 +334,16 @@ class PermissionManager:
         return False
 
     async def confirm_guard(
-        self, action_id: str, approved: bool, approved_by: str = "unknown", tenant_id: str = "default"
+        self, action_id: str, approved: bool, approved_by: str = "unknown", tenant_id: str = "default", scope: str = "*"
     ) -> bool:
         # issue #124: 本地 CONFIRM 拒绝的 confirm — 无需 guard 在线, 直接落本地规则
         with self._lock:
             local_tool = self._pending_local_approvals.pop(action_id, None)
         if local_tool:
+            self._pending_local_details.pop(action_id, None)
             if approved:
-                self.approve(local_tool)
-                logger.info(f"本地 confirm 批准, 加 approve 规则: {local_tool} (by={approved_by})")
+                self.approve(local_tool, scope=scope)
+                logger.info(f"本地 confirm 批准, 加 approve 规则: {local_tool} (scope={scope}, by={approved_by})")
             else:
                 self.deny(local_tool)
                 logger.info(f"本地 confirm 拒绝, 加 deny 规则: {local_tool} (by={approved_by})")
@@ -331,15 +376,20 @@ class PermissionManager:
                 for action_id, tool_name in self._pending_guard_approvals.items()
             ]
 
-    def list_pending(self) -> List[Dict[str, str]]:
+    def list_pending(self) -> List[Dict[str, Any]]:
         # issue #124: guard + 本地 CONFIRM 拒绝合并待审批队列 (source 字段区分来源)
+        # issue #138: 本地条目附带审批卡上下文 (params/ts/workflow/node_id)
         with self._lock:
-            entries = [
+            entries: List[Dict[str, Any]] = [
                 {"action_id": action_id, "tool_name": tool_name, "source": "guard"}
                 for action_id, tool_name in self._pending_guard_approvals.items()
             ]
             entries.extend(
-                {"action_id": action_id, "tool_name": tool_name, "source": "local"}
+                {
+                    "action_id": action_id,
+                    "source": "local",
+                    **(self._pending_local_details.get(action_id) or {"tool_name": tool_name}),
+                }
                 for action_id, tool_name in self._pending_local_approvals.items()
             )
         return entries
