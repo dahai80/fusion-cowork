@@ -304,6 +304,15 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
 
+### 模型 chat 过滤加固 (v0.5.22, issue #131)
+
+跨仓对齐 fusion-gateway#245 (网关在 `/v1/models` 上新增 `engine_type` + `modality` + `capabilities` 元数据)。`_is_chat_model` (`fusion_cowork/ai/nl_parser.py`, 由 `/api/models` 与 `_pick_chat_model` 共用) 闭合两个缺口:
+
+- **`draft` 引擎类型过滤** — 投机解码草稿模型 (如 `Qwen3.8-27B-DFlash2`) 加入 `_NON_CHAT_ENGINE_TYPES`, 不再可能被选为 chat 默认模型。
+- **`capabilities` 第二信号** — 模型条目带网关 `capabilities` 元数据时 (顶层或 `metadata.capabilities`), 优先于 `engine_type` 判定: `capabilities.embedding=true` → 非 chat (无 `engine_type` 也正确, 如 bge-m3 `modality=text`), `text_generation=false` → 非 chat, `text_generation=true` → 权威 chat。不含 `embedding`/`text_generation` 键的条目照旧走 `engine_type` 门。
+
+测试: `tests/test_issue_131_chat_model_filter.py`。
+
 ### Shell 嵌入模式 API 前缀 (v0.5.21, issue #129)
 
 统一 shell 下模块被托管在 `/shell/<id>/` — 根相对 `/api/...` 路径全部 404 (网关无通用 `/api/*` 路由)。API 层现从 document pathname 推导模块前缀 (对齐 agent-studio 的 `apiBase()`):
