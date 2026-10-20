@@ -57,7 +57,7 @@ async function directRequest<T>(
     if (key) {
         headers['x-api-key'] = key;
     }
-    const res = await fetch(path, {
+    const res = await fetch(apiBase() + path, {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -91,7 +91,7 @@ export async function streamSse(
     const headers: Record<string, string> = { accept: 'text/event-stream' };
     const key = runtimeApiKey();
     if (key) headers['x-api-key'] = key;
-    const res = await fetch(path, { headers, signal });
+    const res = await fetch(apiBase() + path, { headers, signal });
     if (!res.ok || !res.body) throw new Error(`sse failed: ${res.status}`);
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -127,8 +127,32 @@ export async function streamSse(
 
 export const sdk: FusionShellSdk = createShellSdk();
 
+// issue #129: under the unified shell the module is served at
+// /shell/<id>/ — origin-root API paths 404 (gateway has no generic /api/*
+// routes). Derive the prefix from the document pathname like agent-studio's
+// apiBase(): "/shell/fusion-cowork/" → "/shell/fusion-cowork", standalone
+// root → "". One build serves both topologies.
+export function apiBase(): string {
+    if (typeof window === 'undefined') return '';
+    const path = window.location?.pathname ?? '';
+    const m = path.match(/^(\/shell\/[^/]+)/);
+    return m ? m[1] : '';
+}
+
 if (!isEmbedded()) {
     // Standalone against the web-api: layer runtime key + content-type onto
     // the plain same-origin http. Embedded mode never enters this branch.
+    // apiBase() is applied per-request (shell-proxied standalone deployments).
     (sdk as unknown as { http: ReturnType<typeof directHttp> }).http = directHttp();
+} else {
+    // Embedded through the host postMessage bridge: the host fetches the
+    // path as-is, so the /shell/<id> module prefix must ride on the path.
+    const bridgeHttp = sdk.http;
+    (sdk as unknown as { http: unknown }).http = {
+        request: <T>(path: string) => bridgeHttp.request<T>(apiBase() + path),
+        get: <T>(path: string) => bridgeHttp.get<T>(apiBase() + path),
+        post: <T>(path: string, body?: unknown) => bridgeHttp.post<T>(apiBase() + path, body),
+        put: <T>(path: string, body?: unknown) => bridgeHttp.put<T>(apiBase() + path, body),
+        delete: <T>(path: string) => bridgeHttp.delete<T>(apiBase() + path),
+    };
 }

@@ -304,6 +304,13 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
 
+### Shell 嵌入模式 API 前缀 (v0.5.21, issue #129)
+
+统一 shell 下模块被托管在 `/shell/<id>/` — 根相对 `/api/...` 路径全部 404 (网关无通用 `/api/*` 路由)。API 层现从 document pathname 推导模块前缀 (对齐 agent-studio 的 `apiBase()`):
+
+- **`web/src/sdk.ts::apiBase()`** — `/shell/fusion-cowork/runs` → `/shell/fusion-cowork`, 独立根路径 → `""`。应用于独立 `directRequest`、`streamSse` 与嵌入 postMessage bridge 路径 (host 按原样 fetch, 前缀必须随路径携带)。一份构建同时服务两种拓扑。
+- **契约测试** — `web/tests/sdk.test.ts` 新增 `apiBase` describe (前缀推导、带前缀请求、独立根路径无前缀)。
+
 ---
 
 ## 🕸️ 统一 Web 模块 (v0.5.5, issue #94; v0.5.6 加固, issue #96/#97/#98)
