@@ -61,9 +61,11 @@ async def _submit_run(client: httpx.AsyncClient, payload: Dict[str, Any]) -> Dic
 
 
 async def _execute_graph(client: httpx.AsyncClient, graph_id: str, input_text: str) -> Dict[str, Any]:
+    # issue #135 F-1: 上游 GraphExecuteRequest 要求 body 携带 graph_id (与路径参数冗余
+    # 但必填), 缺失 422
     resp = await client.post(
         f"/v1/graphs/{graph_id}/execute",
-        json={"input_text": input_text},
+        json={"graph_id": graph_id, "input_text": input_text},
     )
     resp.raise_for_status()
     return resp.json()
