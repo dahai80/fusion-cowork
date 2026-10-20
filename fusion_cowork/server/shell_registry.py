@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 GATEWAY_URL_ENV = "FUSION_SHELL_GATEWAY_URL"
 ADMIN_KEY_ENV = "FUSION_GATEWAY_ADMIN_KEY"
 MANIFEST_PATH_ENV = "FUSION_SHELL_MANIFEST"
+UPSTREAM_OVERRIDE_ENV = "FUSION_COWORK_WEB_UPSTREAM"
 REGISTER_INTERVAL_SECONDS = 15.0
 HTTP_TIMEOUT_SECONDS = 5.0
 
@@ -41,7 +42,23 @@ def load_manifest() -> Dict[str, Any]:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     if not manifest.get("id"):
         raise ValueError(f"shell manifest 缺少 id: {path}")
-    logger.info(f"shell manifest 已加载: {path} (id={manifest['id']})")
+    # issue #125: gateway 动态代理 (#232 契约) 解析 upstream/api_key —
+    # manifest 声明默认值; FUSION_COWORK_WEB_UPSTREAM 覆盖部署特定端口;
+    # api_key 经 api_key_env 指向的运行时变量注入 (空值不注入, 不落盘)。
+    override = os.environ.get(UPSTREAM_OVERRIDE_ENV, "").strip()
+    if override:
+        manifest["upstream"] = override
+    if not manifest.get("upstream"):
+        manifest["upstream"] = "http://127.0.0.1:11461"
+    key_env = str(manifest.get("api_key_env", "")).strip()
+    api_key = os.environ.get(key_env, "").strip() if key_env else ""
+    if api_key:
+        manifest["api_key"] = api_key
+    else:
+        manifest.pop("api_key", None)
+    logger.info(
+        f"shell manifest 已加载: {path} (id={manifest['id']} upstream={manifest['upstream']} api_key={'set' if api_key else 'unset'})"
+    )
     return manifest
 
 

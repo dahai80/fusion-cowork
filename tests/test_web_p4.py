@@ -216,7 +216,8 @@ class TestMobileOverview:
         app.state.permission_manager._pending_guard_approvals["act-9"] = "ShellExec"
         body = tc.get("/api/mobile/overview", headers=_auth()).json()
         assert [r["run_id"] for r in body["runs"]] == ["run_x"]
-        assert body["pending_approvals"] == [{"action_id": "act-9", "tool_name": "ShellExec"}]
+        # issue #124: pending 合并 guard+local, guard 条目带 source=guard
+        assert body["pending_approvals"] == [{"action_id": "act-9", "tool_name": "ShellExec", "source": "guard"}]
 
 
 class TestDeliverToDesktop:

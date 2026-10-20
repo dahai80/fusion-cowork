@@ -10,6 +10,8 @@
     "entry": "/shell/fusion-cowork/",
     "health": "http://127.0.0.1:11432/shell/fusion-cowork/health",
     "backend": "http://127.0.0.1:11432/shell/fusion-cowork/",
+    "upstream": "http://127.0.0.1:11461",
+    "api_key_env": "FUSION_COWORK_WEB_API_KEY",
     "devices": ["desktop", "mobile-readonly"],
     "category": "platform"
 }

@@ -648,48 +648,100 @@ class WebSearchNode(BaseNode):
         max_results = params.get("max_results", 5)
         timeout = params.get("timeout", 10)
 
+        import html as html_mod
+
+        async def _ddg_search(client) -> list:
+            # 使用 DuckDuckGo Lite API (原始路径)
+            resp = await client.get(
+                "https://lite.duckduckgo.com/lite/",
+                params={"q": query},
+            )
+            resp.raise_for_status()
+
+            import re
+
+            html = resp.text
+            link_pattern = re.compile(
+                r'<a[^>]+class="result-link"[^>]+href="([^"]*)"[^>]*>(.*?)</a>',
+                re.DOTALL | re.IGNORECASE,
+            )
+            snippet_pattern = re.compile(
+                r'<td[^>]*class="result-snippet"[^>]*>(.*?)</td>',
+                re.DOTALL | re.IGNORECASE,
+            )
+
+            links = link_pattern.findall(html)
+            snippets = snippet_pattern.findall(html)
+
+            results = []
+            for i, (url, title) in enumerate(links[:max_results]):
+                snippet = ""
+                if i < len(snippets):
+                    snippet = html_mod.unescape(re.sub(r"<[^>]+>", "", snippets[i]).strip())
+                results.append(
+                    {
+                        "title": html_mod.unescape(re.sub(r"<[^>]+>", "", title).strip()),
+                        "url": url,
+                        "snippet": snippet,
+                    }
+                )
+            return results
+
+        async def _bing_search(client) -> list:
+            """Bing 网页结果回退 — DDG 在部分网络环境不可达。"""
+            import re
+
+            resp = await client.get(
+                "https://cn.bing.com/search",
+                params={"q": query},
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0 Safari/537.36"
+                    )
+                },
+            )
+            resp.raise_for_status()
+            html = resp.text
+            results = []
+            for block in re.findall(r'<li class="b_algo".*?</li>', html, re.S)[:max_results]:
+                h2 = re.search(
+                    r'<h2[^>]*><a[^>]+href="(http[^"]+)"[^>]*>(.*?)</a>',
+                    block,
+                    re.S,
+                )
+                if not h2:
+                    continue
+                title = html_mod.unescape(re.sub(r"<[^>]+>", "", h2.group(2)).strip())
+                snippet = ""
+                p = re.search(r'<p class="b_lineclamp[^"]*"[^>]*>(.*?)</p>', block, re.S)
+                if p:
+                    snippet = html_mod.unescape(re.sub(r"<[^>]+>", "", p.group(1)).strip())
+                results.append({"title": title, "url": h2.group(1), "snippet": snippet})
+            return results
+
         try:
             import httpx
 
+            results: list = []
+            last_error = ""
             async with httpx.AsyncClient(timeout=timeout) as client:
-                # 使用 DuckDuckGo Lite API
-                resp = await client.get(
-                    "https://lite.duckduckgo.com/lite/",
-                    params={"q": query},
+                for engine in (_ddg_search, _bing_search):
+                    try:
+                        results = await engine(client)
+                    except Exception as e:
+                        last_error = str(e)
+                        continue
+                    if results:
+                        break
+
+            if not results and last_error:
+                return NodeResult(
+                    status=NodeStatus.FAILED,
+                    error=f"搜索失败: {last_error}",
+                    summary="搜索失败",
                 )
-                resp.raise_for_status()
-
-                import re
-
-                html = resp.text
-
-                # 解析结果
-                results = []
-                link_pattern = re.compile(
-                    r'<a[^>]+class="result-link"[^>]+href="([^"]*)"[^>]*>(.*?)</a>',
-                    re.DOTALL | re.IGNORECASE,
-                )
-                snippet_pattern = re.compile(
-                    r'<td[^>]*class="result-snippet"[^>]*>(.*?)</td>',
-                    re.DOTALL | re.IGNORECASE,
-                )
-
-                links = link_pattern.findall(html)
-                snippets = snippet_pattern.findall(html)
-
-                import html as html_mod
-
-                for i, (url, title) in enumerate(links[:max_results]):
-                    snippet = ""
-                    if i < len(snippets):
-                        snippet = html_mod.unescape(re.sub(r"<[^>]+>", "", snippets[i]).strip())
-                    results.append(
-                        {
-                            "title": html_mod.unescape(re.sub(r"<[^>]+>", "", title).strip()),
-                            "url": url,
-                            "snippet": snippet,
-                        }
-                    )
 
             return NodeResult(
                 status=NodeStatus.SUCCESS if results else NodeStatus.FAILED,

@@ -1123,6 +1123,8 @@ def web_serve(port: int, host: str):
     (默认仅本机绑定)。
     shell 注册 (issue #97): FUSION_SHELL_GATEWAY_URL + FUSION_GATEWAY_ADMIN_KEY
     同时配置时, 后台任务向网关注册 web/manifest.json 并心跳保活。
+    跨设备同步 (#123): FUSION_COWORK_CROSS_SYNC=1 时启动 CrossDeviceSync
+    (W22 /api/deliver 通道), 参数走 FUSION_COWORK_SYNC_HOST/PORT/TOKEN/CERT/KEY。
     """
     import asyncio
 
@@ -1131,12 +1133,15 @@ def web_serve(port: int, host: str):
         import uvicorn
 
         from .server.shell_registry import shell_registration_enabled, shell_registry_loop
+        from .server.sync import cross_sync_from_env
         from .server.web_api import auth_configured, create_web_app
     except ImportError:
         console.print_warning("Web API 未启动 (缺 [web] 依赖): pip install fusion-cowork[web]")
         return
 
-    app = create_web_app()
+    cross_sync = cross_sync_from_env()
+
+    app = create_web_app(cross_sync=cross_sync)
     console.print_success(f"Cowork Web API 已启动: {bind_host}:{port} (/api /health)")
     if not auth_configured():
         console.print_warning("FUSION_COWORK_WEB_API_KEY 未配置 — 鉴权放行 (仅建议本机绑定使用)")
@@ -1149,6 +1154,14 @@ def web_serve(port: int, host: str):
         if scheduler:
             scheduler.start()
             console.print_info("任务调度器已启动 (定时任务生效)")
+        if cross_sync:
+            try:
+                await cross_sync.start()
+                console.print_info(
+                    f"跨设备同步已启动: {cross_sync.host}:{cross_sync.port} (device={cross_sync.device_id})"
+                )
+            except Exception as e:
+                logger.warning(f"跨设备同步启动失败 (/api/deliver 将不可用): {e}")
         registry_task = asyncio.create_task(shell_registry_loop()) if register_enabled else None
         config = uvicorn.Config(app, host=bind_host, port=port, log_level="info")
         server = uvicorn.Server(config)
@@ -1157,6 +1170,11 @@ def web_serve(port: int, host: str):
         finally:
             if registry_task:
                 registry_task.cancel()
+            if cross_sync:
+                try:
+                    await cross_sync.stop()
+                except Exception as e:
+                    logger.warning(f"跨设备同步停止异常: {e}")
             if scheduler:
                 scheduler.shutdown(wait=False)
             space_store = getattr(app.state, "space_store", None)

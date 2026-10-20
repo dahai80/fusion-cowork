@@ -134,6 +134,8 @@ class PermissionManager:
         self._lock = threading.Lock()
         # issue #73: guard 委托待确认 — action_id → tool_name, confirm 成功后加本地 approve 规则
         self._pending_guard_approvals: Dict[str, str] = {}
+        # issue #124: 本地 CONFIRM 拒绝待审批 — guard OFF 时高风险节点拒绝也要进 GUI 审批队列
+        self._pending_local_approvals: Dict[str, str] = {}
 
     async def check(self, tool_name: str, action: str = "", params: Dict[str, Any] = None) -> bool:
         # A-6: deny 规则须先于 Hook 批准判定 — 否则 Hook approve 可覆盖显式 deny (绕过)。
@@ -195,7 +197,13 @@ class PermissionManager:
 
         client = get_guard_client()
         if client is None:
-            logger.info(f"高风险节点无显式批准, 拒绝: {tool_name}")
+            # issue #124: 本地拒绝入待审批队列 — Web GUI 可 confirm, 不再永久拒绝
+            import uuid
+
+            action_id = f"local_{uuid.uuid4().hex[:8]}"
+            with self._lock:
+                self._pending_local_approvals[action_id] = tool_name
+            logger.info(f"高风险节点无显式批准, 拒绝: {tool_name} (action_id={action_id} 已入本地待审批队列)")
             return False
 
         content, content_type = node_to_guard_content(tool_name, params)
@@ -281,6 +289,18 @@ class PermissionManager:
     async def confirm_guard(
         self, action_id: str, approved: bool, approved_by: str = "unknown", tenant_id: str = "default"
     ) -> bool:
+        # issue #124: 本地 CONFIRM 拒绝的 confirm — 无需 guard 在线, 直接落本地规则
+        with self._lock:
+            local_tool = self._pending_local_approvals.pop(action_id, None)
+        if local_tool:
+            if approved:
+                self.approve(local_tool)
+                logger.info(f"本地 confirm 批准, 加 approve 规则: {local_tool} (by={approved_by})")
+            else:
+                self.deny(local_tool)
+                logger.info(f"本地 confirm 拒绝, 加 deny 规则: {local_tool} (by={approved_by})")
+            return True
+
         from ..security.guard import get_guard_client
 
         client = get_guard_client()
@@ -307,6 +327,19 @@ class PermissionManager:
                 {"action_id": action_id, "tool_name": tool_name}
                 for action_id, tool_name in self._pending_guard_approvals.items()
             ]
+
+    def list_pending(self) -> List[Dict[str, str]]:
+        # issue #124: guard + 本地 CONFIRM 拒绝合并待审批队列 (source 字段区分来源)
+        with self._lock:
+            entries = [
+                {"action_id": action_id, "tool_name": tool_name, "source": "guard"}
+                for action_id, tool_name in self._pending_guard_approvals.items()
+            ]
+            entries.extend(
+                {"action_id": action_id, "tool_name": tool_name, "source": "local"}
+                for action_id, tool_name in self._pending_local_approvals.items()
+            )
+        return entries
 
     def approve(self, tool_name: str, scope: str = "*") -> None:
         rule = Permission(tool_name=tool_name, allowed=True, scope=scope)
@@ -395,6 +428,7 @@ class PermissionManager:
                 removed = len(self.rules)
                 self.rules.clear()
             self._pending_approvals.clear()
+            self._pending_local_approvals.clear()
         logger.info(f"PermissionManager.reset removed={removed} tool_name={tool_name or '*'}")
         return removed
 

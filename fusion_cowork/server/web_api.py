@@ -874,9 +874,9 @@ def create_web_app(
             raise HTTPException(status_code=502, detail={"code": "upstream_error", "message": "生成结果缺少 nodes"})
         return {"workflow": workflow}
 
-    # ── W17 模型目录 (migration doc §6 P3) ──
+    # ── W17 模型目录 (migration doc §6 P3; #126 起默认只回 chat 模型) ──
     @app.get("/api/models")
-    async def models_list():
+    async def models_list(request: Request):
         mlx = getattr(nl_generator, "mlx", None)
         if mlx is None:
             raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "模型客户端不可用"})
@@ -887,14 +887,24 @@ def create_web_app(
             raise HTTPException(
                 status_code=503, detail={"code": "upstream_error", "message": f"模型列表获取失败: {e}"}
             ) from e
-        return {"models": models, "count": len(models)}
+        # #126: 顶层模型选择器 (W17 picker / DelegatePage) 只能选 chat 模型 —
+        # video/embedding 等选中后在生成期才失败。默认过滤, 原始列表经 ?all=1 获取。
+        from ..ai.nl_parser import _is_chat_model
 
-    # ── W19 guard L3 审批队列 (migration doc §6 P3) ──
+        if request.query_params.get("all") != "1":
+            chat_models = [m for m in models if _is_chat_model(m)]
+            logger.info(f"web API 模型列表: chat {len(chat_models)}/{len(models)} (默认过滤非 chat)")
+            return {"models": chat_models, "count": len(chat_models), "total": len(models)}
+        return {"models": models, "count": len(models), "total": len(models)}
+
+    # ── W19 guard L3 审批队列 (migration doc §6 P3; #124 起 guard+本地 CONFIRM 合并) ──
     @app.get("/api/permissions/pending")
     async def permissions_pending():
         if permission_manager is None:
             raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"})
-        return {"approvals": permission_manager.list_pending_guard()}
+        list_merged = getattr(permission_manager, "list_pending", None)
+        approvals = list_merged() if callable(list_merged) else permission_manager.list_pending_guard()
+        return {"approvals": approvals}
 
     @app.post("/api/permissions/pending/{action_id}/confirm")
     async def permissions_confirm(action_id: str, body: Dict[str, Any]):
@@ -1000,7 +1010,7 @@ def create_web_app(
                 }
                 for r in recent
             ],
-            "pending_approvals": permission_manager.list_pending_guard(),
+            "pending_approvals": getattr(permission_manager, "list_pending", permission_manager.list_pending_guard)(),
             "generated_at": time.time(),
         }
 

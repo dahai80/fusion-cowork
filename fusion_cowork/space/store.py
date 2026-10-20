@@ -189,15 +189,21 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_space_members_space ON space_members(space_id);
-CREATE INDEX IF NOT EXISTS idx_space_members_tenant ON space_members(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_space_messages_space ON space_messages(space_id);
 CREATE INDEX IF NOT EXISTS idx_space_messages_created ON space_messages(space_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_space_messages_tenant ON space_messages(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_space_agents_space ON space_agents(space_id);
 CREATE INDEX IF NOT EXISTS idx_space_snapshots_space ON space_snapshots(space_id);
 CREATE INDEX IF NOT EXISTS idx_space_workflows_space ON space_workflows(space_id);
 CREATE INDEX IF NOT EXISTS idx_space_artifacts_space ON space_artifacts(space_id);
 CREATE INDEX IF NOT EXISTS idx_sync_events_space ON sync_events(space_id);
+"""
+
+# #122: tenant 索引不能进 _SCHEMA_SQL — 旧库表无 tenant_id 列, executescript 会
+# `no such column: tenant_id` 直接死, MigrationRunner v1 (ADD COLUMN) 永远没机会跑。
+# 这 4 条索引在 MigrationRunner.run_pending() 之后执行 (v1 已补列, IF NOT EXISTS 幂等)。
+_TENANT_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_space_members_tenant ON space_members(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_space_messages_tenant ON space_messages(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_spaces_tenant ON spaces(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_tenant ON audit_log(tenant_id, created_at);
 """
@@ -376,6 +382,8 @@ class SpaceStore:
             error_class=aiosqlite.OperationalError,
         )
         await runner.run_pending()
+        # #122: tenant 索引须在 v1 (ADD COLUMN tenant_id) 之后建
+        await self._db.executescript(_TENANT_INDEX_SQL)
         await self._db.commit()
         logger.info(f"SpaceStore 初始化完成 (sqlite): {self._db_path}")
 
@@ -395,6 +403,9 @@ class SpaceStore:
                 error_class=asyncpg.DuplicateColumnError,
             )
             await runner.run_pending()
+            # #122: tenant 索引须在 v1 (ADD COLUMN tenant_id) 之后建
+            for stmt in filter(None, (s.strip() for s in _TENANT_INDEX_SQL.split(";"))):
+                await conn.execute(stmt)
             # RLS 纵深防御 (仅 postgres): SQL 漏 tenant_id 守卫时仍挡跨租户
             await apply_rls(conn)
         logger.info("SpaceStore 初始化完成 (postgres): pool min=2 max=10")

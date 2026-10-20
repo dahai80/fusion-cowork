@@ -360,6 +360,17 @@ fusion-cowork collab serve --port 11439
 - **Sanitized params** — scalar values only, strings capped at 200 chars, complex values summarized (`<dict:N>`), secret-named keys (`*key*`/`*token*`/`*password*`/...) redacted, 20-key cap.
 - **Log levels** — step start/end at INFO, failures and gates at WARNING, engine-internal errors at ERROR. `AgentOrchestrator` task execution follows the same `[<task_id>]` convention.
 
+### Acceptance Batch Fixes (v0.5.20, issues #122–#127)
+
+Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one batch:
+
+- **#122 (P1) — Space store init on pre-v0.4 DBs**: tenant indexes moved out of `_SCHEMA_SQL` into `_TENANT_INDEX_SQL`, executed after `MigrationRunner.run_pending()` (v1 adds the `tenant_id` columns first). Legacy DBs no longer die with `no such column: tenant_id` on `_init_sqlite`/`_init_postgres`; `/api/space/*` works on upgraded installs.
+- **#123 (P2) — `/api/deliver` wiring**: `web_serve` now injects a `CrossDeviceSync` when `FUSION_COWORK_CROSS_SYNC=1` (`FUSION_COWORK_SYNC_HOST/PORT/TOKEN/CERT/KEY` configure it; default off → honest 503 unchanged). `server/sync.py::cross_sync_from_env()` is the testable seam.
+- **#124 (P2) — local CONFIRM approvals**: guard-OFF high-risk denials now record an entry in `PermissionManager._pending_local_approvals`; `list_pending()` merges guard + local entries (`source: guard|local`); `confirm_guard()` approves local entries without guard. `/api/permissions/pending` and `/api/mobile/overview` surface both sources — the Approvals page is no longer permanently empty in the default posture.
+- **#125 (P2) — manifest upstream/api_key**: `web/manifest.json` declares `upstream` (`http://127.0.0.1:11461`) + `api_key_env`; `shell_registry.load_manifest()` resolves `api_key` from that env at registration time and honors `FUSION_COWORK_WEB_UPSTREAM` overrides. Gateway dynamic proxy (#232 contract) can resolve the module.
+- **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
+- **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
+
 ---
 
 ## 🕸️ Union Web Module (v0.5.5, issue #94; hardened v0.5.6, issues #96/#97/#98; P0 pages v0.5.7; P1 delegation v0.5.8)

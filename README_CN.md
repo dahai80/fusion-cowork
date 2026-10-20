@@ -293,6 +293,17 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **params 脱敏** — 默认仅保留标量, 字符串截断 200 字符, 复杂值汇总 (`<dict:N>`), 敏感键名 (`*key*`/`*token*`/`*password*`/...) 置 `***`, 最多 20 键。
 - **日志级别** — step start/end 用 INFO, 失败与门控用 WARNING, 引擎内部错误用 ERROR。`AgentOrchestrator` 任务执行遵循同一 `[<task_id>]` 约定。
 
+### 验收批次修复 (v0.5.20, issue #122–#127)
+
+来自 2026-10-20 五仓 issue 验收的 6 个问题, 一批修复:
+
+- **#122 (P1) — 旧库上 Space store 初始化崩溃**: tenant 索引移出 `_SCHEMA_SQL`, 改为 `MigrationRunner.run_pending()` (v1 先补 `tenant_id` 列) 之后执行 `_TENANT_INDEX_SQL`。pre-v0.4 旧库不再报 `no such column: tenant_id`, 升级安装上 `/api/space/*` 恢复可用。
+- **#123 (P2) — `/api/deliver` 接线**: `web_serve` 在 `FUSION_COWORK_CROSS_SYNC=1` 时注入 `CrossDeviceSync` (`FUSION_COWORK_SYNC_HOST/PORT/TOKEN/CERT/KEY` 配置; 默认 off → 诚实 503 不变)。`server/sync.py::cross_sync_from_env()` 为可测接缝。
+- **#124 (P2) — 本地 CONFIRM 审批**: guard 关闭时高风险拒绝现写入 `PermissionManager._pending_local_approvals`; `list_pending()` 合并 guard + local (带 `source: guard|local`); `confirm_guard()` 无需 guard 在线即可批准本地条目。`/api/permissions/pending` 与 `/api/mobile/overview` 同时展示两类来源 — 默认姿态下 Approvals 页面不再永远为空。
+- **#125 (P2) — manifest upstream/api_key**: `web/manifest.json` 声明 `upstream` (`http://127.0.0.1:11461`) + `api_key_env`; `shell_registry.load_manifest()` 注册时从该 env 解析 `api_key`, 并支持 `FUSION_COWORK_WEB_UPSTREAM` 覆盖。网关动态代理 (#232 契约) 可解析本模块。
+- **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
+- **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
+
 ---
 
 ## 🕸️ 统一 Web 模块 (v0.5.5, issue #94; v0.5.6 加固, issue #96/#97/#98)
