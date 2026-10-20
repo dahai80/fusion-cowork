@@ -8,6 +8,7 @@
         "build": "bun run typecheck && vite build",
         "typecheck": "tsc --noEmit",
         "lint": "biome check src",
+        "test": "bun test",
         "preview": "vite preview --port 11464"
     },
     "dependencies": {

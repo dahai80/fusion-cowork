@@ -106,9 +106,19 @@ function standaloneSdk(log: BridgeDeps['log']): FusionShellSdk {
         themeListeners.forEach((fn) => fn(e.matches ? 'dark' : 'light'))
     );
     const request = async <T>(path: string, init?: HttpRequestInit): Promise<HttpResult<T>> => {
+        // #20: JSON bodies without an explicit content-type make FastAPI (and
+        // friends) reject the request with 422. Default to application/json;
+        // a caller-provided header always wins.
+        const hasContentType = Object.keys(init?.headers ?? {}).some(
+            (k) => k.toLowerCase() === 'content-type'
+        );
+        const headers =
+            init?.body !== undefined && !hasContentType
+                ? { 'content-type': 'application/json', ...init?.headers }
+                : init?.headers;
         const res = await fetch(path, {
             method: init?.method ?? 'GET',
-            headers: init?.headers,
+            headers,
             body: init?.body === undefined ? undefined : JSON.stringify(init.body),
         });
         const data = (await res.json().catch(() => null)) as T;
