@@ -113,6 +113,7 @@ SYSTEM_PROMPT = """你是一个 macOS 桌面自动化工作流生成器。将用
 
 # #85: mlx /v1/models 不保证 chat 模型在前 (FLUX/Wan 等 image/video 模型可能排第一)。
 # 非 chat engine_type 集合; metadata.engine_type 或顶层 engine_type 均判。
+# #131: draft = 投机解码草稿模型, 不可作为 chat 默认。
 _NON_CHAT_ENGINE_TYPES = {
     "image_gen",
     "video_gen",
@@ -123,17 +124,30 @@ _NON_CHAT_ENGINE_TYPES = {
     "audio",
     "embedding",
     "rerank",
+    "draft",
 }
 
 
 def _is_chat_model(m: Dict[str, Any]) -> bool:
-    """#126: 单模型 chat 能力判定 — engine_type 不在非 chat 集合即视为 chat 可用。"""
+    """#126: 单模型 chat 能力判定 — engine_type 不在非 chat 集合即视为 chat 可用。
+
+    #131: gateway (fusion-gateway#245) 在 /v1/models 上带 capabilities 元数据时,
+    capabilities.embedding=True 或 text_generation=False 直接判非 chat
+    (engine_type 缺失、仅带 modality 的来源也正确, 如 bge-m3 modality=text)。
+    """
     if not isinstance(m, dict):
         return False
     mid = m.get("id") or m.get("model")
     if not mid:
         return False
     meta = m.get("metadata") or {}
+    caps = m.get("capabilities") or meta.get("capabilities") or {}
+    if isinstance(caps, dict) and caps:
+        if caps.get("embedding") is True:
+            return False
+        text_gen = caps.get("text_generation")
+        if isinstance(text_gen, bool):
+            return text_gen
     engine = (m.get("engine_type") or meta.get("engine_type") or "").strip().lower()
     return not (engine and engine in _NON_CHAT_ENGINE_TYPES)
 

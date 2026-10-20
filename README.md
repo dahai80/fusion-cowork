@@ -371,6 +371,15 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
 
+### Chat-Model Filter Hardening (v0.5.22, issue #131)
+
+Cross-repo alignment with fusion-gateway#245 (gateway now emits `engine_type` + `modality` + `capabilities` on `/v1/models`). Two gaps closed in `_is_chat_model` (`fusion_cowork/ai/nl_parser.py`, shared by `/api/models` and `_pick_chat_model`):
+
+- **`draft` engine type filtered** — speculative-decoding draft models (e.g. `Qwen3.8-27B-DFlash2`) are added to `_NON_CHAT_ENGINE_TYPES`, so they can no longer be picked as the chat default.
+- **`capabilities` as a second signal** — when the model entry carries gateway `capabilities` metadata (top-level or `metadata.capabilities`), it is consulted before the `engine_type` gate: `capabilities.embedding=true` → non-chat even without `engine_type` (e.g. bge-m3 with `modality=text`), `text_generation=false` → non-chat, `text_generation=true` → authoritative chat. Entries without `embedding`/`text_generation` keys fall through to the existing `engine_type` gate unchanged.
+
+Tests: `tests/test_issue_131_chat_model_filter.py`.
+
 ### Shell-Embedded API Base (v0.5.21, issue #129)
 
 Under the unified shell the module is served at `/shell/<id>/` — origin-root `/api/...` paths 404ed (gateway has no generic `/api/*` routes). The API layer now derives the module prefix from the document pathname (mirrors agent-studio's `apiBase()`):
