@@ -304,6 +304,12 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
 
+### Studio graph execute 422 修复 (v0.5.24, issue #135)
+
+#133 真机跨模块验收发现 `studio_run` 的 `graph_id`+`mode=sync` 路径必现 `agent-studio HTTP 422` — 上游 `GraphExecuteRequest` (`agent_runtime/api_server.py`) 把 `graph_id` 声明为**必填 body 字段**（与路径参数冗余但强制校验）。`_execute_graph` 现发送 `{"graph_id": ..., "input_text": ...}`；wire 契约测试断言该 body 字段（F-2 `/api/runs` 坏边形状 500 属 agent-studio 侧缺陷，已镜像提上游 issue）。
+
+测试: `tests/test_issue_133_studio_node.py` (18 例)。
+
 ### Agent-Studio 运行节点 (v0.5.23, issue #133)
 
 跨模块组合：cowork DAG 现在可以把 fusion-agent-studio 的 graph/agent 作为一步调用。`StudioRunNode` (`fusion_cowork/nodes/ecosystem/studio_node.py`, 节点名 `studio_run`, 别名 `运行Studio`/`Studio运行`, ecosystem 分类 3→4 节点 / 总数 68):

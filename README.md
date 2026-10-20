@@ -371,6 +371,12 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
 
+### Studio Graph Execute 422 Fix (v0.5.24, issue #135)
+
+Live cross-module acceptance of #133 found `studio_run` `graph_id`+`mode=sync` failing every time with `agent-studio HTTP 422` — upstream `GraphExecuteRequest` (`agent_runtime/api_server.py`) declares `graph_id` as a **required body field** (redundant with the path param, but enforced). `_execute_graph` now sends `{"graph_id": ..., "input_text": ...}`; wire-contract test asserts the body field (F-2, the `/api/runs` malformed-edge 500, is an agent-studio-side defect — mirrored upstream).
+
+Tests: `tests/test_issue_133_studio_node.py` (18 cases).
+
 ### Agent-Studio Run Node (v0.5.23, issue #133)
 
 Cross-module composition: a cowork DAG can now invoke a fusion-agent-studio graph/agent as a step. `StudioRunNode` (`fusion_cowork/nodes/ecosystem/studio_node.py`, node name `studio_run`, aliases `运行Studio`/`Studio运行`, ecosystem category now 4 nodes / 68 total):

@@ -117,6 +117,8 @@ async def test_sync_graph_execute_collects_events(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/graphs/g1/execute"
         payload = json.loads(request.content)
+        # issue #135 F-1: 上游 GraphExecuteRequest 必填 body graph_id
+        assert payload["graph_id"] == "g1"
         assert payload["input_text"] == "summarize inbox"
         return httpx.Response(
             200,
