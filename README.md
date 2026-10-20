@@ -293,7 +293,7 @@ fusion-cowork collab serve --port 11439
 ├─────────────────────────────────────────────────────┤
 │                 Workflow Engine Layer                  │
 │   WorkflowEngine  │  TaskScheduler  │  NodeRegistry   │
-│   (DAG, n8n-inspired) │  (APScheduler) │  (67 nodes)   │
+│   (DAG, n8n-inspired) │  (APScheduler) │  (68 nodes)   │
 ├─────────────────────────────────────────────────────┤
 │                   AI Capability Layer                  │
 │   FusionMLXClient  │  NLWorkflowGenerator             │
@@ -312,7 +312,7 @@ fusion-cowork collab serve --port 11439
 └─────────────────────────────────────────────────────┘
 ```
 
-### Node Types (67 nodes built-in, 7 categories)
+### Node Types (68 nodes built-in, 7 categories)
 
 | Category | Count | Nodes |
 |----------|-------|-------|
@@ -321,7 +321,7 @@ fusion-cowork collab serve --port 11439
 | `file_operation` | 6 | File Classifier, Batch Rename, Copy, Move, Delete, Find |
 | `ai_processing` | 4 | AI Classify, AI Summarize, AI Generate Name, AI Vision Analyze |
 | `logic` | 3 | Filter, Loop, Merge |
-| `fusion_ecosystem` | 3 | Trainer (Fusion-Trainer 互通), **Memory Commit, Memory Retrieve** (Fusion-Memory 互通) |
+| `fusion_ecosystem` | 4 | Trainer (Fusion-Trainer 互通), **Memory Commit, Memory Retrieve** (Fusion-Memory 互通), **Studio Run** (Fusion-Agent-Studio 互通, issue #133) |
 | `io` | 2 | File Input, File Output |
 
 ### Claude Cowork Parity (V0.2) 🆕
@@ -342,7 +342,7 @@ fusion-cowork collab serve --port 11439
 | **fusion-mlx** | HTTP API (via fusion-gateway :11432) | LLM inference, text generation, embeddings |
 | **Fusion-RAG** | HTTP API (port 11436) | Knowledge base semantic search, RAG |
 | **Fusion-Code** | Auto-generated scripts | Complex logic execution |
-| **Agent-Studio** | Workflow import | Advanced pre-built workflows |
+| **Agent-Studio** | HTTP API (:11442) + workflow import | `studio_run` node submits graph/agent runs; advanced pre-built workflows |
 | **Model-Hub** | Model dispatch | Auto-select optimal local model |
 
 ### Run-Scoped Execution Logs (v0.5.19, issue #120)
@@ -370,6 +370,16 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#125 (P2) — manifest upstream/api_key**: `web/manifest.json` declares `upstream` (`http://127.0.0.1:11461`) + `api_key_env`; `shell_registry.load_manifest()` resolves `api_key` from that env at registration time and honors `FUSION_COWORK_WEB_UPSTREAM` overrides. Gateway dynamic proxy (#232 contract) can resolve the module.
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
+
+### Agent-Studio Run Node (v0.5.23, issue #133)
+
+Cross-module composition: a cowork DAG can now invoke a fusion-agent-studio graph/agent as a step. `StudioRunNode` (`fusion_cowork/nodes/ecosystem/studio_node.py`, node name `studio_run`, aliases `运行Studio`/`Studio运行`, ecosystem category now 4 nodes / 68 total):
+
+- **Paths** — `graph_id` + `mode=sync` → `POST /v1/graphs/{id}/execute` (full `events` inline); otherwise `POST /v1/runs` submit — `mode=async` returns `run_id` immediately for upstream orchestration, `mode=sync` polls `GET /v1/runs/{id}` to a terminal state (`completed`/`failed`/`canceled`) then fetches `GET /v1/runs/{id}/result`. Sync timeout best-effort cancels via `POST /v1/runs/{id}/cancel` and fails visibly with the `run_id`.
+- **Config** — env `FUSION_AGENT_STUDIO_URL` (default `http://127.0.0.1:11442`), optional `FUSION_AGENT_STUDIO_API_KEY` sent as `x-api-key` (upstream auth is optional in local-trusted mode). Params: `graph_id`/`agent_id` (exactly one), `input`, `mode`, `timeout` (300s), `poll_interval` (2s), `title`, `idempotency_key`. Outputs: `run_id`, `status`, `result`.
+- **Gating** — `studio_run` added to `HIGH_RISK_NODES` (remote multi-step agent execution, same explicit-approval class as `fetch_url`); guard JSON fallback covers the content mapping.
+
+Tests: `tests/test_issue_133_studio_node.py` (18 cases, httpx MockTransport offline stub).
 
 ### Chat-Model Filter Hardening (v0.5.22, issue #131)
 

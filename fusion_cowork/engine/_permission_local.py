@@ -76,6 +76,9 @@ HIGH_RISK_NODES = frozenset(
         "cdp_network",
         "cdp_wait_for",  # E-10: wait_for_function 任意 JS 注入, 同 cdp_evaluate 高危
         "fetch_url",  # E-11: SSRF 面, 默认拒, 须显式放行
+        # 外部运行时触发 (issue #133): studio_run 提交 agent-studio graph/agent
+        # 执行, 触发远端多步 agent 行为, 同 fetch_url 须显式放行
+        "studio_run",
     }
 )
 

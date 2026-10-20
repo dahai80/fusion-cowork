@@ -21,6 +21,7 @@ _NODE_MODULES = (
     "fusion_cowork.nodes.browser.cdp_nodes",
     "fusion_cowork.nodes.ecosystem.trainer_node",
     "fusion_cowork.nodes.ecosystem.memory_node",
+    "fusion_cowork.nodes.ecosystem.studio_node",
 )
 
 
