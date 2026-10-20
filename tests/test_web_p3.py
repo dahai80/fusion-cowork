@@ -51,7 +51,16 @@ def _auth():
 
 class TestModelsCatalog:
     def test_list_models_ok(self, client):
+        # issue #126: 默认只回 chat 模型 (image_gen 等过滤), total 保留原始计数
         resp = client.get("/api/models", headers=_auth())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 1
+        assert body["total"] == 2
+        assert {m["id"] for m in body["models"]} == {"qwen-chat-8b"}
+
+    def test_list_models_all_flag_returns_raw(self, client):
+        resp = client.get("/api/models", headers=_auth(), params={"all": "1"})
         assert resp.status_code == 200
         body = resp.json()
         assert body["count"] == 2

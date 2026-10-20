@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -19,6 +20,26 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def cross_sync_from_env() -> Optional[CrossDeviceSync]:
+    """#123: web_serve 注入接缝 — FUSION_COWORK_CROSS_SYNC=1 时构建同步引擎。
+
+    参数: FUSION_COWORK_SYNC_HOST/PORT/TOKEN/CERT/KEY (默认 127.0.0.1:11437)。
+    未启用返回 None (/api/deliver 保持诚实 503)。
+    """
+    if os.environ.get("FUSION_COWORK_CROSS_SYNC") != "1":
+        logger.info("跨设备同步未启用 (FUSION_COWORK_CROSS_SYNC!=1), /api/deliver 返回 503")
+        return None
+    instance = CrossDeviceSync(
+        host=os.environ.get("FUSION_COWORK_SYNC_HOST", "127.0.0.1"),
+        port=int(os.environ.get("FUSION_COWORK_SYNC_PORT", "11437")),
+        token=os.environ.get("FUSION_COWORK_SYNC_TOKEN") or None,
+        ssl_cert=os.environ.get("FUSION_COWORK_SYNC_CERT") or None,
+        ssl_key=os.environ.get("FUSION_COWORK_SYNC_KEY") or None,
+    )
+    logger.info(f"跨设备同步已启用 (FUSION_COWORK_CROSS_SYNC=1): {instance.host}:{instance.port}")
+    return instance
 
 
 class DeviceStatus(Enum):
