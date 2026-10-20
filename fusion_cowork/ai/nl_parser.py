@@ -17,6 +17,58 @@ from .mlx_client import FusionMLXClient
 
 logger = logging.getLogger(__name__)
 
+
+class WorkflowParseError(Exception):
+    """LLM 输出无法解析为工作流 JSON（raw_output 供带反馈的重试）。"""
+
+    def __init__(self, message: str, raw_output: str = ""):
+        super().__init__(message)
+        self.raw_output = raw_output
+
+
+def extract_json_object(content: str) -> str:
+    """从 LLM 输出中提取第一个完整 JSON 对象的文本。
+
+    处理三种常见形态: ```json 围栏、前置说明文字、尾随解释文字。
+    采用字符串感知的花括号配平（忽略字符串字面量内的花括号与转义），
+    比脆弱的 split("```") 鲁棒。
+    """
+    import re
+
+    text = content.strip()
+    # 1) 优先取 markdown 围栏块（存在时围栏内就是 JSON）
+    fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+    if fence:
+        text = fence.group(1).strip()
+
+    # 2) 定位第一个 '{'，做字符串感知的括号配平
+    start = text.find("{")
+    if start == -1:
+        raise WorkflowParseError("no JSON object found in model output", raw_output=content)
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    raise WorkflowParseError("unbalanced JSON object in model output", raw_output=content)
+
+
 # 系统提示词 — 指导 LLM 将自然语言转换为工作流定义
 SYSTEM_PROMPT = """你是一个 macOS 桌面自动化工作流生成器。将用户的自然语言需求转换为结构化工作流定义。
 
@@ -74,6 +126,18 @@ _NON_CHAT_ENGINE_TYPES = {
 }
 
 
+def _is_chat_model(m: Dict[str, Any]) -> bool:
+    """#126: 单模型 chat 能力判定 — engine_type 不在非 chat 集合即视为 chat 可用。"""
+    if not isinstance(m, dict):
+        return False
+    mid = m.get("id") or m.get("model")
+    if not mid:
+        return False
+    meta = m.get("metadata") or {}
+    engine = (m.get("engine_type") or meta.get("engine_type") or "").strip().lower()
+    return not (engine and engine in _NON_CHAT_ENGINE_TYPES)
+
+
 def _pick_chat_model(models: List[Dict[str, Any]]) -> str:
     """从 list_models() 结果选一个 chat 模型 id。
 
@@ -82,14 +146,9 @@ def _pick_chat_model(models: List[Dict[str, Any]]) -> str:
     """
     chat_candidates: List[str] = []
     for m in models or []:
-        mid = m.get("id") or m.get("model")
-        if not mid:
+        if not _is_chat_model(m):
             continue
-        meta = m.get("metadata") or {}
-        engine = (m.get("engine_type") or meta.get("engine_type") or "").strip().lower()
-        if engine and engine in _NON_CHAT_ENGINE_TYPES:
-            continue
-        chat_candidates.append(mid)
+        chat_candidates.append(m.get("id") or m.get("model"))
     if not chat_candidates:
         return ""
     # 优先 instruct/chat/qwen/llama 命名
@@ -116,12 +175,18 @@ class NLWorkflowGenerator:
         self,
         user_input: str,
         context: Optional[Dict[str, Any]] = None,
+        system_prompt: str = "",
+        raise_on_parse_error: bool = False,
     ) -> Dict[str, Any]:
         """将自然语言转换为工作流定义。
 
         Args:
             user_input: 用户的自然语言描述
             context: 可选的上下文信息（当前目录、文件列表等）
+            system_prompt: 可选的自定义系统提示词（插件/宿主可用自己的节点
+                目录替换默认的桌面自动化提示词；空串用默认）
+            raise_on_parse_error: True 时解析失败抛 WorkflowParseError（供宿主
+                带反馈重试）；False（默认，兼容旧调用方）返回带 error 的空工作流
 
         Returns:
             dict: 工作流定义，包含 name, description, nodes, edges
@@ -161,7 +226,7 @@ class NLWorkflowGenerator:
             context_str = "\n上下文信息:\n" + "\n".join(ctx_parts)
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt.strip() or SYSTEM_PROMPT},
             {"role": "user", "content": f"{user_input}{context_str}"},
         ]
 
@@ -175,15 +240,9 @@ class NLWorkflowGenerator:
 
         content = response.content.strip()
 
-        # 提取 JSON（处理 LLM 可能输出的 markdown 代码块）
-        if "```json" in content:
-            json_str = content.split("```json")[1].split("```")[0].strip()
-        elif "```" in content:
-            json_str = content.split("```")[1].split("```")[0].strip()
-        else:
-            json_str = content
-
+        # 提取 JSON（字符串感知的花括号配平，处理围栏/前置/尾随噪声）
         try:
+            json_str = extract_json_object(content)
             workflow_def = json.loads(json_str)
 
             # 确保必有字段
@@ -215,9 +274,13 @@ class NLWorkflowGenerator:
             logger.info(f"成功生成工作流: {workflow_def['name']} ({len(workflow_def['nodes'])} 个节点)")
             return workflow_def
 
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, WorkflowParseError) as e:
             logger.error(f"解析 LLM 输出为 JSON 失败: {e}")
             logger.debug(f"LLM 原始输出: {content}")
+            if raise_on_parse_error:
+                if isinstance(e, WorkflowParseError):
+                    raise
+                raise WorkflowParseError(f"invalid JSON: {e}", raw_output=content) from e
             return {
                 "name": "AI 生成的工作流",
                 "description": user_input,
