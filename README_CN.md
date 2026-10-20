@@ -304,6 +304,16 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
 
+### Shell Manifest 扩展字段 (v0.5.26, issue #139)
+
+`web/manifest.json` 现声明 fusion-web-shell#24 扩展字段，cowork 由此接入 shell 宿主的 ⌘K 全局搜索、通知中心与侧栏深链：
+
+- **`pages`** — 7 条模块内相对路由（`/workflows` `/delegate` `/canvas` `/runs` `/sessions` `/spaces` `/approvals`），中英标题；宿主以 `${entry}#${route}` 深链。
+- **`searchProviders`** — 单一 provider（`cowork`）指向 `/shell/fusion-cowork/api/search`；`GET ?q=` 聚合工作流定义（路由 `/canvas/<id>`）、终态运行（`/runs`）与协作空间（`/spaces`），大小写不敏感子串匹配，空查询返回空，上限 32 条。
+- **`notifications`** — 两个轮询源：`approvals`（`/shell/fusion-cowork/api/notifications/approvals`，包装 `list_pending()` — 每条待审批一项，`level: warning`，id 为稳定 `action_id`）与 `runs`（`/shell/fusion-cowork/api/notifications/runs`，终态运行按时间倒序，失败 `level: error`，id 为稳定 `run_id`）。id 跨轮询稳定，满足宿主去重合同（`${moduleId}:${sourceId}:${itemId}`）。
+
+测试: `tests/test_issue_139_manifest_ext.py` (15 例: manifest schema 合规 + 搜索/通知形状、id 稳定性、上限)。
+
 ### Runs API 坏边形状 400 修复 (v0.5.25, issue #135 F-2)
 
 #135 的 F-2 是**本仓** union-web API 的问题（在 agent-studio 的镜像 issue 已以误报关闭）：`POST /api/runs` 携带 `{"from": "n1", "to": "n2"}` 形状的边时，`Workflow.from_dict` 内部 `KeyError: 'source_id'` 直接 500。

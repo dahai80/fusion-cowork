@@ -13,5 +13,66 @@
     "upstream": "http://127.0.0.1:11461",
     "api_key_env": "FUSION_COWORK_WEB_API_KEY",
     "devices": ["desktop", "mobile-readonly"],
-    "category": "platform"
+    "category": "platform",
+    "pages": [
+        {
+            "route": "/workflows",
+            "title": "工作流",
+            "title_en": "Workflows"
+        },
+        {
+            "route": "/delegate",
+            "title": "AI 委托",
+            "title_en": "Delegate"
+        },
+        {
+            "route": "/canvas",
+            "title": "画布",
+            "title_en": "Canvas"
+        },
+        {
+            "route": "/runs",
+            "title": "运行记录",
+            "title_en": "Runs"
+        },
+        {
+            "route": "/sessions",
+            "title": "会话",
+            "title_en": "Sessions"
+        },
+        {
+            "route": "/spaces",
+            "title": "协作空间",
+            "title_en": "Spaces"
+        },
+        {
+            "route": "/approvals",
+            "title": "审批",
+            "title_en": "Approvals"
+        }
+    ],
+    "searchProviders": [
+        {
+            "id": "cowork",
+            "label": "工作流/运行/空间",
+            "label_en": "Workflows/Runs/Modules",
+            "endpoint": "/shell/fusion-cowork/api/search"
+        }
+    ],
+    "notifications": [
+        {
+            "id": "approvals",
+            "label": "审批",
+            "label_en": "Approvals",
+            "endpoint": "/shell/fusion-cowork/api/notifications/approvals",
+            "kind": "approvals"
+        },
+        {
+            "id": "runs",
+            "label": "终态运行",
+            "label_en": "Terminal runs",
+            "endpoint": "/shell/fusion-cowork/api/notifications/runs",
+            "kind": "runs"
+        }
+    ]
 }

@@ -903,6 +903,71 @@ def create_web_app(
             return {"models": chat_models, "count": len(chat_models), "total": len(models)}
         return {"models": models, "count": len(models), "total": len(models)}
 
+    # ── issue #139: manifest ext 后端 — ⌘K 跨模块搜索 + 通知中心轮询源 ──
+    @app.get("/api/search")
+    async def search_all(q: str = ""):
+        query = (q or "").strip().lower()
+        if not query:
+            return {"items": []}
+        items: List[Dict[str, Any]] = []
+        for wf in store.list():
+            name = str(wf.get("name") or wf.get("id") or "")
+            desc = str(wf.get("description") or "")
+            if query in name.lower() or query in desc.lower():
+                items.append({"title": name, "route": f"/canvas/{wf['id']}", "kind": "workflow"})
+        for r in runs.list():
+            name = str(r.get("workflow_name") or r.get("run_id") or "")
+            if query in name.lower():
+                items.append({"title": f"运行: {name}", "route": "/runs", "kind": "run"})
+        if space_store is not None:
+            try:
+                spaces = await space_store.list_spaces(limit=100)
+            except Exception as e:
+                logger.warning(f"搜索空间失败 (跳过): {e}")
+                spaces = []
+            for s in spaces:
+                name = str(getattr(s, "name", "") or getattr(s, "id", ""))
+                if query in name.lower():
+                    items.append({"title": name, "route": "/spaces", "kind": "space"})
+        items = items[:32]
+        logger.info(f"web API 搜索 q={q!r} 命中 {len(items)} 条")
+        return {"items": items}
+
+    @app.get("/api/notifications/approvals")
+    async def notifications_approvals():
+        if permission_manager is None:
+            raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"})
+        list_merged = getattr(permission_manager, "list_pending", None)
+        approvals = list_merged() if callable(list_merged) else permission_manager.list_pending_guard()
+        items = [
+            {
+                "id": a.get("action_id", ""),
+                "title": f"审批: {a.get('tool_name', '')}",
+                "route": "/approvals",
+                "level": "warning",
+            }
+            for a in approvals
+        ][:32]
+        logger.info(f"web API 通知源 approvals 轮询: {len(items)} 条待审批")
+        return {"items": items}
+
+    @app.get("/api/notifications/runs")
+    async def notifications_runs():
+        terminal = {"completed", "failed", "canceled"}
+        rows = [r for r in runs.list() if r.get("status") in terminal]
+        rows.sort(key=lambda x: x.get("finished_at") or x.get("created_at") or 0, reverse=True)
+        items = [
+            {
+                "id": r.get("run_id", ""),
+                "title": f"运行结束: {r.get('workflow_name') or r.get('run_id')} ({r.get('status')})",
+                "route": "/runs",
+                "level": "error" if r.get("status") == "failed" else "info",
+            }
+            for r in rows[:32]
+        ]
+        logger.info(f"web API 通知源 runs 轮询: {len(items)} 条终态运行")
+        return {"items": items}
+
     # ── W19 guard L3 审批队列 (migration doc §6 P3; #124 起 guard+本地 CONFIRM 合并) ──
     @app.get("/api/permissions/pending")
     async def permissions_pending():
