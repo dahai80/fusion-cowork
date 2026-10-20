@@ -45,6 +45,7 @@ class SpaceConfig:
     auto_archive_days: int = 0
     stream_response: bool = True
     default_model: str = ""
+    instructions: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -58,6 +59,7 @@ class SpaceConfig:
             "auto_archive_days": self.auto_archive_days,
             "stream_response": self.stream_response,
             "default_model": self.default_model,
+            "instructions": self.instructions,
         }
 
     @classmethod
@@ -73,6 +75,7 @@ class SpaceConfig:
             auto_archive_days=data.get("auto_archive_days", 0),
             stream_response=data.get("stream_response", True),
             default_model=data.get("default_model", ""),
+            instructions=data.get("instructions", ""),
         )
 
 

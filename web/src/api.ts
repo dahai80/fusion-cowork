@@ -78,6 +78,7 @@ export interface RunStep {
     summary: string;
     error: string | null;
     output_data: Record<string, unknown>;
+    input_data?: Record<string, unknown>;
 }
 
 export interface RunRecord extends RunListItem {
@@ -256,6 +257,11 @@ export interface RpcResponse<T> {
 export interface GuardApproval {
     action_id: string;
     tool_name: string;
+    source?: string;
+    params?: Record<string, unknown>;
+    ts?: number;
+    workflow?: string;
+    node_id?: string;
 }
 
 export interface ClusterNodeInfo {
@@ -282,6 +288,10 @@ async function get<T>(path: string): Promise<T> {
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
     return (await sdk.http.post<T>(path, body)).data;
+}
+
+async function put<T>(path: string, body?: unknown): Promise<T> {
+    return (await sdk.http.put<T>(path, body)).data;
 }
 
 export const api = {
@@ -402,10 +412,19 @@ export const api = {
         }),
     models: () => get<{ models: ModelInfo[]; count: number }>('/api/models'),
     pendingApprovals: () => get<{ approvals: GuardApproval[] }>('/api/permissions/pending'),
-    confirmApproval: (actionId: string, approved: boolean) =>
+    confirmApproval: (actionId: string, approved: boolean, scope?: string) =>
         post<{ action_id: string; approved: boolean; confirmed: boolean }>(
             `/api/permissions/pending/${encodeURIComponent(actionId)}/confirm`,
-            { approved }
+            scope ? { approved, scope } : { approved }
+        ),
+    spaceInstructions: (spaceId: string) =>
+        get<{ space_id: string; instructions: string }>(
+            `/api/space/spaces/${encodeURIComponent(spaceId)}/instructions`
+        ),
+    saveSpaceInstructions: (spaceId: string, instructions: string) =>
+        put<{ space_id: string; instructions: string }>(
+            `/api/space/spaces/${encodeURIComponent(spaceId)}/instructions`,
+            { instructions }
         ),
     clusterState: () => get<ClusterStateInfo>('/api/cluster/state'),
     rpc: <T>(method: string, params?: Record<string, unknown>) =>

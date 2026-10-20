@@ -371,6 +371,17 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
 
+### GUI/UX Upgrade: Approval Cards, Waterfall, Space Instructions (v0.5.27, issue #138)
+
+Implements the fusion-all-gui-1020 §6 targets for cowork (G6/G7/G10 + patterns C2/C3/C6):
+
+- **Approval cards + rule persistence** — `web serve` now loads permission rules at startup (`PermissionManager.load()`) and saves after every confirm, so approve/deny rules survive restarts (previously in-memory only: deny → approve → rerun on every boot). `confirm_guard()` accepts a `scope` — the ApprovalsPage cards offer **three actions**: Deny / Allow once (precise scope derived from the params snapshot, e.g. `command:git` or `file:/path/**`) / Always allow (scope `*`). Local pending entries now carry a card context — sanitized params (scalars, 200-char cap, secret-key redaction), `ts`, plus `workflow`/`node_id` written by the engine via an approval ContextVar at the permission-check call site. Diff-style blocks render `command` and `old_string`/`new_string` params.
+- **Run waterfall** — `RunRegistry._step_dict` exposes `input_data`; RunsPage detail renders per-node waterfall rows (status/duration bar ∝ execution_time); clicking a row expands a drawer with full input/output/error.
+- **Space knowledge layer** — `SpaceConfig.instructions` (stored in the existing `spaces.config` JSON column, no migration); `GET/PUT /api/space/spaces/{id}/instructions`; `SpaceChatService` injects `[空间指令] <text>` as the leading system message in stream chat and both agent paths; SpacePage knowledge tab gains an instructions editor.
+- **Delegate polish** — preview card + save-to-canvas jump already shipped (v0.5.8 W7); chat-filter model picker from #126/#131.
+
+Tests: `tests/test_issue_138_gui_upgrade.py` (10 cases: save/load roundtrip, scoped confirm, pending card context, engine context + waterfall `input_data`, instructions API roundtrip + chat injection helper).
+
 ### Shell Manifest Ext Fields (v0.5.26, issue #139)
 
 `web/manifest.json` now declares the fusion-web-shell#24 extension fields so cowork surfaces in the shell host's ⌘K palette, notification center, and sidebar deep links:

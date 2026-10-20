@@ -304,6 +304,17 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
 
+### GUI/UX 升级: 审批卡/瀑布/空间指令 (v0.5.27, issue #138)
+
+按 fusion-all-gui-1020 §6 cowork 目标落地 (G6/G7/G10 + 模式 C2/C3/C6):
+
+- **审批卡 + 规则持久化** — `web serve` 启动加载权限规则 (`PermissionManager.load()`), 每次 confirm 后落盘, 审批规则重启不再丢 (此前纯内存: 每次重启都要 拒绝→批准→重跑)。`confirm_guard()` 支持 `scope` — ApprovalsPage 卡片提供 **三动作**: 拒绝 / 仅本次允许 (从参数快照推导精确 scope, 如 `command:git` 或 `file:/path/**`) / 始终允许 (scope `*`)。本地待审批条目附带卡片上下文 — 脱敏参数快照 (仅标量, 200 字上限, 秘钥键脱敏)、`ts`, 以及引擎在权限检查点经 ContextVar 写入的 `workflow`/`node_id`。`command` 与 `old_string`/`new_string` 参数以 diff 风格块渲染。
+- **运行瀑布** — `RunRegistry._step_dict` 暴露 `input_data`; RunsPage 详情按节点渲染瀑布行 (状态/时长条 ∝ 执行时间); 点击行展开抽屉查看完整 input/output/error。
+- **空间知识层** — `SpaceConfig.instructions` (存于既有 `spaces.config` JSON 列, 无迁移); `GET/PUT /api/space/spaces/{id}/instructions`; `SpaceChatService` 在流式聊天与两条 agent 路径把 `[空间指令] <文本>` 注入为首条 system 消息; SpacePage 知识页新增指令编辑器。
+- **委托打磨** — 预览卡 + 保存跳画布 v0.5.8 (W7) 已交付; 模型 chat 过滤来自 #126/#131。
+
+测试: `tests/test_issue_138_gui_upgrade.py` (10 例: save/load 往返、scoped confirm、待审批卡上下文、引擎上下文 + 瀑布 `input_data`、instructions API 往返 + 聊天注入)。
+
 ### Shell Manifest 扩展字段 (v0.5.26, issue #139)
 
 `web/manifest.json` 现声明 fusion-web-shell#24 扩展字段，cowork 由此接入 shell 宿主的 ⌘K 全局搜索、通知中心与侧栏深链：

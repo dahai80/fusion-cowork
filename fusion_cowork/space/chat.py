@@ -120,6 +120,9 @@ class SpaceChatService:
         context = await self._store.get_messages(space_id, limit=100)
         messages = self._build_messages(context)
 
+        instructions = await self._space_instructions(space_id)
+        if instructions:
+            messages = [{"role": "system", "content": instructions}] + messages
         agent_def = await self._store.get_agent_def(space_id, agent_id)
         if agent_def:
             system_prompt = agent_def.get("system_prompt", "")
@@ -198,6 +201,10 @@ class SpaceChatService:
                 logger.warning(f"Agent {agent_id} not found in space {space_id}")
                 return
 
+            instructions = await self._space_instructions(space_id)
+            if instructions:
+                agent_def = dict(agent_def)
+                agent_def["system_prompt"] = f"{instructions}\n{agent_def.get('system_prompt', '')}".strip()
             messages = self._build_agent_messages(agent_def, context)
 
             if self._kb_svc and agent_def.get("enable_rag"):
@@ -289,6 +296,20 @@ class SpaceChatService:
             kept.insert(0, {"role": "system", "content": f"[{elided} earlier messages omitted to fit context budget]"})
         return system_head + kept
 
+    async def _space_instructions(self, space_id: str) -> str:
+        # issue #138 G10: 空间级 instructions — 注入聊天 system prompt 头部
+        try:
+            space = await self._store.get_space(space_id)
+        except Exception as e:
+            logger.warning(f"读取空间 instructions 失败 (跳过注入): {e}")
+            return ""
+        if not space:
+            return ""
+        text = str(getattr(space.config, "instructions", "") or "").strip()
+        if not text:
+            return ""
+        return f"[空间指令]\n{text}"
+
     def _build_agent_messages(
         self,
         agent_def: dict,
@@ -374,6 +395,10 @@ class SpaceChatService:
                     agent_def = await self._store.get_agent_def(space_id, aid)
                     if not agent_def:
                         return {"agent_id": aid, "error": "not found"}
+                    instructions = await self._space_instructions(space_id)
+                    if instructions:
+                        agent_def = dict(agent_def)
+                        agent_def["system_prompt"] = f"{instructions}\n{agent_def.get('system_prompt', '')}".strip()
                     # v2 P2: context is fetched ONCE per group and passed in —
                     # each agent previously re-read 100 messages from the store
                     # (duplicated IO per relay member, contradicting the

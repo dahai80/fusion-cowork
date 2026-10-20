@@ -3,7 +3,7 @@ import { DataTable, EmptyState, ErrorState, SkeletonLines, StatusBadge, Streamin
 import { useAutoRetry } from '@fusion/web-ui';
 import type { StatusKind } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
-import { type RunListItem, type RunRecord, type RunReview, api, statusKind } from '../api';
+import { type RunListItem, type RunRecord, type RunReview, type RunStep, api, statusKind } from '../api';
 import { useT } from '../i18n';
 import { sdk, streamSse } from '../sdk';
 
@@ -194,6 +194,7 @@ function RunDetail({ runId }: { runId: string }) {
     const [payload, setPayload] = useState('{}');
     const [sending, setSending] = useState(false);
     const [reviewNote, setReviewNote] = useState('');
+    const [openStep, setOpenStep] = useState('');
 
     // W9: 交付审查 — pending_review → approved/rejected (节点级 guard 审批另属 W19)
     async function reviewRun(approved: boolean) {
@@ -403,27 +404,43 @@ function RunDetail({ runId }: { runId: string }) {
             ) : null}
             <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
                 <div className="space-y-1">
-                    {(record.steps ?? []).map((s) => (
-                        <div
-                            key={s.node_id}
-                            className="flex items-center justify-between rounded-md border border-border px-2 py-1.5"
-                        >
-                            <div className="min-w-0">
-                                <div className="truncate text-xs text-text-primary">
-                                    {s.node_display_name || s.node_name}
-                                </div>
-                                <div className="truncate font-mono text-[10px] text-text-muted">
-                                    {s.summary || s.error || `#${s.node_id}`}
-                                </div>
+                    {(record.steps ?? []).map((s) => {
+                        const maxTime = Math.max(...(record.steps ?? []).map((x) => x.execution_time), 0.001);
+                        const barPct = Math.max(4, Math.round((s.execution_time / maxTime) * 100));
+                        return (
+                            <div key={s.node_id} className="rounded-md border border-border bg-bg-elevated">
+                                <button
+                                    type="button"
+                                    className="flex w-full items-center justify-between px-2 py-1.5 text-left"
+                                    onClick={() => setOpenStep(openStep === s.node_id ? '' : s.node_id)}
+                                >
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-2">
+                                            <span className="truncate text-xs text-text-primary">
+                                                {s.node_display_name || s.node_name}
+                                            </span>
+                                            <span className="truncate font-mono text-[10px] text-text-muted">
+                                                {s.summary || s.error || `#${s.node_id}`}
+                                            </span>
+                                        </div>
+                                        <div className="mt-1 h-1 w-full overflow-hidden rounded bg-bg-muted">
+                                            <div
+                                                className={`h-full rounded ${statusKind(s.status) === 'error' ? 'bg-error' : statusKind(s.status) === 'success' ? 'bg-success' : 'bg-brand'}`}
+                                                style={{ width: `${barPct}%` }}
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="ml-2 flex shrink-0 items-center gap-2">
+                                        <span className="font-mono text-[10px] text-text-muted">
+                                            {s.execution_time.toFixed(2)}s
+                                        </span>
+                                        <StatusBadge status={statusKind(s.status) as StatusKind} label={s.status} />
+                                    </div>
+                                </button>
+                                {openStep === s.node_id ? <StepDrawer step={s} /> : null}
                             </div>
-                            <div className="flex shrink-0 items-center gap-2">
-                                <span className="font-mono text-[10px] text-text-muted">
-                                    {s.execution_time.toFixed(2)}s
-                                </span>
-                                <StatusBadge status={statusKind(s.status) as StatusKind} label={s.status} />
-                            </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
                 <RunArtifactPane
                     runId={runId}
@@ -435,7 +452,37 @@ function RunDetail({ runId }: { runId: string }) {
     );
 }
 
-// W10/B5: Runs 右栏产物预览 — 复用 Space 预览 (StreamingMarkdown), 审查即交付入口
+// #138 G7/C2: 逐节点 waterfall 详情抽屉 — input/output/error 渐进披露
+function StepDrawer({ step }: { step: RunStep }) {
+    const t = useT();
+    const fmt = (v: Record<string, unknown> | undefined) =>
+        v && Object.keys(v).length > 0 ? JSON.stringify(v, null, 4) : '';
+    const input = fmt(step.input_data);
+    const output = fmt(step.output_data);
+    return (
+        <div className="border-t border-border px-2 py-2">
+            {input ? (
+                <div>
+                    <div className="text-[10px] text-text-muted">{t('输入', 'Input')}</div>
+                    <pre className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-text-primary">{input}</pre>
+                </div>
+            ) : null}
+            {output ? (
+                <div className="mt-1.5">
+                    <div className="text-[10px] text-text-muted">{t('输出', 'Output')}</div>
+                    <pre className="mt-0.5 max-h-60 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-text-primary">{output}</pre>
+                </div>
+            ) : null}
+            {step.error ? (
+                <div className="mt-1.5">
+                    <div className="text-[10px] text-error">{t('错误', 'Error')}</div>
+                    <pre className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-error">{step.error}</pre>
+                </div>
+            ) : null}
+        </div>
+    );
+}
+
 function RunArtifactPane({
     runId,
     active,
