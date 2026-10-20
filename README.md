@@ -371,6 +371,15 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
 
+### Runs API Malformed-Edge 400 Fix (v0.5.25, issue #135 F-2)
+
+F-2 of #135 was **this repo's** union-web API, not agent-studio (initial mirror filing there was closed as misattributed): `POST /api/runs` with edges like `{"from": "n1", "to": "n2"}` crashed with 500 `KeyError: 'source_id'` inside `Workflow.from_dict`.
+
+- **`Edge.from_dict`** — missing/blank `source_id`/`target_id` now raise a readable `ValueError` naming the missing keys (aligns with the existing cycle-detection `ValueError` precedent); `Workflow.from_dict` edge parsing routes through it (removes an inline duplicate of the same logic)
+- **`runs_create`** — catches `ValueError` from `Workflow.from_dict` (malformed edges, cycles) → `400` with `工作流定义无效: <reason>` instead of 500
+
+Tests: `tests/test_issue_135_runs_edge_400.py` (9 cases: Edge/Workflow validation + API 400/202).
+
 ### Studio Graph Execute 422 Fix (v0.5.24, issue #135)
 
 Live cross-module acceptance of #133 found `studio_run` `graph_id`+`mode=sync` failing every time with `agent-studio HTTP 422` — upstream `GraphExecuteRequest` (`agent_runtime/api_server.py`) declares `graph_id` as a **required body field** (redundant with the path param, but enforced). `_execute_graph` now sends `{"graph_id": ..., "input_text": ...}`; wire-contract test asserts the body field (F-2, the `/api/runs` malformed-edge 500, is an agent-studio-side defect — mirrored upstream).

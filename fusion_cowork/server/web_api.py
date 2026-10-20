@@ -626,7 +626,13 @@ def create_web_app(
             raise HTTPException(
                 status_code=400, detail={"code": "bad_request", "message": "workflow 或 workflow_id 必填"}
             )
-        return runs.start(workflow_def, workflow_id=workflow_id, workflow_name=workflow_name)
+        try:
+            return runs.start(workflow_def, workflow_id=workflow_id, workflow_name=workflow_name)
+        except ValueError as exc:
+            # issue #135 F-2: 坏边形状/含环等工作流定义错误 → 400 可读信息, 不 500
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": f"工作流定义无效: {exc}"}
+            ) from exc
 
     @app.get("/api/runs")
     async def runs_list():

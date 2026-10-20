@@ -139,6 +139,11 @@ class Edge:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Edge:
+        # issue #135 F-2: 坏边形状 (如 {"from","to"}) 缺必填 key 时抛可读 ValueError,
+        # 不留 KeyError 500; API 层转 400
+        missing = [key for key in ("source_id", "target_id") if not str(data.get(key, "") or "").strip()]
+        if missing:
+            raise ValueError(f"边数据缺少必填字段 {missing}: {data}")
         return cls(
             source_id=data["source_id"],
             target_id=data["target_id"],
@@ -388,16 +393,9 @@ class Workflow:
                     wf.nodes[node.id] = node
                 else:
                     logger.warning(f"未知节点类型: {node_data.get('name')}，跳过")
-        # 恢复边
+        # 恢复边 (issue #135 F-2: 统一走 Edge.from_dict, 坏边形状抛可读 ValueError)
         for edge_data in data.get("edges", []):
-            edge = Edge(
-                source_id=edge_data["source_id"],
-                target_id=edge_data["target_id"],
-                source_output=edge_data.get("source_output", "output"),
-                target_input=edge_data.get("target_input", "input"),
-                label=edge_data.get("label", ""),
-            )
-            wf.edges.append(edge)
+            wf.edges.append(Edge.from_dict(edge_data))
         # HI-16: from_dict 一次性恢复所有边绕过 connect 的逐条环检查, 须在此补检
         if wf._has_cycle(wf.edges):
             logger.warning(f"反序列化工作流 '{wf.name}' 含环, 拒绝 (from_dict)")
