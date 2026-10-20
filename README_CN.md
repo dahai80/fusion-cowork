@@ -304,6 +304,15 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
 
+### Runs API 坏边形状 400 修复 (v0.5.25, issue #135 F-2)
+
+#135 的 F-2 是**本仓** union-web API 的问题（在 agent-studio 的镜像 issue 已以误报关闭）：`POST /api/runs` 携带 `{"from": "n1", "to": "n2"}` 形状的边时，`Workflow.from_dict` 内部 `KeyError: 'source_id'` 直接 500。
+
+- **`Edge.from_dict`** — 缺失/空白 `source_id`/`target_id` 现抛可读 `ValueError` 并指名缺失字段（对齐既有含环 `ValueError` 先例）；`Workflow.from_dict` 边解析统一走该入口（顺带消除同逻辑的内联重复）
+- **`runs_create`** — 捕获 `Workflow.from_dict` 的 `ValueError`（坏边形状/含环）→ `400` 返回 `工作流定义无效: <原因>`，不再 500
+
+测试: `tests/test_issue_135_runs_edge_400.py` (9 例: Edge/Workflow 校验 + API 400/202)。
+
 ### Studio graph execute 422 修复 (v0.5.24, issue #135)
 
 #133 真机跨模块验收发现 `studio_run` 的 `graph_id`+`mode=sync` 路径必现 `agent-studio HTTP 422` — 上游 `GraphExecuteRequest` (`agent_runtime/api_server.py`) 把 `graph_id` 声明为**必填 body 字段**（与路径参数冗余但强制校验）。`_execute_graph` 现发送 `{"graph_id": ..., "input_text": ...}`；wire 契约测试断言该 body 字段（F-2 `/api/runs` 坏边形状 500 属 agent-studio 侧缺陷，已镜像提上游 issue）。
