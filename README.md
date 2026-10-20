@@ -371,6 +371,16 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
 
+### Shell Manifest Ext Fields (v0.5.26, issue #139)
+
+`web/manifest.json` now declares the fusion-web-shell#24 extension fields so cowork surfaces in the shell host's ⌘K palette, notification center, and sidebar deep links:
+
+- **`pages`** — 7 module-relative routes (`/workflows` `/delegate` `/canvas` `/runs` `/sessions` `/spaces` `/approvals`) with zh/en titles; host deep-links `${entry}#${route}`.
+- **`searchProviders`** — one provider (`cowork`) at `/shell/fusion-cowork/api/search`; `GET ?q=` aggregates workflow definitions (route `/canvas/<id>`), terminal runs (`/runs`), and spaces (`/spaces`), case-insensitive substring match, empty query → empty items, cap 32.
+- **`notifications`** — two poll sources: `approvals` (`/shell/fusion-cowork/api/notifications/approvals`, wraps `list_pending()` — one item per pending approval, `level: warning`, stable `action_id` ids) and `runs` (`/shell/fusion-cowork/api/notifications/runs`, terminal runs newest-first, `level: error` for failures, stable `run_id` ids). Item ids are stable across polls per the host dedup contract (`${moduleId}:${sourceId}:${itemId}`).
+
+Tests: `tests/test_issue_139_manifest_ext.py` (15 cases: manifest schema conformance + search/notification shapes, ids, caps).
+
 ### Runs API Malformed-Edge 400 Fix (v0.5.25, issue #135 F-2)
 
 F-2 of #135 was **this repo's** union-web API, not agent-studio (initial mirror filing there was closed as misattributed): `POST /api/runs` with edges like `{"from": "n1", "to": "n2"}` crashed with 500 `KeyError: 'source_id'` inside `Workflow.from_dict`.
