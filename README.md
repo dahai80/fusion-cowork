@@ -63,6 +63,9 @@ pip install -e .
 # Install with AI support (optional, recommended)
 pip install -e ".[web]"
 
+# Office deliverables (xlsx_write / pptx_write nodes, issue #151 #152)
+pip install -e ".[office]"
+
 # Or use uv (faster)
 uv venv --python 3.11
 uv pip install -e ".[test]"
@@ -173,6 +176,9 @@ fusion-cowork plugin uninstall <name>
 fusion-cowork skill list
 fusion-cowork skill run /cleanup
 fusion-cowork skill search "clean"
+
+# Spreadsheet reconciliation — budget vs export-folder variance report (issue #151)
+fusion-cowork skill run /spreadsheet-recon "~/fin/budget.xlsx ~/fin/exports 10"
 
 # Chrome CDP — remote browser control (M3)
 fusion-cowork cdp navigate https://example.com
@@ -322,7 +328,7 @@ fusion-cowork collab serve --port 11439
 | `ai_processing` | 4 | AI Classify, AI Summarize, AI Generate Name, AI Vision Analyze |
 | `logic` | 3 | Filter, Loop, Merge |
 | `fusion_ecosystem` | 4 | Trainer (Fusion-Trainer 互通), **Memory Commit, Memory Retrieve** (Fusion-Memory 互通), **Studio Run** (Fusion-Agent-Studio 互通, issue #133) |
-| `io` | 2 | File Input, File Output |
+| `io` | 4 | File Input, File Output, **xlsx_write** (multi-sheet Excel w/ formulas + conditional formatting, issue #151), **pptx_write** (editable PowerPoint from JSON spec + period-compare flagging, issue #152) |
 
 ### Claude Cowork Parity (V0.2) 🆕
 
@@ -672,6 +678,8 @@ FUSION_MEMORY_E2E=1 FUSION_MEMORY_API_KEY=<key> pytest tests/test_memory_e2e.py 
 |------|-------------|
 | `file_input` | Read file list or directory contents |
 | `file_output` | Write workflow results to files |
+| `xlsx_write` | Generate Excel workbooks from a JSON spec — multiple sheets, `="..."` formula cells (recompute on open), header styling, conditional formatting (issue #151; needs `pip install -e ".[office]"`) |
+| `pptx_write` | Generate editable PowerPoint decks from a JSON spec — title/content/chart/table layouts, `period_compare` auto-flags >10% movements (issue #152; needs `pip install -e ".[office]"`) |
 | `filter` | Filter data by conditions (extension, size, date) |
 | `loop` | Batch process each item in a list |
 | `merge` | Merge data from multiple upstream nodes |

@@ -62,6 +62,9 @@ pip install -e .
 # 安装 AI 支持（可选，建议）
 pip install -e ".[web]"
 
+# 办公交付节点（xlsx_write / pptx_write，issue #151 #152）
+pip install -e ".[office]"
+
 # 或使用 uv（更快）
 uv venv --python 3.11
 uv pip install -e ".[test]"
@@ -156,6 +159,9 @@ fusion-cowork plugin uninstall <name>
 fusion-cowork skill list
 fusion-cowork skill run /cleanup
 fusion-cowork skill search "clean"
+
+# 导出对账 — 预算 vs 导出目录差异对账（issue #151）
+fusion-cowork skill run /spreadsheet-recon "~/fin/budget.xlsx ~/fin/exports 10"
 
 # Chrome CDP — 远程浏览器控制 (M3)
 fusion-cowork cdp navigate https://example.com
@@ -489,6 +495,8 @@ FUSION_MEMORY_E2E=1 FUSION_MEMORY_API_KEY=<key> pytest tests/test_memory_e2e.py 
 |------|------|
 | `file_input` | 读取文件列表或目录内容 |
 | `file_output` | 将工作流结果写入文件 |
+| `xlsx_write` | 从 JSON spec 生成 Excel 工作簿：多 sheet、公式（打开时重算）、表头样式、条件格式（issue #151；需 `pip install -e ".[office]"`） |
+| `pptx_write` | 从 JSON spec 生成可编辑 PPT：标题/内容/图表/表格版式，`period_compare` 自动打标 >10% 变动（issue #152；需 `pip install -e ".[office]"`） |
 | `filter` | 按扩展名/大小/日期过滤 |
 | `loop` | 批量处理列表中的每个元素 |
 | `merge` | 合并多个上游数据源 |

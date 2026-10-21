@@ -60,6 +60,12 @@ NODE_NAME_ALIASES: dict[str, str] = {
     "文件输入": "file_input",
     "写入文件": "file_output",
     "文件输出": "file_output",
+    "写入Excel": "xlsx_write",
+    "Excel写入": "xlsx_write",
+    "生成Excel": "xlsx_write",
+    "写入PPT": "pptx_write",
+    "PPT写入": "pptx_write",
+    "生成PPT": "pptx_write",
     # 逻辑
     "条件过滤": "filter",
     "过滤": "filter",
