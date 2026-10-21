@@ -283,6 +283,8 @@ class RunRegistry:
         # B2: 运行事件订阅 — 每个 SSE 客户端一个队列
         self._subs: Dict[str, List[asyncio.Queue]] = {}
         self._emitter = event_emitter
+        # issue #154: webhook push 出口 (未注入 = 不推送, 零行为变化)
+        self.push = None
         if event_emitter is not None:
             event_emitter.on_event(self._on_event)
 
@@ -463,6 +465,21 @@ class RunRegistry:
                 logger.info(f"运行待交付审查: {run_id}")
             self._broadcast(run_id, {"event": "run_end", "at": time.time(), "run": self._public(record)})
             self._tasks.pop(run_id, None)
+            # issue #154: run 终态 webhook 掬点 (未注入 = 零行为变化)
+            if self.push is not None:
+                push = self.push
+                record_ref = record
+                asyncio.create_task(
+                    push.push_event(
+                        "run_finished",
+                        {
+                            "run_id": run_id,
+                            "workflow_name": record_ref.get("workflow_name", ""),
+                            "status": record_ref.get("status", ""),
+                            "error": record_ref.get("error"),
+                        },
+                    )
+                )
 
     def review(self, run_id: str, approved: bool, note: str = "") -> tuple[Optional[str], Optional[Dict[str, Any]]]:
         """W9: 交付审查 — pending_review → approved/rejected (带意见)。"""
@@ -605,6 +622,126 @@ def _serialize_session(s: Any) -> Dict[str, Any]:
     }
 
 
+def _make_pending_push_callback(push_egress):
+    """issue #154: 审批入队 → webhook 推送回调工厂 (best-effort, 不抛)。
+
+    在事件循环内被调用 (engine 权限检查 await 链), 直接 create_task;
+    无事件循环时跳过 — webhook 是 best-effort, 不为它开新循环。
+    """
+
+    def _cb(info: dict) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug("push 回调无事件 loop, 跳过 (best-effort)")
+            return
+        loop.create_task(push_egress.push_event("approval_requested", info))
+
+    return _cb
+
+
+def _otlp_logs(records: List[Dict[str, Any]], scope: str = "fusion-cowork.audit") -> Dict[str, Any]:
+    """issue #156: 审计记录 → OTLP/JSON LogsData (SIEM collector 可直接消费)。"""
+    log_records: List[Dict[str, Any]] = []
+    for rec in records:
+        attrs = [{"key": k, "value": {"stringValue": str(v)}} for k, v in (rec.get("attributes") or {}).items()]
+        log_records.append(
+            {
+                "timeUnixNano": str(int(float(rec.get("time_unix_nano") or 0))),
+                "severityText": str(rec.get("severity") or "INFO"),
+                "body": {"stringValue": str(rec.get("body") or "")},
+                "attributes": attrs,
+            }
+        )
+    return {
+        "resourceLogs": [
+            {
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "fusion-cowork"}},
+                    ]
+                },
+                "scopeLogs": [{"scope": {"name": scope}, "logRecords": log_records}],
+            }
+        ]
+    }
+
+
+async def _takeover_session(ws, run_id: str, runs: Any, permission_manager: Any) -> None:
+    """issue #154: 接管会话主循环 — 订阅 run 事件 + 处理转向帧。
+
+    帧: {"method": "directive"|"pause"|"resume"|"cancel"|"confirm", "params": {...}}
+    """
+    queue = runs.subscribe(run_id)
+    record = runs.get(run_id)
+    snapshot = RunRegistry._public(record) if record is not None else {}
+    await ws.send_json({"event": "snapshot", "run": snapshot})
+    pump = asyncio.create_task(_pump_run_events(ws, queue))
+    try:
+        while True:
+            raw = await ws.receive_text()
+            try:
+                frame = json.loads(raw)
+            except json.JSONDecodeError:
+                await ws.send_json({"event": "error", "message": "invalid json"})
+                continue
+            method = str(frame.get("method", ""))
+            params = frame.get("params") or {}
+            reply = await _takeover_apply(method, params, run_id, runs, permission_manager)
+            await ws.send_json(reply)
+    finally:
+        runs.unsubscribe(run_id, queue)
+        pump.cancel()
+
+
+async def _takeover_apply(method: str, params: dict, run_id: str, runs: Any, permission_manager: Any) -> dict:
+    """issue #154: 转向帧分发 — 复用 RunRegistry + permission manager, 返回回执帧。"""
+    if method == "directive":
+        action = str(params.get("action", ""))
+        if action not in ("set_params", "insert_node", "skip_remaining"):
+            return {"event": "error", "message": f"directive rejected: unknown action {action}"}
+        err = runs.directive(run_id, params)
+        if err:
+            return {"event": "error", "message": f"directive rejected: {err}"}
+        return {"event": "directive_queued", "action": str(params.get("action", ""))}
+    if method == "pause":
+        ok = runs.pause(run_id)
+        return {"event": "paused"} if ok else {"event": "error", "message": "not running"}
+    if method == "resume":
+        ok = runs.resume(run_id)
+        return {"event": "resumed"} if ok else {"event": "error", "message": "not paused"}
+    if method == "cancel":
+        ok = runs.cancel(run_id)
+        return {"event": "cancelled"} if ok else {"event": "error", "message": "not cancelable"}
+    if method == "confirm":
+        if permission_manager is None:
+            return {"event": "error", "message": "权限管理器不可用"}
+        action_id = str(params.get("action_id", ""))
+        approved = bool(params.get("approved"))
+        confirmed = await permission_manager.confirm_guard(
+            action_id, approved, approved_by="takeover", scope=str(params.get("scope") or "*")
+        )
+        if confirmed:
+            try:
+                saver = getattr(permission_manager, "save", None)
+                if callable(saver):
+                    saver()
+            except Exception as e:
+                logger.warning(f"takeover confirm 规则保存失败: {e}")
+        return {"event": "confirm_result", "action_id": action_id, "approved": approved, "confirmed": confirmed}
+    return {"event": "error", "message": f"unknown method: {method}"}
+
+
+async def _pump_run_events(ws, queue) -> None:
+    """issue #154: run 事件泵 — RunRegistry 订阅队列 → WS 帧。断连/取消即退。"""
+    while True:
+        item = await queue.get()
+        try:
+            await ws.send_json(item)
+        except Exception:
+            return
+
+
 def create_web_app(
     engine: Any = None,
     dist_dir: Optional[Path] = None,
@@ -618,7 +755,7 @@ def create_web_app(
     cross_sync: Any = None,
 ):
     try:
-        from fastapi import FastAPI, HTTPException, Request
+        from fastapi import FastAPI, HTTPException, Request, WebSocket
         from fastapi.responses import JSONResponse, StreamingResponse
         from fastapi.staticfiles import StaticFiles
     except ImportError as e:
@@ -680,9 +817,19 @@ def create_web_app(
     # W22: 跨设备同步引擎接缝 — 注入后 /api/deliver 可投递; 默认 None (503 诚实不可用)
     app.state.cross_sync = cross_sync
 
+    # issue #154: webhook push 出口 (未配 FUSION_COWORK_PUSH_WEBHOOK_URL = no-op)
+    from .push import PushEgress
+
+    push_egress = PushEgress.from_env()
+    app.state.push_egress = push_egress
+    runs.push = push_egress
+    # issue #154: 审批入队 → webhook 推送 (permission manager 回调, best-effort)
+    if permission_manager is not None:
+        permission_manager.on_pending_created = _make_pending_push_callback(push_egress)
+
     @app.middleware("http")
     async def _auth_middleware(request: Request, call_next):
-        if request.url.path in ("/health",):
+        if request.url.path in ("/health",) or request.url.path.startswith("/ws/"):
             return await call_next(request)
         # #146: 未配置密钥 = 放行 (对齐 cli.py/README "unset = allow" 契约) —
         # 旧行为无条件 401 导致 shell 登录弹回循环。
@@ -1434,6 +1581,163 @@ def create_web_app(
             logger.warning(f"/api/deliver 发送失败 (诚实返回未送达): {e}")
             delivered = False
         return {"delivered": delivered, "run_id": run_id, "receiver": receiver}
+
+    # ── issue #156: 管理台 — 成员 / 用量 / 审计导出。FUSION_COWORK_ADMIN_KEY 门禁 ──
+    def _require_admin(request: Request) -> None:
+        import os as _os
+
+        expected = _os.environ.get("FUSION_COWORK_ADMIN_KEY", "")
+        if not expected:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "admin_disabled", "message": "管理台未启用 (未配置 FUSION_COWORK_ADMIN_KEY)"},
+            )
+        provided = request.headers.get("x-admin-key", "")
+        if provided != expected:
+            logger.warning(f"admin API 鉴权拒绝: {request.url.path}")
+            raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "invalid admin key"})
+
+    @app.get("/api/admin/members")
+    async def admin_members(request: Request):
+        _require_admin(request)
+        members: List[Dict[str, Any]] = []
+        space_store = getattr(app.state, "space_store", None)
+        if space_store is not None:
+            try:
+                rows = await space_store._fetchall(
+                    "SELECT space_id, user_id, role, display_name, joined_at, tenant_id FROM space_members ORDER BY tenant_id, space_id"
+                )
+                members = [dict(r) for r in rows]
+            except Exception as e:
+                logger.warning(f"admin members 查询失败: {e}")
+        from ..auth import is_identity_enabled
+
+        return {
+            "mode": "identity" if is_identity_enabled() else "local",
+            "members": members,
+            "count": len(members),
+        }
+
+    @app.get("/api/admin/usage")
+    async def admin_usage(request: Request):
+        _require_admin(request)
+        totals = {"spaces": 0, "messages": 0, "artifacts": 0, "agents": 0}
+        space_store = getattr(app.state, "space_store", None)
+        if space_store is not None:
+            for key, table in (
+                ("spaces", "spaces"),
+                ("messages", "space_messages"),
+                ("artifacts", "space_artifacts"),
+                ("agents", "space_agents"),
+            ):
+                try:
+                    row = await space_store._fetchone(f"SELECT COUNT(*) AS c FROM {table}")
+                    totals[key] = int(row["c"] or 0)
+                except Exception as e:
+                    logger.warning(f"admin usage 计数失败 {table}: {e}")
+        run_counts: Dict[str, int] = {}
+        total_tokens = 0
+        for record in runs._runs.values():
+            status = str(record.get("status", ""))
+            run_counts[status] = run_counts.get(status, 0) + 1
+            for step in record.get("steps") or []:
+                tok = step.get("tokens") or {}
+                if isinstance(tok, dict):
+                    total_tokens += int(tok.get("total_tokens") or 0)
+        return {"spaces": totals, "runs": {"by_status": run_counts, "total": len(runs._runs)}, "tokens": total_tokens}
+
+    @app.get("/api/admin/audit/export")
+    async def admin_audit_export(request: Request, since: float = 0.0, limit: int = 500):
+        _require_admin(request)
+        lim = min(max(limit, 1), 2000)
+        records: List[Dict[str, Any]] = []
+        space_store = getattr(app.state, "space_store", None)
+        if space_store is not None:
+            try:
+                rows = await space_store._fetchall(
+                    "SELECT tenant_id, actor, action, resource, detail_hash, entry_hash, created_at "
+                    "FROM audit_log ORDER BY created_at ASC, id ASC LIMIT ?",
+                    (lim,),
+                )
+                for row in rows:
+                    ts = _iso_to_epoch(str(row["created_at"] or ""))
+                    if since and ts < since:
+                        continue
+                    records.append(
+                        {
+                            "time_unix_nano": ts * 1e9,
+                            "severity": "INFO",
+                            "body": f"audit {row['action']} {row['resource']}",
+                            "attributes": {
+                                "event.name": "audit",
+                                "tenant_id": row["tenant_id"],
+                                "actor": row["actor"],
+                                "action": row["action"],
+                                "resource": row["resource"],
+                                "detail_hash": row["detail_hash"],
+                                "entry_hash": row["entry_hash"],
+                            },
+                        }
+                    )
+            except Exception as e:
+                logger.warning(f"admin audit 查询失败: {e}")
+        for record in runs._runs.values():
+            finished = record.get("finished_at")
+            if not finished:
+                continue
+            if since and float(finished) < since:
+                continue
+            records.append(
+                {
+                    "time_unix_nano": float(finished) * 1e9,
+                    "severity": "ERROR" if record.get("status") == "failed" else "INFO",
+                    "body": f"run.finished {record.get('workflow_name', '')}",
+                    "attributes": {
+                        "event.name": "run.finished",
+                        "run_id": record.get("run_id", ""),
+                        "workflow_id": record.get("workflow_id", ""),
+                        "status": record.get("status", ""),
+                        "steps": len(record.get("steps") or []),
+                        "error": record.get("error") or "",
+                    },
+                }
+            )
+        return _otlp_logs(records[:lim])
+
+    @app.post("/api/admin/push/test")
+    async def admin_push_test(request: Request):
+        _require_admin(request)
+        egress = getattr(app.state, "push_egress", None)
+        if egress is None or not getattr(egress, "enabled", False):
+            return {"enabled": False, "delivered": False, "hint": "配置 FUSION_COWORK_PUSH_WEBHOOK_URL 后可用"}
+        delivered = await egress.push_event("test", {"source": "admin_console"})
+        return {"enabled": True, "delivered": delivered}
+
+    # ── issue #154: 会话接管 WS — 任意已认证设备 attach 运行中的 run, 事件流 + 转向帧 ──
+    @app.websocket("/ws/takeover/{run_id}")
+    async def takeover_ws(websocket: WebSocket, run_id: str):
+        from fastapi import WebSocketDisconnect
+
+        # 浏览器 WS 无法带自定义头 — token 走 query 参数; 未配 key = 放行 (#146 契约)
+        from ..auth import verify_any_token
+
+        if auth_configured():
+            token = str(websocket.query_params.get("token", ""))
+            if verify_any_token(token, _api_key()) is None:
+                await websocket.accept()
+                await websocket.close(code=4401)
+                return
+        await websocket.accept()
+        record = runs.get(run_id)
+        if record is None:
+            await websocket.send_json({"event": "error", "message": f"运行不存在: {run_id}"})
+            await websocket.close(code=4404)
+            return
+        try:
+            await _takeover_session(websocket, run_id, runs, permission_manager)
+        except WebSocketDisconnect:
+            logger.info(f"takeover WS 断开: run={run_id}")
+        return
 
     # ── W20 插件面板 — /rpc 端点 (rpc_bridge plugins/* 委托, 依赖缺则 -32603) ──
     @app.post("/rpc")
