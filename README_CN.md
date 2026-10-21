@@ -168,7 +168,10 @@ fusion-cowork skill packages
 fusion-cowork skill run-package /weekly-readout --params '{"days": 7}'
 fusion-cowork skill run-package /contract-review --params '{"contract_path": "~/contracts/a.md", "kb_id": "playbook"}'
 # 包格式: YAML frontmatter (name/params/handler/output_template) + markdown 指令正文。
-# 内置包在 fusion_cowork/skills/packages/；自写包放入 ~/.fusion-cowork/skills/。
+# 共享格式 (issue #167): JSON Schema parameters + allowed-tools + version 同时被
+# fusion-cowork 与 fusion-agent-studio 识别, 一个包两侧可用 — 详见 docs/skill-packages.md。
+# 内置包在 fusion_cowork/skills/packages/；自写包放入 ~/.fusion-cowork/skills/，
+# 或用 FUSION_COWORK_SKILLS_DIRS=目录1:目录2 指向共享目录。
 
 # Chrome CDP — 远程浏览器控制 (M3)
 fusion-cowork cdp navigate https://example.com
@@ -329,6 +332,11 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#125 (P2) — manifest upstream/api_key**: `web/manifest.json` 声明 `upstream` (`http://127.0.0.1:11461`) + `api_key_env`; `shell_registry.load_manifest()` 注册时从该 env 解析 `api_key`, 并支持 `FUSION_COWORK_WEB_UPSTREAM` 覆盖。网关动态代理 (#232 契约) 可解析本模块。
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
+
+### 共享技能包格式 + 网关签发模块密钥 (v0.5.31, issues #167/#168)
+
+- **共享 markdown 技能包格式 (#167)** — 一个包同时服务 fusion-cowork 与 fusion-agent-studio。`parse_markdown` 接受共享 frontmatter: JSON Schema `parameters`/`arguments` (`properties`/`required`, 映射为 cowork 表单字段, 运行时校验 `enum`), `allowed-tools`/`tools`, `command`/`slash`, `version` 与连字符别名; 产品私有键 (`handler`/`workflow`/`params`) 不破坏 agent-studio 加载器 (其 `parse_skill_md` 归入 `extra`)。内置 `/contract-review` 包已改用共享格式。`FUSION_COWORK_SKILLS_DIRS` (冒号分隔) 增加共享安装目录, 单文件一次安装两侧可用。规范: `docs/skill-packages.md`。测试: `tests/test_issue_167_shared_skill_format.py` (21 例)。
+- **网关签发模块密钥 (#168, K4)** — shell 注册体不再携带模块自供 `api_key` (除非显式配置 `FUSION_COWORK_WEB_API_KEY`, 静态覆盖路径向后兼容)。网关 (K1) 在注册响应返回签发 `fm-` 密钥时, cowork 一次性持久化到 `~/.fusion-cowork/web_module_key` (0600, 明文永不落日志 — 仅掩码 `fm-x****xxxx`), 心跳改用签发密钥而非 admin key; 心跳 401 回退重注册。入站 `/api` 鉴权在 24h 双活窗口内同时接受 env 静态密钥与签发密钥 — 全新安装零手工配密钥, 存量安装升级不停机。测试: `tests/test_issue_168_gateway_keys.py` (15 例)。
 
 ### fusion-browser 托管后端 (v0.5.30, issue #162)
 

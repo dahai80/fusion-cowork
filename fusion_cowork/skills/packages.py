@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -60,8 +61,11 @@ class SkillPackage:
     title_en: str = ""
     description: str = ""
     description_en: str = ""
+    version: str = ""
     category: str = "custom"
     aliases: List[str] = field(default_factory=list)
+    command: str = ""
+    allowed_tools: List[str] = field(default_factory=list)
     params: List[ParamSpec] = field(default_factory=list)
     instructions: str = ""
     output_template: str = ""
@@ -77,8 +81,11 @@ class SkillPackage:
             "title_en": self.title_en or self.title,
             "description": self.description,
             "description_en": self.description_en,
+            "version": self.version,
             "category": self.category,
             "aliases": self.aliases,
+            "command": self.command or self.name,
+            "allowed_tools": self.allowed_tools,
             "params": [p.to_dict() for p in self.params],
             "instructions": self.instructions,
             "output_template": self.output_template,
@@ -100,9 +107,15 @@ class SkillPackage:
                 clean[spec.name] = "" if spec.type in ("string", "file", "dir", "text") else spec.default
                 continue
             try:
-                clean[spec.name] = _coerce_value(spec.type, raw)
+                value = _coerce_value(spec.type, raw)
             except (TypeError, ValueError):
                 errors.append(f"参数类型错误: {spec.name} 应为 {spec.type}")
+                continue
+            # issue #167: enum (options) 校验 — 对齐 agent-studio validate_skill_params
+            if spec.options and str(value) not in [str(o) for o in spec.options]:
+                errors.append(f"参数取值非法: {spec.name} 应为 {', '.join(spec.options)} 之一")
+                continue
+            clean[spec.name] = value
         return clean, errors
 
 
@@ -129,6 +142,50 @@ def _coerce_value(kind: str, raw: Any) -> Any:
     return raw
 
 
+def _first(meta: Dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in meta and meta[key] is not None:
+            return meta[key]
+    return None
+
+
+def _as_list(raw: Any) -> List[str]:
+    if isinstance(raw, str):
+        return [t.strip() for t in raw.split(",") if t.strip()]
+    if isinstance(raw, list):
+        return [str(t) for t in raw]
+    return []
+
+
+def _params_from_schema(schema: Any) -> List[ParamSpec]:
+    # issue #167: 共享格式 parameters (JSON Schema: properties/required) → ParamSpec。
+    # 与 fusion-agent-studio skills_store 同一 schema, 两侧结构化表单同源渲染。
+    if not isinstance(schema, dict):
+        return []
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return []
+    required = _as_list(schema.get("required"))
+    type_map = {"string": "string", "integer": "int", "number": "float", "boolean": "bool", "array": "list"}
+    out: List[ParamSpec] = []
+    for key, spec in properties.items():
+        spec = spec if isinstance(spec, dict) else {}
+        kind = type_map.get(str(spec.get("type", "string")), "string")
+        out.append(
+            ParamSpec(
+                name=str(key),
+                label=str(spec.get("title", "") or key),
+                label_en=str(spec.get("title_en", "") or spec.get("title", "") or key),
+                type=kind,
+                required=bool(spec.get("required", False)) or key in required,
+                default=spec.get("default"),
+                options=[str(e) for e in (spec.get("enum") or [])],
+                placeholder=str(spec.get("description", "") or "")[:120],
+            )
+        )
+    return out
+
+
 def parse_markdown(text: str, source: str = "") -> SkillPackage:
     if not text.startswith("---"):
         raise ValueError("markdown skill 包缺少 frontmatter (--- 开头)")
@@ -138,22 +195,34 @@ def parse_markdown(text: str, source: str = "") -> SkillPackage:
     meta = yaml.safe_load(parts[1]) or {}
     if not isinstance(meta, dict):
         raise ValueError("markdown skill 包 frontmatter 必须是映射")
-    name = str(meta.get("name", "")).strip()
+    name = str(_first(meta, "name", "command", "slash") or "").strip()
     if not name:
         raise ValueError("markdown skill 包缺少 name")
+    name = name if name.startswith("/") else f"/{name}"
+    raw_params = _first(meta, "params")
+    if isinstance(raw_params, list) and raw_params:
+        params = [ParamSpec.from_dict(p) for p in raw_params]
+    else:
+        params = _params_from_schema(_first(meta, "parameters", "arguments"))
+    command = str(_first(meta, "command", "slash") or "").strip()
+    if command and not command.startswith("/"):
+        command = f"/{command}"
     return SkillPackage(
-        name=name if name.startswith("/") else f"/{name}",
-        title=str(meta.get("title", "")),
-        title_en=str(meta.get("title_en", "")),
-        description=str(meta.get("description", "")),
-        description_en=str(meta.get("description_en", "")),
-        category=str(meta.get("category", "custom")),
-        aliases=[str(a) for a in (meta.get("aliases") or [])],
-        params=[ParamSpec.from_dict(p) for p in (meta.get("params") or [])],
+        name=name,
+        title=str(_first(meta, "title", "title-en") or ""),
+        title_en=str(_first(meta, "title_en", "title-en") or ""),
+        description=str(_first(meta, "description") or ""),
+        description_en=str(_first(meta, "description_en", "description-en") or ""),
+        version=str(_first(meta, "version") or ""),
+        category=str(_first(meta, "category") or "custom"),
+        aliases=_as_list(meta.get("aliases")),
+        command=command or name,
+        allowed_tools=_as_list(_first(meta, "allowed-tools", "allowed_tools", "tools")),
+        params=params,
         instructions=parts[2].strip(),
-        output_template=str(meta.get("output_template", "") or ""),
-        handler=str(meta.get("handler", "") or ""),
-        argument_template=str(meta.get("argument_template", "") or ""),
+        output_template=str(_first(meta, "output_template", "output-template") or ""),
+        handler=str(_first(meta, "handler") or ""),
+        argument_template=str(_first(meta, "argument_template", "argument-template") or ""),
         workflow=dict(meta.get("workflow") or {}),
         source=source,
     )
@@ -181,6 +250,8 @@ class SkillPackageRegistry:
         self._packages[pkg.name] = pkg
         for alias in pkg.aliases:
             self._packages[alias if alias.startswith("/") else f"/{alias}"] = pkg
+        if pkg.command and pkg.command != pkg.name:
+            self._packages[pkg.command] = pkg
         logger.info(f"注册 markdown skill 包: {pkg.name} (source={pkg.source or '-'})")
 
     def get(self, name: str) -> Optional[SkillPackage]:
@@ -275,6 +346,10 @@ def get_package_registry(reload: bool = False) -> SkillPackageRegistry:
     registry = SkillPackageRegistry()
     registry.discover(BUILTIN_PACKAGES_DIR)
     registry.discover(USER_PACKAGES_DIR)
+    # issue #167: 共享安装目录 (冒号分隔) — 同一包一次安装, cowork / agent-studio 共用
+    for extra in os.environ.get("FUSION_COWORK_SKILLS_DIRS", "").split(":"):
+        if extra.strip():
+            registry.discover(Path(extra.strip()))
     _registry = registry
     logger.info(f"markdown skill 包就绪: {len(registry.list_packages())} 个")
     return registry

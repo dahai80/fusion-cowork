@@ -27,15 +27,35 @@ def _api_key() -> str:
     return os.environ.get("FUSION_COWORK_WEB_API_KEY", "")
 
 
+def _module_key() -> str:
+    # issue #168 (K4): 网关注册时签发的 fm- 模块密钥 (0600 落盘); 未签发返回空。
+    try:
+        from .shell_registry import load_module_key
+
+        return load_module_key()
+    except Exception:
+        return ""
+
+
+def _accepted_keys() -> List[str]:
+    # 双活窗口: env 静态密钥与网关签发密钥同时有效 (24h grace 对齐 gateway K1)。
+    keys = [k for k in (_api_key(), _module_key()) if k]
+    return list(dict.fromkeys(keys))
+
+
 def auth_configured() -> bool:
-    return bool(_api_key())
+    return bool(_accepted_keys())
 
 
 def check_static_key(key: str) -> Optional[Dict[str, Any]]:
-    expected = _api_key()
-    if not expected or not key or key != expected:
+    accepted = _accepted_keys()
+    if not accepted or not key:
         return None
-    return {"valid": True, "key_id": "static-env", "permissions": ["admin"]}
+    if key == _api_key():
+        return {"valid": True, "key_id": "static-env", "permissions": ["admin"]}
+    if key == _module_key():
+        return {"valid": True, "key_id": "module-issued", "permissions": ["admin"]}
+    return None
 
 
 def extract_caller_key(headers: Any) -> str:
@@ -1997,7 +2017,7 @@ def create_web_app(
 
         if auth_configured():
             token = str(websocket.query_params.get("token", ""))
-            if verify_any_token(token, _api_key()) is None:
+            if not any(verify_any_token(token, expected) is not None for expected in _accepted_keys()):
                 await websocket.accept()
                 await websocket.close(code=4401)
                 return
