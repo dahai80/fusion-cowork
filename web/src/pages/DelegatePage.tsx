@@ -48,6 +48,15 @@ export function DelegatePage() {
     const [memoryEnabled, setMemoryEnabled] = useState(true);
 
     useEffect(() => onPreferredModelChange(setModel), []);
+    // #147: 模型列表失败后 30s 慢速自动重试直到恢复 (服务恢复后自动回填),
+    // 替代旧行为的失败即死; 手动重试按钮在下拉旁。
+    const modelsRetryRef = useRef(models.manualRetry);
+    modelsRetryRef.current = models.manualRetry;
+    useEffect(() => {
+        if (!models.error) return;
+        const timer = window.setInterval(() => modelsRetryRef.current(), 30000);
+        return () => window.clearInterval(timer);
+    }, [models.error]);
 
     async function generate() {
         const text = prompt.trim();
@@ -199,8 +208,25 @@ export function DelegatePage() {
                 {models.loading && !models.data ? (
                     <span className="text-xs text-text-muted">{t('加载中…', 'Loading…')}</span>
                 ) : null}
+                {models.data?.stale ? (
+                    <span
+                        className="text-xs text-text-muted"
+                        title={t('模型服务暂时不可用, 显示缓存列表', 'Model service unavailable — cached list shown')}
+                    >
+                        {t('缓存', 'Cached')}
+                    </span>
+                ) : null}
                 {models.error ? (
-                    <span className="text-xs text-text-muted">{t('模型列表不可用', 'Models unavailable')}</span>
+                    <span className="flex items-center gap-1 text-xs text-text-muted">
+                        {t('模型列表不可用', 'Models unavailable')}
+                        <button
+                            type="button"
+                            className="rounded border border-border px-1 hover:bg-bg-muted"
+                            onClick={() => models.manualRetry()}
+                        >
+                            {t('重试', 'Retry')}
+                        </button>
+                    </span>
                 ) : null}
             </div>
             <div className="flex items-end gap-2 pb-4">
@@ -363,7 +389,13 @@ export function DelegatePage() {
                         </div>
                     </div>
                     <div className="mt-3 flex items-center justify-end gap-2">
-                        <label className="mr-auto flex items-center gap-1 text-sm text-text-secondary" title={t('运行结束后把产出写入 fusion-memory 长期记忆', 'Write run outcomes to fusion-memory after the run ends')}>
+                        <label
+                            className="mr-auto flex items-center gap-1 text-sm text-text-secondary"
+                            title={t(
+                                '运行结束后把产出写入 fusion-memory 长期记忆',
+                                'Write run outcomes to fusion-memory after the run ends'
+                            )}
+                        >
                             <input
                                 type="checkbox"
                                 checked={memoryEnabled}
