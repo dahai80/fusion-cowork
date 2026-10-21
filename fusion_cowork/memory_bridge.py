@@ -134,9 +134,7 @@ class MemoryBridge:
             summary = getattr(s, "summary", "") or getattr(s, "error", "") or ""
             if not summary:
                 summary = _compact(getattr(s, "output_data", None))
-            tool_calls.append(
-                {"name": name, "args": {}, "result_summary": f"[{status}] {summary}"[:_FIELD_CAP]}
-            )
+            tool_calls.append({"name": name, "args": {}, "result_summary": f"[{status}] {summary}"[:_FIELD_CAP]})
         user_message = f"{workflow_name}: {description}".strip(": ")
         assistant_message = (result_summary or error or "(无输出)")[:_FIELD_CAP]
         return {

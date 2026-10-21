@@ -15,6 +15,7 @@ _NODE_MODULES = (
     "fusion_cowork.nodes.macos.input_nodes",
     "fusion_cowork.nodes.ai.classify",
     "fusion_cowork.nodes.io.file_io",
+    "fusion_cowork.nodes.io.deliverables",
     "fusion_cowork.nodes.logic.logic_nodes",
     "fusion_cowork.nodes.tools.tool_nodes",
     "fusion_cowork.nodes.browser.browser_nodes",

@@ -414,6 +414,63 @@ BUILTIN_TEMPLATES = [
             "edges": [{"source_id": "n1", "target_id": "n2"}, {"source_id": "n2", "target_id": "n3"}],
         },
     },
+    {
+        "id": "weekly_readout_pptx",
+        "name": "周度数据读出 (PPT)",
+        "description": "从 JSON 数据源生成周度读出 deck: 环比对比, 超 10% 变动自动打标 (issue #152)",
+        "category": "办公交付",
+        "tags": ["PPT", "周报", "环比", "读出"],
+        "icon": "📽️",
+        "difficulty": "简单",
+        "estimated_time": "10秒",
+        "needs_ai": False,
+        "workflow": {
+            "name": "周度数据读出",
+            "description": "本期 vs 上期对比, 超阈值变动打标, 生成可编辑 deck",
+            "nodes": [
+                {
+                    "id": "n1",
+                    "name": "pptx_write",
+                    "config": {
+                        "params": {
+                            "output_path": "~/Desktop/Output",
+                            "file_name": "weekly_readout_{date}",
+                            "overwrite": True,
+                            "spec": json.dumps(
+                                {
+                                    "title": "周度数据读出",
+                                    "subtitle": "本期 vs 上期 (>10% 变动打标)",
+                                    "slides": [
+                                        {
+                                            "layout": "chart",
+                                            "title": "核心指标对比",
+                                            "chart": {
+                                                "type": "column",
+                                                "categories": ["营收", "订单", "活跃", "转化率"],
+                                                "series": [
+                                                    {"name": "上期", "values": [100, 90, 180, 3.2]},
+                                                    {"name": "本期", "values": [128, 84, 205, 3.0]},
+                                                ],
+                                            },
+                                        }
+                                    ],
+                                    "period_compare": {
+                                        "metric": "指标",
+                                        "categories": ["营收", "订单", "活跃", "转化率"],
+                                        "previous": [100, 90, 180, 3.2],
+                                        "current": [128, 84, 205, 3.0],
+                                        "threshold_pct": 10,
+                                    },
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    },
+                }
+            ],
+            "edges": [],
+        },
+    },
 ]
 
 

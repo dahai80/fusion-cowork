@@ -61,6 +61,7 @@ def _sanitize_approval_params(params: Dict[str, Any] = None) -> Dict[str, Any]:
             snapshot[str(key)] = f"<{type(val).__name__}>"
     return snapshot
 
+
 # issue #142: 编辑型 params (old_text/new_text) 的审批 diff 分块 — 原文截断上限
 _DIFF_MAX_CHARS = 20000
 

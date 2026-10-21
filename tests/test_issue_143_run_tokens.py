@@ -52,9 +52,7 @@ def test_engine_captures_step_tokens():
             )
 
     engine = WorkflowEngine()
-    wf = Workflow.from_dict(
-        {"name": "wf-tok", "nodes": {"n1": {"name": "issue143_usage_node"}}, "edges": []}
-    )
+    wf = Workflow.from_dict({"name": "wf-tok", "nodes": {"n1": {"name": "issue143_usage_node"}}, "edges": []})
     execution = asyncio.run(engine.execute(wf))
     assert execution.steps, "应有步骤记录"
     tok = execution.steps[0].tokens
@@ -97,7 +95,9 @@ def test_step_dict_exposes_tokens():
 
 class _FakeUsage:
     def __init__(self, usage):
-        self.content = "```json\n[{\"file_name\": \"a.txt\", \"category\": \"txt_files\", \"confidence\": 0.9, \"reason\": \"r\"}]\n```"
+        self.content = (
+            '```json\n[{"file_name": "a.txt", "category": "txt_files", "confidence": 0.9, "reason": "r"}]\n```'
+        )
         self.usage = usage
 
 
@@ -115,9 +115,7 @@ def test_classify_node_aggregates_usage():
     from fusion_cowork.engine.node import NodeConfig
     from fusion_cowork.nodes.ai.classify import AIClassifyNode
 
-    node = AIClassifyNode(
-        node_id="n1", config=NodeConfig(params={"model": "m", "max_files_per_batch": 1})
-    )
+    node = AIClassifyNode(node_id="n1", config=NodeConfig(params={"model": "m", "max_files_per_batch": 1}))
     node._mlx = _FakeMLX({"prompt_tokens": 7, "completion_tokens": 3})
     files = ["/tmp/a.txt", "/tmp/b.txt"]
     result = asyncio.run(node.execute({"files": files}))
