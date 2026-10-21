@@ -214,6 +214,8 @@ class PermissionManager:
         self._pending_local_approvals: Dict[str, str] = {}
         # issue #138: 待审批卡片上下文 — action_id → {tool_name/params/ts/workflow/node_id}
         self._pending_local_details: Dict[str, Dict[str, Any]] = {}
+        # issue #154: 待审批入队回调 — 审批请求外发 (webhook push) 挂点
+        self.on_pending_created = None
 
     async def check(self, tool_name: str, action: str = "", params: Dict[str, Any] = None) -> bool:
         # A-6: deny 规则须先于 Hook 批准判定 — 否则 Hook approve 可覆盖显式 deny (绕过)。
@@ -294,6 +296,7 @@ class PermissionManager:
                 "raw_edit": _build_raw_edit(params),
             }
             logger.info(f"高风险节点无显式批准, 拒绝: {tool_name} (action_id={action_id} 已入本地待审批队列)")
+            self._notify_pending(tool_name, action_id, source="local", params=params)
             return False
 
         content, content_type = node_to_guard_content(tool_name, params)
@@ -350,6 +353,7 @@ class PermissionManager:
                 with self._lock:
                     self._pending_guard_approvals[action_id] = tool_name
             logger.info(f"guard 需确认 (l3): {tool_name} action_id={action_id}")
+            self._notify_pending(tool_name, action_id, source="guard", params=None)
             return False
         # preview / redact → 保守拒绝 (seatbelt 超出本期)
         logger.info(f"guard 保守拒绝 (preview/redact): {tool_name} action={action}")
@@ -375,6 +379,30 @@ class PermissionManager:
                     return True
         logger.warning(f"guard 不可达且无匹配缓存, 高风险 fail-closed 拒绝: {tool_name}")
         return False
+
+    def _notify_pending(self, tool_name: str, action_id: str, source: str, params: Any = None) -> None:
+        """issue #154: 待审批入队即通知 (webhook push 挂点) — best-effort, 不抛不阻塞。
+
+        info: {action_id, tool_name, source, params, ts} — params 走 _sanitize_approval_params
+        与 GUI 卡片一致的脱敏。
+        """
+        cb = self.on_pending_created
+        if not callable(cb):
+            return
+        try:
+            ctx = _approval_context.get({})
+            info = {
+                "action_id": action_id,
+                "tool_name": tool_name,
+                "source": source,
+                "params": _sanitize_approval_params(params),
+                "workflow": str(ctx.get("workflow", "")),
+                "node_id": str(ctx.get("node_id", "")),
+                "ts": time.time(),
+            }
+            cb(info)
+        except Exception as e:
+            logger.warning(f"on_pending_created 回调失败 (忽略): {e}")
 
     async def confirm_guard(
         self, action_id: str, approved: bool, approved_by: str = "unknown", tenant_id: str = "default", scope: str = "*"

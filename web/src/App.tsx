@@ -4,6 +4,7 @@ import { NotificationBell } from './NotificationBell';
 import { api } from './api';
 import { useT } from './i18n';
 import { onPreferredModelChange, preferredModel, setPreferredModel } from './modelPref';
+import { AdminPage } from './pages/AdminPage';
 import { ApprovalsPage } from './pages/ApprovalsPage';
 import { CanvasPage } from './pages/CanvasPage';
 import { ClusterPage } from './pages/ClusterPage';
@@ -38,6 +39,7 @@ type Route =
     | 'approvals'
     | 'cluster'
     | 'usage'
+    | 'admin'
     | 'm';
 
 const ROUTES: Route[] = [
@@ -54,6 +56,7 @@ const ROUTES: Route[] = [
     'approvals',
     'cluster',
     'usage',
+    'admin',
 ];
 
 function parseHash(): { route: Route; arg: string } {
@@ -71,6 +74,7 @@ function parseHash(): { route: Route; arg: string } {
     if (head === 'approvals') return { route: 'approvals', arg };
     if (head === 'cluster') return { route: 'cluster', arg };
     if (head === 'usage') return { route: 'usage', arg };
+    if (head === 'admin') return { route: 'admin', arg };
     if (head === 'm') return { route: 'm', arg };
     return { route: 'workflows', arg };
 }
@@ -103,6 +107,8 @@ function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
             return t('集群', 'Cluster');
         case 'usage':
             return t('用量', 'Usage');
+        case 'admin':
+            return t('管理', 'Admin');
         case 'm':
             return t('移动端', 'Mobile');
     }
@@ -200,6 +206,8 @@ export function App() {
                     <ClusterPage />
                 ) : route === 'usage' ? (
                     <UsagePage />
+                ) : route === 'admin' ? (
+                    <AdminPage />
                 ) : route === 'm' ? (
                     <MobilePage />
                 ) : route === 'templates' ? (

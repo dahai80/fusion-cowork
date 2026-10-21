@@ -1,4 +1,4 @@
-import { sdk } from './sdk';
+import { apiBase, runtimeApiKey, sdk } from './sdk';
 
 // Typed client over the web API surface (port 11461 direct, or through the
 // gateway /shell/fusion-cowork/ proxy when embedded). All calls go through
@@ -332,6 +332,73 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
 async function put<T>(path: string, body?: unknown): Promise<T> {
     return (await sdk.http.put<T>(path, body)).data;
 }
+
+// issue #156: 管理台密钥只在浏览器本地 (localStorage), 随请求走 x-admin-key。
+// sdk.http 不接受自定义头, 管理台单独走同源 fetch (嵌入式 shell 不承载管理台)。
+const ADMIN_KEY_STORAGE = 'fusion-cowork-admin-key';
+
+export function adminKey(): string {
+    try {
+        return localStorage.getItem(ADMIN_KEY_STORAGE) ?? '';
+    } catch {
+        return '';
+    }
+}
+
+export function saveAdminKey(key: string): void {
+    try {
+        if (key) localStorage.setItem(ADMIN_KEY_STORAGE, key);
+        else localStorage.removeItem(ADMIN_KEY_STORAGE);
+    } catch {
+        // storage unavailable — header simply omitted
+    }
+}
+
+async function adminRequest<T>(path: string, method: 'GET' | 'POST' = 'GET', body?: unknown): Promise<T> {
+    const headers: Record<string, string> = {};
+    if (body !== undefined) headers['content-type'] = 'application/json';
+    const key = runtimeApiKey();
+    if (key) headers['x-api-key'] = key;
+    const admin = adminKey();
+    if (admin) headers['x-admin-key'] = admin;
+    const res = await fetch(apiBase() + path, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`admin request failed: ${res.status}`);
+    return (await res.json()) as T;
+}
+
+export interface AdminMember {
+    user_id: string;
+    role: string;
+    tenant_id?: string;
+    space_count?: number;
+}
+
+export interface AdminUsage {
+    spaces: { spaces: number; messages: number; artifacts: number; agents: number };
+    runs: { total: number; by_status: Record<string, number> };
+    tokens: number;
+}
+
+export interface AdminAuditExport {
+    resourceLogs: {
+        scopeLogs: {
+            scope: { name: string };
+            logRecords: { severityText: string; body: { stringValue: string }; attributes: unknown[] }[];
+        }[];
+    }[];
+}
+
+export const adminApi = {
+    members: () => adminRequest<{ mode: string; members: AdminMember[] }>('/api/admin/members'),
+    usage: () => adminRequest<AdminUsage>('/api/admin/usage'),
+    auditExport: (since = 0, limit = 200) =>
+        adminRequest<AdminAuditExport>(`/api/admin/audit/export?since=${since}&limit=${limit}`),
+    pushTest: () => adminRequest<{ enabled: boolean; delivered: boolean }>('/api/admin/push/test', 'POST', {}),
+};
 
 export const api = {
     nodes: () => get<{ nodes: NodeInfo[]; count: number }>('/api/nodes'),
