@@ -1,5 +1,6 @@
 import { useAutoRetry } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
+import { BrowserPanel } from './BrowserPanel';
 import { NotificationBell } from './NotificationBell';
 import { api } from './api';
 import { useT } from './i18n';
@@ -15,6 +16,7 @@ import { PluginsPage } from './pages/PluginsPage';
 import { RunsPage } from './pages/RunsPage';
 import { SchedulePage } from './pages/SchedulePage';
 import { SessionsPage } from './pages/SessionsPage';
+import { SkillsPage } from './pages/SkillsPage';
 import { SpacePage } from './pages/SpacePage';
 import { TemplatesPage } from './pages/TemplatesPage';
 import { UsagePage } from './pages/UsagePage';
@@ -40,6 +42,7 @@ type Route =
     | 'cluster'
     | 'usage'
     | 'admin'
+    | 'skills'
     | 'm';
 
 const ROUTES: Route[] = [
@@ -57,6 +60,7 @@ const ROUTES: Route[] = [
     'cluster',
     'usage',
     'admin',
+    'skills',
 ];
 
 function parseHash(): { route: Route; arg: string } {
@@ -75,6 +79,7 @@ function parseHash(): { route: Route; arg: string } {
     if (head === 'cluster') return { route: 'cluster', arg };
     if (head === 'usage') return { route: 'usage', arg };
     if (head === 'admin') return { route: 'admin', arg };
+    if (head === 'skills') return { route: 'skills', arg };
     if (head === 'm') return { route: 'm', arg };
     return { route: 'workflows', arg };
 }
@@ -109,6 +114,8 @@ function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
             return t('用量', 'Usage');
         case 'admin':
             return t('管理', 'Admin');
+        case 'skills':
+            return t('技能', 'Skills');
         case 'm':
             return t('移动端', 'Mobile');
     }
@@ -208,6 +215,8 @@ export function App() {
                     <UsagePage />
                 ) : route === 'admin' ? (
                     <AdminPage />
+                ) : route === 'skills' ? (
+                    <SkillsPage />
                 ) : route === 'm' ? (
                     <MobilePage />
                 ) : route === 'templates' ? (
@@ -216,6 +225,7 @@ export function App() {
                     <SchedulePage />
                 )}
             </main>
+            <BrowserPanel />
         </div>
     );
 }

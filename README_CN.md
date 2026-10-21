@@ -163,6 +163,13 @@ fusion-cowork skill search "clean"
 # 导出对账 — 预算 vs 导出目录差异对账（issue #151）
 fusion-cowork skill run /spreadsheet-recon "~/fin/budget.xlsx ~/fin/exports 10"
 
+# Markdown 技能包 — frontmatter 参数在 Web UI 渲染为表单（issue #155）
+fusion-cowork skill packages
+fusion-cowork skill run-package /weekly-readout --params '{"days": 7}'
+fusion-cowork skill run-package /contract-review --params '{"contract_path": "~/contracts/a.md", "kb_id": "playbook"}'
+# 包格式: YAML frontmatter (name/params/handler/output_template) + markdown 指令正文。
+# 内置包在 fusion_cowork/skills/packages/；自写包放入 ~/.fusion-cowork/skills/。
+
 # Chrome CDP — 远程浏览器控制 (M3)
 fusion-cowork cdp navigate https://example.com
 fusion-cowork cdp snapshot
@@ -170,6 +177,13 @@ fusion-cowork cdp click 42
 fusion-cowork cdp fill --selector "#search" --value "hello"
 fusion-cowork cdp screenshot --save ~/Desktop/shot.png
 fusion-cowork cdp evaluate "document.title"
+
+# 托管浏览器（issue #153）— 自动拉起独立 profile 的 Chromium 并分配 CDP 端口，
+# 无需手工配置 --remote-debugging-port。工作流节点 `managed_browser`
+# (action launch/close/status, import_cookies=<Netscape cookies.txt>)。
+# `fusion-cowork web serve` 暴露 POST /api/browser/launch|close 与
+# GET /api/browser/status|screenshot（Web 侧栏实时截图）。
+# 可执行文件发现可用 FUSION_COWORK_CHROMIUM=<path> 覆盖 Chrome/Chromium/Edge/Brave 查找。
 
 # 协作空间 (M6+M7)
 fusion-cowork space create --name "Project Alpha" --owner-id user1
@@ -309,6 +323,13 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#125 (P2) — manifest upstream/api_key**: `web/manifest.json` 声明 `upstream` (`http://127.0.0.1:11461`) + `api_key_env`; `shell_registry.load_manifest()` 注册时从该 env 解析 `api_key`, 并支持 `FUSION_COWORK_WEB_UPSTREAM` 覆盖。网关动态代理 (#232 契约) 可解析本模块。
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
+
+### 托管浏览器、Markdown 技能包、跨设备接管、管理台 (v0.5.29, issues #153/#154/#155/#156)
+
+- **托管浏览器 (#153)** — `fusion_cowork/managed_browser.py` 与 `managed_browser` 节点自动拉起独立 `--user-data-dir`（`~/.fusion-cowork/browser-profile`）和自动分配 `--remote-debugging-port` 的 Chromium/Chrome/Edge/Brave，成功后设置 `FUSION_BROWSER_CDP`，现有 `cdp_*` 节点直接复用同一会话，无需手工配置 Chrome 调试端口。可选 `import_cookies` 通过 `Network.setCookies` 导入 Netscape `cookies.txt`（登录态不出本机）。`web serve` 新增 `POST /api/browser/launch|close`、`GET /api/browser/status|screenshot`；Web 侧栏 `BrowserPanel` 每 2 秒刷新运行截图。`FUSION_COWORK_CHROMIUM` 可覆盖可执行文件发现。
+- **Markdown 技能包 (#155)** — `fusion_cowork/skills/packages.py` 从内置 `skills/packages/` 与 `~/.fusion-cowork/skills/` 发现 `*.md` 包（YAML frontmatter: `name`/`params`/`handler`/`output_template`/`aliases`；正文即指令）。参数 schema 驱动 Web `#/skills` 表单（`GET /api/skills`、`POST /api/skills/{name}/run`）；handler 可委托内置技能（`builtin:/spreadsheet-recon`）、运行参数化 DAG 或调用本地 Python handler。种子技能: `/contract-review`（合同 + 可选 fusion-kb 要点 + 本机 MLX 备忘，逐条引用）、`/spreadsheet-recon`、`/weekly-readout`（生命周期 JSONL 汇总）。CLI: `skill packages`、`skill run-package`。
+- **跨设备接管 + 推送出口 (#154)** — `WS /ws/takeover/{run_id}` 让已认证设备接入运行中的 run（快照帧、事件泵、`directive`/`pause`/`resume`/`cancel`/`confirm` 帧）；`PushEgress` 把 `run_finished` 与审批入队事件推到 `FUSION_COWORK_PUSH_WEBHOOK_URL`（尽力而为，未配置零行为变化）；MobilePage 增加暂停/恢复/取消与允许/拒绝。
+- **管理台 + OTel 审计导出 (#156)** — `/api/admin/*` 由 `FUSION_COWORK_ADMIN_KEY` 把关（未配 503，错误 401）：成员/用量/推送测试，`GET /api/admin/audit/export` 输出 OTLP/JSON `LogsData`（审计链 + 终态运行）。新增 `#/admin` 页面，管理密钥仅存浏览器 localStorage。
 
 ### GUI 审计修复: 逐块 diff 审阅/token 瀑布/委托即时预览 (v0.5.28, issues #142/#143/#144)
 

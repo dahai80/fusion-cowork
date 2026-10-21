@@ -1593,6 +1593,42 @@ def skill_list_packs():
     console.print_table(["名称", "类型", "描述", "别名"], rows)
 
 
+@skill.command("packages")
+def skill_packages():
+    """列出 markdown skill 包 (内置 + 用户目录)。"""
+    from .skills import get_package_registry
+
+    packages = get_package_registry(reload=True).list_packages()
+    if not packages:
+        console.print_info("没有 markdown skill 包")
+        return
+    console.print_header(f"markdown skill 包 ({len(packages)} 个)")
+    rows = [[p.name, p.title or "-", p.category, ", ".join(x.name for x in p.params) or "-"] for p in packages]
+    console.print_table(["名称", "标题", "分类", "参数"], rows)
+
+
+@skill.command("run-package")
+@click.argument("name")
+@click.option("--params", default="", help="参数 JSON, 如 '{\"days\": 7}'")
+def skill_run_package(name: str, params: str):
+    """执行 markdown skill 包。"""
+    from .skills import get_package_registry
+
+    try:
+        values = json.loads(params) if params else {}
+    except json.JSONDecodeError as e:
+        console.print_error(f"参数 JSON 解析失败: {e}")
+        return
+    result = asyncio.run(get_package_registry().run(name, values))
+    if result.get("error"):
+        console.print_error(f"执行失败: {result['error']}")
+        for err in result.get("errors", []):
+            click.echo(f"  - {err}")
+        return
+    console.print_success(result.get("summary", f"已完成: {name}"))
+    click.echo(json.dumps(result.get("data", {}), ensure_ascii=False, indent=2))
+
+
 @skill.command("delete-pack")
 @click.argument("name")
 def skill_delete_pack(name: str):

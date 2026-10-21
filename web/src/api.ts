@@ -400,6 +400,59 @@ export const adminApi = {
     pushTest: () => adminRequest<{ enabled: boolean; delivered: boolean }>('/api/admin/push/test', 'POST', {}),
 };
 
+export interface SkillParamInfo {
+    name: string;
+    label: string;
+    label_en: string;
+    type: string;
+    required: boolean;
+    default: unknown;
+    options: string[];
+    placeholder: string;
+}
+
+export interface SkillPackageInfo {
+    name: string;
+    title: string;
+    title_en: string;
+    description: string;
+    description_en: string;
+    category: string;
+    aliases: string[];
+    params: SkillParamInfo[];
+    instructions: string;
+    output_template: string;
+    handler: string;
+    workflow: Record<string, unknown>;
+    source: string;
+}
+
+export interface SkillRunResult {
+    status?: string;
+    summary?: string;
+    data?: Record<string, unknown>;
+    error?: string;
+    errors?: string[];
+}
+
+export interface BrowserStatus {
+    running: boolean;
+    port?: number;
+    profile_dir?: string;
+    pid?: number;
+    url?: string;
+    headless?: boolean;
+    cookies_imported?: number;
+}
+
+async function authHeaders(json = false): Promise<Record<string, string>> {
+    const headers: Record<string, string> = {};
+    if (json) headers['content-type'] = 'application/json';
+    const key = runtimeApiKey();
+    if (key) headers['x-api-key'] = key;
+    return headers;
+}
+
 export const api = {
     nodes: () => get<{ nodes: NodeInfo[]; count: number }>('/api/nodes'),
     workflows: () => get<{ workflows: WorkflowListItem[]; count: number }>('/api/workflows'),
@@ -560,6 +613,28 @@ export const api = {
             { instructions }
         ),
     clusterState: () => get<ClusterStateInfo>('/api/cluster/state'),
+    skillPackages: () => get<{ skills: SkillPackageInfo[]; count: number }>('/api/skills'),
+    skillPackage: (name: string) => get<SkillPackageInfo>(`/api/skills/${encodeURIComponent(name)}`),
+    runSkillPackage: async (name: string, params: Record<string, unknown>): Promise<SkillRunResult> => {
+        const res = await fetch(`${apiBase()}/api/skills/${encodeURIComponent(name)}/run`, {
+            method: 'POST',
+            headers: await authHeaders(true),
+            body: JSON.stringify({ params }),
+        });
+        const body = (await res.json().catch(() => ({}))) as SkillRunResult;
+        if (!res.ok && !body.error) body.error = `run failed: ${res.status}`;
+        return body;
+    },
+    browserStatus: () => get<BrowserStatus>('/api/browser/status'),
+    browserLaunch: (body: { url?: string; headless?: boolean; import_cookies?: string }) =>
+        post<BrowserStatus>('/api/browser/launch', body),
+    browserClose: () => post<{ closed: boolean }>('/api/browser/close'),
+    browserScreenshot: async (): Promise<string> => {
+        const res = await fetch(`${apiBase()}/api/browser/screenshot`, { headers: await authHeaders() });
+        if (!res.ok) throw new Error(`screenshot failed: ${res.status}`);
+        const blob = await res.blob();
+        return URL.createObjectURL(blob);
+    },
     rpc: <T>(method: string, params?: Record<string, unknown>) =>
         post<RpcResponse<T>>('/rpc', { jsonrpc: '2.0', id: Date.now(), method, params: params ?? {} }).then((resp) => {
             if (resp.error) throw new Error(resp.error.message || `rpc error ${resp.error.code}`);
