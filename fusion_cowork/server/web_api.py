@@ -1413,6 +1413,184 @@ def create_web_app(
             await client.disconnect()
         return Response(content=data, media_type="image/png")
 
+    # ── issue #162: fusion-browser 引擎 — 每运行 profile / 登录态导入 / 面板截图流 ──
+    def _fusion_browser():
+        from ..fusion_browser import get_fusion_browser
+
+        return get_fusion_browser()
+
+    async def _fusion_body(request: Request) -> Dict[str, Any]:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_body", "message": "body 必须是对象"})
+        return body
+
+    @app.post("/api/fusion-browser/launch")
+    async def fusion_browser_launch(request: Request):
+        from ..fusion_browser import FusionBrowserError
+
+        body = await _fusion_body(request)
+        browser = _fusion_browser()
+        origins = body.get("allowed_origins")
+        if isinstance(origins, list):
+            browser.allowed_origins = [str(o) for o in origins if str(o).strip()]
+        try:
+            return await asyncio.to_thread(browser.launch, str(body.get("url") or "") or None)
+        except FusionBrowserError as e:
+            logger.error(f"fusion-browser 启动失败: {e}")
+            raise HTTPException(status_code=503, detail={"code": "browser_unavailable", "message": str(e)}) from e
+
+    @app.get("/api/fusion-browser/status")
+    async def fusion_browser_status():
+        return _fusion_browser().status()
+
+    @app.post("/api/fusion-browser/session")
+    async def fusion_browser_session(request: Request):
+        from ..fusion_browser import FusionBrowserError
+
+        body = await _fusion_body(request)
+        browser = _fusion_browser()
+        try:
+            return await asyncio.to_thread(
+                browser.create_session,
+                run_id=str(body.get("run_id") or "") or None,
+                profile_id=str(body.get("profile_id") or "") or None,
+                initial_url=str(body.get("initial_url") or body.get("url") or "") or None,
+                mode=str(body.get("mode") or "") or None,
+            )
+        except FusionBrowserError as e:
+            status = 409 if "未运行" in str(e) else 502
+            raise HTTPException(status_code=status, detail={"code": "session_failed", "message": str(e)}) from e
+
+    @app.post("/api/fusion-browser/import-cookies")
+    async def fusion_browser_import_cookies(request: Request):
+        from ..fusion_browser import FusionBrowserError
+
+        body = await _fusion_body(request)
+        session_id = str(body.get("session_id") or "")
+        if not session_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_session", "message": "session_id 必填"})
+        try:
+            return await asyncio.to_thread(
+                _fusion_browser().import_cookies,
+                session_id,
+                str(body.get("browser") or "firefox"),
+                str(body.get("profile") or "") or None,
+            )
+        except FusionBrowserError as e:
+            raise HTTPException(status_code=502, detail={"code": "import_failed", "message": str(e)}) from e
+
+    @app.post("/api/fusion-browser/execute")
+    async def fusion_browser_execute(request: Request):
+        from ..fusion_browser import FusionBrowserError
+
+        body = await _fusion_body(request)
+        session_id = str(body.get("session_id") or "")
+        action = str(body.get("action") or "")
+        if not session_id or not action:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "missing_params", "message": "session_id 与 action 必填"},
+            )
+        try:
+            return await asyncio.to_thread(
+                _fusion_browser().execute,
+                session_id,
+                action,
+                str(body.get("target_node_id") or "") or None,
+                str(body.get("payload_text") or "") or None,
+            )
+        except FusionBrowserError as e:
+            raise HTTPException(status_code=502, detail={"code": "execute_failed", "message": str(e)}) from e
+
+    @app.post("/api/fusion-browser/finish")
+    async def fusion_browser_finish(request: Request):
+        from ..fusion_browser import FusionBrowserError
+
+        body = await _fusion_body(request)
+        try:
+            return await asyncio.to_thread(
+                _fusion_browser().finish,
+                str(body.get("run_id") or "") or None,
+                not bool(body.get("keep_profile")),
+            )
+        except FusionBrowserError as e:
+            raise HTTPException(status_code=502, detail={"code": "finish_failed", "message": str(e)}) from e
+
+    @app.post("/api/fusion-browser/close")
+    async def fusion_browser_close():
+        return await asyncio.to_thread(_fusion_browser().close)
+
+    @app.get("/api/fusion-browser/screenshot")
+    async def fusion_browser_screenshot(session_id: str = ""):
+        from ..fusion_browser import FusionBrowserError
+
+        if not session_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_session", "message": "session_id 必填"})
+        try:
+            data = await asyncio.to_thread(_fusion_browser().screenshot_png, session_id)
+        except FusionBrowserError as e:
+            status = 409 if "未运行" in str(e) else 502
+            raise HTTPException(status_code=status, detail={"code": "screenshot_failed", "message": str(e)}) from e
+        return Response(content=data, media_type="image/png")
+
+    @app.get("/api/fusion-browser/stream")
+    async def fusion_browser_stream(request: Request, session_id: str = ""):
+        from ..fusion_browser import FusionBrowserError
+
+        if not session_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_session", "message": "session_id 必填"})
+        browser = _fusion_browser()
+        if not browser.socket_path:
+            raise HTTPException(status_code=409, detail={"code": "not_running", "message": "fusion-browser 未运行"})
+        try:
+            frames = browser.stream_frames(session_id)
+        except FusionBrowserError as e:
+            raise HTTPException(status_code=502, detail={"code": "stream_failed", "message": str(e)}) from e
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=8)
+
+        def _pump() -> None:
+            try:
+                for frame in frames:
+                    while True:
+                        try:
+                            loop.call_soon_threadsafe(queue.put_nowait, frame)
+                            break
+                        except asyncio.QueueFull:
+                            time.sleep(0.05)
+            except Exception as e:
+                logger.warning(f"fusion-browser 面板流中断: {e}")
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        pump = asyncio.create_task(asyncio.to_thread(_pump))
+
+        async def _events():
+            try:
+                while True:
+                    frame = await queue.get()
+                    if frame is None:
+                        yield "event: stream_end\ndata: {}\n\n"
+                        return
+                    payload = {
+                        "seq": frame.get("seq"),
+                        "url": frame.get("url", ""),
+                        "title": frame.get("title", ""),
+                        "ts_ms": frame.get("ts_ms"),
+                        "png": frame.get("png", ""),
+                    }
+                    yield f"event: screenshot_frame\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    if await request.is_disconnected():
+                        return
+            finally:
+                pump.cancel()
+
+        return StreamingResponse(_events(), media_type="text/event-stream")
+
     # ── issue #139: manifest ext 后端 — ⌘K 跨模块搜索 + 通知中心轮询源 ──
     @app.get("/api/search")
     async def search_all(q: str = ""):

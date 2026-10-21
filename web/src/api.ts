@@ -445,6 +445,17 @@ export interface BrowserStatus {
     cookies_imported?: number;
 }
 
+export interface FusionBrowserStatus {
+    running: boolean;
+    pid?: number | null;
+    socket_path?: string | null;
+    binary?: string | null;
+    mode?: string;
+    sessions?: Record<string, { session_id: string; run_id?: string; profile_id?: string }>;
+    profiles?: Record<string, string>;
+    allowed_origins?: string[];
+}
+
 async function authHeaders(json = false): Promise<Record<string, string>> {
     const headers: Record<string, string> = {};
     if (json) headers['content-type'] = 'application/json';
@@ -635,6 +646,25 @@ export const api = {
         const blob = await res.blob();
         return URL.createObjectURL(blob);
     },
+    fusionBrowserStatus: () => get<FusionBrowserStatus>('/api/fusion-browser/status'),
+    fusionBrowserLaunch: (body: { url?: string; allowed_origins?: string[] }) =>
+        post<FusionBrowserStatus>('/api/fusion-browser/launch', body),
+    fusionBrowserSession: (body: { run_id?: string; initial_url?: string; mode?: string }) =>
+        post<{ session_id: string; run_id?: string; profile_id?: string; initial_url?: string }>(
+            '/api/fusion-browser/session',
+            body
+        ),
+    fusionBrowserImportCookies: (body: { session_id: string; browser: string; profile?: string }) =>
+        post<{ browser: string; imported: number; skipped_app_bound: number; skipped_other: number }>(
+            '/api/fusion-browser/import-cookies',
+            body
+        ),
+    fusionBrowserFinish: (body: { run_id?: string; keep_profile?: boolean }) =>
+        post<{ closed_sessions: string[]; deleted_profiles: string[]; engine_running: boolean }>(
+            '/api/fusion-browser/finish',
+            body
+        ),
+    fusionBrowserClose: () => post<FusionBrowserStatus>('/api/fusion-browser/close'),
     rpc: <T>(method: string, params?: Record<string, unknown>) =>
         post<RpcResponse<T>>('/rpc', { jsonrpc: '2.0', id: Date.now(), method, params: params ?? {} }).then((resp) => {
             if (resp.error) throw new Error(resp.error.message || `rpc error ${resp.error.code}`);
