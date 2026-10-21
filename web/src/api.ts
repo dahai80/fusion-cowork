@@ -87,6 +87,32 @@ export interface RunRecord extends RunListItem {
     result: { summary?: string } | null;
 }
 
+// issue #150: 引用溯源 — 结构化引用 (文件路径 / 空间消息 id)
+export interface CitationRef {
+    type: string;
+    path?: string;
+    name?: string;
+    message_id?: string;
+}
+
+// issue #148: chat-first 委托结果 — auto 直接执行的 run_id / plan 待批准
+export interface ChatDelegateResult {
+    mode: 'auto' | 'plan';
+    workflow_id: string;
+    run_id?: string;
+    plan: { name: string; description: string; steps: { node: string; display: string; label: string }[] };
+}
+
+export interface FileReadResult {
+    path: string;
+    name: string;
+    content: string;
+    line_start: number;
+    line_end: number;
+    total_lines: number;
+    truncated: boolean;
+}
+
 export interface RunArtifact {
     artifact_id: string;
     node_id: string;
@@ -96,6 +122,7 @@ export interface RunArtifact {
     path: string;
     content: string;
     truncated: boolean;
+    citations?: CitationRef[];
 }
 
 export interface TemplateInfo {
@@ -362,6 +389,26 @@ export const api = {
     generateWorkflow: (body: { prompt: string; model?: string; context?: Record<string, unknown> }) =>
         post<{ workflow: { name?: string; description?: string; nodes: CanvasNodeDef[]; edges: CanvasEdgeDef[] } }>(
             '/api/ai/generate-workflow',
+            body
+        ),
+    // issue #148: chat-first 委托 — 简单任务直接执行 (auto), 复杂任务返回计划待批准 (plan)
+    chatDelegate: (body: { prompt: string; model?: string; memory?: boolean }) =>
+        post<ChatDelegateResult>('/api/ai/chat-delegate', body),
+    // issue #150: 引用溯源 — 读取引用文件内容 (沙箱范围内)
+    readFile: (path: string) => get<FileReadResult>(`/api/files/read?path=${encodeURIComponent(path)}`),
+    // issue #149: 产物就地 AI 修订
+    spaceAiRevise: (id: string, aid: string, body: { selection: string; instruction: string; model?: string }) =>
+        post<{ selection: string; revised: string; diff_blocks: DiffBlock[]; model: string }>(
+            `/api/space/spaces/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(aid)}/ai_revise`,
+            body
+        ),
+    spaceApplyRevision: (
+        id: string,
+        aid: string,
+        body: { selection: string; revised: string; model?: string; accepted_blocks?: number[] }
+    ) =>
+        post<{ id: string; applied: boolean; revision_count: number }>(
+            `/api/space/spaces/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(aid)}/apply_revision`,
             body
         ),
     sessions: (status = '', source = '') =>

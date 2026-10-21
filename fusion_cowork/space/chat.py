@@ -58,6 +58,11 @@ class SpaceChatService:
         # the v2 retrospective after_ts optimization.
         self._step_watermark: float = 0.0
 
+    @property
+    def mlx(self) -> FusionMLXClient:
+        # issue #149: 产物就地 AI 修订复用同一客户端 (只读访问)
+        return self._mlx
+
     def _get_config_model(self, agent_def: dict) -> str:
         config = agent_def.get("config", {})
         if isinstance(config, str):

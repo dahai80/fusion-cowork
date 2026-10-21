@@ -210,6 +210,8 @@ def _collect_artifacts(steps: List[Any]) -> List[Dict[str, Any]]:
             continue
         node_id = getattr(step, "node_id", "")
         node_name = getattr(step, "node_display_name", "") or getattr(step, "node_name", "")
+        # issue #150: 步骤输出的结构化引用 (file/message refs) 随产物透出
+        citations = out.get("citations") if isinstance(out.get("citations"), list) else []
         # issue #142: 编辑型步骤产出 unified diff 卡 — apply_edit 的 old/new 对 → diff 产物
         diff_content = _step_diff_content(step, out)
         if diff_content:
@@ -241,6 +243,7 @@ def _collect_artifacts(steps: List[Any]) -> List[Dict[str, Any]]:
                 "path": str(p),
                 "content": "",
                 "truncated": False,
+                "citations": citations,
             }
             if suffix in _TEXT_EXTS:
                 try:
@@ -265,6 +268,7 @@ def _collect_artifacts(steps: List[Any]) -> List[Dict[str, Any]]:
                     "path": "",
                     "content": val[:_MAX_ARTIFACT_BYTES],
                     "truncated": len(val) > _MAX_ARTIFACT_BYTES,
+                    "citations": citations,
                 }
             )
             break
@@ -1018,6 +1022,115 @@ def create_web_app(
         if not isinstance(workflow, dict) or not workflow.get("nodes"):
             raise HTTPException(status_code=502, detail={"code": "upstream_error", "message": "生成结果缺少 nodes"})
         return {"workflow": workflow}
+
+    # ── issue #148: chat-first 委托 — 一句话直接出交付物, 不强制进画布 ──
+    # 确定性启发 (Rule: 决策走代码不走模型): 计划 ≤2 节点且不含高风险节点 →
+    # mode=auto 直接执行并返回 run_id (前端流式展示进度/交付物); 否则
+    # mode=plan 返回内部执行计划 (仍保存为工作流), 一键批准执行; DAG 编辑
+    # 永远可选 (workflow_id 可进画布)。
+    @app.post("/api/ai/chat-delegate")
+    async def ai_chat_delegate(body: Dict[str, Any]):
+        prompt = str(body.get("prompt") or "").strip()
+        if not prompt:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "prompt 必填"})
+        context = body.get("context") if isinstance(body.get("context"), dict) else None
+        model = str(body.get("model") or "").strip()
+        memory = body.get("memory", True)
+        generator = nl_generator
+        if model:
+            from ..ai.nl_parser import NLWorkflowGenerator
+
+            generator = NLWorkflowGenerator(getattr(nl_generator, "mlx", None), model=model)
+        logger.info(f"web API chat-delegate: {prompt[:80]} model={model or '(auto)'}")
+        try:
+            workflow = await generator.generate(prompt, context)
+        except Exception as e:
+            logger.error(f"web API chat-delegate 生成失败: {e}")
+            raise HTTPException(status_code=502, detail={"code": "upstream_error", "message": f"生成失败: {e}"}) from e
+        if not isinstance(workflow, dict) or not workflow.get("nodes"):
+            raise HTTPException(status_code=502, detail={"code": "upstream_error", "message": "生成结果缺少 nodes"})
+
+        from ..engine.node import NodeRegistry
+        from ..engine.permission import HIGH_RISK_NODES
+
+        nodes = workflow.get("nodes") or []
+        node_names = [str(n.get("name") or "") for n in nodes if isinstance(n, dict)]
+        plan_steps = []
+        for n in nodes:
+            if not isinstance(n, dict):
+                continue
+            reg = NodeRegistry.get(str(n.get("name") or ""))
+            display = getattr(reg, "display_name", "") or str(n.get("name") or "")
+            plan_steps.append(
+                {"node": n.get("name"), "display": display, "label": (n.get("config") or {}).get("label", "")}
+            )
+        simple = len(nodes) <= 2 and not any(name in HIGH_RISK_NODES for name in node_names)
+
+        workflow_id = f"wf_{uuid.uuid4().hex[:10]}"
+        record = store.save(
+            workflow_id,
+            {
+                "name": workflow.get("name") or prompt[:40],
+                "description": workflow.get("description") or prompt[:120],
+                "workflow": {"name": workflow.get("name") or "", "nodes": nodes, "edges": workflow.get("edges") or []},
+            },
+        )
+        plan = {
+            "name": record.get("name", workflow_id),
+            "description": record.get("description", ""),
+            "steps": plan_steps,
+        }
+
+        if simple:
+            try:
+                run = runs.start(
+                    {"name": workflow.get("name") or "", "nodes": nodes, "edges": workflow.get("edges") or []},
+                    workflow_id=workflow_id,
+                    workflow_name=record.get("name", workflow_id),
+                    memory=bool(memory),
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=400, detail={"code": "bad_request", "message": f"工作流定义无效: {exc}"}
+                ) from exc
+            logger.info(f"chat-delegate 自动执行: workflow={workflow_id} run={run['run_id']} ({len(nodes)} 节点)")
+            return {"mode": "auto", "workflow_id": workflow_id, "run_id": run["run_id"], "plan": plan}
+        logger.info(
+            f"chat-delegate 计划待批准: workflow={workflow_id} ({len(nodes)} 节点, 含高风险={any(n in HIGH_RISK_NODES for n in node_names)})"
+        )
+        return {"mode": "plan", "workflow_id": workflow_id, "plan": plan}
+
+    # ── issue #150: 引用溯源 — 按路径读取文本文件 (沙箱范围内, 供引用卡展示) ──
+    @app.get("/api/files/read")
+    async def files_read(path: str = "", line_start: int = 0, line_end: int = 0):
+        if not path:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "path 必填"})
+        from ..security import get_scoped_folder_manager
+
+        p = Path(path).expanduser()
+        if not get_scoped_folder_manager().ensure_allowed(p):
+            raise HTTPException(status_code=403, detail={"code": "forbidden", "message": f"路径不在授权范围内: {path}"})
+        if not p.is_file():
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"文件不存在: {path}"})
+        try:
+            raw = p.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            raise HTTPException(status_code=400, detail={"code": "read_error", "message": f"读取失败: {e}"}) from e
+        lines = raw.splitlines()
+        total_lines = len(lines)
+        lo = max(int(line_start or 1), 1)
+        hi = min(int(line_end or total_lines), total_lines) if line_end else total_lines
+        selected = "\n".join(lines[lo - 1 : hi])[:_MAX_ARTIFACT_BYTES]
+        logger.info(f"web API 文件读取: {p} [{lo}-{hi}/{total_lines}]")
+        return {
+            "path": str(p),
+            "name": p.name,
+            "content": selected,
+            "line_start": lo,
+            "line_end": hi,
+            "total_lines": total_lines,
+            "truncated": len(selected) >= _MAX_ARTIFACT_BYTES,
+        }
 
     # ── W17 模型目录 (migration doc §6 P3; #126 起默认只回 chat 模型) ──
     # #147: 模型列表最后成功缓存 — 上游断链时返回 stale 结果而非 503,
