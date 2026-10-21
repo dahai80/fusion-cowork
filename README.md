@@ -371,6 +371,16 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
 
+### GUI Audit Fixes: Block-Level Diff Review, Token Waterfall, Live Delegate Preview (v0.5.28, issues #142/#143/#144)
+
+Implements the fusion-all-gui-audit-1021 §3.3/§3.4/§3.7 acceptance targets:
+
+- **Block-level diff review (#142)** — edit-type pending approvals (`apply_edit`-style `old_text`/`new_text` or `old_string`/`new_string` params) render as SequenceMatcher diff blocks with per-block **Accept/Reject** toggles; "Allow once" with rejected blocks sends `accepted_blocks`, the backend rebuilds narrowed edit params via `apply_block_selection` (rejected hunks fall back to the original lines) and echoes `edited_params`; rejecting every block refuses the confirm without adding a rule. New text-diff engine in `engine/ast_diff.py` (`text_diff_blocks` / `apply_block_selection` / `unified_diff_text`) wired into the approval chain. File artifacts surface as unified diff cards: edit-pair step inputs and `diff` outputs produce `type: "diff"` artifacts (plus `.diff`/`.patch` files), rendered with +/- line coloring in the run detail artifact pane. The permission check now sees effective params (`config.params` merged with upstream input) so config-param nodes no longer show empty approval cards.
+- **Token waterfall (#143)** — `WorkflowStep.tokens` extracted from node output `usage` (`_extract_tokens`: prompt/completion/total); AI nodes (classify/summarize/rename) aggregate cross-batch/cross-file usage into their output; `_step_dict` exposes `tokens`; RunsPage waterfall shows a per-row `tok` cell, the run header shows `Σ N tok`, and denied (blocked) nodes get a dashed border + 被阻塞 chip + amber bar.
+- **Live delegate preview (#144)** — DelegatePage auto-generates the DAG preview after an 800 ms input debounce (≥6 chars, stale-response seq guard); the preview card is editable in place (workflow name/description, per-node label + params JSON editor, node delete with edge cleanup, edge delete/add) and only commits on Save.
+
+Tests: `tests/test_issue_142_approval_diff.py` (15 cases: diff block split/selection rebuild, pending details + engine-run integration, accepted_blocks confirm narrowing/all-reject/full-accept, diff artifact sources) + `tests/test_issue_143_run_tokens.py` (5 cases: token extraction, engine capture, `_step_dict` compat, classify usage aggregation).
+
 ### GUI/UX Upgrade: Approval Cards, Waterfall, Space Instructions (v0.5.27, issue #138)
 
 Implements the fusion-all-gui-1020 §6 targets for cowork (G6/G7/G10 + patterns C2/C3/C6):

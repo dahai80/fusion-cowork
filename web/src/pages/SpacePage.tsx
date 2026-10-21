@@ -453,8 +453,7 @@ function KbPanel({ spaceId }: { spaceId: string }) {
 
     useEffect(() => {
         let alive = true;
-        api
-            .spaceInstructions(spaceId)
+        api.spaceInstructions(spaceId)
             .then((r) => {
                 if (!alive) return;
                 setInstr(r.instructions || '');
@@ -478,7 +477,7 @@ function KbPanel({ spaceId }: { spaceId: string }) {
             sdk.toast.show({ level: 'error', message: t('保存失败', 'Save failed') });
         } finally {
             setSavingInstr(false);
-    }
+        }
     }
 
     async function bind(unbind: boolean) {
@@ -516,11 +515,17 @@ function KbPanel({ spaceId }: { spaceId: string }) {
             <div className="rounded-lg border border-border bg-bg-elevated p-3">
                 <div className="text-xs font-medium text-text-primary">{t('空间指令', 'Space instructions')}</div>
                 <div className="mt-1 text-[10px] text-text-muted">
-                    {t('注入该空间所有 agent 聊天的 system prompt', 'Injected into every agent chat system prompt in this space')}
+                    {t(
+                        '注入该空间所有 agent 聊天的 system prompt',
+                        'Injected into every agent chat system prompt in this space'
+                    )}
                 </div>
                 <textarea
                     className="min-h-20 w-full rounded-md border border-border bg-bg px-2 py-1.5 text-xs text-text-primary"
-                    placeholder={t('例: 用中文回答, 引用知识库内容时标注来源', 'e.g. answer in Chinese, cite KB sources')}
+                    placeholder={t(
+                        '例: 用中文回答, 引用知识库内容时标注来源',
+                        'e.g. answer in Chinese, cite KB sources'
+                    )}
                     value={instr}
                     onChange={(e) => setInstr(e.target.value)}
                     disabled={!instrLoaded}

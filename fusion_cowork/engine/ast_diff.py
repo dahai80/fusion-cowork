@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import copy
+import difflib
 import logging
 from typing import Any
 
@@ -181,3 +182,52 @@ def _insert_node(tree: dict[str, Any], path: str, node_data: dict[str, Any]) -> 
         new_node["value"] = node_data["value"]
 
     parent.setdefault("children", []).append(new_node)
+
+
+# issue #142: 文本 diff 工具 — 审批卡逐块审阅 + 文件产物 unified diff 的底层引擎。
+# AST diff 面向树结构; 以下三个函数面向文本, 供 server/web_api 审批/UI 链路使用。
+
+def text_diff_blocks(old_text: str, new_text: str) -> list[dict[str, Any]]:
+    old_lines = str(old_text or "").splitlines(keepends=True)
+    new_lines = str(new_text or "").splitlines(keepends=True)
+    matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+    blocks: list[dict[str, Any]] = []
+    for idx, (tag, i1, i2, j1, j2) in enumerate(matcher.get_opcodes()):
+        block: dict[str, Any] = {
+            "index": idx,
+            "tag": tag,
+            "old_start": i1 + 1 if i1 < i2 else i1,
+            "new_start": j1 + 1 if j1 < j2 else j1,
+            "old": "".join(old_lines[i1:i2]),
+            "new": "".join(new_lines[j1:j2]),
+        }
+        for side in ("old", "new"):
+            if len(block[side]) > 4000:
+                block[side] = block[side][:4000] + "\n…"
+        blocks.append(block)
+    logger.info(f"text diff blocks computed: {len(blocks)} blocks")
+    return blocks
+
+
+def apply_block_selection(old_text: str, new_text: str, accepted: list) -> str:
+    accepted_set = {int(i) for i in accepted or []}
+    old_lines = str(old_text or "").splitlines(keepends=True)
+    new_lines = str(new_text or "").splitlines(keepends=True)
+    matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+    out: list[str] = []
+    for idx, (tag, i1, i2, j1, j2) in enumerate(matcher.get_opcodes()):
+        if tag == "equal" or idx in accepted_set:
+            out.extend(new_lines[j1:j2])
+        else:
+            out.extend(old_lines[i1:i2])
+    return "".join(out)
+
+
+def unified_diff_text(old_text: str, new_text: str, fromfile: str = "a", tofile: str = "b") -> str:
+    diff = difflib.unified_diff(
+        str(old_text or "").splitlines(keepends=True),
+        str(new_text or "").splitlines(keepends=True),
+        fromfile=fromfile,
+        tofile=tofile,
+    )
+    return "".join(diff)
