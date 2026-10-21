@@ -185,6 +185,13 @@ fusion-cowork cdp evaluate "document.title"
 # GET /api/browser/status|screenshot（Web 侧栏实时截图）。
 # 可执行文件发现可用 FUSION_COWORK_CHROMIUM=<path> 覆盖 Chrome/Chromium/Edge/Brave 查找。
 
+# fusion-browser 引擎（issue #162）— 托管拉起 fusion-browser UDS 引擎，每运行独立配置
+# (绝不写入 ~/.fusion-browser)，每运行持久 profile，登录态导入返回诚实计数，面板直连 UDS
+# 截图流。工作流节点 `fusion_browser` (action launch/create_session/import_cookies/execute/
+# screenshot/finish/close)。Web 侧: POST /api/fusion-browser/launch|session|import-cookies|
+# execute|finish|close 与 GET /api/fusion-browser/status|screenshot|stream (SSE)。
+# 二进制覆盖: FUSION_BROWSER_BIN。
+
 # 协作空间 (M6+M7)
 fusion-cowork space create --name "Project Alpha" --owner-id user1
 fusion-cowork space list
@@ -264,18 +271,17 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 └─────────────────────────────────────────────────────┘
 ```
 
-### 节点类型（47 个内置节点，7 大分类）
+### 节点类型（72 个内置节点，7 大分类）
 
 | 分类 | 数量 | 节点 |
 |------|------|------|
 | `macos_system` | 13 | 桌面清理、下载整理、磁盘清理、文件监听、屏幕截图、剪贴板、通知、应用生命周期、OCR、**鼠标移动、鼠标点击、键盘输入、键盘快捷键、Computer Use 循环** 🆕 |
 | `ai_processing` | 4 | AI 分类、AI 摘要、AI 重命名、AI 视觉分析 |
-| `tool` | 9 | Shell 命令、Python REPL、Web 搜索、获取网页、文件编辑、浏览器打开、浏览器提取、浏览器自动化、Trainer 节点 |
+| `tool` | 38 | Shell 命令、Python REPL、Web 搜索、获取网页、文件编辑、浏览器打开/提取/自动化、**托管浏览器** (issue #153)、**fusion-browser 引擎** (issue #162)、CDP 浏览器节点族（导航、快照、点击、填写、截图、执行JS、模拟、网络、控制台等）、Push/LSP/Worktree |
 | `file_operation` | 6 | 文件分类、批量重命名、复制、移动、删除、查找 |
-| `io` | 2 | 文件输入、文件输出 |
+| `io` | 4 | 文件输入、文件输出、**xlsx_write** (issue #151)、**pptx_write** (issue #152) |
 | `logic` | 3 | 条件过滤、循环处理、数据合并 |
-| `fusion_ecosystem` | 4 | Trainer（Fusion-Trainer 互通）、记忆提交/记忆检索（Fusion-Memory 互通）、**Studio 运行**（Fusion-Agent-Studio 互通, issue #133）🆕 |
-| **CDP 浏览器节点** | **10** | CDP 导航、快照、点击、填写、批量填写、截图、执行JS、模拟设备、网络、控制台（注册在 `tool` 分类下） |
+| `fusion_ecosystem` | 4 | Trainer（Fusion-Trainer 互通）、记忆提交/记忆检索（Fusion-Memory 互通）、**Studio 运行**（Fusion-Agent-Studio 互通, issue #133） |
 
 ### Claude Cowork 对等能力 (V0.2) 🆕
 
@@ -323,6 +329,20 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#125 (P2) — manifest upstream/api_key**: `web/manifest.json` 声明 `upstream` (`http://127.0.0.1:11461`) + `api_key_env`; `shell_registry.load_manifest()` 注册时从该 env 解析 `api_key`, 并支持 `FUSION_COWORK_WEB_UPSTREAM` 覆盖。网关动态代理 (#232 契约) 可解析本模块。
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
+
+### fusion-browser 托管后端 (v0.5.30, issue #162)
+
+实现 fusion-browser#25 契约的 cowork 侧（`fusion-browser/docs/cowork-managed-backend-contract.md`）：
+
+- **托管启动** — `fusion_cowork/fusion_browser.py` 用 `FUSION_BROWSER_CONFIG` 指向每运行独立配置（socket、随机 auth token、`tokenCapabilities: ["all"]`、显式 `allowedOrigins`）拉起 fusion-browser 引擎，等 socket 通过 `metrics` 鉴权，收尾发 SIGTERM；绝不读写使用者的 `~/.fusion-browser`。
+- **每运行 profile** — `create_session(profile_id="run-<id>")` 把登录态放进引擎持久 profile；run→profile 映射写入 `~/.fusion-cowork/fusion-browser/profiles.json`，恢复的运行可重新挂载；`finish` 关闭会话并删除 profile（`keep_profile` 可保留）。
+- **登录态导入** — 可选 `import_cookies(session_id, browser, profile)` 返回引擎的诚实计数（`imported`、`skipped_app_bound`、`skipped_other`），UI 原样展示，绝不笼统显示"已登录"。
+- **面板截图流** — 第二条直连 UDS 连接跑 `stream_screenshots`；`GET /api/fusion-browser/stream` 以 SSE 转发 `screenshot_frame`，`stream_end` 视为终止。Web `BrowserPanel` 增加 fusion-browser 模式渲染该流。
+- **节点接线** — `fusion_browser` 节点（TOOL，高危）在同一托管引擎上暴露 launch/session/import/execute/screenshot/finish；`cdp_*` 节点不变。
+
+上游 Python 客户端以字节一致方式 vendor 到 `fusion_cowork/vendor/fusion_browser_client/`（MIT，无 PyPI 包）。
+
+测试：`tests/test_issue_162_fusion_browser.py`（13 例：独立配置 + 环境变量、启动回滚、会话/profile 持久化、诚实 cookie 计数、execute 映射、收尾清理、截图流、节点与 API/SSE 面，均对假 UDS 引擎）。
 
 ### 托管浏览器、Markdown 技能包、跨设备接管、管理台 (v0.5.29, issues #153/#154/#155/#156)
 

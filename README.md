@@ -209,6 +209,13 @@ export FUSION_CDP_ORIGIN=https://fusion.local
 # exposes POST /api/browser/launch|close and GET /api/browser/status|screenshot (live side panel).
 # Binary discovery: FUSION_COWORK_CHROMIUM=<path> overrides Chrome/Chromium/Edge/Brave lookup.
 
+# fusion-browser engine (issue #162) — managed launch of the fusion-browser UDS engine with a
+# per-run config (never ~/.fusion-browser), a persistent per-run profile, honest login import
+# counters, and a direct-UDS screenshot stream for the side panel. Workflow node: `fusion_browser`
+# (action launch/create_session/import_cookies/execute/screenshot/finish/close). Web:
+# POST /api/fusion-browser/launch|session|import-cookies|execute|finish|close,
+# GET /api/fusion-browser/status|screenshot|stream (SSE). Binary override: FUSION_BROWSER_BIN.
+
 # Collaboration Space (M6+M7)
 fusion-cowork space create --name "Project Alpha" --owner-id user1
 fusion-cowork space list
@@ -331,11 +338,11 @@ fusion-cowork collab serve --port 11439
 └─────────────────────────────────────────────────────┘
 ```
 
-### Node Types (71 nodes built-in, 7 categories)
+### Node Types (72 nodes built-in, 7 categories)
 
 | Category | Count | Nodes |
 |----------|-------|-------|
-| `tool` | 37 | Shell Exec, Python REPL, Web Search, Fetch URL, Apply Edit, **Managed Browser** (issue #153 — dedicated profile + auto CDP port), Browser Open/Extract/Automate, **CDP** (Navigate, Snapshot, Click, Fill, Fill Form, Screenshot, Evaluate, Emulate, Network, Console, Drag, Hover, Press Key, Type Text, Upload File, Wait For, Handle Dialog, Resize Page, Heap Snapshot, Lighthouse, List Pages, New Page, Select Page, Close Page, Performance Trace), **Push, LSP, Worktree** |
+| `tool` | 38 | Shell Exec, Python REPL, Web Search, Fetch URL, Apply Edit, **Managed Browser** (issue #153 — dedicated profile + auto CDP port), **Fusion Browser** (issue #162 — managed fusion-browser engine, per-run profile, login import, panel stream), Browser Open/Extract/Automate, **CDP** (Navigate, Snapshot, Click, Fill, Fill Form, Screenshot, Evaluate, Emulate, Network, Console, Drag, Hover, Press Key, Type Text, Upload File, Wait For, Handle Dialog, Resize Page, Heap Snapshot, Lighthouse, List Pages, New Page, Select Page, Close Page, Performance Trace), **Push, LSP, Worktree** |
 | `macos_system` | 13 | Desktop Clean, Download Organizer, Disk Cleaner, File Watcher, Screen Capture, Clipboard, Notification, App Lifecycle, OCR, Mouse Move, Mouse Click, Keyboard Type, Keyboard Shortcut |
 | `file_operation` | 6 | File Classifier, Batch Rename, Copy, Move, Delete, Find |
 | `ai_processing` | 4 | AI Classify, AI Summarize, AI Generate Name, AI Vision Analyze |
@@ -389,6 +396,20 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#125 (P2) — manifest upstream/api_key**: `web/manifest.json` declares `upstream` (`http://127.0.0.1:11461`) + `api_key_env`; `shell_registry.load_manifest()` resolves `api_key` from that env at registration time and honors `FUSION_COWORK_WEB_UPSTREAM` overrides. Gateway dynamic proxy (#232 contract) can resolve the module.
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
+
+### fusion-browser Managed Backend (v0.5.30, issue #162)
+
+Implements the cowork half of fusion-browser#25 (`fusion-browser/docs/cowork-managed-backend-contract.md`):
+
+- **Managed launch** — `fusion_cowork/fusion_browser.py` spawns the fusion-browser engine with `FUSION_BROWSER_CONFIG` pointing at a per-run config (socket, random auth token, `tokenCapabilities: ["all"]`, explicit `allowedOrigins`), waits for the socket to answer `metrics`, and SIGTERMs on teardown. The operator's `~/.fusion-browser` is never read or written.
+- **Per-run profile** — `create_session(profile_id="run-<id>")` keeps login state in a persistent engine profile; run→profile mapping is persisted to `~/.fusion-cowork/fusion-browser/profiles.json` so a resumed run re-attaches; `finish` closes sessions and deletes the profile unless `keep_profile`.
+- **Login import** — optional `import_cookies(session_id, browser, profile)` returns the engine's honest counters (`imported`, `skipped_app_bound`, `skipped_other`) and the UI shows them verbatim — never a blanket "logged in".
+- **Panel stream** — a second direct-UDS connection runs `stream_screenshots`; `GET /api/fusion-browser/stream` re-emits `screenshot_frame` as SSE and treats `stream_end` as terminal. The web `BrowserPanel` gains a fusion-browser mode rendering the stream.
+- **Node wiring** — `fusion_browser` node (TOOL, high-risk) exposes launch/session/import/execute/screenshot/finish over the same managed engine; `cdp_*` nodes are untouched.
+
+The upstream Python client is vendored byte-identical under `fusion_cowork/vendor/fusion_browser_client/` (MIT, no PyPI package).
+
+Tests: `tests/test_issue_162_fusion_browser.py` (13 cases: isolated config + env, launch rollback, session/profile persistence, honest cookie counters, execute mapping, finish teardown, stream frames, node + API/SSE surfaces against a fake UDS engine).
 
 ### Managed Browser, Markdown Skill Packages, Cross-Device Takeover, Admin Console (v0.5.29, issues #153/#154/#155/#156)
 

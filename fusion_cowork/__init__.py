@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.5.29"
+__version__ = "0.5.30"
 __app_name__ = "Fusion-Cowork"
 
 # ── 节点工具名称映射表（吸纳自 Squish tool_name_map.py） ──
@@ -41,6 +41,9 @@ NODE_NAME_ALIASES: dict[str, str] = {
     "AI重命名": "ai_generate_name",
     "智能重命名": "ai_generate_name",
     "批量重命名": "file_batch_rename",
+    # fusion-browser 引擎 (issue #162)
+    "融合浏览器": "fusion_browser",
+    "fusion浏览器": "fusion_browser",
     # 磁盘清理
     "磁盘清理": "disk_cleaner",
     "清理磁盘": "disk_cleaner",
