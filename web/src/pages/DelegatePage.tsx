@@ -1,6 +1,6 @@
-import { EmptyState, ErrorState, SkeletonLines, useAutoRetry } from '@fusion/web-ui';
+import { EmptyState, ErrorState, SkeletonLines, StatusBadge, useAutoRetry } from '@fusion/web-ui';
 import { useEffect, useRef, useState } from 'react';
-import { type CanvasEdgeDef, type CanvasNodeDef, api } from '../api';
+import { type CanvasEdgeDef, type CanvasNodeDef, type ChatDelegateResult, type RunRecord, api } from '../api';
 import { useT } from '../i18n';
 import { onPreferredModelChange, preferredModel, setPreferredModel } from '../modelPref';
 import { sdk } from '../sdk';
@@ -10,6 +10,8 @@ import { sdk } from '../sdk';
 // live; errors surface as 502 toasts.
 // #144: 输入防抖 (800ms) 即时生成预览; 预览卡内可就地编辑节点 (标签/参数/删除)
 // 与边 (删除/新增), 确认后才提交落库。
+// #148: chat-first 默认模式 — 一句话直接执行/出交付物; 复杂任务返回内部计划
+// (DAG 仍在幕后), 批准即跑; DAG 编辑留在"高级"模式可选。
 
 const CATEGORY_COLOR: Record<string, string> = {
     tool: '#3b82f6',
@@ -29,6 +31,136 @@ interface GeneratedWorkflow {
     edges: CanvasEdgeDef[];
 }
 
+const TERMINAL_RUN = new Set(['completed', 'success', 'failed', 'canceled']);
+
+// #148: chat-first 执行卡 — auto 模式轮询 run 进度, 终态展示结果 + 产物;
+// plan 模式展示内部计划, 一键批准执行 (工作流已落库, 画布编辑可选)。
+function ChatResultCard({
+    result,
+    memory,
+    onGoRuns,
+}: {
+    result: ChatDelegateResult;
+    memory: boolean;
+    onGoRuns: () => void;
+}) {
+    const t = useT();
+    const [run, setRun] = useState<RunRecord | null>(null);
+    const [starting, setStarting] = useState(false);
+
+    useEffect(() => {
+        const runId = result.run_id;
+        if (!runId) return;
+        let stopped = false;
+        async function poll() {
+            try {
+                const rec = await api.run(runId as string);
+                if (stopped) return;
+                setRun(rec);
+                if (TERMINAL_RUN.has(rec.status)) stopped = true;
+            } catch (e) {
+                console.error('[cowork-web] chat-delegate poll failed', e);
+            }
+        }
+        void poll();
+        const timer = window.setInterval(() => void poll(), 1500);
+        return () => {
+            stopped = true;
+            window.clearInterval(timer);
+        };
+    }, [result.run_id]);
+
+    async function approve() {
+        if (starting) return;
+        setStarting(true);
+        try {
+            const started = await api.startRun({ workflow_id: result.workflow_id, memory });
+            setRun(await api.run(started.run_id));
+        } catch (e) {
+            console.error('[cowork-web] chat-delegate approve failed', e);
+            sdk.toast.show({ level: 'error', message: t('执行启动失败', 'Failed to start run') });
+        } finally {
+            setStarting(false);
+        }
+    }
+
+    const running = run && !TERMINAL_RUN.has(run.status);
+    return (
+        <div className="rounded-lg border border-border bg-bg-elevated p-3">
+            <div className="flex items-center justify-between">
+                <div className="text-sm font-medium text-text-primary">{result.plan.name}</div>
+                <span className="rounded bg-bg-muted px-1.5 py-0.5 text-[10px] text-text-muted">
+                    {result.mode === 'auto' ? t('直接执行', 'Auto-run') : t('待批准计划', 'Plan')}
+                </span>
+            </div>
+            <div className="mt-1 space-y-0.5">
+                {result.plan.steps.map((s, i) => (
+                    <div key={i} className="flex items-center gap-1.5 text-xs text-text-secondary">
+                        <span className="text-text-muted">{i + 1}.</span>
+                        <span>{s.label || s.display || s.node}</span>
+                        {s.node ? <span className="font-mono text-[10px] text-text-muted">{s.node}</span> : null}
+                    </div>
+                ))}
+            </div>
+            {!run && result.mode === 'plan' ? (
+                <div className="mt-2 flex items-center justify-end gap-2">
+                    <button
+                        type="button"
+                        className="rounded-md border border-border px-3 py-1 text-sm text-text-primary hover:bg-bg-muted disabled:opacity-50"
+                        onClick={() => {
+                            window.location.hash = `#/canvas/${result.workflow_id}`;
+                        }}
+                    >
+                        {t('在画布查看', 'Open in canvas')}
+                    </button>
+                    <button
+                        type="button"
+                        className="rounded-md bg-brand px-3 py-1 text-sm text-white hover:opacity-90 disabled:opacity-50"
+                        disabled={starting}
+                        onClick={() => void approve()}
+                    >
+                        {starting ? t('启动中…', 'Starting…') : t('批准并执行', 'Approve & run')}
+                    </button>
+                </div>
+            ) : null}
+            {run ? (
+                <div className="mt-2 border-t border-border pt-2">
+                    <div className="flex items-center gap-2 text-xs text-text-secondary">
+                        <StatusBadge status={run.status as never} />
+                        <span>
+                            {t('步骤', 'Steps')} {run.steps?.length ?? 0}
+                        </span>
+                        {running ? (
+                            <span className="animate-pulse text-text-muted">{t('执行中…', 'Running…')}</span>
+                        ) : null}
+                    </div>
+                    {run.result?.summary ? (
+                        <div className="mt-1 text-xs text-text-primary">{run.result.summary}</div>
+                    ) : null}
+                    {run.error ? <div className="mt-1 text-xs text-error">{run.error}</div> : null}
+                    {!TERMINAL_RUN.has(run.status) ? (
+                        <button
+                            type="button"
+                            className="mt-2 rounded-md border border-border px-3 py-1 text-sm text-text-primary hover:bg-bg-muted"
+                            onClick={onGoRuns}
+                        >
+                            {t('查看运行详情', 'View run')}
+                        </button>
+                    ) : (
+                        <button
+                            type="button"
+                            className="mt-2 rounded-md border border-border px-3 py-1 text-sm text-text-primary hover:bg-bg-muted"
+                            onClick={onGoRuns}
+                        >
+                            {t('查看运行详情', 'View run')}
+                        </button>
+                    )}
+                </div>
+            ) : null}
+        </div>
+    );
+}
+
 export function DelegatePage() {
     const t = useT();
     const [prompt, setPrompt] = useState('');
@@ -37,6 +169,9 @@ export function DelegatePage() {
     const [wf, setWf] = useState<GeneratedWorkflow | null>(null);
     const [saving, setSaving] = useState(false);
     const [model, setModel] = useState(preferredModel);
+    // #148: chat-first 默认; advanced 保留 #144 DAG 预览编辑路径
+    const [mode, setMode] = useState<'chat' | 'advanced'>('chat');
+    const [chatResult, setChatResult] = useState<ChatDelegateResult | null>(null);
     const models = useAutoRetry(() => api.models(), []);
     // #144: 防抖即时预览 — 序号守卫丢弃过期响应; 编辑器开关与参数草稿
     const genSeq = useRef(0);
@@ -78,15 +213,36 @@ export function DelegatePage() {
         }
     }
 
+    // #148: chat-first 提交 — 服务端确定性分流 (简单直接执行 / 复杂返回计划)
+    async function chatSubmit() {
+        const text = prompt.trim();
+        if (busy || !text) return;
+        const seq = ++genSeq.current;
+        setBusy(true);
+        setError('');
+        try {
+            const res = await api.chatDelegate({ prompt: text, model: model || undefined, memory: memoryEnabled });
+            if (seq !== genSeq.current) return;
+            setChatResult(res);
+        } catch (e) {
+            if (seq !== genSeq.current) return;
+            console.error('[cowork-web] chat delegate failed', e);
+            setError(e instanceof Error ? e.message : String(e));
+        } finally {
+            if (seq === genSeq.current) setBusy(false);
+        }
+    }
+
     // #144: 输入停顿 800ms 即自动生成预览 (最短 6 字符), 手动按钮仍可用。
+    // chat 模式同样防抖直接提交。
     // generate 是每次渲染重建的闭包, 读到的恒为最新 prompt/model — 无需进 deps。
     // biome-ignore lint/correctness/useExhaustiveDependencies: debounce 只随 prompt/model 触发
     useEffect(() => {
         const text = prompt.trim();
         if (text.length < 6) return;
-        const timer = window.setTimeout(() => void generate(), 800);
+        const timer = window.setTimeout(() => void (mode === 'chat' ? chatSubmit() : generate()), 800);
         return () => window.clearTimeout(timer);
-    }, [prompt, model]);
+    }, [prompt, model, mode]);
 
     async function save(alsoRun: boolean) {
         if (!wf || saving) return;
@@ -189,6 +345,28 @@ export function DelegatePage() {
     return (
         <div className="mx-auto max-w-4xl">
             <div className="flex items-center gap-2 pb-2">
+                <div className="mr-2 flex rounded-md border border-border p-0.5">
+                    <button
+                        type="button"
+                        className={`rounded px-2 py-0.5 text-xs ${mode === 'chat' ? 'bg-brand text-white' : 'text-text-secondary hover:bg-bg-muted'}`}
+                        onClick={() => {
+                            setMode('chat');
+                            setWf(null);
+                        }}
+                    >
+                        {t('对话委托', 'Chat')}
+                    </button>
+                    <button
+                        type="button"
+                        className={`rounded px-2 py-0.5 text-xs ${mode === 'advanced' ? 'bg-brand text-white' : 'text-text-secondary hover:bg-bg-muted'}`}
+                        onClick={() => {
+                            setMode('advanced');
+                            setChatResult(null);
+                        }}
+                    >
+                        {t('高级·DAG预览', 'Advanced')}
+                    </button>
+                </div>
                 <span className="text-xs text-text-secondary">{t('模型', 'Model')}</span>
                 <select
                     className="rounded-md border border-border bg-bg px-2 py-1 text-xs text-text-primary"
@@ -243,186 +421,220 @@ export function DelegatePage() {
                     type="button"
                     className="rounded-md bg-brand px-3 py-2 text-sm text-white hover:opacity-90 disabled:opacity-50"
                     disabled={busy || !prompt.trim()}
-                    onClick={() => void generate()}
+                    onClick={() => void (mode === 'chat' ? chatSubmit() : generate())}
                 >
-                    {busy ? t('生成中…', 'Generating…') : t('生成工作流', 'Generate')}
+                    {busy
+                        ? t('处理中…', 'Working…')
+                        : mode === 'chat'
+                          ? t('发送任务', 'Send task')
+                          : t('生成工作流', 'Generate')}
                 </button>
             </div>
 
-            {error ? <ErrorState message={error} onRetry={() => void generate()} /> : null}
-
-            {!wf && !error && !busy ? (
-                <EmptyState
-                    title={t('还没有委托', 'No delegation yet')}
-                    description={t('描述目标, AI 生成工作流草稿', 'Describe a goal — AI drafts the workflow')}
-                />
+            {error ? (
+                <ErrorState message={error} onRetry={() => void (mode === 'chat' ? chatSubmit() : generate())} />
             ) : null}
-            {busy ? <SkeletonLines rows={4} /> : null}
 
-            {wf ? (
-                <div className="rounded-lg border border-border bg-bg-elevated p-3">
-                    <div className="text-[10px] text-text-muted">
-                        {t('预览可就地编辑, 确认后提交', 'Preview is editable — confirm to submit')}
-                    </div>
-                    <input
-                        className="mt-1 w-full rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm font-medium text-text-primary hover:border-border focus:border-accent focus:outline-none"
-                        value={wf.name ?? ''}
-                        placeholder={t('未命名', 'Untitled')}
-                        onChange={(e) => patchWf({ name: e.target.value })}
-                    />
-                    <input
-                        className="mt-0.5 w-full rounded-md border border-transparent bg-transparent px-1 py-0.5 text-xs text-text-secondary hover:border-border focus:border-accent focus:outline-none"
-                        value={wf.description ?? ''}
-                        placeholder={t('描述 (可选)', 'Description (optional)')}
-                        onChange={(e) => patchWf({ description: e.target.value })}
-                    />
-                    <div className="mt-2 space-y-1">
-                        {(wf.nodes ?? []).map((n) => (
-                            <div key={n.id} className="rounded-md border border-border bg-bg px-1.5 py-1">
-                                <div className="flex items-center gap-1.5">
-                                    <span
-                                        className="h-1.5 w-1.5 shrink-0 rounded-full"
-                                        style={{ background: CATEGORY_COLOR[n.category ?? ''] ?? '#6b7280' }}
-                                    />
-                                    <span className="shrink-0 font-mono text-[10px] text-text-muted">{n.name}</span>
-                                    <input
-                                        className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 text-xs text-text-primary hover:border-border focus:border-accent focus:outline-none"
-                                        value={n.config?.label || ''}
-                                        placeholder={n.id}
-                                        onChange={(e) => updateNodeLabel(n.id, e.target.value)}
-                                    />
-                                    <button
-                                        type="button"
-                                        className={`shrink-0 rounded px-1 text-[10px] ${editNode === n.id ? 'bg-brand/15 text-brand' : 'text-text-muted hover:bg-bg-muted'}`}
-                                        title={t('编辑参数', 'Edit params')}
-                                        onClick={() => openParams(n)}
-                                    >
-                                        {t('参数', 'params')}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="shrink-0 rounded px-1 text-[10px] text-error hover:bg-error/10"
-                                        title={t('删除节点', 'Delete node')}
-                                        onClick={() => removeNode(n.id)}
-                                    >
-                                        {t('删除', 'del')}
-                                    </button>
-                                </div>
-                                {editNode === n.id ? (
-                                    <div className="mt-1 border-t border-border pt-1">
-                                        <textarea
-                                            className="min-h-24 w-full rounded border border-border bg-bg px-1.5 py-1 font-mono text-[11px] text-text-primary"
-                                            value={paramsDraft}
-                                            onChange={(e) => setParamsDraft(e.target.value)}
-                                        />
-                                        <div className="mt-1 flex justify-end gap-1">
+            {mode === 'chat' ? (
+                <>
+                    {!chatResult && !error && !busy ? (
+                        <EmptyState
+                            title={t('一句话交差', 'One line, one deliverable')}
+                            description={t(
+                                '描述目标: 简单任务直接执行交付, 复杂任务先给执行计划',
+                                'Simple tasks run directly; complex ones show a plan first'
+                            )}
+                        />
+                    ) : null}
+                    {busy ? <SkeletonLines rows={4} /> : null}
+                    {chatResult ? (
+                        <ChatResultCard
+                            result={chatResult}
+                            memory={memoryEnabled}
+                            onGoRuns={() => {
+                                window.location.hash = '#/runs';
+                            }}
+                        />
+                    ) : null}
+                </>
+            ) : (
+                <>
+                    {!wf && !error && !busy ? (
+                        <EmptyState
+                            title={t('还没有委托', 'No delegation yet')}
+                            description={t('描述目标, AI 生成工作流草稿', 'Describe a goal — AI drafts the workflow')}
+                        />
+                    ) : null}
+                    {busy ? <SkeletonLines rows={4} /> : null}
+
+                    {wf ? (
+                        <div className="rounded-lg border border-border bg-bg-elevated p-3">
+                            <div className="text-[10px] text-text-muted">
+                                {t('预览可就地编辑, 确认后提交', 'Preview is editable — confirm to submit')}
+                            </div>
+                            <input
+                                className="mt-1 w-full rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm font-medium text-text-primary hover:border-border focus:border-accent focus:outline-none"
+                                value={wf.name ?? ''}
+                                placeholder={t('未命名', 'Untitled')}
+                                onChange={(e) => patchWf({ name: e.target.value })}
+                            />
+                            <input
+                                className="mt-0.5 w-full rounded-md border border-transparent bg-transparent px-1 py-0.5 text-xs text-text-secondary hover:border-border focus:border-accent focus:outline-none"
+                                value={wf.description ?? ''}
+                                placeholder={t('描述 (可选)', 'Description (optional)')}
+                                onChange={(e) => patchWf({ description: e.target.value })}
+                            />
+                            <div className="mt-2 space-y-1">
+                                {(wf.nodes ?? []).map((n) => (
+                                    <div key={n.id} className="rounded-md border border-border bg-bg px-1.5 py-1">
+                                        <div className="flex items-center gap-1.5">
+                                            <span
+                                                className="h-1.5 w-1.5 shrink-0 rounded-full"
+                                                style={{ background: CATEGORY_COLOR[n.category ?? ''] ?? '#6b7280' }}
+                                            />
+                                            <span className="shrink-0 font-mono text-[10px] text-text-muted">
+                                                {n.name}
+                                            </span>
+                                            <input
+                                                className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 text-xs text-text-primary hover:border-border focus:border-accent focus:outline-none"
+                                                value={n.config?.label || ''}
+                                                placeholder={n.id}
+                                                onChange={(e) => updateNodeLabel(n.id, e.target.value)}
+                                            />
                                             <button
                                                 type="button"
-                                                className="rounded border border-border px-1.5 py-0.5 text-[10px] text-text-primary hover:bg-bg-muted"
-                                                onClick={() => setEditNode('')}
+                                                className={`shrink-0 rounded px-1 text-[10px] ${editNode === n.id ? 'bg-brand/15 text-brand' : 'text-text-muted hover:bg-bg-muted'}`}
+                                                title={t('编辑参数', 'Edit params')}
+                                                onClick={() => openParams(n)}
                                             >
-                                                {t('取消', 'Cancel')}
+                                                {t('参数', 'params')}
                                             </button>
                                             <button
                                                 type="button"
-                                                className="rounded bg-brand px-1.5 py-0.5 text-[10px] text-white hover:opacity-90"
-                                                onClick={() => applyParams(n.id)}
+                                                className="shrink-0 rounded px-1 text-[10px] text-error hover:bg-error/10"
+                                                title={t('删除节点', 'Delete node')}
+                                                onClick={() => removeNode(n.id)}
                                             >
-                                                {t('应用', 'Apply')}
+                                                {t('删除', 'del')}
                                             </button>
                                         </div>
+                                        {editNode === n.id ? (
+                                            <div className="mt-1 border-t border-border pt-1">
+                                                <textarea
+                                                    className="min-h-24 w-full rounded border border-border bg-bg px-1.5 py-1 font-mono text-[11px] text-text-primary"
+                                                    value={paramsDraft}
+                                                    onChange={(e) => setParamsDraft(e.target.value)}
+                                                />
+                                                <div className="mt-1 flex justify-end gap-1">
+                                                    <button
+                                                        type="button"
+                                                        className="rounded border border-border px-1.5 py-0.5 text-[10px] text-text-primary hover:bg-bg-muted"
+                                                        onClick={() => setEditNode('')}
+                                                    >
+                                                        {t('取消', 'Cancel')}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="rounded bg-brand px-1.5 py-0.5 text-[10px] text-white hover:opacity-90"
+                                                        onClick={() => applyParams(n.id)}
+                                                    >
+                                                        {t('应用', 'Apply')}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ) : null}
                                     </div>
-                                ) : null}
+                                ))}
                             </div>
-                        ))}
-                    </div>
-                    <div className="mt-2 space-y-0.5">
-                        {(wf.edges ?? []).map((e, i) => (
-                            <div
-                                key={`${e.source_id}-${e.target_id}-${i}`}
-                                className="flex items-center gap-1.5 font-mono text-[10px] text-text-muted"
-                            >
-                                <span className="min-w-0 flex-1 truncate">{`${e.source_id} → ${e.target_id}`}</span>
+                            <div className="mt-2 space-y-0.5">
+                                {(wf.edges ?? []).map((e, i) => (
+                                    <div
+                                        key={`${e.source_id}-${e.target_id}-${i}`}
+                                        className="flex items-center gap-1.5 font-mono text-[10px] text-text-muted"
+                                    >
+                                        <span className="min-w-0 flex-1 truncate">{`${e.source_id} → ${e.target_id}`}</span>
+                                        <button
+                                            type="button"
+                                            className="shrink-0 rounded px-1 text-[10px] text-error hover:bg-error/10"
+                                            onClick={() => removeEdge(i)}
+                                        >
+                                            {t('删除', 'del')}
+                                        </button>
+                                    </div>
+                                ))}
+                                <div className="flex items-center gap-1 pt-1">
+                                    <select
+                                        className="rounded border border-border bg-bg px-1 py-0.5 text-[10px] text-text-primary"
+                                        value={edgeFrom}
+                                        onChange={(e) => setEdgeFrom(e.target.value)}
+                                    >
+                                        <option value="">{t('源节点', 'Source')}</option>
+                                        {(wf.nodes ?? []).map((n) => (
+                                            <option key={n.id} value={n.id}>
+                                                {n.config?.label || n.id}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <span className="text-[10px] text-text-muted">→</span>
+                                    <select
+                                        className="rounded border border-border bg-bg px-1 py-0.5 text-[10px] text-text-primary"
+                                        value={edgeTo}
+                                        onChange={(e) => setEdgeTo(e.target.value)}
+                                    >
+                                        <option value="">{t('目标节点', 'Target')}</option>
+                                        {(wf.nodes ?? []).map((n) => (
+                                            <option key={n.id} value={n.id}>
+                                                {n.config?.label || n.id}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <button
+                                        type="button"
+                                        className="rounded border border-border px-1.5 py-0.5 text-[10px] text-text-primary hover:bg-bg-muted disabled:opacity-50"
+                                        disabled={!edgeFrom || !edgeTo}
+                                        onClick={addEdge}
+                                    >
+                                        {t('加边', 'Add')}
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="mt-3 flex items-center justify-end gap-2">
+                                <label
+                                    className="mr-auto flex items-center gap-1 text-sm text-text-secondary"
+                                    title={t(
+                                        '运行结束后把产出写入 fusion-memory 长期记忆',
+                                        'Write run outcomes to fusion-memory after the run ends'
+                                    )}
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={memoryEnabled}
+                                        onChange={(e) => setMemoryEnabled(e.target.checked)}
+                                        disabled={saving}
+                                    />
+                                    {t('记忆', 'Memory')}
+                                </label>
                                 <button
                                     type="button"
-                                    className="shrink-0 rounded px-1 text-[10px] text-error hover:bg-error/10"
-                                    onClick={() => removeEdge(i)}
+                                    className="rounded-md border border-border px-3 py-1 text-sm text-text-primary hover:bg-bg-muted disabled:opacity-50"
+                                    disabled={saving}
+                                    onClick={() => void save(false)}
                                 >
-                                    {t('删除', 'del')}
+                                    {t('保存到画布', 'Save to canvas')}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="rounded-md bg-brand px-3 py-1 text-sm text-white hover:opacity-90 disabled:opacity-50"
+                                    disabled={saving}
+                                    onClick={() => void save(true)}
+                                >
+                                    {t('保存并运行', 'Save & run')}
                                 </button>
                             </div>
-                        ))}
-                        <div className="flex items-center gap-1 pt-1">
-                            <select
-                                className="rounded border border-border bg-bg px-1 py-0.5 text-[10px] text-text-primary"
-                                value={edgeFrom}
-                                onChange={(e) => setEdgeFrom(e.target.value)}
-                            >
-                                <option value="">{t('源节点', 'Source')}</option>
-                                {(wf.nodes ?? []).map((n) => (
-                                    <option key={n.id} value={n.id}>
-                                        {n.config?.label || n.id}
-                                    </option>
-                                ))}
-                            </select>
-                            <span className="text-[10px] text-text-muted">→</span>
-                            <select
-                                className="rounded border border-border bg-bg px-1 py-0.5 text-[10px] text-text-primary"
-                                value={edgeTo}
-                                onChange={(e) => setEdgeTo(e.target.value)}
-                            >
-                                <option value="">{t('目标节点', 'Target')}</option>
-                                {(wf.nodes ?? []).map((n) => (
-                                    <option key={n.id} value={n.id}>
-                                        {n.config?.label || n.id}
-                                    </option>
-                                ))}
-                            </select>
-                            <button
-                                type="button"
-                                className="rounded border border-border px-1.5 py-0.5 text-[10px] text-text-primary hover:bg-bg-muted disabled:opacity-50"
-                                disabled={!edgeFrom || !edgeTo}
-                                onClick={addEdge}
-                            >
-                                {t('加边', 'Add')}
-                            </button>
                         </div>
-                    </div>
-                    <div className="mt-3 flex items-center justify-end gap-2">
-                        <label
-                            className="mr-auto flex items-center gap-1 text-sm text-text-secondary"
-                            title={t(
-                                '运行结束后把产出写入 fusion-memory 长期记忆',
-                                'Write run outcomes to fusion-memory after the run ends'
-                            )}
-                        >
-                            <input
-                                type="checkbox"
-                                checked={memoryEnabled}
-                                onChange={(e) => setMemoryEnabled(e.target.checked)}
-                                disabled={saving}
-                            />
-                            {t('记忆', 'Memory')}
-                        </label>
-                        <button
-                            type="button"
-                            className="rounded-md border border-border px-3 py-1 text-sm text-text-primary hover:bg-bg-muted disabled:opacity-50"
-                            disabled={saving}
-                            onClick={() => void save(false)}
-                        >
-                            {t('保存到画布', 'Save to canvas')}
-                        </button>
-                        <button
-                            type="button"
-                            className="rounded-md bg-brand px-3 py-1 text-sm text-white hover:opacity-90 disabled:opacity-50"
-                            disabled={saving}
-                            onClick={() => void save(true)}
-                        >
-                            {t('保存并运行', 'Save & run')}
-                        </button>
-                    </div>
-                </div>
-            ) : null}
+                    ) : null}
+                </>
+            )}
         </div>
     );
 }

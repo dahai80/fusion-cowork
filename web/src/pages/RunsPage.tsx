@@ -3,7 +3,16 @@ import { DataTable, EmptyState, ErrorState, SkeletonLines, StatusBadge, Streamin
 import { useAutoRetry } from '@fusion/web-ui';
 import type { StatusKind } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
-import { type RunListItem, type RunRecord, type RunReview, type RunStep, api, statusKind } from '../api';
+import {
+    type FileReadResult,
+    type RunArtifact,
+    type RunListItem,
+    type RunRecord,
+    type RunReview,
+    type RunStep,
+    api,
+    statusKind,
+} from '../api';
 import { useT } from '../i18n';
 import { sdk, streamSse } from '../sdk';
 
@@ -540,6 +549,68 @@ function DiffView({ content }: { content: string }) {
     );
 }
 
+// #150: 引用溯源卡 — 点击 chip 拉取源文件内容 (沙箱内只读)
+function CitationCards({ citations }: { citations: NonNullable<RunArtifact['citations']> }) {
+    const t = useT();
+    const [openPath, setOpenPath] = useState('');
+    const [file, setFile] = useState<FileReadResult | null>(null);
+    const [error, setError] = useState('');
+    if (citations.length === 0) return null;
+
+    async function open(path: string) {
+        if (openPath === path && file) {
+            setOpenPath('');
+            setFile(null);
+            return;
+        }
+        setOpenPath(path);
+        setError('');
+        try {
+            setFile(await api.readFile(path));
+        } catch (e) {
+            console.error('[cowork-web] citation file read failed', e);
+            setError(e instanceof Error ? e.message : String(e));
+            setFile(null);
+        }
+    }
+
+    return (
+        <div className="mt-1 border-t border-border pt-1">
+            <div className="mb-1 text-[10px] text-text-muted">
+                {t('引用来源', 'Citations')} ({citations.length})
+            </div>
+            <div className="flex flex-wrap gap-1">
+                {citations.map((c, i) => (
+                    <button
+                        key={`${c.path || c.message_id || i}`}
+                        type="button"
+                        title={c.path || c.message_id || ''}
+                        className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                            openPath === c.path
+                                ? 'border-accent text-text-primary'
+                                : 'border-border text-text-secondary hover:bg-bg-muted'
+                        }`}
+                        onClick={() => c.path && void open(c.path)}
+                    >
+                        📄 {c.name || c.path?.split('/').pop() || c.message_id}
+                    </button>
+                ))}
+            </div>
+            {error ? <div className="mt-1 text-[10px] text-error">{error}</div> : null}
+            {openPath && file ? (
+                <div className="mt-1 rounded border border-border bg-bg p-1">
+                    <div className="mb-1 font-mono text-[10px] text-text-muted">
+                        {file.path} [{file.line_start}-{file.line_end}/{file.total_lines}]
+                    </div>
+                    <pre className="max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[10px] text-text-secondary">
+                        {file.content}
+                    </pre>
+                </div>
+            ) : null}
+        </div>
+    );
+}
+
 function RunArtifactPane({
     runId,
     active,
@@ -626,6 +697,9 @@ function RunArtifactPane({
                                     {selected.content || selected.path}
                                 </pre>
                             )}
+                            {selected.citations && selected.citations.length > 0 ? (
+                                <CitationCards citations={selected.citations} />
+                            ) : null}
                         </div>
                     ) : null}
                 </div>

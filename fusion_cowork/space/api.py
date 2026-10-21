@@ -26,6 +26,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime
 from typing import Optional
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -38,6 +39,8 @@ from fusion_cowork.tenant import (
     reset_current_tenant,
     set_current_tenant,
 )
+
+from .artifact import ConflictError
 
 logger = logging.getLogger(__name__)
 
@@ -606,6 +609,129 @@ def create_space_api(
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=404)
         return JSONResponse(res)
+
+    # ── issue #149: 产物就地 AI 修订 — 选区 → AI 改写 → block 级接受/拒绝 → 写回 ──
+    @app.post("/spaces/{space_id}/artifacts/{artifact_id}/ai_revise")
+    async def ai_revise_artifact(space_id: str, artifact_id: str, request: Request):
+        if not artifact_svc:
+            return JSONResponse({"error": "artifact service not available"}, status_code=503)
+        auth_err = await _check_auth(request)
+        if auth_err:
+            return auth_err
+        principal = _resolve_principal(request)
+        body = await request.json()
+        selection = str(body.get("selection") or "").strip()
+        instruction = str(body.get("instruction") or "").strip()
+        if not selection:
+            return JSONResponse({"error": "selection 必填"}, status_code=400)
+        mlx = getattr(chat_svc, "mlx", None) if chat_svc else None
+        if mlx is None:
+            return JSONResponse({"error": "model client not available"}, status_code=503)
+        try:
+            art = await artifact_svc.get_artifact(
+                space_id, artifact_id, principal.user_id, tenant_id=principal.tenant_id
+            )
+        except PermissionError as e:
+            return JSONResponse({"error": str(e)}, status_code=403)
+        if not art:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        content = str(art.get("content") or "")
+        if selection not in content:
+            return JSONResponse({"error": "选区与产物内容不一致, 请重新选择"}, status_code=400)
+
+        model = str(body.get("model") or "").strip()
+        if not model:
+            try:
+                from ..ai.nl_parser import _pick_chat_model
+
+                model = _pick_chat_model(await mlx.list_models())
+            except Exception as e:
+                logger.warning(f"ai_revise 模型自动选择失败: {e}")
+        if not model:
+            return JSONResponse({"error": "无可用 chat 模型"}, status_code=503)
+
+        messages = [
+            {"role": "system", "content": "你是文本修订助手。只输出修订后的文本本身, 不要解释、不要包裹代码块。"},
+            {
+                "role": "user",
+                "content": f"请按以下要求修订选中文本:\n要求: {instruction or '改进表达, 保持原意'}\n\n原文:\n{selection}",
+            },
+        ]
+        try:
+            resp = await mlx.chat(model=model, messages=messages, temperature=0.2, max_tokens=2048)
+        except Exception as e:
+            logger.error(f"ai_revise 模型调用失败: {e}")
+            return JSONResponse({"error": f"模型调用失败: {e}"}, status_code=502)
+        revised = str(resp.content or "").strip()
+        # 模型偶发用 ``` 包裹 — 确定性剥壳, 不走模型
+        if revised.startswith("```"):
+            revised = revised.split("\n", 1)[-1]
+            if revised.endswith("```"):
+                revised = revised[:-3].rstrip()
+        from ..engine.ast_diff import text_diff_blocks
+
+        blocks = text_diff_blocks(selection, revised)
+        logger.info(f"ai_revise artifact={artifact_id} user={principal.user_id} model={model} blocks={len(blocks)}")
+        return JSONResponse({"selection": selection, "revised": revised, "diff_blocks": blocks, "model": model})
+
+    @app.post("/spaces/{space_id}/artifacts/{artifact_id}/apply_revision")
+    async def apply_revision_artifact(space_id: str, artifact_id: str, request: Request):
+        if not artifact_svc:
+            return JSONResponse({"error": "artifact service not available"}, status_code=503)
+        auth_err = await _check_auth(request)
+        if auth_err:
+            return auth_err
+        principal = _resolve_principal(request)
+        body = await request.json()
+        selection = str(body.get("selection") or "")
+        revised = str(body.get("revised") or "")
+        model = str(body.get("model") or "")
+        accepted = body.get("accepted_blocks")
+        # #142 对齐: 可选 block 级部分接受 — 仅保留被接受的块重建 revised
+        if isinstance(accepted, list):
+            from ..engine.ast_diff import apply_block_selection
+
+            revised = apply_block_selection(selection, revised, accepted)
+        if not selection or not revised:
+            return JSONResponse({"error": "selection/revised 必填"}, status_code=400)
+        try:
+            art = await artifact_svc.get_artifact(
+                space_id, artifact_id, principal.user_id, tenant_id=principal.tenant_id
+            )
+        except PermissionError as e:
+            return JSONResponse({"error": str(e)}, status_code=403)
+        if not art:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        content = str(art.get("content") or "")
+        if selection not in content:
+            return JSONResponse({"error": "选区与产物内容不一致, 请刷新后重试"}, status_code=400)
+        new_content = content.replace(selection, revised, 1)
+        metadata = art.get("metadata") if isinstance(art.get("metadata"), dict) else {}
+        history = list(metadata.get("revision_history") or [])
+        history.append(
+            {
+                "ts": datetime.now().isoformat(),
+                "user_id": principal.user_id,
+                "model": model,
+                "selection": selection[:200],
+                "revised": revised[:200],
+            }
+        )
+        try:
+            await artifact_svc.update_artifact(
+                space_id,
+                artifact_id,
+                principal.user_id,
+                content=new_content,
+                metadata={**metadata, "revision_history": history},
+                tenant_id=principal.tenant_id,
+            )
+        except PermissionError as e:
+            return JSONResponse({"error": str(e)}, status_code=403)
+        except ConflictError as e:
+            return JSONResponse({"error": str(e)}, status_code=409)
+        logger.info(f"apply_revision artifact={artifact_id} user={principal.user_id} v+1")
+        return JSONResponse({"id": artifact_id, "applied": True, "revision_count": len(history)})
 
     # ── Notifications (W15) ──
 

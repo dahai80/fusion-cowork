@@ -185,6 +185,12 @@ class AIClassifyNode(BaseNode):
                 "total": len(classified_files),
                 "categories": list(set(f["category"] for f in classified_files)),
                 "usage": dict(usage_totals),
+                # issue #150: 结构化引用 — 分类结果可溯源到源文件
+                "citations": [
+                    {"type": "file", "path": f.get("file_path", ""), "name": f.get("file_name", "")}
+                    for f in classified_files
+                    if f.get("file_path")
+                ],
             },
             summary=f"已分类 {len(classified_files)} 个文件",
         )
@@ -364,7 +370,17 @@ class AISummarizeNode(BaseNode):
 
         return NodeResult(
             status=NodeStatus.SUCCESS,
-            data={"summaries": summaries, "report": report, "usage": dict(usage_totals)},
+            data={
+                "summaries": summaries,
+                "report": report,
+                "usage": dict(usage_totals),
+                # issue #150: 结构化引用 — 摘要报告可溯源到源文件
+                "citations": [
+                    {"type": "file", "path": s.get("file_path", ""), "name": s.get("file_name", "")}
+                    for s in summaries
+                    if s.get("file_path")
+                ],
+            },
             summary=f"已完成 {len(summaries)} 个文档摘要",
         )
 

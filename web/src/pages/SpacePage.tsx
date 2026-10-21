@@ -1,7 +1,14 @@
 import { EmptyState, ErrorState, SkeletonLines } from '@fusion/web-ui';
 import { useAutoRetry } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
-import { type ArtifactReview, type SpaceArtifact, type SpaceInfo, type SpaceMessage, api } from '../api';
+import {
+    type ArtifactReview,
+    type DiffBlock,
+    type SpaceArtifact,
+    type SpaceInfo,
+    type SpaceMessage,
+    api,
+} from '../api';
 import { useT } from '../i18n';
 import { preferredModel } from '../modelPref';
 import { sdk, streamSse } from '../sdk';
@@ -138,6 +145,8 @@ function SpaceDetail({ spaceId }: { spaceId: string }) {
     const [sending, setSending] = useState(false);
     const [reloadKey, setReloadKey] = useState(0);
     const [artifactPreview, setArtifactPreview] = useState<SpaceArtifact | null>(null);
+    // #149: 产物就地修订 — 预览内选中文本触发
+    const [selText, setSelText] = useState('');
 
     const msgs = useAutoRetry(() => api.spaceMessages(spaceId), [spaceId, reloadKey]);
     const members = useAutoRetry(() => api.spaceMembers(spaceId), [spaceId]);
@@ -346,14 +355,47 @@ function SpaceDetail({ spaceId }: { spaceId: string }) {
                                 <button
                                     type="button"
                                     className="rounded px-2 py-0.5 text-xs text-text-secondary hover:bg-bg-muted"
-                                    onClick={() => setArtifactPreview(null)}
+                                    onClick={() => {
+                                        setArtifactPreview(null);
+                                        setSelText('');
+                                    }}
                                 >
                                     {t('关闭', 'Close')}
                                 </button>
                             </div>
-                            <pre className="max-h-72 overflow-auto whitespace-pre-wrap font-mono text-xs text-text-secondary">
+                            <pre
+                                className="max-h-72 overflow-auto whitespace-pre-wrap font-mono text-xs text-text-secondary"
+                                onMouseUp={() => {
+                                    const sel = window.getSelection()?.toString() ?? '';
+                                    setSelText(sel.trim());
+                                }}
+                            >
                                 {artifactPreview.content}
                             </pre>
+                            {selText ? (
+                                <div className="mt-2">
+                                    <div className="mb-1 rounded bg-bg-muted px-2 py-1 text-[11px] text-text-secondary">
+                                        {t('已选', 'Selected')} {selText.length} {t('字符', 'chars')}
+                                        <button
+                                            type="button"
+                                            className="ml-2 rounded px-1 text-[10px] text-text-muted hover:bg-bg-elevated"
+                                            onClick={() => setSelText('')}
+                                        >
+                                            {t('清除', 'Clear')}
+                                        </button>
+                                    </div>
+                                    <ArtifactRevise
+                                        spaceId={spaceId}
+                                        artifactId={artifactPreview.id}
+                                        selection={selText}
+                                        onDone={() => {
+                                            void openArtifact(artifactPreview.id);
+                                            setSelText('');
+                                        }}
+                                        onClear={() => setSelText('')}
+                                    />
+                                </div>
+                            ) : null}
                         </div>
                     ) : (artifacts.data ?? []).length === 0 ? (
                         <EmptyState title={t('暂无产物', 'No artifacts')} />
@@ -708,5 +750,142 @@ function ArtifactReviewButtons({
                 {t('退回', 'Reject')}
             </button>
         </span>
+    );
+}
+
+// #149: 产物就地 AI 修订 — 选区 → AI 改写 → block 级接受/拒绝 → 写回 (审计入 revision_history)
+function ArtifactRevise({
+    spaceId,
+    artifactId,
+    selection,
+    onDone,
+    onClear,
+}: {
+    spaceId: string;
+    artifactId: string;
+    selection: string;
+    onDone: () => void;
+    onClear: () => void;
+}) {
+    const t = useT();
+    const [instruction, setInstruction] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [result, setResult] = useState<{ revised: string; diff_blocks: DiffBlock[]; model: string } | null>(null);
+    const [accepted, setAccepted] = useState<Set<number>>(new Set());
+    const [applying, setApplying] = useState(false);
+
+    async function revise() {
+        if (busy) return;
+        setBusy(true);
+        try {
+            const res = await api.spaceAiRevise(spaceId, artifactId, { selection, instruction });
+            setResult(res);
+            setAccepted(new Set(res.diff_blocks.filter((b) => b.tag !== 'equal').map((b) => b.index)));
+        } catch (e) {
+            console.error('[cowork-web] artifact revise failed', e);
+            sdk.toast.show({
+                level: 'error',
+                message: e instanceof Error ? e.message : t('修订失败', 'Revise failed'),
+            });
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function apply() {
+        if (!result || applying) return;
+        setApplying(true);
+        try {
+            await api.spaceApplyRevision(spaceId, artifactId, {
+                selection: selection,
+                revised: result.revised,
+                model: result.model,
+                accepted_blocks: [...accepted],
+            });
+            sdk.toast.show({ level: 'success', message: t('修订已应用', 'Revision applied') });
+            onDone();
+        } catch (e) {
+            console.error('[cowork-web] artifact apply failed', e);
+            sdk.toast.show({ level: 'error', message: e instanceof Error ? e.message : t('应用失败', 'Apply failed') });
+        } finally {
+            setApplying(false);
+        }
+    }
+
+    function toggle(idx: number) {
+        setAccepted((prev) => {
+            const next = new Set(prev);
+            if (next.has(idx)) next.delete(idx);
+            else next.add(idx);
+            return next;
+        });
+    }
+
+    return (
+        <div className="rounded-md border border-border bg-bg-elevated p-2">
+            <div className="flex items-center gap-1">
+                <input
+                    className="min-w-0 flex-1 rounded border border-border bg-bg px-2 py-1 text-xs text-text-primary"
+                    placeholder={t('修改要求, 例: 更简洁', 'Instruction, e.g.: make it terser')}
+                    value={instruction}
+                    onChange={(e) => setInstruction(e.target.value)}
+                />
+                <button
+                    type="button"
+                    className="rounded bg-brand px-2 py-1 text-xs text-white hover:opacity-90 disabled:opacity-50"
+                    disabled={busy}
+                    onClick={() => void revise()}
+                >
+                    {busy ? t('生成中…', 'Working…') : t('AI 修改', 'Revise with AI')}
+                </button>
+                <button
+                    type="button"
+                    className="rounded border border-border px-2 py-1 text-xs text-text-secondary hover:bg-bg-muted"
+                    onClick={onClear}
+                >
+                    {t('放弃', 'Discard')}
+                </button>
+            </div>
+            {result ? (
+                <div className="mt-2 space-y-1">
+                    {result.diff_blocks.map((b) => (
+                        <div key={b.index} className="rounded border border-border bg-bg p-1">
+                            {b.tag !== 'equal' ? (
+                                <label className="flex items-center gap-1 text-[10px] text-text-muted">
+                                    <input
+                                        type="checkbox"
+                                        checked={accepted.has(b.index)}
+                                        onChange={() => toggle(b.index)}
+                                    />
+                                    {b.tag}
+                                </label>
+                            ) : (
+                                <div className="text-[10px] text-text-muted">{t('未改动', 'unchanged')}</div>
+                            )}
+                            {b.old && b.tag !== 'insert' ? (
+                                <pre className="whitespace-pre-wrap font-mono text-[10px] text-error/80">{b.old}</pre>
+                            ) : null}
+                            {b.new && b.tag !== 'delete' ? (
+                                <pre className="whitespace-pre-wrap font-mono text-[10px] text-success">{b.new}</pre>
+                            ) : null}
+                        </div>
+                    ))}
+                    <div className="flex items-center justify-end gap-1">
+                        <span className="mr-auto text-[10px] text-text-muted">
+                            {t('接受', 'Accepted')} {accepted.size}/
+                            {result.diff_blocks.filter((b) => b.tag !== 'equal').length}
+                        </span>
+                        <button
+                            type="button"
+                            className="rounded bg-brand px-2 py-1 text-xs text-white hover:opacity-90 disabled:opacity-50"
+                            disabled={applying || accepted.size === 0}
+                            onClick={() => void apply()}
+                        >
+                            {applying ? t('应用中…', 'Applying…') : t('应用所选', 'Apply selected')}
+                        </button>
+                    </div>
+                </div>
+            ) : null}
+        </div>
     );
 }
