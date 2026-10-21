@@ -849,14 +849,47 @@ class DeskRPCServer:
             return {"error": "workflow 或 template_id 必填"}
         wf = Workflow.from_dict(workflow_def)
         engine = self._get_engine()
-        result = await engine.execute(wf)
-        return {
+        # issue #157: run 级记忆集成 — 启动召回注入 / 结束写回 (params.memory 默认开, 桥失败零冲击)
+        memory_enabled = params.get("memory", True)
+        if not isinstance(memory_enabled, bool):
+            return {"error": "memory 须为 boolean"}
+        bridge = None
+        initial_input: Optional[Dict[str, Any]] = None
+        if memory_enabled:
+            from ..memory_bridge import MemoryBridge
+
+            bridge = MemoryBridge.from_env()
+        if bridge is not None:
+            query = f"{wf.name} {getattr(wf, 'description', '') or ''}".strip()
+            ctx = await bridge.retrieve_context(query)
+            if ctx:
+                initial_input = {"memory_context": ctx}
+        result = await engine.execute(wf, initial_input=initial_input)
+        out = {
             "id": result.id,
             "status": result.status.value if hasattr(result.status, "value") else str(result.status),
             "summary": result.result_summary,
             "steps": [s.to_dict() if hasattr(s, "to_dict") else str(s) for s in result.steps],
             "error": result.error,
         }
+        # issue #157: 成功 run 结束写回
+        if bridge is not None and out["status"] == "success":
+            from ..memory_bridge import MemoryBridge
+
+            interaction = MemoryBridge.build_interaction(
+                session_id=result.id,
+                workflow_id="",
+                workflow_name=wf.name,
+                description=getattr(wf, "description", "") or "",
+                steps=result.steps,
+                result_summary=result.result_summary or "",
+                execution_id=result.id,
+            )
+            ids = await bridge.write_back(interaction)
+            out["memory_writeback"] = "ok" if ids is not None else "failed"
+            if ids is not None:
+                out["memory_ids"] = ids
+        return out
 
     async def _handle_workflow_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "idle", "running_workflows": 0}

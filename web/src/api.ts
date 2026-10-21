@@ -315,7 +315,7 @@ export const api = {
     updateWorkflow: (id: string, record: { name: string; description: string; workflow: unknown }) =>
         sdk.http.put<WorkflowRecord>(`/api/workflows/${encodeURIComponent(id)}`, record).then((r) => r.data),
     deleteWorkflow: (id: string) => sdk.http.delete(`/api/workflows/${encodeURIComponent(id)}`),
-    startRun: (body: { workflow?: unknown; workflow_id?: string; name?: string }) =>
+    startRun: (body: { workflow?: unknown; workflow_id?: string; name?: string; memory?: boolean }) =>
         post<{ run_id: string; status: string }>('/api/runs', body),
     runs: () => get<{ runs: RunListItem[]; count: number }>('/api/runs'),
     run: (id: string) => get<RunRecord>(`/api/runs/${encodeURIComponent(id)}`),
