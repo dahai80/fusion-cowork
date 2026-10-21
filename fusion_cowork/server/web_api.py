@@ -145,7 +145,9 @@ def _narrow_pending_edit(permission_manager: Any, action_id: str, accepted_raw: 
     edited_new = apply_block_selection(old_val, new_val, sorted(selected))
     edited = dict(entry.get("params") or {})
     edited[str(raw_edit.get("new_key") or "new_text")] = edited_new
-    logger.info(f"逐块审阅: action={action_id} 接受 {len(selected)}/{len(non_equal)} 块, 窄化 {raw_edit.get('new_key')}")
+    logger.info(
+        f"逐块审阅: action={action_id} 接受 {len(selected)}/{len(non_equal)} 块, 窄化 {raw_edit.get('new_key')}"
+    )
     return edited
 
 
@@ -763,12 +765,8 @@ def create_web_app(
             # issue #157: per-run 记忆开关, 默认开 (未配 FUSION_MEMORY_API_KEY 时桥自动关闭)
             memory = body.get("memory", True)
             if not isinstance(memory, bool):
-                raise HTTPException(
-                    status_code=400, detail={"code": "bad_request", "message": "memory 须为 boolean"}
-                )
-            return runs.start(
-                workflow_def, workflow_id=workflow_id, workflow_name=workflow_name, memory=memory
-            )
+                raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "memory 须为 boolean"})
+            return runs.start(workflow_def, workflow_id=workflow_id, workflow_name=workflow_name, memory=memory)
         except ValueError as exc:
             # issue #135 F-2: 坏边形状/含环等工作流定义错误 → 400 可读信息, 不 500
             raise HTTPException(
@@ -1124,7 +1122,6 @@ def create_web_app(
         logger.info(f"web API 通知源 runs 轮询: {len(items)} 条终态运行")
         return {"items": items}
 
-
     # ── issue #138 G10: 空间知识层 — space 级 instructions (system-prompt 注入) ──
     @app.get("/api/space/spaces/{space_id}/instructions")
     async def instructions_get(space_id: str):
@@ -1147,6 +1144,7 @@ def create_web_app(
         await space_store.update_space(space_id, config=existing)
         logger.info(f"web API space instructions 已更新: {space_id} ({len(existing['instructions'])} 字符)")
         return {"space_id": space_id, "instructions": existing["instructions"]}
+
     # ── W19 guard L3 审批队列 (migration doc §6 P3; #124 起 guard+本地 CONFIRM 合并) ──
     @app.get("/api/permissions/pending")
     async def permissions_pending():
@@ -1173,7 +1171,9 @@ def create_web_app(
                     "confirmed": False,
                     "reason": "所有变更块均被拒绝, 无可批准内容",
                 }
-        confirmed = await permission_manager.confirm_guard(action_id, approved, approved_by="web", scope=str(body.get("scope") or "*"))
+        confirmed = await permission_manager.confirm_guard(
+            action_id, approved, approved_by="web", scope=str(body.get("scope") or "*")
+        )
         # issue #138: 确认落规则后立即持久化 (重启不丢)
         try:
             saver = getattr(permission_manager, "save", None)
