@@ -185,7 +185,10 @@ fusion-cowork skill packages
 fusion-cowork skill run-package /weekly-readout --params '{"days": 7}'
 fusion-cowork skill run-package /contract-review --params '{"contract_path": "~/contracts/a.md", "kb_id": "playbook"}'
 # Package layout: YAML frontmatter (name/params/handler/output_template) + markdown instructions.
-# Built-ins ship in fusion_cowork/skills/packages/; drop your own *.md into ~/.fusion-cowork/skills/.
+# Shared format (issue #167): JSON-Schema `parameters` + `allowed-tools` + `version` are understood by
+# both fusion-cowork and fusion-agent-studio, so one pack works in either product — see docs/skill-packages.md.
+# Built-ins ship in fusion_cowork/skills/packages/; drop your own *.md into ~/.fusion-cowork/skills/,
+# or point FUSION_COWORK_SKILLS_DIRS=dir1:dir2 at shared directories.
 
 # Chrome CDP — remote browser control (M3)
 fusion-cowork cdp navigate https://example.com
@@ -396,6 +399,11 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#125 (P2) — manifest upstream/api_key**: `web/manifest.json` declares `upstream` (`http://127.0.0.1:11461`) + `api_key_env`; `shell_registry.load_manifest()` resolves `api_key` from that env at registration time and honors `FUSION_COWORK_WEB_UPSTREAM` overrides. Gateway dynamic proxy (#232 contract) can resolve the module.
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
+
+### Shared Skill Format + Gateway-Issued Module Keys (v0.5.31, issues #167/#168)
+
+- **Shared markdown skill format (#167)** — one pack now serves both fusion-cowork and fusion-agent-studio. `parse_markdown` accepts the shared frontmatter: JSON-Schema `parameters`/`arguments` (`properties`/`required`, mapped to the cowork form fields; `enum` now validated on run), `allowed-tools`/`tools`, `command`/`slash`, `version`, and hyphenated aliases; unknown product-specific keys (`handler`, `workflow`, `params`) stay cowork-only and never break the agent-studio loader (its `parse_skill_md` parks them in `extra`). The seed `/contract-review` pack ships in the shared format. `FUSION_COWORK_SKILLS_DIRS` (colon-separated) adds shared install directories so a single file installs once for both products. Spec: `docs/skill-packages.md`. Tests: `tests/test_issue_167_shared_skill_format.py` (21 cases).
+- **Gateway-issued module keys (#168, K4)** — the shell registration body no longer sends a module-supplied `api_key` unless `FUSION_COWORK_WEB_API_KEY` is explicitly set (static override kept for old gateways). When the gateway (K1) returns an issued `fm-` key in the registration response, cowork persists it once to `~/.fusion-cowork/web_module_key` (0600, plaintext never logged — masked `fm-x****xxxx` only) and authenticates heartbeats with it instead of the admin key; a 401 heartbeat falls back to re-registration. Inbound `/api` auth dual-accepts the env static key and the issued key during the 24 h grace window, so fresh installs need zero manual key handling and existing installs upgrade without downtime. Migration note (one line): keep `FUSION_COWORK_WEB_API_KEY` set through the upgrade; once the gateway issues a key, the persisted `~/.fusion-cowork/web_module_key` takes over and the env var can be dropped. Tests: `tests/test_issue_168_gateway_keys.py` (15 cases).
 
 ### fusion-browser Managed Backend (v0.5.30, issue #162)
 
