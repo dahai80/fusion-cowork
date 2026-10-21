@@ -180,6 +180,13 @@ fusion-cowork skill search "clean"
 # Spreadsheet reconciliation — budget vs export-folder variance report (issue #151)
 fusion-cowork skill run /spreadsheet-recon "~/fin/budget.xlsx ~/fin/exports 10"
 
+# Markdown skill packages — frontmatter params render a form in the web UI (issue #155)
+fusion-cowork skill packages
+fusion-cowork skill run-package /weekly-readout --params '{"days": 7}'
+fusion-cowork skill run-package /contract-review --params '{"contract_path": "~/contracts/a.md", "kb_id": "playbook"}'
+# Package layout: YAML frontmatter (name/params/handler/output_template) + markdown instructions.
+# Built-ins ship in fusion_cowork/skills/packages/; drop your own *.md into ~/.fusion-cowork/skills/.
+
 # Chrome CDP — remote browser control (M3)
 fusion-cowork cdp navigate https://example.com
 fusion-cowork cdp snapshot
@@ -195,6 +202,12 @@ fusion-cowork cdp evaluate "document.title"
 # (e.g. https://fusion.local). Without it the WS upgrade, Page.navigate and PUT /json/new are denied.
 export FUSION_BROWSER_CDP=9223
 export FUSION_CDP_ORIGIN=https://fusion.local
+
+# Managed browser (issue #153) — spawn a dedicated Chromium profile with its own CDP port,
+# no manual `--remote-debugging-port` setup. Workflow node: `managed_browser`
+# (action launch/close/status, import_cookies=<Netscape cookies.txt>). Web: `fusion-cowork web serve`
+# exposes POST /api/browser/launch|close and GET /api/browser/status|screenshot (live side panel).
+# Binary discovery: FUSION_COWORK_CHROMIUM=<path> overrides Chrome/Chromium/Edge/Brave lookup.
 
 # Collaboration Space (M6+M7)
 fusion-cowork space create --name "Project Alpha" --owner-id user1
@@ -318,11 +331,11 @@ fusion-cowork collab serve --port 11439
 └─────────────────────────────────────────────────────┘
 ```
 
-### Node Types (68 nodes built-in, 7 categories)
+### Node Types (71 nodes built-in, 7 categories)
 
 | Category | Count | Nodes |
 |----------|-------|-------|
-| `tool` | 36 | Shell Exec, Python REPL, Web Search, Fetch URL, Apply Edit, Browser Open/Extract/Automate, **CDP** (Navigate, Snapshot, Click, Fill, Fill Form, Screenshot, Evaluate, Emulate, Network, Console, Drag, Hover, Press Key, Type Text, Upload File, Wait For, Handle Dialog, Resize Page, Heap Snapshot, Lighthouse, List Pages, New Page, Select Page, Close Page, Performance Trace), **Push, LSP, Worktree** |
+| `tool` | 37 | Shell Exec, Python REPL, Web Search, Fetch URL, Apply Edit, **Managed Browser** (issue #153 — dedicated profile + auto CDP port), Browser Open/Extract/Automate, **CDP** (Navigate, Snapshot, Click, Fill, Fill Form, Screenshot, Evaluate, Emulate, Network, Console, Drag, Hover, Press Key, Type Text, Upload File, Wait For, Handle Dialog, Resize Page, Heap Snapshot, Lighthouse, List Pages, New Page, Select Page, Close Page, Performance Trace), **Push, LSP, Worktree** |
 | `macos_system` | 13 | Desktop Clean, Download Organizer, Disk Cleaner, File Watcher, Screen Capture, Clipboard, Notification, App Lifecycle, OCR, Mouse Move, Mouse Click, Keyboard Type, Keyboard Shortcut |
 | `file_operation` | 6 | File Classifier, Batch Rename, Copy, Move, Delete, Find |
 | `ai_processing` | 4 | AI Classify, AI Summarize, AI Generate Name, AI Vision Analyze |
@@ -376,6 +389,13 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#125 (P2) — manifest upstream/api_key**: `web/manifest.json` declares `upstream` (`http://127.0.0.1:11461`) + `api_key_env`; `shell_registry.load_manifest()` resolves `api_key` from that env at registration time and honors `FUSION_COWORK_WEB_UPSTREAM` overrides. Gateway dynamic proxy (#232 contract) can resolve the module.
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
+
+### Managed Browser, Markdown Skill Packages, Cross-Device Takeover, Admin Console (v0.5.29, issues #153/#154/#155/#156)
+
+- **Managed browser (#153)** — `fusion_cowork/managed_browser.py` + the `managed_browser` node spawn a dedicated Chromium/Chrome/Edge/Brave process with an independent `--user-data-dir` (`~/.fusion-cowork/browser-profile`) and an auto-allocated `--remote-debugging-port`; `FUSION_BROWSER_CDP` is set on success so every existing `cdp_*` node drives the same session with zero manual Chrome setup. Optional `import_cookies` ingests a Netscape `cookies.txt` via `Network.setCookies` (login state stays on-device). `web serve` adds `POST /api/browser/launch|close`, `GET /api/browser/status|screenshot`; the web `BrowserPanel` streams screenshots every 2 s while a run executes. `FUSION_COWORK_CHROMIUM` overrides binary discovery.
+- **Markdown skill packages (#155)** — `fusion_cowork/skills/packages.py` discovers `*.md` packages (YAML frontmatter: `name`, `params`, `handler`, `output_template`, `aliases`; body = instructions) from the built-in `skills/packages/` and `~/.fusion-cowork/skills/`. Parameter schemas drive the `#/skills` form in the web UI (`GET /api/skills`, `POST /api/skills/{name}/run`) and render structured forms; handlers can delegate to a built-in skill (`builtin:/spreadsheet-recon`), run a parameterized DAG, or call a local Python handler. Seed skills: `/contract-review` (contract + optional fusion-kb playbook hits + local MLX memo with clause citations), `/spreadsheet-recon`, `/weekly-readout` (lifecycle JSONL aggregation). CLI: `skill packages`, `skill run-package`.
+- **Cross-device takeover + push egress (#154)** — `WS /ws/takeover/{run_id}` attaches an authenticated device to a live run (snapshot frame, run-event pump, `directive`/`pause`/`resume`/`cancel`/`confirm` frames); `PushEgress` posts `run_finished` and pending-approval events to `FUSION_COWORK_PUSH_WEBHOOK_URL` (best-effort, unset = no-op); MobilePage gains pause/resume/cancel and allow/deny controls.
+- **Admin console + OTel audit export (#156)** — `/api/admin/*` behind `FUSION_COWORK_ADMIN_KEY` (503 when unset, 401 on mismatch): members, usage, push test, and `GET /api/admin/audit/export` emitting OTLP/JSON `LogsData` from the audit chain + terminal runs. New `#/admin` page keeps the admin key in localStorage only.
 
 ### GUI Audit Fixes: Block-Level Diff Review, Token Waterfall, Live Delegate Preview (v0.5.28, issues #142/#143/#144)
 

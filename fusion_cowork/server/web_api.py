@@ -756,7 +756,7 @@ def create_web_app(
 ):
     try:
         from fastapi import FastAPI, HTTPException, Request, WebSocket
-        from fastapi.responses import JSONResponse, StreamingResponse
+        from fastapi.responses import JSONResponse, Response, StreamingResponse
         from fastapi.staticfiles import StaticFiles
     except ImportError as e:
         raise ImportError("web API 需要 [web] 依赖: pip install fusion-cowork[web]") from e
@@ -1316,6 +1316,102 @@ def create_web_app(
             logger.info(f"web API 模型列表: chat {len(chat_models)}/{len(models)} (默认过滤非 chat)")
             return {"models": chat_models, "count": len(chat_models), "total": len(models), "stale": stale}
         return {"models": models, "count": len(models), "total": len(models), "stale": stale}
+
+    # ── issue #155: markdown skill 包 — 发现 / 参数表单 schema / 执行 ──
+    @app.get("/api/skills")
+    async def skills_list():
+        from ..skills import get_package_registry
+
+        packages = get_package_registry().list_packages()
+        return {"skills": [p.to_dict() for p in packages], "count": len(packages)}
+
+    @app.post("/api/skills/{name:path}/run")
+    async def skills_run(name: str, request: Request):
+        from ..skills import get_package_registry
+
+        try:
+            body = await request.json()
+        except Exception as e:
+            logger.warning(f"/api/skills/{name}/run JSON 解析失败: {e}")
+            raise HTTPException(status_code=400, detail={"code": "invalid_json", "message": "invalid json"}) from e
+        values = body.get("params") if isinstance(body, dict) and "params" in body else body
+        if not isinstance(values, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_params", "message": "params 必须是对象"})
+        registry = get_package_registry()
+        if registry.get(name) is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"})
+        result = await registry.run(name, values)
+        if "error" in result:
+            status = 400 if result.get("errors") else 500
+            return JSONResponse(result, status_code=status)
+        return result
+
+    @app.get("/api/skills/{name:path}")
+    async def skills_get(name: str):
+        from ..skills import get_package_registry
+
+        pkg = get_package_registry().get(name)
+        if pkg is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"})
+        return pkg.to_dict()
+
+    # ── issue #153: 托管浏览器 — 启动 / 关闭 / 状态 / 实时截图侧栏 ──
+    @app.post("/api/browser/launch")
+    async def browser_launch(request: Request):
+        from ..managed_browser import ManagedBrowserError, get_managed_browser
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_body", "message": "body 必须是对象"})
+        try:
+            info = await get_managed_browser().launch(
+                url=str(body.get("url") or "about:blank"),
+                port=int(body.get("port") or 0),
+                headless=bool(body.get("headless")),
+                import_cookies=str(body.get("import_cookies") or ""),
+            )
+        except ManagedBrowserError as e:
+            logger.error(f"托管浏览器启动失败: {e}")
+            raise HTTPException(status_code=503, detail={"code": "browser_unavailable", "message": str(e)}) from e
+        except Exception as e:
+            logger.error(f"托管浏览器启动异常: {e}")
+            raise HTTPException(status_code=500, detail={"code": "browser_error", "message": str(e)}) from e
+        return info
+
+    @app.post("/api/browser/close")
+    async def browser_close():
+        from ..managed_browser import get_managed_browser
+
+        closed = await get_managed_browser().close()
+        return {"closed": closed}
+
+    @app.get("/api/browser/status")
+    async def browser_status():
+        from ..managed_browser import get_managed_browser
+
+        return get_managed_browser().status()
+
+    @app.get("/api/browser/screenshot")
+    async def browser_screenshot():
+        from ..managed_browser import get_managed_browser
+        from ..nodes.browser.cdp_client import CDPClient
+
+        info = get_managed_browser().status()
+        if not info.get("running"):
+            raise HTTPException(status_code=409, detail={"code": "not_running", "message": "托管浏览器未运行"})
+        client = CDPClient(port=int(info["port"]))
+        try:
+            await client.connect()
+            data = await client.screenshot()
+        except Exception as e:
+            logger.warning(f"托管浏览器截图失败: {e}")
+            raise HTTPException(status_code=502, detail={"code": "screenshot_failed", "message": str(e)}) from e
+        finally:
+            await client.disconnect()
+        return Response(content=data, media_type="image/png")
 
     # ── issue #139: manifest ext 后端 — ⌘K 跨模块搜索 + 通知中心轮询源 ──
     @app.get("/api/search")
