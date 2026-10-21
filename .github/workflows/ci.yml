@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
-      - run: pip install ruff
+      - run: pip install "ruff==0.16.3"
       - name: Ruff check
         run: ruff check fusion_cowork/ tests/
       - name: Ruff format check

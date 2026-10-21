@@ -708,7 +708,7 @@ class WorkflowEngine:
                     # 否则 apply_edit 等参数在节点 config 里的高危操作, 审批卡无参数可展示
                     check_input = {**(node.config.params or {}), **node_input}
                     # issue #138: 写审批上下文 (workflow/node_id) 供高风险拒绝的审批卡展示
-                    token = set_approval_context({'workflow': workflow.name, 'node_id': node_id})
+                    token = set_approval_context({"workflow": workflow.name, "node_id": node_id})
                     allowed = await self._permission_manager.check(node.name, "execute", check_input)
                     reset_approval_context(token)
                     if not allowed:

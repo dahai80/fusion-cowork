@@ -187,6 +187,7 @@ def _insert_node(tree: dict[str, Any], path: str, node_data: dict[str, Any]) -> 
 # issue #142: 文本 diff 工具 — 审批卡逐块审阅 + 文件产物 unified diff 的底层引擎。
 # AST diff 面向树结构; 以下三个函数面向文本, 供 server/web_api 审批/UI 链路使用。
 
+
 def text_diff_blocks(old_text: str, new_text: str) -> list[dict[str, Any]]:
     old_lines = str(old_text or "").splitlines(keepends=True)
     new_lines = str(new_text or "").splitlines(keepends=True)
