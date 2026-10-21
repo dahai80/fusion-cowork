@@ -294,10 +294,20 @@ function RunDetail({ runId }: { runId: string }) {
         );
     if (!record) return null;
 
+    // #143: run 头部总 token — 瀑布各步聚合
+    const totalTokens = (record.steps ?? []).reduce((n, s) => n + (s.tokens?.total_tokens ?? 0), 0);
+
     return (
         <div className="rounded-lg border border-border p-3">
             <div className="flex items-center justify-between">
-                <div className="font-mono text-sm text-text-primary">{record.run_id}</div>
+                <div className="flex items-center gap-2">
+                    <div className="font-mono text-sm text-text-primary">{record.run_id}</div>
+                    {totalTokens > 0 ? (
+                        <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-text-muted">
+                            Σ {totalTokens} tok
+                        </span>
+                    ) : null}
+                </div>
                 <StatusBadge status={statusKind(record.status) as StatusKind} label={record.status} />
             </div>
             {record.error ? <div className="mt-2 text-xs text-error">{record.error}</div> : null}
@@ -407,8 +417,12 @@ function RunDetail({ runId }: { runId: string }) {
                     {(record.steps ?? []).map((s) => {
                         const maxTime = Math.max(...(record.steps ?? []).map((x) => x.execution_time), 0.001);
                         const barPct = Math.max(4, Math.round((s.execution_time / maxTime) * 100));
+                        const denied = s.status === 'denied';
                         return (
-                            <div key={s.node_id} className="rounded-md border border-border bg-bg-elevated">
+                            <div
+                                key={s.node_id}
+                                className={`rounded-md border bg-bg-elevated ${denied ? 'border-dashed border-warning' : 'border-border'}`}
+                            >
                                 <button
                                     type="button"
                                     className="flex w-full items-center justify-between px-2 py-1.5 text-left"
@@ -419,18 +433,28 @@ function RunDetail({ runId }: { runId: string }) {
                                             <span className="truncate text-xs text-text-primary">
                                                 {s.node_display_name || s.node_name}
                                             </span>
+                                            {denied ? (
+                                                <span className="shrink-0 rounded border border-warning px-1 text-[10px] text-warning">
+                                                    {t('被阻塞', 'Blocked')}
+                                                </span>
+                                            ) : null}
                                             <span className="truncate font-mono text-[10px] text-text-muted">
                                                 {s.summary || s.error || `#${s.node_id}`}
                                             </span>
                                         </div>
                                         <div className="mt-1 h-1 w-full overflow-hidden rounded bg-bg-muted">
                                             <div
-                                                className={`h-full rounded ${statusKind(s.status) === 'error' ? 'bg-error' : statusKind(s.status) === 'success' ? 'bg-success' : 'bg-brand'}`}
+                                                className={`h-full rounded ${denied ? 'bg-warning' : statusKind(s.status) === 'error' ? 'bg-error' : statusKind(s.status) === 'success' ? 'bg-success' : 'bg-brand'}`}
                                                 style={{ width: `${barPct}%` }}
                                             />
                                         </div>
                                     </div>
                                     <div className="ml-2 flex shrink-0 items-center gap-2">
+                                        {s.tokens?.total_tokens ? (
+                                            <span className="font-mono text-[10px] text-text-muted">
+                                                {s.tokens.total_tokens} tok
+                                            </span>
+                                        ) : null}
                                         <span className="font-mono text-[10px] text-text-muted">
                                             {s.execution_time.toFixed(2)}s
                                         </span>
@@ -464,22 +488,55 @@ function StepDrawer({ step }: { step: RunStep }) {
             {input ? (
                 <div>
                     <div className="text-[10px] text-text-muted">{t('输入', 'Input')}</div>
-                    <pre className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-text-primary">{input}</pre>
+                    <pre className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-text-primary">
+                        {input}
+                    </pre>
                 </div>
             ) : null}
             {output ? (
                 <div className="mt-1.5">
                     <div className="text-[10px] text-text-muted">{t('输出', 'Output')}</div>
-                    <pre className="mt-0.5 max-h-60 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-text-primary">{output}</pre>
+                    <pre className="mt-0.5 max-h-60 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-text-primary">
+                        {output}
+                    </pre>
                 </div>
             ) : null}
             {step.error ? (
                 <div className="mt-1.5">
                     <div className="text-[10px] text-error">{t('错误', 'Error')}</div>
-                    <pre className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-error">{step.error}</pre>
+                    <pre className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-error">
+                        {step.error}
+                    </pre>
                 </div>
             ) : null}
         </div>
+    );
+}
+
+// #142: unified diff 逐行着色 (+ 绿 / - 红 / @@ 定位 / 头部行灰)
+function DiffView({ content }: { content: string }) {
+    const lines = content.split('\n').slice(0, 400);
+    return (
+        <pre className="max-h-72 overflow-auto font-mono text-[11px] leading-4">
+            {lines.map((ln, i) => (
+                <div
+                    key={i}
+                    className={
+                        ln.startsWith('+++') || ln.startsWith('---') || ln.startsWith('diff ')
+                            ? 'text-text-muted'
+                            : ln.startsWith('@@')
+                              ? 'text-accent'
+                              : ln.startsWith('+')
+                                ? 'bg-success/10 text-success'
+                                : ln.startsWith('-')
+                                  ? 'bg-error/10 text-error'
+                                  : 'text-text-secondary'
+                    }
+                >
+                    {ln || ' '}
+                </div>
+            ))}
+        </pre>
     );
 }
 
@@ -561,6 +618,9 @@ function RunArtifactPane({
                                     text={selected.content}
                                     className="max-h-72 overflow-auto text-xs text-text-secondary"
                                 />
+                            ) : selected.type === 'diff' ? (
+                                // #142: 文件产物 unified diff 卡 — 编辑型步骤 / .diff/.patch 文件
+                                <DiffView content={selected.content} />
                             ) : (
                                 <pre className="max-h-72 overflow-auto whitespace-pre-wrap font-mono text-xs text-text-secondary">
                                     {selected.content || selected.path}

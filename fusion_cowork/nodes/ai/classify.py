@@ -111,6 +111,8 @@ class AIClassifyNode(BaseNode):
 
         # 分批处理文件
         classified_files = []
+        # issue #143: 跨批次聚合 token 用量, 落入输出 usage 供 run 瀑布展示
+        usage_totals = {"prompt_tokens": 0, "completion_tokens": 0}
         batches = [files[i : i + max_per_batch] for i in range(0, len(files), max_per_batch)]
 
         for batch_idx, batch in enumerate(batches):
@@ -152,6 +154,11 @@ class AIClassifyNode(BaseNode):
                     max_tokens=2048,
                 )
 
+                # issue #143: 累加本批次 LLM token 用量
+                usage = getattr(response, "usage", None) or {}
+                usage_totals["prompt_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
+                usage_totals["completion_tokens"] += int(usage.get("completion_tokens", 0) or 0)
+
                 result = self._parse_classification_result(response.content, batch)
                 classified_files.extend(result)
 
@@ -177,6 +184,7 @@ class AIClassifyNode(BaseNode):
                 "classified_files": classified_files,
                 "total": len(classified_files),
                 "categories": list(set(f["category"] for f in classified_files)),
+                "usage": dict(usage_totals),
             },
             summary=f"已分类 {len(classified_files)} 个文件",
         )
@@ -279,6 +287,8 @@ class AISummarizeNode(BaseNode):
         extract_conclusions = params.get("extract_conclusions", True)
 
         summaries = []
+        # issue #143: 跨文件聚合 token 用量, 落入输出 usage 供 run 瀑布展示
+        usage_totals = {"prompt_tokens": 0, "completion_tokens": 0}
         for f in files:
             path = Path(f) if isinstance(f, str) else Path(f.get("path", ""))
             if not path.is_file():
@@ -318,6 +328,11 @@ class AISummarizeNode(BaseNode):
                     max_tokens=2048,
                 )
 
+                # issue #143: 累加本文件 LLM token 用量
+                usage = getattr(response, "usage", None) or {}
+                usage_totals["prompt_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
+                usage_totals["completion_tokens"] += int(usage.get("completion_tokens", 0) or 0)
+
                 parsed = self._parse_summary(response.content, path)
                 summaries.append(parsed)
 
@@ -349,7 +364,7 @@ class AISummarizeNode(BaseNode):
 
         return NodeResult(
             status=NodeStatus.SUCCESS,
-            data={"summaries": summaries, "report": report},
+            data={"summaries": summaries, "report": report, "usage": dict(usage_totals)},
             summary=f"已完成 {len(summaries)} 个文档摘要",
         )
 
@@ -441,6 +456,8 @@ class AIGenerateNameNode(BaseNode):
 
         # 构建文件信息
         file_info = []
+        # issue #143: token 用量聚合 (单次 LLM 调用)
+        usage_totals = {"prompt_tokens": 0, "completion_tokens": 0}
         for f in files:
             path = Path(f) if isinstance(f, str) else Path(f.get("path", ""))
             info = {"name": path.name, "stem": path.stem, "suffix": path.suffix, "path": str(path)}
@@ -473,6 +490,11 @@ class AIGenerateNameNode(BaseNode):
                 max_tokens=2048,
             )
 
+            # issue #143: 累加 LLM token 用量
+            usage = getattr(response, "usage", None) or {}
+            usage_totals["prompt_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
+            usage_totals["completion_tokens"] += int(usage.get("completion_tokens", 0) or 0)
+
             renamed = self._parse_rename_result(response.content, files)
         except Exception as e:
             logger.error(f"AI 重命名失败: {e}")
@@ -492,7 +514,7 @@ class AIGenerateNameNode(BaseNode):
 
         return NodeResult(
             status=NodeStatus.SUCCESS,
-            data={"renamed_files": renamed},
+            data={"renamed_files": renamed, "usage": dict(usage_totals)},
             summary=f"已为 {len(renamed)} 个文件生成新名称",
         )
 

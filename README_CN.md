@@ -304,6 +304,16 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
 
+### GUI 审计修复: 逐块 diff 审阅/token 瀑布/委托即时预览 (v0.5.28, issues #142/#143/#144)
+
+按 fusion-all-gui-audit-1021 §3.3/§3.4/§3.7 验收口径落地:
+
+- **审批 diff 逐块审阅 (#142)** — 编辑型待审批 (`apply_edit` 类 `old_text`/`new_text` 或 `old_string`/`new_string` 参数) 以 SequenceMatcher 分块渲染, 每块可独立**接受/拒绝**; 存在拒绝块时 "仅本次允许" 携带 `accepted_blocks`, 后端经 `apply_block_selection` 重建窄化后的编辑参数 (拒绝块回退原文) 并回显 `edited_params`; 全部拒绝则 confirm 不生效且不落规则。`engine/ast_diff.py` 新增文本 diff 引擎 (`text_diff_blocks` / `apply_block_selection` / `unified_diff_text`) 接入审批链路。文件产物以 unified diff 卡呈现: 编辑对输入与 `diff` 输出产出 `type: "diff"` 产物 (`.diff`/`.patch` 文件同), run 详情产物面板按 +/- 行着色渲染。权限检查现可见生效参数 (`config.params` 与上游输入合并), config 参数节点审批卡不再为空。
+- **token 瀑布 (#143)** — `WorkflowStep.tokens` 自节点输出 `usage` 提取 (`_extract_tokens`: prompt/completion/total); AI 节点 (分类/摘要/重命名) 跨批次/跨文件聚合 usage 落输出; `_step_dict` 暴露 `tokens`; RunsPage 瀑布每行显示 `tok`, run 头部显示 `Σ N tok`, 被拒绝节点虚线边框 + 被阻塞 chip + 琥珀色条。
+- **委托即时预览 (#144)** — DelegatePage 输入停顿 800ms 自动生成 DAG 预览 (≥6 字符, 过期响应序号守卫); 预览卡就地编辑 (工作流名/描述、节点标签 + 参数 JSON 编辑器、删节点连带清边、边删除/新增), 确认保存才落库。
+
+测试: `tests/test_issue_142_approval_diff.py` (15 例: 分块/选择重建、待审批详情 + 引擎链路、accepted_blocks 窄化/全拒/全收、diff 产物来源) + `tests/test_issue_143_run_tokens.py` (5 例: token 提取、引擎捕获、`_step_dict` 兼容、classify usage 聚合)。
+
 ### GUI/UX 升级: 审批卡/瀑布/空间指令 (v0.5.27, issue #138)
 
 按 fusion-all-gui-1020 §6 cowork 目标落地 (G6/G7/G10 + 模式 C2/C3/C6):

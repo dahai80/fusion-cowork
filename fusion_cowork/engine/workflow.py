@@ -75,6 +75,25 @@ def _node_verdict(status: NodeStatus, output: Any) -> str:
     return "success"
 
 
+def _extract_tokens(output: Any) -> Optional[Dict[str, int]]:
+    # issue #143: 从节点输出提取 token 用量 (usage dict: prompt/completion/total)
+    if not isinstance(output, dict):
+        return None
+    usage = output.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    try:
+        prompt_t = int(usage.get("prompt_tokens", 0) or 0)
+        completion_t = int(usage.get("completion_tokens", 0) or 0)
+        total_raw = usage.get("total_tokens")
+        total_t = int(total_raw) if total_raw is not None else prompt_t + completion_t
+    except (TypeError, ValueError):
+        return None
+    if prompt_t <= 0 and completion_t <= 0 and total_t <= 0:
+        return None
+    return {"prompt_tokens": prompt_t, "completion_tokens": completion_t, "total_tokens": total_t}
+
+
 class WorkflowStatus(Enum):
     """工作流执行状态。"""
 
@@ -101,6 +120,8 @@ class WorkflowStep:
     summary: str = ""
     input_data: Dict[str, Any] = field(default_factory=dict)
     output_data: Dict[str, Any] = field(default_factory=dict)
+    # issue #143: 节点 token 用量聚合 (来自输出 usage 字段), 供 run 瀑布展示
+    tokens: Optional[Dict[str, int]] = None
 
 
 @dataclass
@@ -683,9 +704,12 @@ class WorkflowEngine:
 
                 # Permission check
                 if self._permission_manager:
+                    # issue #142: 审批检查须看到生效参数 — config.params 与上游输入合并,
+                    # 否则 apply_edit 等参数在节点 config 里的高危操作, 审批卡无参数可展示
+                    check_input = {**(node.config.params or {}), **node_input}
                     # issue #138: 写审批上下文 (workflow/node_id) 供高风险拒绝的审批卡展示
                     token = set_approval_context({'workflow': workflow.name, 'node_id': node_id})
-                    allowed = await self._permission_manager.check(node.name, "execute", node_input)
+                    allowed = await self._permission_manager.check(node.name, "execute", check_input)
                     reset_approval_context(token)
                     if not allowed:
                         logger.warning(f"节点 '{node.name}' 被权限系统拒绝执行")
@@ -695,7 +719,7 @@ class WorkflowEngine:
                             node_display_name=node.config.label or node.display_name,
                             status=NodeStatus.DENIED,
                             started_at=time.time(),
-                            input_data=node_input,
+                            input_data=check_input,
                         )
                         step.completed_at = time.time()
                         step.execution_time = 0
@@ -844,6 +868,7 @@ class WorkflowEngine:
                     step.completed_at = time.time()
                     step.execution_time = step.completed_at - step.started_at
                     step.output_data = result.data or {}
+                    step.tokens = _extract_tokens(step.output_data)
                     step.error = result.error
                     step.summary = result.summary
 

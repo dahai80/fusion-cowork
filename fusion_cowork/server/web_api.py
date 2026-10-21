@@ -108,6 +108,46 @@ _TEXT_EXTS = {".md", ".markdown", ".txt", ".html", ".htm", ".csv", ".json", ".ya
 _MAX_ARTIFACT_BYTES = 64 * 1024
 _MAX_ARTIFACTS = 20
 
+# issue #142: 逐块审阅哨兵 — accepted_blocks 全拒 → confirm 返回 confirmed=False
+_EDIT_ALL_REJECTED = object()
+
+
+def _narrow_pending_edit(permission_manager: Any, action_id: str, accepted_raw: List[Any]) -> Any:
+    # 逐块接受/拒绝 → 用待审批条目的原始 old/new 对重建仅含接受块的 new 值。
+    # 返回 None 表示无窄化 (全接受/无编辑对); _EDIT_ALL_REJECTED 表示全部拒绝。
+    try:
+        entries = permission_manager.list_pending()
+    except Exception as e:
+        logger.warning(f"逐块审阅: 读取待审批队列失败: {e}")
+        return None
+    entry = next((e for e in entries if isinstance(e, dict) and e.get("action_id") == action_id), None)
+    if not entry:
+        return None
+    raw_edit = entry.get("raw_edit") or {}
+    old_val = raw_edit.get("old")
+    new_val = raw_edit.get("new")
+    if not isinstance(old_val, str) or not isinstance(new_val, str):
+        return None
+    try:
+        from ..engine.ast_diff import apply_block_selection, text_diff_blocks
+
+        blocks = text_diff_blocks(old_val, new_val)
+        non_equal = {b["index"] for b in blocks if b["tag"] != "equal"}
+        accepted = {int(i) for i in accepted_raw if isinstance(i, (int, float)) and float(i).is_integer()}
+    except Exception as e:
+        logger.warning(f"逐块审阅: 分块重建失败: {e}")
+        return None
+    selected = accepted & non_equal
+    if not selected:
+        return _EDIT_ALL_REJECTED
+    if selected == non_equal:
+        return None
+    edited_new = apply_block_selection(old_val, new_val, sorted(selected))
+    edited = dict(entry.get("params") or {})
+    edited[str(raw_edit.get("new_key") or "new_text")] = edited_new
+    logger.info(f"逐块审阅: action={action_id} 接受 {len(selected)}/{len(non_equal)} 块, 窄化 {raw_edit.get('new_key')}")
+    return edited
+
 
 def _iso_to_epoch(value: Any) -> float:
     """ISO 时间字符串转 epoch; 非法/空值返回 0。"""
@@ -130,7 +170,31 @@ def _artifact_type(suffix: str) -> str:
         return "csv"
     if suffix == ".json":
         return "json"
+    if suffix in (".diff", ".patch"):
+        # issue #142: diff/patch 文件以 unified diff 渲染
+        return "diff"
     return "text"
+
+
+def _step_diff_content(step: Any, out: Dict[str, Any]) -> str:
+    # issue #142: diff 产物来源 — 输出自带 diff 字段, 或步骤输入含编辑对 (old/new)
+    if isinstance(out.get("diff"), str) and out["diff"].strip():
+        return out["diff"]
+    inp = getattr(step, "input_data", None) or {}
+    if not isinstance(inp, dict):
+        return ""
+    from ..engine.ast_diff import unified_diff_text
+
+    for old_key, new_key in (("old_text", "new_text"), ("old_string", "new_string")):
+        old_val = inp.get(old_key)
+        new_val = inp.get(new_key)
+        if isinstance(old_val, str) and isinstance(new_val, str) and (old_val or new_val):
+            target = next(
+                (inp.get(k) for k in ("file_path", "path") if isinstance(inp.get(k), str) and inp.get(k)),
+                "",
+            )
+            return unified_diff_text(old_val, new_val, fromfile=target or old_key, tofile=target or new_key)
+    return ""
 
 
 def _collect_artifacts(steps: List[Any]) -> List[Dict[str, Any]]:
@@ -144,6 +208,21 @@ def _collect_artifacts(steps: List[Any]) -> List[Dict[str, Any]]:
             continue
         node_id = getattr(step, "node_id", "")
         node_name = getattr(step, "node_display_name", "") or getattr(step, "node_name", "")
+        # issue #142: 编辑型步骤产出 unified diff 卡 — apply_edit 的 old/new 对 → diff 产物
+        diff_content = _step_diff_content(step, out)
+        if diff_content:
+            artifacts.append(
+                {
+                    "artifact_id": f"{node_id}:diff",
+                    "node_id": node_id,
+                    "node_name": node_name,
+                    "name": f"{node_name} · diff",
+                    "type": "diff",
+                    "path": "",
+                    "content": diff_content[:_MAX_ARTIFACT_BYTES],
+                    "truncated": len(diff_content) > _MAX_ARTIFACT_BYTES,
+                }
+            )
         path_val = next(
             (out[k] for k in ("file_path", "output_path", "path") if isinstance(out.get(k), str) and out.get(k)),
             "",
@@ -263,6 +342,8 @@ class RunRegistry:
             "error": s.error,
             "output_data": s.output_data,
             "input_data": s.input_data,
+            # issue #143: per-node token 用量 (None = 节点无 LLM 调用)
+            "tokens": getattr(s, "tokens", None),
         }
 
     def list(self) -> List[Dict[str, Any]]:
@@ -1013,6 +1094,18 @@ def create_web_app(
         if permission_manager is None:
             raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"})
         approved = bool(body.get("approved"))
+        # issue #142: 逐块审阅 — accepted_blocks 指定接受的变更块, 重建窄化后的编辑参数
+        narrowed = None
+        if approved and isinstance(body.get("accepted_blocks"), list):
+            narrowed = _narrow_pending_edit(permission_manager, action_id, body["accepted_blocks"])
+            if narrowed is _EDIT_ALL_REJECTED:
+                logger.info(f"逐块审阅: {action_id} 全部变更块被拒绝, 不落批准规则")
+                return {
+                    "action_id": action_id,
+                    "approved": True,
+                    "confirmed": False,
+                    "reason": "所有变更块均被拒绝, 无可批准内容",
+                }
         confirmed = await permission_manager.confirm_guard(action_id, approved, approved_by="web", scope=str(body.get("scope") or "*"))
         # issue #138: 确认落规则后立即持久化 (重启不丢)
         try:
@@ -1021,7 +1114,10 @@ def create_web_app(
                 saver()
         except Exception as e:
             logger.warning(f"web API 权限规则保存失败: {e}")
-        return {"action_id": action_id, "approved": approved, "confirmed": confirmed}
+        resp: Dict[str, Any] = {"action_id": action_id, "approved": approved, "confirmed": confirmed}
+        if narrowed is not None:
+            resp["edited_params"] = narrowed
+        return resp
 
     # ── W21 集群面板 (migration doc §6 P3, FUSION_CLUSTER_ENABLED opt-in) ──
     @app.get("/api/cluster/state")

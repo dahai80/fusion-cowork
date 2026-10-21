@@ -79,6 +79,7 @@ export interface RunStep {
     error: string | null;
     output_data: Record<string, unknown>;
     input_data?: Record<string, unknown>;
+    tokens?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
 }
 
 export interface RunRecord extends RunListItem {
@@ -254,6 +255,16 @@ export interface RpcResponse<T> {
     error?: { code: number; message: string; data?: unknown };
 }
 
+// issue #142: 审批 diff 分块 — SequenceMatcher opcode 切片, 非(equal)块可独立接受/拒绝
+export interface DiffBlock {
+    index: number;
+    tag: 'equal' | 'replace' | 'delete' | 'insert';
+    old: string;
+    new: string;
+    old_start?: number;
+    new_start?: number;
+}
+
 export interface GuardApproval {
     action_id: string;
     tool_name: string;
@@ -262,6 +273,7 @@ export interface GuardApproval {
     ts?: number;
     workflow?: string;
     node_id?: string;
+    diff_blocks?: DiffBlock[];
 }
 
 export interface ClusterNodeInfo {
@@ -412,11 +424,18 @@ export const api = {
         }),
     models: () => get<{ models: ModelInfo[]; count: number }>('/api/models'),
     pendingApprovals: () => get<{ approvals: GuardApproval[] }>('/api/permissions/pending'),
-    confirmApproval: (actionId: string, approved: boolean, scope?: string) =>
-        post<{ action_id: string; approved: boolean; confirmed: boolean }>(
-            `/api/permissions/pending/${encodeURIComponent(actionId)}/confirm`,
-            scope ? { approved, scope } : { approved }
-        ),
+    confirmApproval: (actionId: string, approved: boolean, scope?: string, acceptedBlocks?: number[]) =>
+        post<{
+            action_id: string;
+            approved: boolean;
+            confirmed: boolean;
+            reason?: string;
+            edited_params?: Record<string, unknown>;
+        }>(`/api/permissions/pending/${encodeURIComponent(actionId)}/confirm`, {
+            approved,
+            ...(scope ? { scope } : {}),
+            ...(acceptedBlocks ? { accepted_blocks: acceptedBlocks } : {}),
+        }),
     spaceInstructions: (spaceId: string) =>
         get<{ space_id: string; instructions: string }>(
             `/api/space/spaces/${encodeURIComponent(spaceId)}/instructions`

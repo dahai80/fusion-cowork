@@ -61,6 +61,45 @@ def _sanitize_approval_params(params: Dict[str, Any] = None) -> Dict[str, Any]:
             snapshot[str(key)] = f"<{type(val).__name__}>"
     return snapshot
 
+# issue #142: 编辑型 params (old_text/new_text) 的审批 diff 分块 — 原文截断上限
+_DIFF_MAX_CHARS = 20000
+
+
+def _build_diff_blocks(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+    # issue #142: apply_edit 类待审批 → SequenceMatcher 分块, 卡片内逐块接受/拒绝
+    if not isinstance(params, dict):
+        return []
+    from .ast_diff import text_diff_blocks
+
+    for old_key, new_key in (("old_text", "new_text"), ("old_string", "new_string")):
+        old_val = params.get(old_key)
+        new_val = params.get(new_key)
+        if isinstance(old_val, str) and isinstance(new_val, str) and (old_val or new_val):
+            try:
+                return text_diff_blocks(old_val[:_DIFF_MAX_CHARS], new_val[:_DIFF_MAX_CHARS])
+            except Exception as e:
+                logger.warning(f"审批 diff 分块失败: {e}")
+                return []
+    return []
+
+
+def _build_raw_edit(params: Dict[str, Any] = None) -> Dict[str, Any]:
+    # issue #142: 逐块审阅重建需要未截断的 old/new 原文 (区别于脱敏展示快照)
+    if not isinstance(params, dict):
+        return {}
+    for old_key, new_key in (("old_text", "new_text"), ("old_string", "new_string")):
+        old_val = params.get(old_key)
+        new_val = params.get(new_key)
+        if isinstance(old_val, str) and isinstance(new_val, str) and (old_val or new_val):
+            return {
+                "old_key": old_key,
+                "new_key": new_key,
+                "old": old_val[:_DIFF_MAX_CHARS],
+                "new": new_val[:_DIFF_MAX_CHARS],
+            }
+    return {}
+
+
 _PERMISSIONS_FILE = os.path.join(_PERMISSIONS_DIR, "permissions.json")
 
 
@@ -249,6 +288,9 @@ class PermissionManager:
                 "ts": time.time(),
                 "workflow": str(ctx.get("workflow", "")),
                 "node_id": str(ctx.get("node_id", "")),
+                # issue #142: 编辑型待审批附 diff 分块 + 重建用原文
+                "diff_blocks": _build_diff_blocks(params),
+                "raw_edit": _build_raw_edit(params),
             }
             logger.info(f"高风险节点无显式批准, 拒绝: {tool_name} (action_id={action_id} 已入本地待审批队列)")
             return False
