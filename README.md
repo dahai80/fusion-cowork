@@ -598,6 +598,40 @@ export FUSION_REQUIRE_JWT=1
 
 ---
 
+## 🧠 Run-Level Memory Integration (v0.5.29, issue #157 / fusion-memory#20)
+
+Runs now close the loop with **fusion-memory** (the ecosystem long-term memory hub) automatically — no need to hand-place `memory_commit`/`memory_retrieve` nodes in the DAG. Task outcomes enter fusion-memory as short-term entries and get promoted to long-term by reuse (three-tier scheduling + forgetting curve are engine-side, already shipped).
+
+- **Run start (retrieve)** — when memory is on, the run queries fusion-memory with `<workflow name> <description>` and injects the recalled context into the first node's input as `memory_context` (via `initial_input`). The run record exposes the injected text as `memory_context`.
+- **Run end (commit, success only)** — the execution's steps become a fm-core `Interaction` (one turn: task = user message, result summary = assistant message, steps = tool calls, capped at 64 calls / 4000 chars per field) and are committed via fm-server `commit`. The run record exposes `memory_writeback` (`ok`/`failed`) + `memory_ids`.
+- **Per-run switch** — `POST /api/runs` body `{"memory": false}` (default `true`), `desk.workflow.run` params `memory`, and a "Memory" checkbox in the web canvas run bar + delegate page. Off = zero RPC calls, no trace.
+- **Zero-impact degradation** — `FUSION_MEMORY_API_KEY` unset → integration fully off (legacy behavior). fusion-memory down/unreachable → run still succeeds; failures surface fail-visible in the run record (`memory_writeback: "failed"`) + warn logs. Offline hard constraint kept: HTTP only to 127.0.0.1.
+
+Implementation: `fusion_cowork/memory_bridge.py` (wire contract aligned with `fm-core` interaction.rs + fm-server `commit` P1-1 result shape). Tests: `tests/test_memory_bridge.py`, `tests/test_run_memory.py` (offline, MockTransport) + `tests/test_memory_e2e.py` (gated e2e vs real fm-server).
+
+Enable:
+
+```bash
+# fm-server (fusion-memory) must be running on 11435 with HTTP auth
+export FUSION_MEMORY_API_KEY=<fm-server api key>
+export FUSION_MEMORY_BASE_URL=http://127.0.0.1:11435   # optional, default shown
+```
+
+Run-level off switch (API):
+
+```bash
+curl -X POST http://127.0.0.1:11463/api/runs -H 'Authorization: Bearer <key>' \
+  -d '{"workflow_id": "wf1", "memory": false}'
+```
+
+Gated e2e (needs a real fm-server + fusion-mlx):
+
+```bash
+FUSION_MEMORY_E2E=1 FUSION_MEMORY_API_KEY=<key> pytest tests/test_memory_e2e.py -v
+```
+
+---
+
 ## 🔧 Node Reference
 
 ### macOS System Nodes

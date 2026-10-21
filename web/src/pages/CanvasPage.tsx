@@ -92,6 +92,8 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
     const [name, setName] = useState('');
     const [saving, setSaving] = useState(false);
     const [running, setRunning] = useState(false);
+    // issue #157: per-run 记忆开关 (默认开)
+    const [memoryEnabled, setMemoryEnabled] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [loadPending, setLoadPending] = useState(!!workflowId);
 
@@ -265,6 +267,7 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
             const res = await api.startRun({
                 workflow: { name: name || 'canvas-run', nodes: nodeDefs, edges: edgeDefs },
                 name: name,
+                memory: memoryEnabled,
             });
             console.info(`[cowork-web] run started: ${res.run_id}`);
             sdk.toast.show({ level: 'success', message: t('已提交运行', 'Run submitted') });
@@ -321,6 +324,15 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                     >
                         {saving ? t('保存中…', 'Saving…') : t('保存', 'Save')}
                     </button>
+                    <label className="flex items-center gap-1 text-sm text-text-secondary" title={t('运行结束后把产出写入 fusion-memory 长期记忆', 'Write run outcomes to fusion-memory after the run ends')}>
+                        <input
+                            type="checkbox"
+                            checked={memoryEnabled}
+                            onChange={(e) => setMemoryEnabled(e.target.checked)}
+                            disabled={isReadonly || running}
+                        />
+                        {t('记忆', 'Memory')}
+                    </label>
                     <button
                         type="button"
                         className="rounded-md bg-brand px-3 py-1 text-sm text-white hover:opacity-90 disabled:opacity-50"

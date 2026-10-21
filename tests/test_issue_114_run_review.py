@@ -31,7 +31,7 @@ class TestRunReviewStateMachine:
         from fusion_cowork.server.web_api import RunRegistry
 
         class _Engine:
-            async def execute(self, wf, execution_id=""):
+            async def execute(self, wf, initial_input=None, execution_id=""):
                 return SimpleNamespace(
                     status=SimpleNamespace(value="success"),
                     steps=[],
@@ -49,7 +49,7 @@ class TestRunReviewStateMachine:
         from fusion_cowork.server.web_api import RunRegistry
 
         class _Engine:
-            async def execute(self, wf, execution_id=""):
+            async def execute(self, wf, initial_input=None, execution_id=""):
                 return SimpleNamespace(
                     status=SimpleNamespace(value="failed"),
                     steps=[],

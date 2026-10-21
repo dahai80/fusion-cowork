@@ -415,6 +415,40 @@ bun run build                               # dist/ → web serve / gateway 托�
 
 ---
 
+## 🧠 Run 级记忆集成 (v0.5.29, issue #157 / fusion-memory#20)
+
+Run 现在自动与 **fusion-memory**（生态长期记忆中枢）闭环 — 无需在 DAG 里手工摆放 `memory_commit`/`memory_retrieve` 节点。任务产出以短期记忆进入 fusion-memory，按复用晋升长期（三线调度 + 遗忘曲线在引擎侧，已上线）。
+
+- **Run 启动（召回）** — 记忆开启时，run 以 `<工作流名> <描述>` 查询 fusion-memory，召回上下文经 `initial_input` 以 `memory_context` 键注入首节点输入；run 记录以 `memory_context` 字段暴露。
+- **Run 结束（写回，仅 success）** — 执行步骤构建为 fm-core `Interaction`（单 turn：任务 = user_message，结果摘要 = assistant_message，步骤 = tool_calls，封顶 64 步 / 每字段 4000 字符），经 fm-server `commit` 写入；run 记录暴露 `memory_writeback`（`ok`/`failed`）+ `memory_ids`。
+- **Per-run 开关** — `POST /api/runs` body `{"memory": false}`（默认 `true`），`desk.workflow.run` params `memory`，Web 画布运行栏 + 委托页有「记忆」勾选框。关 = 零 RPC 调用、零痕迹。
+- **零冲击降级** — `FUSION_MEMORY_API_KEY` 未配 → 集成整体关闭（与旧版行为一致）；fusion-memory 不可达 → run 照常成功，失败以 `memory_writeback: "failed"` + warn 日志 fail-visible。离线硬约束保持：仅 HTTP 到 127.0.0.1。
+
+实现：`fusion_cowork/memory_bridge.py`（wire 契约对齐 `fm-core` interaction.rs + fm-server `commit` P1-1 结果形状）。测试：`tests/test_memory_bridge.py`、`tests/test_run_memory.py`（离线 MockTransport）+ `tests/test_memory_e2e.py`（门控 e2e，需真 fm-server）。
+
+启用：
+
+```bash
+# fm-server (fusion-memory) 需在 11435 运行且开启 HTTP 鉴权
+export FUSION_MEMORY_API_KEY=<fm-server api key>
+export FUSION_MEMORY_BASE_URL=http://127.0.0.1:11435   # 可选, 默认值
+```
+
+Run 级关闭（API）：
+
+```bash
+curl -X POST http://127.0.0.1:11463/api/runs -H 'Authorization: Bearer <key>' \
+  -d '{"workflow_id": "wf1", "memory": false}'
+```
+
+门控 e2e（需真 fm-server + fusion-mlx）：
+
+```bash
+FUSION_MEMORY_E2E=1 FUSION_MEMORY_API_KEY=<key> pytest tests/test_memory_e2e.py -v
+```
+
+---
+
 ## 🔧 节点参考
 
 ### macOS 系统节点

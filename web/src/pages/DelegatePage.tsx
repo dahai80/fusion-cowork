@@ -44,6 +44,8 @@ export function DelegatePage() {
     const [paramsDraft, setParamsDraft] = useState('');
     const [edgeFrom, setEdgeFrom] = useState('');
     const [edgeTo, setEdgeTo] = useState('');
+    // issue #157: per-run 记忆开关 (默认开)
+    const [memoryEnabled, setMemoryEnabled] = useState(true);
 
     useEffect(() => onPreferredModelChange(setModel), []);
 
@@ -87,7 +89,7 @@ export function DelegatePage() {
                 workflow: { name: wf.name || '', nodes: wf.nodes, edges: wf.edges },
             });
             if (alsoRun) {
-                await api.startRun({ workflow_id: created.id, name: created.name });
+                await api.startRun({ workflow_id: created.id, name: created.name, memory: memoryEnabled });
                 sdk.toast.show({ level: 'success', message: t('已保存并开始运行', 'Saved and run started') });
                 window.location.hash = '#/runs';
             } else {
@@ -360,7 +362,16 @@ export function DelegatePage() {
                             </button>
                         </div>
                     </div>
-                    <div className="mt-3 flex justify-end gap-2">
+                    <div className="mt-3 flex items-center justify-end gap-2">
+                        <label className="mr-auto flex items-center gap-1 text-sm text-text-secondary" title={t('运行结束后把产出写入 fusion-memory 长期记忆', 'Write run outcomes to fusion-memory after the run ends')}>
+                            <input
+                                type="checkbox"
+                                checked={memoryEnabled}
+                                onChange={(e) => setMemoryEnabled(e.target.checked)}
+                                disabled={saving}
+                            />
+                            {t('记忆', 'Memory')}
+                        </label>
                         <button
                             type="button"
                             className="rounded-md border border-border px-3 py-1 text-sm text-text-primary hover:bg-bg-muted disabled:opacity-50"

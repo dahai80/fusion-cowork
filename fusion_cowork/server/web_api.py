@@ -365,7 +365,13 @@ class RunRegistry:
     def get(self, run_id: str) -> Optional[Dict[str, Any]]:
         return self._runs.get(run_id)
 
-    def start(self, workflow_def: Dict[str, Any], workflow_id: str = "", workflow_name: str = "") -> Dict[str, Any]:
+    def start(
+        self,
+        workflow_def: Dict[str, Any],
+        workflow_id: str = "",
+        workflow_name: str = "",
+        memory: bool = True,
+    ) -> Dict[str, Any]:
         from ..engine import Workflow
 
         wf = Workflow.from_dict(workflow_def)
@@ -383,17 +389,34 @@ class RunRegistry:
             "review": None,
             "workflow_def": workflow_def,
             "artifacts": [],
+            # issue #157: per-run 记忆开关 (任务启动时设定), 默认开
+            "memory": bool(memory),
         }
         self._runs[run_id] = record
         task = asyncio.create_task(self._execute(run_id, wf))
         self._tasks[run_id] = task
-        logger.info(f"工作流运行已启动: {run_id} ({record['workflow_name']})")
+        logger.info(f"工作流运行已启动: {run_id} ({record['workflow_name']}) memory={record['memory']}")
         return {"run_id": run_id, "status": "running"}
 
     async def _execute(self, run_id: str, wf: Any) -> None:
         record = self._runs[run_id]
         try:
-            execution = await self._engine.execute(wf, execution_id=run_id)
+            # issue #157: run 级记忆集成 — 启动召回注入首节点 / 结束轨迹写回。
+            # 桥不可用 (未配 key) 或开关关 → 行为与旧版完全一致; 桥失败零冲击 run。
+            bridge = None
+            if record.get("memory", True):
+                from ..memory_bridge import MemoryBridge
+
+                bridge = MemoryBridge.from_env()
+            initial_input: Optional[Dict[str, Any]] = None
+            if bridge is not None:
+                query = f"{wf.name} {getattr(wf, 'description', '') or ''}".strip()
+                ctx = await bridge.retrieve_context(query)
+                if ctx:
+                    record["memory_context"] = ctx
+                    initial_input = {"memory_context": ctx}
+                    logger.info(f"[{run_id}] 记忆上下文已注入首节点输入 ({len(ctx)} chars)")
+            execution = await self._engine.execute(wf, initial_input=initial_input, execution_id=run_id)
             record["steps"] = [RunRegistry._step_dict(s) for s in execution.steps]
             record["artifacts"] = _collect_artifacts(execution.steps)
             status = execution.status.value if hasattr(execution.status, "value") else str(execution.status)
@@ -403,6 +426,23 @@ class RunRegistry:
             }
             if execution.error:
                 record["error"] = execution.error
+            # issue #157: 成功 run 结束写回 (失败/取消不入库 — 只沉淀有效产出)
+            if bridge is not None and status == "success":
+                from ..memory_bridge import MemoryBridge
+
+                interaction = MemoryBridge.build_interaction(
+                    session_id=run_id,
+                    workflow_id=record["workflow_id"],
+                    workflow_name=record["workflow_name"],
+                    description=getattr(wf, "description", "") or "",
+                    steps=execution.steps,
+                    result_summary=execution.result_summary or "",
+                    execution_id=run_id,
+                )
+                ids = await bridge.write_back(interaction)
+                record["memory_writeback"] = "ok" if ids is not None else "failed"
+                if ids is not None:
+                    record["memory_ids"] = ids
         except asyncio.CancelledError:
             record["status"] = "cancelled"
         except Exception as e:
@@ -716,7 +756,15 @@ def create_web_app(
                 status_code=400, detail={"code": "bad_request", "message": "workflow 或 workflow_id 必填"}
             )
         try:
-            return runs.start(workflow_def, workflow_id=workflow_id, workflow_name=workflow_name)
+            # issue #157: per-run 记忆开关, 默认开 (未配 FUSION_MEMORY_API_KEY 时桥自动关闭)
+            memory = body.get("memory", True)
+            if not isinstance(memory, bool):
+                raise HTTPException(
+                    status_code=400, detail={"code": "bad_request", "message": "memory 须为 boolean"}
+                )
+            return runs.start(
+                workflow_def, workflow_id=workflow_id, workflow_name=workflow_name, memory=memory
+            )
         except ValueError as exc:
             # issue #135 F-2: 坏边形状/含环等工作流定义错误 → 400 可读信息, 不 500
             raise HTTPException(
