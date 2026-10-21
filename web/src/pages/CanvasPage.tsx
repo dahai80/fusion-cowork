@@ -324,7 +324,13 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                     >
                         {saving ? t('保存中…', 'Saving…') : t('保存', 'Save')}
                     </button>
-                    <label className="flex items-center gap-1 text-sm text-text-secondary" title={t('运行结束后把产出写入 fusion-memory 长期记忆', 'Write run outcomes to fusion-memory after the run ends')}>
+                    <label
+                        className="flex items-center gap-1 text-sm text-text-secondary"
+                        title={t(
+                            '运行结束后把产出写入 fusion-memory 长期记忆',
+                            'Write run outcomes to fusion-memory after the run ends'
+                        )}
+                    >
                         <input
                             type="checkbox"
                             checked={memoryEnabled}

@@ -678,6 +678,10 @@ def create_web_app(
     async def _auth_middleware(request: Request, call_next):
         if request.url.path in ("/health",):
             return await call_next(request)
+        # #146: 未配置密钥 = 放行 (对齐 cli.py/README "unset = allow" 契约) —
+        # 旧行为无条件 401 导致 shell 登录弹回循环。
+        if not auth_configured():
+            return await call_next(request)
         key = extract_caller_key(request.headers)
         if not check_static_key(key):
             logger.warning(f"web API 鉴权拒绝: {request.url.path} (key {'缺失' if not key else '无效'})")
@@ -1018,6 +1022,10 @@ def create_web_app(
         return {"workflow": workflow}
 
     # ── W17 模型目录 (migration doc §6 P3; #126 起默认只回 chat 模型) ──
+    # #147: 模型列表最后成功缓存 — 上游断链时返回 stale 结果而非 503,
+    # 消除前端重试风暴; 下次成功自动刷新 ("服务恢复后自动回填")。
+    _models_cache: Dict[str, Any] = {"models": None, "ts": 0.0}
+
     @app.get("/api/models")
     async def models_list(request: Request):
         mlx = getattr(nl_generator, "mlx", None)
@@ -1025,11 +1033,22 @@ def create_web_app(
             raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "模型客户端不可用"})
         try:
             models = await mlx.list_models()
+            _models_cache["models"] = models
+            _models_cache["ts"] = time.time()
         except Exception as e:
-            logger.warning(f"web API 模型列表获取失败 (fusion-mlx 不在线?): {e}")
-            raise HTTPException(
-                status_code=503, detail={"code": "upstream_error", "message": f"模型列表获取失败: {e}"}
-            ) from e
+            cached = _models_cache["models"]
+            if cached is not None:
+                age = int(time.time() - _models_cache["ts"])
+                logger.warning(f"web API 模型列表获取失败, 返回 {age}s 前缓存 ({len(cached)} 条): {e}")
+                models = cached
+                stale = True
+            else:
+                logger.warning(f"web API 模型列表获取失败 (fusion-mlx 不在线, 无缓存): {e}")
+                raise HTTPException(
+                    status_code=503, detail={"code": "upstream_error", "message": f"模型列表获取失败: {e}"}
+                ) from e
+        else:
+            stale = False
         # #126: 顶层模型选择器 (W17 picker / DelegatePage) 只能选 chat 模型 —
         # video/embedding 等选中后在生成期才失败。默认过滤, 原始列表经 ?all=1 获取。
         from ..ai.nl_parser import _is_chat_model
@@ -1037,8 +1056,8 @@ def create_web_app(
         if request.query_params.get("all") != "1":
             chat_models = [m for m in models if _is_chat_model(m)]
             logger.info(f"web API 模型列表: chat {len(chat_models)}/{len(models)} (默认过滤非 chat)")
-            return {"models": chat_models, "count": len(chat_models), "total": len(models)}
-        return {"models": models, "count": len(models), "total": len(models)}
+            return {"models": chat_models, "count": len(chat_models), "total": len(models), "stale": stale}
+        return {"models": models, "count": len(models), "total": len(models), "stale": stale}
 
     # ── issue #139: manifest ext 后端 — ⌘K 跨模块搜索 + 通知中心轮询源 ──
     @app.get("/api/search")
