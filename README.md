@@ -400,6 +400,13 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
 
+### Registry Key Extraction + Models Polling Fix (v0.5.33, issues #172/#173/#174)
+
+- **#173/#174 — gateway-issued key never persisted**: fusion-gateway's K1 issuance response (`writeShellKeyResponse`) returns the plaintext module key under `raw_key`, but `_extract_issued_key()` only looked for `api_key`/`issued_key`/`key`/`module_key` — the one-shot `fm-` key was silently dropped and `~/.fusion-cowork/web_module_key` never written. `raw_key` is now the first candidate (top level and nested `data`); legacy field names stay for older/custom gateways. Heartbeats now authenticate with the issued key as designed.
+- **#172 — `/api/models` 503 polling storm**: while the model client is unavailable (cold cache, upstream down, or no client injected), the web UI's fixed-interval poller retried the bare 503 every few seconds, spamming the shell tab console. The route now returns an honest `200` envelope — `{"models": [], "count": 0, "stale": false, "unavailable": true}` — so the poller succeeds once and renders an empty state instead of retrying. The #147 stale-cache path (last success served with `stale: true`) is unchanged; `web/src/api.ts` types the new `unavailable` field.
+
+Tests: `tests/test_issue_172_173_174_registry_models.py` (6 cases: `raw_key` extraction top-level/nested/precedence + gateway-shaped response persisted through the registry loop, unavailable envelope for missing client, envelope shape under `?all=1`); updated contracts in `tests/test_issue_146_147_web_auth_models.py` and `tests/test_web_p3.py`.
+
 ### Extensions Console: Skills + Knowledge (v0.5.32, issue #170)
 
 Migrates the f-ecommerce Extensions console (E2, insight/f-ecommerce-migration-1022.md) — the Skills and Knowledge tabs, same layout and interactions, data sources moved to this module's own endpoints:

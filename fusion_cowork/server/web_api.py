@@ -1305,13 +1305,16 @@ def create_web_app(
     # ── W17 模型目录 (migration doc §6 P3; #126 起默认只回 chat 模型) ──
     # #147: 模型列表最后成功缓存 — 上游断链时返回 stale 结果而非 503,
     # 消除前端重试风暴; 下次成功自动刷新 ("服务恢复后自动回填")。
+    # #172: 冷缓存 (上游一直离线) 同样不再 503 — 返回 200 空列表 + unavailable=true
+    # envelope, 前端轮询拿到成功响应即不重试, 渲染空态而非刷屏报错。
     _models_cache: Dict[str, Any] = {"models": None, "ts": 0.0}
 
     @app.get("/api/models")
     async def models_list(request: Request):
         mlx = getattr(nl_generator, "mlx", None)
         if mlx is None:
-            raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "模型客户端不可用"})
+            logger.warning("web API 模型列表: 模型客户端不可用, 返回空列表 envelope")
+            return {"models": [], "count": 0, "total": 0, "stale": False, "unavailable": True}
         try:
             models = await mlx.list_models()
             _models_cache["models"] = models
@@ -1325,9 +1328,7 @@ def create_web_app(
                 stale = True
             else:
                 logger.warning(f"web API 模型列表获取失败 (fusion-mlx 不在线, 无缓存): {e}")
-                raise HTTPException(
-                    status_code=503, detail={"code": "upstream_error", "message": f"模型列表获取失败: {e}"}
-                ) from e
+                return {"models": [], "count": 0, "total": 0, "stale": False, "unavailable": True}
         else:
             stale = False
         # #126: 顶层模型选择器 (W17 picker / DelegatePage) 只能选 chat 模型 —

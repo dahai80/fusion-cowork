@@ -56,15 +56,17 @@ def _mask_key(key: str) -> str:
 
 
 def _extract_issued_key(payload: Any) -> str:
+    # issue #173/#174: fusion-gateway K1 签发响应 (writeShellKeyResponse) 明文在 raw_key,
+    # 其余字段名保留兼容旧/自定义网关
     if not isinstance(payload, dict):
         return ""
-    for field in ("api_key", "issued_key", "key", "module_key"):
+    for field in ("raw_key", "api_key", "issued_key", "key", "module_key"):
         value = payload.get(field)
         if isinstance(value, str) and value.strip():
             return value.strip()
     nested = payload.get("data")
     if isinstance(nested, dict):
-        for field in ("api_key", "issued_key", "key", "module_key"):
+        for field in ("raw_key", "api_key", "issued_key", "key", "module_key"):
             value = nested.get(field)
             if isinstance(value, str) and value.strip():
                 return value.strip()

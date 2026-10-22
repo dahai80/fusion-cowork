@@ -79,7 +79,11 @@ class TestModelsCatalog:
             nl_generator=FakeGenerator(FakeMlx(fail=True)),
         )
         resp = TestClient(app).get("/api/models", headers=_auth())
-        assert resp.status_code == 503
+        # issue #172: 冷缓存上游失败不再 503, 返回 200 unavailable envelope
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["models"] == []
+        assert body["unavailable"] is True
 
     def test_generate_with_model_override(self, client):
         resp = client.post(
