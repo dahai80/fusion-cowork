@@ -333,6 +333,10 @@ async function put<T>(path: string, body?: unknown): Promise<T> {
     return (await sdk.http.put<T>(path, body)).data;
 }
 
+async function del<T>(path: string): Promise<T> {
+    return (await sdk.http.delete<T>(path)).data;
+}
+
 // issue #156: 管理台密钥只在浏览器本地 (localStorage), 随请求走 x-admin-key。
 // sdk.http 不接受自定义头, 管理台单独走同源 fetch (嵌入式 shell 不承载管理台)。
 const ADMIN_KEY_STORAGE = 'fusion-cowork-admin-key';
@@ -433,6 +437,69 @@ export interface SkillRunResult {
     data?: Record<string, unknown>;
     error?: string;
     errors?: string[];
+}
+
+// issue #170: Extensions console — Skills tab (JSON 用户包) + Knowledge tab (fusion-rag)。
+export interface ExtensionSkill {
+    name: string;
+    description: string;
+    type: string;
+    category: string;
+    capability: string;
+    cap_status: string;
+}
+
+export interface ExtensionSkillInstallResult {
+    installed: boolean;
+    name?: string;
+    capability?: string;
+    problems?: string[];
+}
+
+export interface ExtensionSkillTestResult {
+    ok: boolean;
+    result?: unknown;
+    duration_ms?: number;
+    error?: string;
+}
+
+export interface RagHealth {
+    ok: boolean;
+    version?: string;
+    status?: string;
+    error?: string;
+}
+
+export interface RagKbRow {
+    kb_id: string;
+    name: string;
+    description: string;
+    document_count?: number | null;
+    capability: string | null;
+    cap_status: string | null;
+}
+
+export interface RagKbList {
+    bases: RagKbRow[];
+    total: number;
+    page: number;
+    page_size: number;
+    error?: string;
+}
+
+export interface RagDocument {
+    file_name?: string;
+    doc_path?: string;
+    name?: string;
+    chunk_count?: number;
+    chunks?: number;
+    char_count?: number;
+}
+
+export interface RagHit {
+    text: string;
+    doc_path: string;
+    score?: number;
 }
 
 export interface BrowserStatus {
@@ -637,6 +704,67 @@ export const api = {
         return body;
     },
     browserStatus: () => get<BrowserStatus>('/api/browser/status'),
+    // issue #170: Extensions console
+    extensionSkills: () => get<{ skills: ExtensionSkill[]; count: number }>('/api/extensions/skills'),
+    installExtensionSkill: (doc: Record<string, unknown>) =>
+        post<ExtensionSkillInstallResult>('/api/extensions/skills', doc),
+    testExtensionSkill: async (name: string, args: string): Promise<ExtensionSkillTestResult> => {
+        const res = await fetch(`${apiBase()}/api/extensions/skills/${encodeURIComponent(name)}/test`, {
+            method: 'POST',
+            headers: await authHeaders(true),
+            body: JSON.stringify({ args }),
+        });
+        const body = (await res.json().catch(() => ({}))) as ExtensionSkillTestResult;
+        if (!res.ok && !body.error) body.error = `test failed: ${res.status}`;
+        body.ok = res.ok && body.ok !== false;
+        return body;
+    },
+    removeExtensionSkill: (name: string) =>
+        del<{ deleted: boolean; capability_removed: boolean }>(`/api/extensions/skills/${encodeURIComponent(name)}`),
+    ragHealth: () => get<RagHealth>('/api/extensions/rag/health'),
+    ragKbs: (q: string, page: number, pageSize: number) =>
+        get<RagKbList>(`/api/extensions/rag/kb?q=${encodeURIComponent(q)}&page=${page}&page_size=${pageSize}`),
+    createRagKb: (name: string, description: string, wire: boolean) =>
+        post<{ kb_id: string; capability: string | null; detail?: string }>('/api/extensions/rag/kb', {
+            name,
+            description,
+            wire,
+        }),
+    wireRagKb: (kbId: string, wired: boolean) =>
+        post<{ wired: boolean; capability: string | null; capabilities_disabled: string[] }>(
+            `/api/extensions/rag/kb/${encodeURIComponent(kbId)}/wire`,
+            { wired }
+        ),
+    ragDocuments: async (kbId: string): Promise<{ documents: RagDocument[] }> => {
+        const res = await fetch(`${apiBase()}/api/extensions/rag/kb/${encodeURIComponent(kbId)}/documents`, {
+            headers: await authHeaders(),
+        });
+        const body = (await res.json().catch(() => ({}))) as { documents?: RagDocument[]; detail?: string };
+        if (!res.ok) throw new Error(body.detail ?? `documents failed: ${res.status}`);
+        return { documents: body.documents ?? [] };
+    },
+    uploadRagDocument: async (kbId: string, file: File): Promise<{ chunks?: number | null }> => {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch(`${apiBase()}/api/extensions/rag/kb/${encodeURIComponent(kbId)}/documents`, {
+            method: 'POST',
+            headers: await authHeaders(),
+            body: fd,
+        });
+        const body = (await res.json().catch(() => ({}))) as { chunks?: number | null; detail?: string };
+        if (!res.ok) throw new Error(body.detail ?? `upload failed: ${res.status}`);
+        return body;
+    },
+    searchRagKb: async (kbId: string, query: string): Promise<RagHit[]> => {
+        const res = await fetch(`${apiBase()}/api/extensions/rag/kb/${encodeURIComponent(kbId)}/search`, {
+            method: 'POST',
+            headers: await authHeaders(true),
+            body: JSON.stringify({ query, top_k: 5 }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body?.detail ?? `search failed: ${res.status}`);
+        return Array.isArray(body) ? body : [];
+    },
     browserLaunch: (body: { url?: string; headless?: boolean; import_cookies?: string }) =>
         post<BrowserStatus>('/api/browser/launch', body),
     browserClose: () => post<{ closed: boolean }>('/api/browser/close'),

@@ -773,6 +773,9 @@ def create_web_app(
     space_data_dir: Optional[Path] = None,
     permission_manager: Any = None,
     cross_sync: Any = None,
+    skills_dir: Optional[Path] = None,
+    rag_base_url: Optional[str] = None,
+    rag_wired_path: Optional[Path] = None,
 ):
     try:
         from fastapi import FastAPI, HTTPException, Request, WebSocket
@@ -1374,6 +1377,367 @@ def create_web_app(
         if pkg is None:
             raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"})
         return pkg.to_dict()
+
+    # ── issue #170: Extensions console — Skills + Knowledge (f-ecommerce E2 迁移) ──
+    # Skills: 用户 JSON skill 包 (~/.fusion-cowork/skills/<name>/skill.json,
+    #   handler = workflow|node|script), 安装即注册进 SkillRegistry (MCP skill_run
+    #   可调), 脚本包仅静态 env 密钥 (本地未配鉴权 = 本机操作员) 可装。
+    # Knowledge: fusion-rag (:11436) KB 控制台 — 复用 SpaceKB 同款 KBClient 绑定,
+    #   wire 状态落 ~/.fusion-cowork/web/rag_wired.json, 能力 id knowledge.<kb>.search。
+    def _extensions_rag():
+        from ..ai.mlx_client import KBClient
+
+        return KBClient(base_url=(rag_base_url or os.environ.get("FUSION_RAG_URL", "http://127.0.0.1:11436")))
+
+    def _load_wired() -> List[str]:
+        path = rag_wired_path or (Path.home() / ".fusion-cowork" / "web" / "rag_wired.json")
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            wired = data.get("wired") if isinstance(data, dict) else None
+            return [str(k) for k in wired] if isinstance(wired, list) else []
+        except FileNotFoundError:
+            return []
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"rag wired 状态读取失败 {path}: {e}")
+            return []
+
+    def _save_wired(wired: List[str]) -> None:
+        path = rag_wired_path or (Path.home() / ".fusion-cowork" / "web" / "rag_wired.json")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"wired": sorted(set(wired))}, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
+
+    def _script_install_allowed(request: Request) -> bool:
+        # script 包 = 任意代码 — 仅静态 env 密钥 (或本机未配鉴权) 可装;
+        # 网关签发 fm- 模块密钥走浏览器面, 永远不可装脚本包。
+        if not auth_configured():
+            return True
+        return extract_caller_key(request.headers) == _api_key() and bool(_api_key())
+
+    def _validate_skill_doc(doc: Dict[str, Any]) -> tuple:
+        from ..skills.persistence import VALID_TYPES
+
+        problems: List[str] = []
+        name = str(doc.get("name") or "").strip().strip("/")
+        if not name or "/" in name or name.startswith("."):
+            problems.append("missing/invalid name")
+        stype = str(doc.get("type") or "node")
+        if stype not in VALID_TYPES:
+            problems.append(f"type must be one of {VALID_TYPES}")
+        if stype == "script" and not str(doc.get("script") or "").strip():
+            problems.append("script skills require the script field")
+        if stype == "workflow" and not str(doc.get("template_id") or "").strip():
+            problems.append("workflow skills require template_id")
+        if stype == "node" and not str(doc.get("node") or "").strip():
+            problems.append("node skills require the node field")
+        return name, stype, problems
+
+    @app.get("/api/extensions/skills")
+    async def extensions_skills_list():
+        from ..skills.persistence import list_skill_packs
+        from ..skills.registry import SkillRegistry
+
+        registered = {s.name for s in SkillRegistry().list_skills()}
+        packs = list_skill_packs(skills_dir=skills_dir)
+        out = [
+            {
+                "name": p.name,
+                "description": p.description,
+                "type": p.type,
+                "category": p.category,
+                "capability": f"skill.{p.name}",
+                "cap_status": "active" if p.name in registered else "missing",
+            }
+            for p in packs
+        ]
+        return {"skills": out, "count": len(out)}
+
+    @app.post("/api/extensions/skills")
+    async def extensions_skills_install(request: Request):
+        from ..skills.persistence import SkillPack, make_pack_handler, save_skill_pack
+        from ..skills.registry import Skill, SkillRegistry
+
+        try:
+            doc = await request.json()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail={"code": "invalid_json", "message": "invalid json"}) from e
+        if not isinstance(doc, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_body", "message": "body 必须是 JSON 对象"})
+        name, stype, problems = _validate_skill_doc(doc)
+        if problems:
+            return JSONResponse({"installed": False, "problems": problems}, status_code=400)
+        if stype == "script" and not _script_install_allowed(request):
+            logger.warning("[extensions] script 包安装被拒 (非静态管理密钥): %s", name)
+            return JSONResponse(
+                {"installed": False, "problems": ["script skills are admin-only (arbitrary code)"]},
+                status_code=403,
+            )
+        pack = SkillPack.from_manifest(doc)
+        pack.name = name
+        try:
+            save_skill_pack(pack, skills_dir=skills_dir)
+        except ValueError as e:
+            return JSONResponse({"installed": False, "problems": [str(e)]}, status_code=400)
+        registry = SkillRegistry()
+        registry.register(
+            Skill(
+                name=pack.name,
+                description=pack.description,
+                handler=make_pack_handler(pack, skills_dir),
+                category=pack.category,
+                aliases=pack.aliases,
+            )
+        )
+        logger.info("[extensions] skill %s installed (type=%s, capability=skill.%s)", name, stype, name)
+        return {"installed": True, "name": name, "capability": f"skill.{name}"}
+
+    @app.post("/api/extensions/skills/{name}/test")
+    async def extensions_skills_test(name: str, request: Request):
+        import time as _time
+
+        from ..skills.persistence import list_skill_packs, make_pack_handler
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        args = str(body.get("args", "")) if isinstance(body, dict) else ""
+        pack = next((p for p in list_skill_packs(skills_dir=skills_dir) if p.name == name), None)
+        if pack is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"})
+        started = _time.monotonic()
+        result = await make_pack_handler(pack, skills_dir)(args)
+        failed = isinstance(result, dict) and "error" in result
+        duration_ms = int((_time.monotonic() - started) * 1000)
+        logger.info("[extensions] skill %s test run: ok=%s (%dms)", name, not failed, duration_ms)
+        return {"ok": not failed, "result": result, "duration_ms": duration_ms}
+
+    @app.delete("/api/extensions/skills/{name}")
+    async def extensions_skills_delete(name: str):
+        from ..skills.persistence import delete_skill_pack
+        from ..skills.registry import SkillRegistry
+
+        deleted = delete_skill_pack(name, skills_dir=skills_dir)
+        removed = SkillRegistry().unregister(name)
+        logger.info("[extensions] skill %s removed (deleted=%s, capability_removed=%s)", name, deleted, removed)
+        return {"deleted": deleted, "capability_removed": removed}
+
+    def _norm_kb_id(b: Dict[str, Any]) -> str:
+        return str(b.get("id") or b.get("kb_id") or b.get("name") or "")
+
+    @app.get("/api/extensions/rag/health")
+    async def extensions_rag_health():
+        client = _extensions_rag()
+        try:
+            resp = await client.client.get("/health")
+            data = resp.json() if resp.status_code < 400 else {}
+            if resp.status_code >= 400:
+                return {"ok": False, "error": f"fusion-rag {resp.status_code}"}
+            return {"ok": True, "version": data.get("version", ""), "status": data.get("status", "")}
+        except Exception as e:
+            logger.warning("[extensions] fusion-rag 不可达: %s", e)
+            return {"ok": False, "error": str(e)}
+        finally:
+            await client.close()
+
+    @app.get("/api/extensions/rag/kb")
+    async def extensions_rag_kb_list(request: Request):
+        client = _extensions_rag()
+        try:
+            resp = await client.client.get("/kb/bases")
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            logger.warning("[extensions] fusion-rag KB 列表失败: %s", e)
+            raise HTTPException(status_code=503, detail={"code": "rag_unavailable", "message": str(e)}) from e
+        finally:
+            await client.close()
+        bases = data if isinstance(data, list) else (data.get("bases") or data.get("items") or [])
+        q = (request.query_params.get("q") or "").strip().lower()
+        if q:
+            bases = [
+                b for b in bases if q in str(b.get("name", "")).lower() or q in str(b.get("description", "")).lower()
+            ]
+        try:
+            page = max(1, int(request.query_params.get("page", "1")))
+            page_size = max(1, min(int(request.query_params.get("page_size", "10")), 50))
+        except ValueError:
+            page, page_size = 1, 10
+        total = len(bases)
+        window = bases[(page - 1) * page_size : page * page_size]
+        wired = set(_load_wired())
+
+        async def _doc_count(b: Dict[str, Any]) -> Any:
+            kb_id = _norm_kb_id(b)
+            c = _extensions_rag()
+            try:
+                r = await c.client.get(f"/kb/bases/{kb_id}/documents")
+                if r.status_code >= 400:
+                    return None
+                docs = r.json()
+                docs = docs if isinstance(docs, list) else (docs.get("documents") or docs.get("items") or [])
+                return len(docs)
+            except Exception:
+                return None
+            finally:
+                await c.close()
+
+        import asyncio as _asyncio
+
+        counts = await _asyncio.gather(*(_doc_count(b) for b in window))
+        rows = []
+        for b, count in zip(window, counts):
+            kb_id = _norm_kb_id(b)
+            is_wired = kb_id in wired
+            rows.append(
+                {
+                    "kb_id": kb_id,
+                    "name": b.get("name", kb_id),
+                    "description": b.get("description", ""),
+                    "document_count": count,
+                    "capability": f"knowledge.{kb_id}.search" if is_wired else None,
+                    "cap_status": "active" if is_wired else None,
+                }
+            )
+        return {"bases": rows, "total": total, "page": page, "page_size": page_size}
+
+    @app.post("/api/extensions/rag/kb")
+    async def extensions_rag_kb_create(request: Request):
+        try:
+            body = await request.json()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail={"code": "invalid_json", "message": "invalid json"}) from e
+        name = str(body.get("name") or "").strip() if isinstance(body, dict) else ""
+        description = str(body.get("description") or "").strip() if isinstance(body, dict) else ""
+        wire = bool(body.get("wire")) if isinstance(body, dict) else False
+        if not name:
+            raise HTTPException(status_code=400, detail={"code": "invalid_name", "message": "name 必填"})
+        client = _extensions_rag()
+        try:
+            kb_id = await client.create_kb(name, description)
+            if wire:
+                _save_wired(_load_wired() + [kb_id])
+        except Exception as e:
+            logger.error("[extensions] fusion-rag KB 创建失败: %s", e)
+            raise HTTPException(status_code=503, detail={"code": "rag_unavailable", "message": str(e)}) from e
+        finally:
+            await client.close()
+        logger.info("[extensions] KB %s created (wired=%s)", kb_id, wire)
+        return {"kb_id": kb_id, "capability": f"knowledge.{kb_id}.search" if wire else None}
+
+    @app.post("/api/extensions/rag/kb/{kb_id}/wire")
+    async def extensions_rag_kb_wire(kb_id: str, request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        wired_flag = bool(body.get("wired")) if isinstance(body, dict) else False
+        wired = set(_load_wired())
+        capabilities_disabled: List[str] = []
+        if wired_flag:
+            wired.add(kb_id)
+        else:
+            wired.discard(kb_id)
+            capabilities_disabled = [f"knowledge.{kb_id}.search"]
+        _save_wired(sorted(wired))
+        logger.info("[extensions] KB %s wired=%s", kb_id, wired_flag)
+        return {
+            "wired": wired_flag,
+            "capability": f"knowledge.{kb_id}.search" if wired_flag else None,
+            "capabilities_disabled": capabilities_disabled,
+        }
+
+    @app.get("/api/extensions/rag/kb/{kb_id}/documents")
+    async def extensions_rag_kb_documents(kb_id: str):
+        client = _extensions_rag()
+        try:
+            resp = await client.list_documents(kb_id)
+        except Exception as e:
+            logger.warning("[extensions] fusion-rag 文档列表失败 %s: %s", kb_id, e)
+            raise HTTPException(status_code=503, detail={"code": "rag_unavailable", "message": str(e)}) from e
+        finally:
+            await client.close()
+        docs = resp if isinstance(resp, list) else (resp.get("documents") or resp.get("items") or [])
+        return {"documents": docs}
+
+    @app.post("/api/extensions/rag/kb/{kb_id}/documents")
+    async def extensions_rag_kb_upload(kb_id: str, request: Request):
+        # multipart 上传: 浏览器文件先落 ~/.fusion-cowork/web/rag_uploads/<kb>/,
+        # 再经 KBClient.upload_file (SpaceKB 同款绑定) 走 fusion-rag 摄取。
+        try:
+            form = await request.form()
+        except Exception as e:
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_form", "message": "multipart form 解析失败"}
+            ) from e
+        upload = form.get("file")
+        if upload is None or isinstance(upload, str):
+            raise HTTPException(status_code=400, detail={"code": "missing_file", "message": "file 字段必填"})
+        filename = Path(upload.filename or "").name
+        if not filename or Path(filename).suffix.lower() not in (".md", ".txt"):
+            raise HTTPException(status_code=400, detail={"code": "invalid_type", "message": "仅接受 .md/.txt"})
+        if not kb_id or any(c in kb_id for c in "/\\") or kb_id.startswith("."):
+            raise HTTPException(status_code=400, detail={"code": "invalid_kb", "message": "非法 kb_id"})
+        upload_dir = Path.home() / ".fusion-cowork" / "web" / "rag_uploads" / kb_id
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        dest = upload_dir / filename
+        size = 0
+        try:
+            with dest.open("wb") as f:
+                while chunk := await upload.read(1 << 20):
+                    size += len(chunk)
+                    if size > 10 << 20:
+                        raise HTTPException(
+                            status_code=400, detail={"code": "too_large", "message": "文件超过 10MB 上限"}
+                        )
+                    f.write(chunk)
+        except HTTPException:
+            dest.unlink(missing_ok=True)
+            raise
+        except OSError as e:
+            logger.error("[extensions] 上传落盘失败 %s: %s", dest, e)
+            raise HTTPException(status_code=500, detail={"code": "write_failed", "message": str(e)}) from e
+        client = _extensions_rag()
+        try:
+            result = await client.upload_file(kb_id, str(dest), file_name=filename)
+        except Exception as e:
+            logger.error("[extensions] fusion-rag 摄取失败 %s/%s: %s", kb_id, filename, e)
+            raise HTTPException(status_code=503, detail={"code": "rag_unavailable", "message": str(e)}) from e
+        finally:
+            await client.close()
+        result = result if isinstance(result, dict) else {}
+        logger.info("[extensions] KB %s 摄取 %s (%d bytes): %s", kb_id, filename, size, result.get("chunks", "?"))
+        return {"chunks": result.get("chunks"), **{k: v for k, v in result.items() if k != "chunks"}}
+
+    @app.post("/api/extensions/rag/kb/{kb_id}/search")
+    async def extensions_rag_kb_search(kb_id: str, request: Request):
+        try:
+            body = await request.json()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail={"code": "invalid_json", "message": "invalid json"}) from e
+        query = str(body.get("query") or "").strip() if isinstance(body, dict) else ""
+        if not query:
+            raise HTTPException(status_code=400, detail={"code": "invalid_query", "message": "query 必填"})
+        try:
+            top_k = int(body.get("top_k", 5))
+        except (TypeError, ValueError):
+            top_k = 5
+        top_k = max(1, min(top_k, 20))
+        client = _extensions_rag()
+        try:
+            hits = await client.search(kb_id, query, top_k=top_k)
+        except Exception as e:
+            logger.warning("[extensions] fusion-rag 检索失败 %s: %s", kb_id, e)
+            raise HTTPException(status_code=503, detail={"code": "rag_unavailable", "message": str(e)}) from e
+        finally:
+            await client.close()
+        hits = hits if isinstance(hits, list) else []
+        return [
+            {"text": h.get("text", ""), "doc_path": h.get("doc_path", ""), "score": h.get("score")}
+            for h in hits
+            if isinstance(h, dict)
+        ]
 
     # ── issue #153: 托管浏览器 — 启动 / 关闭 / 状态 / 实时截图侧栏 ──
     @app.post("/api/browser/launch")

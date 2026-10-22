@@ -67,6 +67,11 @@
             "route": "/skills",
             "title": "技能",
             "title_en": "Skills"
+        },
+        {
+            "route": "/extensions",
+            "title": "扩展",
+            "title_en": "Extensions"
         }
     ],
     "searchProviders": [
