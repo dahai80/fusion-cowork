@@ -333,6 +333,13 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
 
+### 签发密钥提取 + 模型轮询修复 (v0.5.33, issues #172/#173/#174)
+
+- **#173/#174 — 网关签发密钥从未落盘**: fusion-gateway K1 签发响应 (`writeShellKeyResponse`) 明文模块密钥在 `raw_key` 字段, 而 `_extract_issued_key()` 只找 `api_key`/`issued_key`/`key`/`module_key` — 一次性 `fm-` 密钥被静默丢弃, `~/.fusion-cowork/web_module_key` 从未写入。现在 `raw_key` 为首选项 (顶层 + `data` 嵌套); 旧字段名保留兼容旧/自定义网关。心跳按设计改用签发密钥鉴权。
+- **#172 — `/api/models` 503 轮询风暴**: 模型客户端不可用 (冷缓存/上游离线/未注入客户端) 时, 前端固定间隔轮询对裸 503 每几秒重试一次, shell 页签控制台刷屏。路由现返回诚实 `200` 信封 — `{"models": [], "count": 0, "stale": false, "unavailable": true}` — 轮询拿到成功响应即渲染空态, 不再重试。#147 stale 缓存路径 (成功过一次后带 `stale: true` 返回缓存) 不变; `web/src/api.ts` 类型补充 `unavailable` 字段。
+
+测试: `tests/test_issue_172_173_174_registry_models.py` (6 例: `raw_key` 顶层/嵌套/优先级提取 + 网关真实响应形状经注册循环落盘, 缺客户端 unavailable 信封, `?all=1` 信封形状); 更新 `tests/test_issue_146_147_web_auth_models.py` 与 `tests/test_web_p3.py` 契约。
+
 ### 扩展控制台：Skills + Knowledge (v0.5.32, issue #170)
 
 迁移 f-ecommerce 扩展控制台（E2，insight/f-ecommerce-migration-1022.md）— Skills 与 Knowledge 两个页签，布局与交互不变，数据源端点换到本模块：

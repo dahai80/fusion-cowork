@@ -6,7 +6,8 @@
 - 配置密钥时: 无/错 key 401, 正确 key 200 (现状保持)。
 
 #147 Contract:
-- /api/models 首次上游失败 (无缓存) → 503 (诚实不可用)。
+- /api/models 首次上游失败 (无缓存) → 200 + unavailable=True 空列表 envelope
+  (issue #172: 冷缓存不再 503, 前端轮询拿到成功响应即不重试)。
 - 上游成功过一次后再失败 → 200 + stale=True + 缓存列表, 消除前端重试风暴;
   chat 过滤在 stale 路径同样生效 (?all=1 返回原始缓存)。
 """
@@ -106,10 +107,14 @@ def _build_models_client(tmp_path, store_root, monkeypatch, mlx_stub):
 
 
 class TestIssue147ModelsStaleCache:
-    def test_first_failure_no_cache_503(self, tmp_path, store_root, monkeypatch):
+    def test_first_failure_no_cache_returns_unavailable_envelope(self, tmp_path, store_root, monkeypatch):
         client = _build_models_client(tmp_path, store_root, monkeypatch, _FlakyMlx(fail=True))
         resp = client.get("/api/models")
-        assert resp.status_code == 503
+        assert resp.status_code == 200, "冷缓存上游失败应返回 200 envelope (issue #172), 而非 503"
+        body = resp.json()
+        assert body["models"] == []
+        assert body["unavailable"] is True
+        assert body["stale"] is False
 
     def test_success_then_failure_returns_stale_cache(self, tmp_path, store_root, monkeypatch):
         mlx = _FlakyMlx(fail=False)

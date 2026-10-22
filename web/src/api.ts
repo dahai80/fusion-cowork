@@ -667,7 +667,10 @@ export const api = {
         post<{ unbound: boolean }>(`/api/space/spaces/${encodeURIComponent(id)}/kb/unbind`, {
             operator_id: 'local_user',
         }),
-    models: () => get<{ models: ModelInfo[]; count: number; total?: number; stale?: boolean }>('/api/models'),
+    models: () =>
+        get<{ models: ModelInfo[]; count: number; total?: number; stale?: boolean; unavailable?: boolean }>(
+            '/api/models'
+        ),
     pendingApprovals: () => get<{ approvals: GuardApproval[] }>('/api/permissions/pending'),
     confirmApproval: (actionId: string, approved: boolean, scope?: string, acceptedBlocks?: number[]) =>
         post<{
