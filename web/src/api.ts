@@ -719,7 +719,8 @@ export const api = {
         body.ok = res.ok && body.ok !== false;
         return body;
     },
-    removeExtensionSkill: (name: string) => del<{ deleted: boolean; capability_removed: boolean }>(`/api/extensions/skills/${encodeURIComponent(name)}`),
+    removeExtensionSkill: (name: string) =>
+        del<{ deleted: boolean; capability_removed: boolean }>(`/api/extensions/skills/${encodeURIComponent(name)}`),
     ragHealth: () => get<RagHealth>('/api/extensions/rag/health'),
     ragKbs: (q: string, page: number, pageSize: number) =>
         get<RagKbList>(`/api/extensions/rag/kb?q=${encodeURIComponent(q)}&page=${page}&page_size=${pageSize}`),

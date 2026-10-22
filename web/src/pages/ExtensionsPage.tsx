@@ -1,12 +1,6 @@
 import { EmptyState, ErrorState, SkeletonLines, useAutoRetry } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
-import {
-    type ExtensionSkill,
-    type RagDocument,
-    type RagHit,
-    type RagKbList,
-    api,
-} from '../api';
+import { type ExtensionSkill, type RagDocument, type RagHit, type RagKbList, api } from '../api';
 import { useT } from '../i18n';
 
 // issue #170: Extensions 控制台 — f-ecommerce extensions.html E2 迁移 (Skills +
@@ -60,7 +54,8 @@ export function ExtensionsPage() {
         if (rag.data) {
             setKbHealth(
                 rag.data.ok
-                    ? t('知识库服务已连接', 'knowledge service connected') + (rag.data.version ? ` (fusion-rag ${rag.data.version})` : '')
+                    ? t('知识库服务已连接', 'knowledge service connected') +
+                          (rag.data.version ? ` (fusion-rag ${rag.data.version})` : '')
                     : t('知识库服务未连接', 'knowledge service down') + (rag.data.error ? ` — ${rag.data.error}` : '')
             );
         }
@@ -79,21 +74,21 @@ export function ExtensionsPage() {
         }
     }
 
+    // biome-ignore lint/correctness/useExhaustiveDependencies: 切页签时一次性加载
     useEffect(() => {
         if (tab === 'knowledge') {
             void rag.manualRetry();
             void loadKbs('', 1);
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tab]);
 
+    // biome-ignore lint/correctness/useExhaustiveDependencies: 过滤变化重置分页
     useEffect(() => {
         const timer = setTimeout(() => {
             if (tab === 'knowledge') void loadKbs(kbFilter.trim(), 1);
             setKbPage(1);
         }, 300);
         return () => clearTimeout(timer);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [kbFilter]);
 
     async function installSkill() {
@@ -101,13 +96,13 @@ export function ExtensionsPage() {
             const doc = JSON.parse(skillDoc) as Record<string, unknown>;
             const out = await api.installExtensionSkill(doc);
             if (!out.installed) {
-                setSkillDiag({ cls: 'err', msg: '✗ ' + (out.problems ?? []).join(' | ') });
+                setSkillDiag({ cls: 'err', msg: `✗ ${(out.problems ?? []).join(' | ')}` });
                 return;
             }
             setSkillDiag({ cls: 'ok', msg: `✓ installed — capability ${out.capability} auto-listed` });
             void skills.manualRetry();
         } catch (e) {
-            setSkillDiag({ cls: 'err', msg: '✗ ' + (e instanceof Error ? e.message : String(e)) });
+            setSkillDiag({ cls: 'err', msg: `✗ ${e instanceof Error ? e.message : String(e)}` });
         }
     }
 
@@ -128,7 +123,12 @@ export function ExtensionsPage() {
     }
 
     async function removeSkill(name: string) {
-        if (!window.confirm(t(`移除技能 "${name}"? 其能力同时注销。`, `Remove skill "${name}"? Its capability is removed too.`))) return;
+        if (
+            !window.confirm(
+                t(`移除技能 "${name}"? 其能力同时注销。`, `Remove skill "${name}"? Its capability is removed too.`)
+            )
+        )
+            return;
         try {
             await api.removeExtensionSkill(name);
             void skills.manualRetry();
@@ -145,7 +145,7 @@ export function ExtensionsPage() {
             setKbDesc('');
             void loadKbs(kbFilter.trim(), 1);
         } catch (e) {
-            setKbDiag({ cls: 'err', msg: '✗ ' + (e instanceof Error ? e.message : String(e)) });
+            setKbDiag({ cls: 'err', msg: `✗ ${e instanceof Error ? e.message : String(e)}` });
         }
     }
 
@@ -165,8 +165,14 @@ export function ExtensionsPage() {
             const out = await api.wireRagKb(kbId, wired);
             setPageMsg(
                 out.wired
-                    ? t(`已接线 — ${out.capability} 现在是 agent 工具。`, `Wired — ${out.capability} is now an agent tool.`)
-                    : t(`已断开 — ${out.capabilities_disabled.join(', ')} 停用。`, `Unwired — ${out.capabilities_disabled.join(', ')} disabled.`)
+                    ? t(
+                          `已接线 — ${out.capability} 现在是 agent 工具。`,
+                          `Wired — ${out.capability} is now an agent tool.`
+                      )
+                    : t(
+                          `已断开 — ${out.capabilities_disabled.join(', ')} 停用。`,
+                          `Unwired — ${out.capabilities_disabled.join(', ')} disabled.`
+                      )
             );
             void loadKbs(kbFilter.trim(), kbPage);
         } catch (e) {
@@ -177,7 +183,7 @@ export function ExtensionsPage() {
     async function uploadDoc() {
         if (!kbOpen) return;
         if (!kbFile) {
-            setUpDiag({ cls: 'err', msg: '✗ ' + t('请先选择文件', 'pick a file first') });
+            setUpDiag({ cls: 'err', msg: `✗ ${t('请先选择文件', 'pick a file first')}` });
             return;
         }
         setUpDiag({ cls: 'ok', msg: t('摄取中…', 'ingesting…') });
@@ -187,7 +193,7 @@ export function ExtensionsPage() {
             void openKb(kbOpen);
             void loadKbs(kbFilter.trim(), kbPage);
         } catch (e) {
-            setUpDiag({ cls: 'err', msg: '✗ ' + (e instanceof Error ? e.message : String(e)) });
+            setUpDiag({ cls: 'err', msg: `✗ ${e instanceof Error ? e.message : String(e)}` });
         }
     }
 
@@ -200,7 +206,10 @@ export function ExtensionsPage() {
             setKbHits(
                 (hits.length ? hits : [{ text: '(no hits)', doc_path: '' }])
                     .slice(0, 5)
-                    .map((h, i) => `${i + 1}. ${h.doc_path || '?'}  score ${h.score ?? '—'}\n   ${String(h.text || '').slice(0, 160)}`)
+                    .map(
+                        (h, i) =>
+                            `${i + 1}. ${h.doc_path || '?'}  score ${h.score ?? '—'}\n   ${String(h.text || '').slice(0, 160)}`
+                    )
                     .join('\n')
             );
         } catch (e) {
@@ -221,7 +230,7 @@ export function ExtensionsPage() {
             <p className="text-xs text-text-muted">
                 {t(
                     '安装一次技能与知识库 — 之后每个 agent 的工具清单自动可见。',
-                    'Install skills and knowledge once — they surface in every agent\'s tool checklist automatically.'
+                    "Install skills and knowledge once — they surface in every agent's tool checklist automatically."
                 )}
             </p>
 
@@ -234,7 +243,9 @@ export function ExtensionsPage() {
                     )}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-4">
-                    <span className="font-semibold">{skillRows.length} {t('技能', 'skills')}</span>
+                    <span className="font-semibold">
+                        {skillRows.length} {t('技能', 'skills')}
+                    </span>
                     <span>{kbList ? `${kbList.total} KB` : '—'}</span>
                 </div>
             </div>
@@ -296,10 +307,23 @@ export function ExtensionsPage() {
                                             )}
                                         </td>
                                         <td className="py-1.5">
-                                            <button type="button" className="text-text-secondary hover:underline" onClick={() => { setTestSkill(s.name); setTestArgs(''); setTestOut(''); setTestErr(false); }}>
+                                            <button
+                                                type="button"
+                                                className="text-text-secondary hover:underline"
+                                                onClick={() => {
+                                                    setTestSkill(s.name);
+                                                    setTestArgs('');
+                                                    setTestOut('');
+                                                    setTestErr(false);
+                                                }}
+                                            >
                                                 {t('测试', 'Test')}
                                             </button>
-                                            <button type="button" className="ml-2 text-text-secondary hover:underline" onClick={() => void removeSkill(s.name)}>
+                                            <button
+                                                type="button"
+                                                className="ml-2 text-text-secondary hover:underline"
+                                                onClick={() => void removeSkill(s.name)}
+                                            >
                                                 {t('移除', 'Remove')}
                                             </button>
                                         </td>
@@ -325,15 +349,24 @@ export function ExtensionsPage() {
                             onChange={(e) => setSkillDoc(e.target.value)}
                         />
                         <div className="mt-2 flex items-center gap-3">
-                            <button type="button" className="rounded-md bg-brand px-3 py-1.5 text-xs text-white hover:opacity-90" onClick={() => void installSkill()}>
+                            <button
+                                type="button"
+                                className="rounded-md bg-brand px-3 py-1.5 text-xs text-white hover:opacity-90"
+                                onClick={() => void installSkill()}
+                            >
                                 {t('校验并安装', 'Validate & install')}
                             </button>
                             <span className="text-[10px] text-text-muted">
-                                {t('安装后能力自动列出 → 每个 agent 的工具清单', 'installs → capability auto-listed → every agent\'s tool checklist')}
+                                {t(
+                                    '安装后能力自动列出 → 每个 agent 的工具清单',
+                                    "installs → capability auto-listed → every agent's tool checklist"
+                                )}
                             </span>
                         </div>
                         {skillDiag && (
-                            <p className={`mt-2 whitespace-pre-wrap font-mono text-[10px] ${skillDiag.cls === 'ok' ? 'text-success' : 'text-error'}`}>
+                            <p
+                                className={`mt-2 whitespace-pre-wrap font-mono text-[10px] ${skillDiag.cls === 'ok' ? 'text-success' : 'text-error'}`}
+                            >
                                 {skillDiag.msg}
                             </p>
                         )}
@@ -349,19 +382,35 @@ export function ExtensionsPage() {
                                 <input
                                     aria-label="skill-test-args"
                                     className="flex-1 rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text-primary"
-                                    placeholder={t('args (JSON 或文本, handler 契约)', 'args (JSON or text, handler contract)')}
+                                    placeholder={t(
+                                        'args (JSON 或文本, handler 契约)',
+                                        'args (JSON or text, handler contract)'
+                                    )}
                                     value={testArgs}
                                     onChange={(e) => setTestArgs(e.target.value)}
                                 />
-                                <button type="button" className="rounded-md border border-border px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-muted" disabled={testing} onClick={() => void runSkillTest()}>
+                                <button
+                                    type="button"
+                                    className="rounded-md border border-border px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-muted"
+                                    disabled={testing}
+                                    onClick={() => void runSkillTest()}
+                                >
                                     {t('运行', 'Run')}
                                 </button>
-                                <button type="button" className="text-xs text-text-secondary hover:underline" onClick={() => setTestSkill(null)}>
+                                <button
+                                    type="button"
+                                    className="text-xs text-text-secondary hover:underline"
+                                    onClick={() => setTestSkill(null)}
+                                >
                                     {t('关闭', 'close')}
                                 </button>
                             </div>
                             {testOut && (
-                                <p className={`mt-2 whitespace-pre-wrap font-mono text-[10px] ${testErr ? 'text-error' : 'text-success'}`}>{testOut}</p>
+                                <p
+                                    className={`mt-2 whitespace-pre-wrap font-mono text-[10px] ${testErr ? 'text-error' : 'text-success'}`}
+                                >
+                                    {testOut}
+                                </p>
                             )}
                         </div>
                     )}
@@ -397,12 +446,20 @@ export function ExtensionsPage() {
                                 value={kbDesc}
                                 onChange={(e) => setKbDesc(e.target.value)}
                             />
-                            <button type="button" className="rounded-md bg-brand px-3 py-1.5 text-xs text-white hover:opacity-90" onClick={() => void createKb()}>
+                            <button
+                                type="button"
+                                className="rounded-md bg-brand px-3 py-1.5 text-xs text-white hover:opacity-90"
+                                onClick={() => void createKb()}
+                            >
                                 {t('创建并接线', 'Create & wire')}
                             </button>
                         </div>
                         {kbDiag && (
-                            <p className={`mt-2 font-mono text-[10px] ${kbDiag.cls === 'ok' ? 'text-success' : 'text-error'}`}>{kbDiag.msg}</p>
+                            <p
+                                className={`mt-2 font-mono text-[10px] ${kbDiag.cls === 'ok' ? 'text-success' : 'text-error'}`}
+                            >
+                                {kbDiag.msg}
+                            </p>
                         )}
                         <input
                             aria-label="kb-filter"
@@ -423,16 +480,25 @@ export function ExtensionsPage() {
                             <tbody>
                                 {!kbList ? (
                                     <tr>
-                                        <td colSpan={4} className="py-2 text-text-muted">…</td>
+                                        <td colSpan={4} className="py-2 text-text-muted">
+                                            …
+                                        </td>
                                     </tr>
                                 ) : kbList.error ? (
                                     <tr>
-                                        <td colSpan={4} className="py-2 text-text-muted">{kbList.error}</td>
+                                        <td colSpan={4} className="py-2 text-text-muted">
+                                            {kbList.error}
+                                        </td>
                                     </tr>
                                 ) : kbList.bases.length === 0 ? (
                                     <tr>
                                         <td colSpan={4} className="py-2 text-text-muted">
-                                            {kbFilter ? t('无匹配知识库。', 'No knowledge bases match.') : t('尚无知识库 — 在上方创建。', 'No knowledge bases — create one above.')}
+                                            {kbFilter
+                                                ? t('无匹配知识库。', 'No knowledge bases match.')
+                                                : t(
+                                                      '尚无知识库 — 在上方创建。',
+                                                      'No knowledge bases — create one above.'
+                                                  )}
                                         </td>
                                     </tr>
                                 ) : (
@@ -447,7 +513,9 @@ export function ExtensionsPage() {
                                                 {b.capability ? (
                                                     <>
                                                         {b.capability}{' '}
-                                                        <span className="rounded-full bg-bg-muted px-2 py-0.5 text-[10px] text-success">on</span>
+                                                        <span className="rounded-full bg-bg-muted px-2 py-0.5 text-[10px] text-success">
+                                                            on
+                                                        </span>
                                                     </>
                                                 ) : (
                                                     <span className="rounded-full bg-bg-muted px-2 py-0.5 text-[10px] text-text-muted">
@@ -456,10 +524,18 @@ export function ExtensionsPage() {
                                                 )}
                                             </td>
                                             <td className="py-1.5">
-                                                <button type="button" className="text-text-secondary hover:underline" onClick={() => void openKb(b.kb_id)}>
+                                                <button
+                                                    type="button"
+                                                    className="text-text-secondary hover:underline"
+                                                    onClick={() => void openKb(b.kb_id)}
+                                                >
                                                     {t('打开', 'Open')}
                                                 </button>
-                                                <button type="button" className="ml-2 text-text-secondary hover:underline" onClick={() => void wireKb(b.kb_id, !b.capability)}>
+                                                <button
+                                                    type="button"
+                                                    className="ml-2 text-text-secondary hover:underline"
+                                                    onClick={() => void wireKb(b.kb_id, !b.capability)}
+                                                >
                                                     {b.capability ? t('断开', 'Unwire') : t('接线', 'Wire')}
                                                 </button>
                                             </td>
@@ -472,12 +548,28 @@ export function ExtensionsPage() {
                             <p className="mt-1 text-[10px] text-text-muted">
                                 {kbList.total} KB — {t('页', 'page')} {kbList.page} / {kbPages}
                                 {kbList.page > 1 && (
-                                    <button type="button" className="ml-1 text-text-secondary hover:underline" onClick={() => { const p = kbPage - 1; setKbPage(p); void loadKbs(kbFilter.trim(), p); }}>
+                                    <button
+                                        type="button"
+                                        className="ml-1 text-text-secondary hover:underline"
+                                        onClick={() => {
+                                            const p = kbPage - 1;
+                                            setKbPage(p);
+                                            void loadKbs(kbFilter.trim(), p);
+                                        }}
+                                    >
                                         ‹ {t('上一页', 'prev')}
                                     </button>
                                 )}
                                 {kbList.page < kbPages && (
-                                    <button type="button" className="ml-1 text-text-secondary hover:underline" onClick={() => { const p = kbPage + 1; setKbPage(p); void loadKbs(kbFilter.trim(), p); }}>
+                                    <button
+                                        type="button"
+                                        className="ml-1 text-text-secondary hover:underline"
+                                        onClick={() => {
+                                            const p = kbPage + 1;
+                                            setKbPage(p);
+                                            void loadKbs(kbFilter.trim(), p);
+                                        }}
+                                    >
                                         {t('下一页', 'next')} ›
                                     </button>
                                 )}
@@ -498,12 +590,20 @@ export function ExtensionsPage() {
                                     className="flex-1 text-xs text-text-secondary"
                                     onChange={(e) => setKbFile(e.target.files?.[0] ?? null)}
                                 />
-                                <button type="button" className="rounded-md bg-brand px-3 py-1.5 text-xs text-white hover:opacity-90" onClick={() => void uploadDoc()}>
+                                <button
+                                    type="button"
+                                    className="rounded-md bg-brand px-3 py-1.5 text-xs text-white hover:opacity-90"
+                                    onClick={() => void uploadDoc()}
+                                >
                                     {t('上传并摄取', 'Upload & ingest')}
                                 </button>
                             </div>
                             {kbUpDiag && (
-                                <p className={`mt-1 font-mono text-[10px] ${kbUpDiag.cls === 'ok' ? 'text-success' : 'text-error'}`}>{kbUpDiag.msg}</p>
+                                <p
+                                    className={`mt-1 font-mono text-[10px] ${kbUpDiag.cls === 'ok' ? 'text-success' : 'text-error'}`}
+                                >
+                                    {kbUpDiag.msg}
+                                </p>
                             )}
                             <table className="mt-2 w-full text-left text-xs">
                                 <thead>
@@ -523,9 +623,13 @@ export function ExtensionsPage() {
                                     ) : (
                                         kbDocs.map((d, i) => (
                                             <tr key={i} className="border-b border-border">
-                                                <td className="py-1.5 pr-2 font-mono text-text-primary">{d.file_name || d.doc_path || d.name || '?'}</td>
+                                                <td className="py-1.5 pr-2 font-mono text-text-primary">
+                                                    {d.file_name || d.doc_path || d.name || '?'}
+                                                </td>
                                                 <td className="py-1.5 pr-2">{d.chunk_count ?? d.chunks ?? '—'}</td>
-                                                <td className="py-1.5 text-text-muted">{d.char_count != null ? `${d.char_count} chars` : '—'}</td>
+                                                <td className="py-1.5 text-text-muted">
+                                                    {d.char_count != null ? `${d.char_count} chars` : '—'}
+                                                </td>
                                             </tr>
                                         ))
                                     )}
@@ -540,12 +644,20 @@ export function ExtensionsPage() {
                                     value={kbQuery}
                                     onChange={(e) => setKbQuery(e.target.value)}
                                 />
-                                <button type="button" className="rounded-md border border-border px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-muted" onClick={() => void searchKb()}>
+                                <button
+                                    type="button"
+                                    className="rounded-md border border-border px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-muted"
+                                    onClick={() => void searchKb()}
+                                >
                                     {t('检索', 'Search')}
                                 </button>
                             </div>
                             {kbHits && (
-                                <p className={`mt-2 whitespace-pre-wrap font-mono text-[10px] ${kbErr ? 'text-error' : 'text-success'}`}>{kbHits}</p>
+                                <p
+                                    className={`mt-2 whitespace-pre-wrap font-mono text-[10px] ${kbErr ? 'text-error' : 'text-success'}`}
+                                >
+                                    {kbHits}
+                                </p>
                             )}
                         </div>
                     )}
@@ -553,7 +665,9 @@ export function ExtensionsPage() {
             )}
 
             {pageMsg && <p className="text-xs text-text-muted">{pageMsg}</p>}
-            {skillRows.length === 0 && tab === 'skills' && !skills.loading && <EmptyState title={t('暂无扩展', 'No extensions')} />}
+            {skillRows.length === 0 && tab === 'skills' && !skills.loading && (
+                <EmptyState title={t('暂无扩展', 'No extensions')} />
+            )}
         </div>
     );
 }

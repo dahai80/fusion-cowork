@@ -76,9 +76,7 @@ class _FakeKB:
 
     async def create_kb(self, name: str, description: str = "") -> str:
         kb_id = f"{name}-1"
-        self.state["bases"] = self.state["bases"] + [
-            {"id": kb_id, "name": name, "description": description}
-        ]
+        self.state["bases"] = self.state["bases"] + [{"id": kb_id, "name": name, "description": description}]
         return kb_id
 
     async def search(self, kb_id: str, query: str, top_k: int = 5):
@@ -245,8 +243,16 @@ class TestRagHealth:
 
 class TestRagKb:
     def test_list_filter_and_wire_state(self, client, tmp_path):
-        client.post("/api/extensions/rag/kb", json={"name": "products", "description": "product docs", "wire": True}, headers=_auth())
-        client.post("/api/extensions/rag/kb", json={"name": "copy", "description": "historical copy", "wire": False}, headers=_auth())
+        client.post(
+            "/api/extensions/rag/kb",
+            json={"name": "products", "description": "product docs", "wire": True},
+            headers=_auth(),
+        )
+        client.post(
+            "/api/extensions/rag/kb",
+            json={"name": "copy", "description": "historical copy", "wire": False},
+            headers=_auth(),
+        )
         data = client.get("/api/extensions/rag/kb", headers=_auth()).json()
         assert data["total"] == 2
         by_id = {b["kb_id"]: b for b in data["bases"]}
@@ -259,7 +265,9 @@ class TestRagKb:
 
     def test_list_pagination(self, client):
         for i in range(3):
-            client.post("/api/extensions/rag/kb", json={"name": f"kb{i}", "description": "", "wire": False}, headers=_auth())
+            client.post(
+                "/api/extensions/rag/kb", json={"name": f"kb{i}", "description": "", "wire": False}, headers=_auth()
+            )
         page1 = client.get("/api/extensions/rag/kb", params={"page": 1, "page_size": 2}, headers=_auth()).json()
         assert page1["total"] == 3
         assert len(page1["bases"]) == 2
@@ -331,6 +339,8 @@ class TestRagUpload:
 
 
 def test_manifest_declares_extensions_page():
-    manifest = json.loads((Path(__file__).resolve().parent.parent / "web" / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (Path(__file__).resolve().parent.parent / "web" / "manifest.json").read_text(encoding="utf-8")
+    )
     routes = [p["route"] for p in manifest.get("pages", [])]
     assert "/extensions" in routes

@@ -1481,8 +1481,13 @@ def create_web_app(
             return JSONResponse({"installed": False, "problems": [str(e)]}, status_code=400)
         registry = SkillRegistry()
         registry.register(
-            Skill(name=pack.name, description=pack.description, handler=make_pack_handler(pack, skills_dir),
-                  category=pack.category, aliases=pack.aliases)
+            Skill(
+                name=pack.name,
+                description=pack.description,
+                handler=make_pack_handler(pack, skills_dir),
+                category=pack.category,
+                aliases=pack.aliases,
+            )
         )
         logger.info("[extensions] skill %s installed (type=%s, capability=skill.%s)", name, stype, name)
         return {"installed": True, "name": name, "capability": f"skill.{name}"}
@@ -1552,8 +1557,7 @@ def create_web_app(
         q = (request.query_params.get("q") or "").strip().lower()
         if q:
             bases = [
-                b for b in bases
-                if q in str(b.get("name", "")).lower() or q in str(b.get("description", "")).lower()
+                b for b in bases if q in str(b.get("name", "")).lower() or q in str(b.get("description", "")).lower()
             ]
         try:
             page = max(1, int(request.query_params.get("page", "1")))
@@ -1561,7 +1565,7 @@ def create_web_app(
         except ValueError:
             page, page_size = 1, 10
         total = len(bases)
-        window = bases[(page - 1) * page_size:page * page_size]
+        window = bases[(page - 1) * page_size : page * page_size]
         wired = set(_load_wired())
 
         async def _doc_count(b: Dict[str, Any]) -> Any:
@@ -1664,7 +1668,9 @@ def create_web_app(
         try:
             form = await request.form()
         except Exception as e:
-            raise HTTPException(status_code=400, detail={"code": "invalid_form", "message": "multipart form 解析失败"}) from e
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_form", "message": "multipart form 解析失败"}
+            ) from e
         upload = form.get("file")
         if upload is None or isinstance(upload, str):
             raise HTTPException(status_code=400, detail={"code": "missing_file", "message": "file 字段必填"})
@@ -1682,7 +1688,9 @@ def create_web_app(
                 while chunk := await upload.read(1 << 20):
                     size += len(chunk)
                     if size > 10 << 20:
-                        raise HTTPException(status_code=400, detail={"code": "too_large", "message": "文件超过 10MB 上限"})
+                        raise HTTPException(
+                            status_code=400, detail={"code": "too_large", "message": "文件超过 10MB 上限"}
+                        )
                     f.write(chunk)
         except HTTPException:
             dest.unlink(missing_ok=True)
