@@ -121,22 +121,22 @@ def list_skill_packs(skills_dir: Path = None) -> List[SkillPack]:
     return packs
 
 
-def make_pack_handler(pack: SkillPack) -> Callable:
-    """为 skill 包构造异步 handler。"""
+def make_pack_handler(pack: SkillPack, skills_dir: Path = None) -> Callable:
+    """为 skill 包构造异步 handler。skills_dir 与安装目录一致, 脚本包按目录定位。"""
 
     async def _handler(args: str = "") -> Any:
-        return await _execute_pack(pack, args)
+        return await _execute_pack(pack, args, skills_dir)
 
     return _handler
 
 
-async def _execute_pack(pack: SkillPack, args: str = "") -> Any:
+async def _execute_pack(pack: SkillPack, args: str = "", skills_dir: Path = None) -> Any:
     if pack.type == "workflow":
         return await _exec_workflow_pack(pack, args)
     elif pack.type == "node":
         return await _exec_node_pack(pack, args)
     elif pack.type == "script":
-        return await _exec_script_pack(pack, args)
+        return await _exec_script_pack(pack, args, skills_dir)
     return {"error": f"未知 skill 类型: {pack.type}"}
 
 
@@ -175,8 +175,8 @@ async def _exec_node_pack(pack: SkillPack, args: str) -> Any:
         return {"error": str(e)}
 
 
-async def _exec_script_pack(pack: SkillPack, args: str) -> Any:
-    skills_dir = DEFAULT_SKILLS_DIR
+async def _exec_script_pack(pack: SkillPack, args: str, skills_dir: Path = None) -> Any:
+    skills_dir = skills_dir or DEFAULT_SKILLS_DIR
     pdir = _pack_dir(skills_dir, pack.name)
     script_path = (pdir / pack.script) if pack.script else None
     if not script_path or not script_path.exists():
@@ -206,7 +206,7 @@ def register_user_packs(registry: SkillRegistry, skills_dir: Path = None) -> Lis
             skill = Skill(
                 name=pack.name,
                 description=pack.description,
-                handler=make_pack_handler(pack),
+                handler=make_pack_handler(pack, skills_dir),
                 category=pack.category,
                 aliases=pack.aliases,
             )

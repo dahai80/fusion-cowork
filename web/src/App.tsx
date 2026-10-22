@@ -17,6 +17,7 @@ import { RunsPage } from './pages/RunsPage';
 import { SchedulePage } from './pages/SchedulePage';
 import { SessionsPage } from './pages/SessionsPage';
 import { SkillsPage } from './pages/SkillsPage';
+import { ExtensionsPage } from './pages/ExtensionsPage';
 import { SpacePage } from './pages/SpacePage';
 import { TemplatesPage } from './pages/TemplatesPage';
 import { UsagePage } from './pages/UsagePage';
@@ -43,6 +44,7 @@ type Route =
     | 'usage'
     | 'admin'
     | 'skills'
+    | 'extensions'
     | 'm';
 
 const ROUTES: Route[] = [
@@ -61,6 +63,7 @@ const ROUTES: Route[] = [
     'usage',
     'admin',
     'skills',
+    'extensions',
 ];
 
 function parseHash(): { route: Route; arg: string } {
@@ -80,6 +83,7 @@ function parseHash(): { route: Route; arg: string } {
     if (head === 'usage') return { route: 'usage', arg };
     if (head === 'admin') return { route: 'admin', arg };
     if (head === 'skills') return { route: 'skills', arg };
+    if (head === 'extensions') return { route: 'extensions', arg };
     if (head === 'm') return { route: 'm', arg };
     return { route: 'workflows', arg };
 }
@@ -116,6 +120,8 @@ function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
             return t('管理', 'Admin');
         case 'skills':
             return t('技能', 'Skills');
+        case 'extensions':
+            return t('扩展', 'Extensions');
         case 'm':
             return t('移动端', 'Mobile');
     }
@@ -217,6 +223,8 @@ export function App() {
                     <AdminPage />
                 ) : route === 'skills' ? (
                     <SkillsPage />
+                ) : route === 'extensions' ? (
+                    <ExtensionsPage />
                 ) : route === 'm' ? (
                     <MobilePage />
                 ) : route === 'templates' ? (

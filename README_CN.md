@@ -333,6 +333,16 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
 
+### 扩展控制台：Skills + Knowledge (v0.5.32, issue #170)
+
+迁移 f-ecommerce 扩展控制台（E2，insight/f-ecommerce-migration-1022.md）— Skills 与 Knowledge 两个页签，布局与交互不变，数据源端点换到本模块：
+
+- **Skills 页签** — JSON 用户 skill 包（`~/.fusion-cowork/skills/<name>/skill.json`，handler 为 `workflow|node|script`），支持 校验并安装 / 测试运行 / 移除。安装经 cowork 自有持久化 API（`skills/persistence.py`）落盘，并注册进共享 `SkillRegistry`（能力 `skill.<name>`，MCP `skill_run` 可调）；包 handler 现按安装目录定位脚本包。脚本包（任意代码）仅管理员：本机操作员（未配鉴权）或静态 `FUSION_COWORK_WEB_API_KEY` 可装，网关签发 `fm-` 模块密钥一律拒绝。
+- **Knowledge 页签** — fusion-rag 控制台，复用 SpaceKB 的 `KBClient` 绑定（`:11436`，`FUSION_RAG_URL` 覆盖）：健康标记、KB 创建并接线、可过滤+分页的 KB 列表（含文档数）、文档上传摄取（`.md`/`.txt`，10MB 上限，暂存 `~/.fusion-cowork/web/rag_uploads/`）、检索面板（只回引用相关字段 `text`/`doc_path`/`score`）。接线状态落 `~/.fusion-cowork/web/rag_wired.json`，呈现为 `knowledge.<kb_id>.search` 能力；断开时报告停用的能力 id。
+- **Web** — 新 `#/extensions` 页（`ExtensionsPage.tsx`，`web/manifest.json` 页项）：页签栏 + 表格 + 安装/测试/KB 面板对齐源页面；`api.ts` 增加 `/api/extensions/*` 客户端面。
+
+测试：`tests/test_issue_170_extensions_console.py`（22 例：包校验/安装/注册/脚本管理门/测试运行诚实信封/移除，RAG health/过滤/分页/接线/文档/上传/检索，KBClient 用离线替身）。
+
 ### 共享技能包格式 + 网关签发模块密钥 (v0.5.31, issues #167/#168)
 
 - **共享 markdown 技能包格式 (#167)** — 一个包同时服务 fusion-cowork 与 fusion-agent-studio。`parse_markdown` 接受共享 frontmatter: JSON Schema `parameters`/`arguments` (`properties`/`required`, 映射为 cowork 表单字段, 运行时校验 `enum`), `allowed-tools`/`tools`, `command`/`slash`, `version` 与连字符别名; 产品私有键 (`handler`/`workflow`/`params`) 不破坏 agent-studio 加载器 (其 `parse_skill_md` 归入 `extra`)。内置 `/contract-review` 包已改用共享格式。`FUSION_COWORK_SKILLS_DIRS` (冒号分隔) 增加共享安装目录, 单文件一次安装两侧可用。规范: `docs/skill-packages.md`。测试: `tests/test_issue_167_shared_skill_format.py` (21 例)。
