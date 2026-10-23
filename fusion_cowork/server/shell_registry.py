@@ -137,7 +137,17 @@ async def _registry_loop_body(client: Any, manifest: Dict[str, Any], interval: f
                 module_key = load_module_key()
                 beat_key = module_key or admin_key
                 headers = {"Authorization": f"Bearer {beat_key}", "Content-Type": "application/json"}
-                resp = await client.post(f"{gateway}/api/v1/shell/manifests/{module_id}/heartbeat", headers=headers)
+                # issue #177: 心跳携带 manifest (网关 #284 契约) — 每拍重读磁盘,
+                # 磁盘编辑 (增删 pages 等) 一个心跳周期内收敛到网关注册表, 无需重启;
+                # 重读失败沿用注册时版本, 不中断心跳保活
+                try:
+                    beat_manifest = load_manifest()
+                except Exception as e:
+                    logger.warning(f"shell 心跳重读 manifest 失败, 沿用注册时版本: {e}")
+                    beat_manifest = manifest
+                resp = await client.post(
+                    f"{gateway}/api/v1/shell/manifests/{module_id}/heartbeat", json=beat_manifest, headers=headers
+                )
                 if resp.status_code == 404:
                     logger.info(f"shell 心跳 404, 重注册 {module_id}")
                     registered = False

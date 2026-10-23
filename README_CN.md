@@ -333,6 +333,13 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
 
+### 心跳携带 manifest + 跟随 shell 主题 (v0.5.34, issues #176/#177)
+
+- **#177 — 心跳携带 manifest**: fusion-gateway #284 (`handleShellManifestHeartbeat`) 接受可选 manifest body — 带 id 的 body 触发 `HeartbeatWithManifest`, 收敛陈旧 ext 字段 (pages/searchProviders/notifications); 空 body 仍是纯保活 ping。模块侧现采纳该契约: `_registry_loop_body` 每拍重读磁盘 `web/manifest.json` 并作为心跳 body POST, 磁盘编辑 (增删页面) 一个心跳周期内收敛到网关注册表, 无需重启。重读失败 (文件缺失/损坏) 回退注册时版本, 保活不中断; fm- 密钥鉴权路径 (401 → 重注册) 不变。
+- **#176 — iframe 跟随 shell 主题切换**: 新增 `web/src/theme.ts` — 嵌入模式订阅 `sdk.theme.onThemeChange` (shell 发 `{type:"event", event:"theme"}` 且 iframe 加载时重推, 无闪变), 切换 `html.light`/`html.dark` (tokens.css 类调色板); 独立模式初始主题依次取 `localStorage["fusion.shell.theme"]`、`prefers-color-scheme`、默认 dark, 并在每次切换后回写。`main.tsx` 首帧渲染前接线。
+
+测试: `tests/test_issue_177_registry_heartbeat.py` (4 例: 心跳体携带 manifest、磁盘编辑一拍内收敛、重读失败回退注册版本、401 重注册臂不破坏); `web/tests/theme.test.ts` (6 例: light/dark 类切换、存储偏好/脏值/prefers-color-scheme/无存储的初始主题链)。
+
 ### 签发密钥提取 + 模型轮询修复 (v0.5.33, issues #172/#173/#174)
 
 - **#173/#174 — 网关签发密钥从未落盘**: fusion-gateway K1 签发响应 (`writeShellKeyResponse`) 明文模块密钥在 `raw_key` 字段, 而 `_extract_issued_key()` 只找 `api_key`/`issued_key`/`key`/`module_key` — 一次性 `fm-` 密钥被静默丢弃, `~/.fusion-cowork/web_module_key` 从未写入。现在 `raw_key` 为首选项 (顶层 + `data` 嵌套); 旧字段名保留兼容旧/自定义网关。心跳按设计改用签发密钥鉴权。
