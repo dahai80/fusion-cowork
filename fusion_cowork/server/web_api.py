@@ -787,6 +787,16 @@ def create_web_app(
     from ..nodes import import_all_nodes
 
     import_all_nodes()
+    # ai-hr-automation: load trusted plugins so plugin nodes (hr_http) join the
+    # serve process registry. deny-closed: only plugins.trusted whitelist passes
+    # the loader's CR-21 check; load failures are logged, not fatal.
+    try:
+        from ..plugins import get_plugin_loader
+
+        for _name, _plugin_nodes in get_plugin_loader().load_all().items():
+            logger.info(f"插件节点已加载: {_name} -> {[n.name for n in _plugin_nodes]}")
+    except Exception as e:
+        logger.warning(f"插件加载失败 (忽略): {e}")
     store = WorkflowDefStore(root=store_root)
     if permission_manager is None:
         from ..engine import PermissionManager
