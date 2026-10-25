@@ -1185,6 +1185,154 @@ def web_serve(port: int, host: str):
     asyncio.run(_serve())
 
 
+# ── 团队消息面 (issue #190) ──
+
+
+def _team_api(method: str, path: str, payload=None):
+    # 状态/生命周期走 daemon HTTP; 花名册与信箱直连 SQLite (daemon 不在也能收发)
+    import httpx
+
+    base = os.environ.get("FUSION_COWORK_WEB_URL", "http://127.0.0.1:11461").rstrip("/")
+    headers = {}
+    key = os.environ.get("FUSION_COWORK_WEB_API_KEY", "").strip()
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.request(method, f"{base}{path}", json=payload, headers=headers)
+    except httpx.HTTPError as e:
+        console.print_warning(f"Web API 不可达 ({base}): {e} — 先 fusion-cowork web serve")
+        return None
+    if resp.status_code >= 400:
+        console.print_error(f"Web API {method} {path} 失败: {resp.status_code} {resp.text[:200]}")
+        return None
+    try:
+        return resp.json()
+    except ValueError:
+        return None
+
+
+@cli.group("team")
+def team():
+    """团队消息 — 花名册 / durable 信箱 / 消费池 (issue #190)。"""
+
+
+@team.command("register")
+@click.argument("agent_id")
+@click.option("--workflow", "workflow_id", required=True, help="收件后执行的工作流定义 id")
+@click.option("--name", default="", help="显示名 (默认 = agent_id)")
+@click.option("--team", "team_name", default="", help="所属团队")
+@click.option("--disable", is_flag=True, help="登记为停用 (登记但不消费)")
+def team_register(agent_id, workflow_id, name, team_name, disable):
+    """登记一个常驻消费 agent。"""
+    from .orchestrator.team_mailbox import CoworkRoster
+
+    try:
+        row = CoworkRoster().register(agent_id, workflow_id, name=name, team=team_name, enabled=not disable)
+    except ValueError as e:
+        console.print_error(str(e))
+        return
+    console.print_success(f"已登记: {row['agent_id']} → workflow {row['workflow_id']} (enabled={bool(row['enabled'])})")
+
+
+@team.command("roster")
+def team_roster():
+    """列出花名册。"""
+    from .orchestrator.team_mailbox import CoworkRoster
+
+    rows = CoworkRoster().list()
+    if not rows:
+        console.print_info("花名册为空 — fusion-cowork team register <agent_id> --workflow <id>")
+        return
+    for r in rows:
+        state = "启用" if r["enabled"] else "停用"
+        console.print_result(f"{r['agent_id']:20s} {state}  workflow={r['workflow_id']}  team={r['team']}")
+
+
+@team.command("remove")
+@click.argument("agent_id")
+def team_remove(agent_id):
+    """移除一个消费 agent。"""
+    from .orchestrator.team_mailbox import CoworkRoster
+
+    if CoworkRoster().remove(agent_id):
+        console.print_success(f"已移除: {agent_id}")
+    else:
+        console.print_warning(f"未登记: {agent_id}")
+
+
+@team.command("send")
+@click.option("--from", "sender", required=True, help="发送方 agent id")
+@click.option("--to", "recipient", required=True, help="接收方 agent id (可跨仓: agent-studio agent)")
+@click.option("--kind", default="message", show_default=True, help="消息类型")
+@click.option("--team", "team_name", default="", help="团队标签")
+@click.argument("body")
+def team_send(sender, recipient, kind, team_name, body):
+    """投递一条 durable 消息 (落 SQLite, at-least-once 送达)。"""
+    from .orchestrator.team_mailbox import TeamMailbox
+
+    try:
+        msg = TeamMailbox().send(sender, recipient, body, kind=kind, team=team_name)
+    except ValueError as e:
+        console.print_error(str(e))
+        return
+    console.print_success(f"已投递: {msg['message_id']} {sender} → {recipient}")
+
+
+@team.command("inbox")
+@click.argument("agent_id")
+@click.option("--all", "show_all", is_flag=True, help="包含已 ack 的历史消息")
+@click.option("--limit", default=50, show_default=True, help="最多条数")
+def team_inbox(agent_id, show_all, limit):
+    """查看某 agent 的信箱。"""
+    from .orchestrator.team_mailbox import TeamMailbox
+
+    messages = TeamMailbox().inbox(agent_id, unread_only=not show_all, limit=limit)
+    if not messages:
+        console.print_info(f"{agent_id} 无未读消息")
+        return
+    for m in messages:
+        acked = "已读" if m.get("acked_at") else "未读"
+        console.print_result(f"{m['message_id']}  {m['sender']:20s} {acked}  {m['body'][:80]}")
+
+
+@team.command("status")
+def team_status():
+    """消费池状态 — 活 consumer 数 / 积压深度 / 指标。"""
+    data = _team_api("GET", "/api/team/status")
+    if data is None:
+        return
+    console.print_result(f"消费池: {'运行中' if data.get('running') else '已停止'}  轮询 {data.get('poll_interval')}s")
+    console.print_result(f"活 consumer: {data.get('consumers', 0)}")
+    metrics = data.get("metrics") or {}
+    console.print_result(
+        f"积压 {metrics.get('mailbox_depth', 0)} 条 / 最老未 ack {metrics.get('oldest_unacked_age_s', 0)}s "
+        f"/ 已消费 {metrics.get('consumed', 0)} / 回信 {metrics.get('replies_sent', 0)} "
+        f"/ 派发错误 {metrics.get('dispatch_errors', 0)}"
+    )
+    for a in data.get("agents") or []:
+        console.print_result(
+            f"  {a['agent_id']:20s} workflow={a['workflow_id']:20s} 积压={a['inbox_depth']} "
+            f"已消费={a['consumed']} 回信={a['replies_sent']}"
+        )
+
+
+@team.command("start")
+def team_start():
+    """启动消费池 (daemon 常驻任务)。"""
+    data = _team_api("POST", "/api/team/pool/start")
+    if data is not None:
+        console.print_success(f"消费池: running={data.get('running')}")
+
+
+@team.command("stop")
+def team_stop():
+    """停止消费池。"""
+    data = _team_api("POST", "/api/team/pool/stop")
+    if data is not None:
+        console.print_success(f"消费池: running={data.get('running')}")
+
+
 # ── Session 会话管理 ──
 
 

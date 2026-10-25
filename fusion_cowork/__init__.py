@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.5.38"
+__version__ = "0.5.39"
 __app_name__ = "Fusion-Cowork"
 
 # ── 节点工具名称映射表（吸纳自 Squish tool_name_map.py） ──
@@ -258,6 +258,10 @@ _LAZY_IMPORTS: dict[str, str] = {
     # M5 Agent Runtime
     "AgentRuntime": "fusion_cowork.orchestrator.agent_runtime",
     "CoordinatorExecutor": "fusion_cowork.orchestrator.executors",
+    # issue #190 团队消息 durable 信箱 + 常驻消费池
+    "TeamMailbox": "fusion_cowork.orchestrator.team_mailbox",
+    "CoworkRoster": "fusion_cowork.orchestrator.team_mailbox",
+    "RunnerPool": "fusion_cowork.orchestrator.runner_pool",
     # M5 SDK/Headless
     "FusionCoworkSDK": "fusion_cowork.sdk",
     "HeadlessRunner": "fusion_cowork.sdk.headless",
