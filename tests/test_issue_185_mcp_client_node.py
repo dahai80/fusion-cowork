@@ -9,8 +9,8 @@ import json
 
 import httpx
 
-from fusion_cowork.engine.permission_manager import HIGH_RISK_NODES, Permission, PermissionManager
 from fusion_cowork.engine.node import NodeConfig, NodeRegistry
+from fusion_cowork.engine.permission_manager import HIGH_RISK_NODES, Permission, PermissionManager
 from fusion_cowork.nodes.ecosystem.mcp_client_node import MCPClientNode
 
 

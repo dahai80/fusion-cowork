@@ -296,13 +296,15 @@ def _collect_artifacts(steps: List[Any]) -> List[Dict[str, Any]]:
 
 
 class RunRegistry:
-    def __init__(self, engine: Any, event_emitter: Any = None):
+    def __init__(self, engine: Any, event_emitter: Any = None, run_store: Any = None):
         self._engine = engine
         self._runs: Dict[str, Dict[str, Any]] = {}
         self._tasks: Dict[str, asyncio.Task] = {}
         # B2: 运行事件订阅 — 每个 SSE 客户端一个队列
         self._subs: Dict[str, List[asyncio.Queue]] = {}
         self._emitter = event_emitter
+        # issue #191: 运行控制状态持久层 (未注入 = 纯内存, 零行为变化)
+        self.run_store = run_store
         # issue #154: webhook push 出口 (未注入 = 不推送, 零行为变化)
         self.push = None
         if event_emitter is not None:
@@ -347,7 +349,10 @@ class RunRegistry:
         if execution is not None:
             record["steps"] = [RunRegistry._step_dict(s) for s in execution.steps]
             status = execution.status.value if hasattr(execution.status, "value") else str(execution.status)
-            record["status"] = status
+            # issue #191: paused 记录不被运行事件翻回 running —
+            # 引擎暂停检查点/HITL 边界不改 execution.status, 状态翻转只由 resume() 显式驱动
+            if record.get("status") != "paused":
+                record["status"] = status
         self._broadcast(
             run_id,
             {
@@ -357,6 +362,27 @@ class RunRegistry:
                 "run": self._public(record),
             },
         )
+        # issue #191: 事件即检查点 — 每个步骤事件后持久化进度+控制状态
+        self._persist(run_id)
+
+    def _persist(self, run_id: str) -> None:
+        # issue #191: 活跃 run 落 SQLite; 失败只 WARN 不影响执行 (持久化是旁路)
+        if self.run_store is None:
+            return
+        record = self._runs.get(run_id)
+        if record is None or record.get("status") not in ("running", "paused"):
+            return
+        paused_reason = str(record.get("paused_reason") or "")
+        if record.get("status") == "running":
+            try:
+                if self._engine.hitl_pending(run_id):
+                    paused_reason = "hitl"
+            except Exception:
+                pass
+        try:
+            self.run_store.save(record, paused_reason=paused_reason)
+        except Exception as e:
+            logger.warning(f"运行状态持久化失败 (忽略) {run_id}: {e}")
 
     @staticmethod
     def _step_dict(s: Any) -> Dict[str, Any]:
@@ -422,14 +448,23 @@ class RunRegistry:
             "artifacts": [],
             # issue #157: per-run 记忆开关 (任务启动时设定), 默认开
             "memory": bool(memory),
+            # issue #191: 暂停原因 (manual|hitl|crash), 恢复语义用
+            "paused_reason": "",
         }
         self._runs[run_id] = record
+        self._persist(run_id)
         task = asyncio.create_task(self._execute(run_id, wf))
         self._tasks[run_id] = task
         logger.info(f"工作流运行已启动: {run_id} ({record['workflow_name']}) memory={record['memory']}")
         return {"run_id": run_id, "status": "running"}
 
-    async def _execute(self, run_id: str, wf: Any) -> None:
+    async def _execute(
+        self,
+        run_id: str,
+        wf: Any,
+        start_paused: bool = False,
+        resume_steps: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
         record = self._runs[run_id]
         try:
             # issue #157: run 级记忆集成 — 启动召回注入首节点 / 结束轨迹写回。
@@ -440,14 +475,26 @@ class RunRegistry:
 
                 bridge = MemoryBridge.from_env()
             initial_input: Optional[Dict[str, Any]] = None
-            if bridge is not None:
+            # issue #191: 恢复续跑不再重复召回 — 首轮已注入过, 再注入会覆盖已完成首节点的快照输出
+            if bridge is not None and not resume_steps:
                 query = f"{wf.name} {getattr(wf, 'description', '') or ''}".strip()
                 ctx = await bridge.retrieve_context(query)
                 if ctx:
                     record["memory_context"] = ctx
                     initial_input = {"memory_context": ctx}
                     logger.info(f"[{run_id}] 记忆上下文已注入首节点输入 ({len(ctx)} chars)")
-            execution = await self._engine.execute(wf, initial_input=initial_input, execution_id=run_id)
+            # issue #191: 仅在恢复场景传新参 — 注入的旧版/测试引擎无这两个 kwarg 也不破
+            engine_kwargs: Dict[str, Any] = {}
+            if resume_steps is not None:
+                engine_kwargs["resume_steps"] = resume_steps
+            if start_paused:
+                engine_kwargs["start_paused"] = True
+            execution = await self._engine.execute(
+                wf,
+                initial_input=initial_input,
+                execution_id=run_id,
+                **engine_kwargs,
+            )
             record["steps"] = [RunRegistry._step_dict(s) for s in execution.steps]
             record["artifacts"] = _collect_artifacts(execution.steps)
             status = execution.status.value if hasattr(execution.status, "value") else str(execution.status)
@@ -482,6 +529,12 @@ class RunRegistry:
             record["error"] = str(e)
         finally:
             record["finished_at"] = time.time()
+            # issue #191: 终态出库 — run 结束后不再需要恢复, 持久层只留活跃 run
+            if self.run_store is not None:
+                try:
+                    self.run_store.delete(run_id)
+                except Exception as e:
+                    logger.warning(f"运行状态清理失败 (忽略) {run_id}: {e}")
             # W9: 成功完成的运行进入交付审查队列; 失败/取消不进入
             if record["status"] == "success" and record.get("review") is None:
                 record["review"] = {"status": "pending_review", "note": "", "reviewed_at": None}
@@ -543,6 +596,8 @@ class RunRegistry:
         if not self._engine.pause(run_id):
             return False
         record["status"] = "paused"
+        record["paused_reason"] = "manual"
+        self._persist(run_id)
         self._broadcast(run_id, {"event": "run_paused", "at": time.time(), "run": self._public(record)})
         logger.info(f"工作流运行已暂停: {run_id}")
         return True
@@ -554,8 +609,11 @@ class RunRegistry:
         if not self._engine.resume(run_id):
             record["status"] = "running"
             logger.warning(f"引擎无暂停事件, 记录状态回退 running: {run_id}")
+            self._persist(run_id)
             return True
         record["status"] = "running"
+        record["paused_reason"] = ""
+        self._persist(run_id)
         self._broadcast(run_id, {"event": "run_resumed", "at": time.time(), "run": self._public(record)})
         logger.info(f"工作流运行已恢复: {run_id}")
         return True
@@ -572,10 +630,90 @@ class RunRegistry:
             return "bad_action"
         if not self._engine.add_directive(run_id, directive):
             return "rejected"
-        record.setdefault("directives", []).append({"action": action, "at": time.time()})
+        # issue #191: 全量 payload 落 record — 恢复重放需要完整指令 (仅 action 不够)
+        record.setdefault("directives", []).append({"action": action, "at": time.time(), "payload": dict(directive)})
+        self._persist(run_id)
         self._broadcast(run_id, {"event": "run_directive", "at": time.time(), "run": self._public(record)})
         logger.info(f"运行改向指令已排队: {run_id} action={action}")
         return None
+
+    async def recover_persisted(self) -> int:
+        # issue #191: daemon 重启恢复 — SQLite 活跃行 → 重建 record → start_paused 续跑。
+        # 唯一恢复路径: 步骤进度 (resume_steps) 与控制状态 (paused/directives) 同路还原。
+        if self.run_store is None:
+            return 0
+        try:
+            rows = self.run_store.load_active()
+        except Exception as e:
+            logger.error(f"加载持久化运行状态失败 (跳过恢复): {e}")
+            return 0
+        recovered = 0
+        for row in rows:
+            run_id = str(row.get("run_id", ""))
+            if not run_id or run_id in self._runs:
+                continue
+            try:
+                wf_def = json.loads(row.get("workflow_def") or "{}")
+                steps = json.loads(row.get("steps") or "[]")
+                directives = json.loads(row.get("directives") or "[]")
+                from ..engine import Workflow
+
+                wf = Workflow.from_dict(wf_def)
+                if not wf.nodes:
+                    raise ValueError("workflow_def 无有效节点")
+            except Exception as e:
+                logger.error(f"恢复运行 {run_id} 失败: 持久化数据无法解析, 已废弃该行: {e}")
+                self.run_store.delete(run_id)
+                continue
+            # 持久化状态 running = 上次会话非正常退出 (kill -9/崩溃) — loud 恢复为 paused
+            crashed = str(row.get("status", "")) != "paused"
+            record: Dict[str, Any] = {
+                "run_id": run_id,
+                "workflow_id": row.get("workflow_id", ""),
+                "workflow_name": row.get("workflow_name", ""),
+                "status": "paused",
+                "paused_reason": "crash" if crashed else str(row.get("paused_reason") or "manual"),
+                "created_at": float(row.get("created_at") or time.time()),
+                "finished_at": None,
+                "steps": steps,
+                "result": None,
+                "error": None,
+                "review": None,
+                "workflow_def": wf_def,
+                "artifacts": [],
+                "memory": bool(row.get("memory", 1)),
+                "recovered": True,
+                "directives": [],
+            }
+            self._runs[run_id] = record
+            task = asyncio.create_task(self._execute(run_id, wf, start_paused=True, resume_steps=steps))
+            self._tasks[run_id] = task
+            # 等引擎登记 pause 事件后再重放指令 (add_directive 校验 _pause_events 存在)
+            for _ in range(200):
+                if run_id in getattr(self._engine, "_pause_events", {}):
+                    break
+                await asyncio.sleep(0.02)
+            # 恢复期间重放持久化的改向指令 — resume 后首个节点边界生效
+            replayed = 0
+            for d in directives:
+                if not isinstance(d, dict):
+                    continue
+                payload = d.get("payload") or d
+                if self._engine.add_directive(run_id, payload):
+                    record.setdefault("directives", []).append(d)
+                    replayed += 1
+            if replayed:
+                logger.info(f"[{run_id}] 恢复期间重放改向指令 {replayed} 条")
+            if crashed:
+                logger.warning(
+                    f"[{run_id}] 上次会话非正常退出 (持久化状态 running), 已恢复为 paused "
+                    f"({len(steps)} 步快照), 等待人工 resume/审批"
+                )
+            else:
+                logger.info(f"[{run_id}] 恢复暂停中的运行: paused_reason={record['paused_reason']}")
+            self._persist(run_id)
+            recovered += 1
+        return recovered
 
     def _gc(self) -> None:
         now = time.time()
@@ -779,6 +917,7 @@ def create_web_app(
     skills_dir: Optional[Path] = None,
     rag_base_url: Optional[str] = None,
     rag_wired_path: Optional[Path] = None,
+    run_store: Any = None,
 ):
     try:
         from fastapi import FastAPI, HTTPException, Request, WebSocket
@@ -821,7 +960,12 @@ def create_web_app(
     else:
         permission_manager = getattr(engine, "_permission_manager", None) or permission_manager
         emitter = getattr(engine, "_event_emitter", None)
-    runs = RunRegistry(engine, event_emitter=emitter)
+    # issue #191: 运行控制状态持久层 — SQLite 落盘, daemon 重启可恢复
+    from ..engine.run_persistence import RunStateStore
+
+    if run_store is None:
+        run_store = RunStateStore(Path(store_root) / "run_states.db" if store_root else None)
+    runs = RunRegistry(engine, event_emitter=emitter, run_store=run_store)
     if scheduler is None:
         from ..engine.scheduler import TaskScheduler
 
@@ -862,6 +1006,13 @@ def create_web_app(
     # issue #154: 审批入队 → webhook 推送 (permission manager 回调, best-effort)
     if permission_manager is not None:
         permission_manager.on_pending_created = _make_pending_push_callback(push_egress)
+
+    # issue #191: 启动即恢复 — SQLite 里的活跃 run (paused/崩溃残留 running) 重建为 paused, 等人工 resume/审批
+    @app.on_event("startup")
+    async def _recover_runs():
+        recovered = await runs.recover_persisted()
+        if recovered:
+            logger.warning(f"启动恢复: 从持久层重建 {recovered} 个活跃 run (均以 paused 起跑, 等待人工 resume/审批)")
 
     @app.middleware("http")
     async def _auth_middleware(request: Request, call_next):
