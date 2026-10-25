@@ -5,6 +5,7 @@ import type { StatusKind } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
 import {
     type FileReadResult,
+    type GuardApproval,
     type RunArtifact,
     type RunListItem,
     type RunRecord,
@@ -21,6 +22,23 @@ const POLL_MS = 5000; // spec §6.3: monitoring poll 5s
 function fmtTime(ts: number | null | undefined, lang: 'zh' | 'en'): string {
     if (!ts) return '—';
     return new Date(ts * 1000).toLocaleString(lang === 'en' ? 'en-US' : 'zh-CN');
+}
+
+// issue #187: HITL 超时倒计时 (服务端 hitl_deadline, 到点自动拒绝)
+function HitlCountdown({ deadline }: { deadline: number }) {
+    const [now, setNow] = useState(Math.floor(Date.now() / 1000));
+    useEffect(() => {
+        const timer = window.setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
+        return () => window.clearInterval(timer);
+    }, []);
+    const left = Math.max(0, deadline - now);
+    const mm = Math.floor(left / 60);
+    const ss = left % 60;
+    return (
+        <span className="font-mono text-[11px] text-warning">
+            {mm}:{ss.toString().padStart(2, '0')}
+        </span>
+    );
 }
 
 export function RunsPage() {
@@ -104,11 +122,13 @@ export function RunsPage() {
                     onChange={(e) => setStatusFilter(e.target.value)}
                 >
                     <option value="">{t('全部状态', 'All statuses')}</option>
-                    {['running', 'pending', 'paused', 'completed', 'failed', 'cancelled'].map((s) => (
-                        <option key={s} value={s}>
-                            {s}
-                        </option>
-                    ))}
+                    {['running', 'pending', 'paused', 'completed', 'completed_with_denials', 'failed', 'cancelled'].map(
+                        (s) => (
+                            <option key={s} value={s}>
+                                {s}
+                            </option>
+                        )
+                    )}
                 </select>
             </div>
             <DataTable<RunListItem>
@@ -205,6 +225,31 @@ function RunDetail({ runId }: { runId: string }) {
     const [reviewNote, setReviewNote] = useState('');
     const [openStep, setOpenStep] = useState('');
 
+    // issue #187: HITL — run 命中待审批节点时轮询审批卡 (approve once / approve node / deny)
+    const [hitlApprovals, setHitlApprovals] = useState<GuardApproval[]>([]);
+    const [hitlBusy, setHitlBusy] = useState('');
+
+    async function hitlConfirm(actionId: string, approved: boolean, once: boolean) {
+        setHitlBusy(actionId);
+        try {
+            await api.confirmApproval(actionId, approved, undefined, undefined, once);
+            sdk.toast.show({
+                level: 'success',
+                message: approved
+                    ? once
+                        ? t('已批准 (本次)', 'Approved (once)')
+                        : t('已批准并记住', 'Approved and remembered')
+                    : t('已拒绝', 'Denied'),
+            });
+            setReloadKey((k) => k + 1);
+        } catch (e) {
+            console.error('[cowork-web] hitl confirm failed', e);
+            sdk.toast.show({ level: 'error', message: t('审批失败', 'Approval failed') });
+        } finally {
+            setHitlBusy('');
+        }
+    }
+
     // W9: 交付审查 — pending_review → approved/rejected (节点级 guard 审批另属 W19)
     async function reviewRun(approved: boolean) {
         try {
@@ -283,6 +328,30 @@ function RunDetail({ runId }: { runId: string }) {
     }, [runId]);
 
     const record = live ?? data;
+
+    // issue #187: HITL 审批卡数据源 — hitl_pending 时轮询 pending 队列 (按 execution_id 过滤)
+    useEffect(() => {
+        if (!record?.hitl_pending) {
+            setHitlApprovals([]);
+            return;
+        }
+        let alive = true;
+        const load = async () => {
+            try {
+                const res = await api.pendingApprovals();
+                if (!alive) return;
+                setHitlApprovals((res.approvals ?? []).filter((a) => a.execution_id === runId));
+            } catch (e) {
+                console.warn('[cowork-web] hitl pending approvals fetch failed', e);
+            }
+        };
+        void load();
+        const timer = window.setInterval(load, 2000);
+        return () => {
+            alive = false;
+            window.clearInterval(timer);
+        };
+    }, [record?.hitl_pending, runId]);
 
     useEffect(() => {
         if (sseOk) return;
@@ -373,6 +442,48 @@ function RunDetail({ runId }: { runId: string }) {
                     ) : null}
                 </div>
             ) : null}
+            {/* issue #187: HITL 审批卡 — 高风险节点暂停等待人工决定 */}
+            {record.hitl_pending
+                ? hitlApprovals.map((a) => (
+                      <div key={a.action_id} className="mt-3 rounded-md border border-warning/60 bg-warning/5 p-2">
+                          <div className="flex items-center justify-between text-xs">
+                              <span className="font-medium text-text-primary">
+                                  {t('等待审批', 'Awaiting approval')} — {a.node_id ?? a.tool_name}
+                              </span>
+                              {record.hitl_deadline ? <HitlCountdown deadline={record.hitl_deadline} /> : null}
+                          </div>
+                          <div className="mt-1 font-mono text-[11px] text-text-secondary">
+                              {a.tool_name}({JSON.stringify(a.params ?? {})})
+                          </div>
+                          <div className="mt-2 flex items-center gap-2">
+                              <button
+                                  type="button"
+                                  disabled={hitlBusy === a.action_id}
+                                  className="rounded-md border border-success px-2 py-1 text-xs text-success hover:bg-success/10 disabled:opacity-50"
+                                  onClick={() => void hitlConfirm(a.action_id, true, true)}
+                              >
+                                  {t('本次允许', 'Approve once')}
+                              </button>
+                              <button
+                                  type="button"
+                                  disabled={hitlBusy === a.action_id}
+                                  className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted disabled:opacity-50"
+                                  onClick={() => void hitlConfirm(a.action_id, true, false)}
+                              >
+                                  {t('总是允许', 'Always allow')}
+                              </button>
+                              <button
+                                  type="button"
+                                  disabled={hitlBusy === a.action_id}
+                                  className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-error/10 disabled:opacity-50"
+                                  onClick={() => void hitlConfirm(a.action_id, false, false)}
+                              >
+                                  {t('拒绝', 'Deny')}
+                              </button>
+                          </div>
+                      </div>
+                  ))
+                : null}
             {record.status === 'running' || record.status === 'paused' ? (
                 <div className="mt-3 rounded-md border border-border p-2">
                     <div className="mb-2 text-xs font-medium text-text-primary">{t('运行改向', 'Run directive')}</div>

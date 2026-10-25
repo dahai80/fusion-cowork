@@ -970,8 +970,14 @@ def create_web_app(
         if not record:
             raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"})
         # issue #181: HITL 等待中标记 — 前端提示"等待人工审批"而非卡死
+        # issue #187: 附带截止时间 — 审批卡倒计时; 状态服务端持久, 页面刷新不丢
         if record.get("status") == "running":
             record["hitl_pending"] = engine.hitl_pending(run_id)
+            if record["hitl_pending"]:
+                deadline_getter = getattr(engine, "hitl_deadline", None)
+                deadline = deadline_getter(run_id) if callable(deadline_getter) else None
+                if deadline is not None:
+                    record["hitl_deadline"] = deadline
         return record
 
     # ── W10/B5 运行产物预览 (右栏, 实时随步骤输出刷新) ──
@@ -2112,6 +2118,20 @@ def create_web_app(
         details_getter = getattr(permission_manager, "get_pending_details", None)
         if callable(details_getter):
             hitl_exec = (details_getter(action_id) or {}).get("execution_id") or None
+        # issue #187: "Approve once" — 只出队该待审批项, 不落持久规则, 直接唤醒暂停中的 run
+        if body.get("once") and hitl_exec:
+            releaser = getattr(permission_manager, "release_pending_once", None)
+            released = releaser(action_id) if callable(releaser) else False
+            if released and approved:
+                resolver = getattr(engine, "resolve_hitl", None)
+                if callable(resolver):
+                    try:
+                        resolver(hitl_exec, True, once=True)
+                    except TypeError:
+                        # 兼容无 once 参数的旧引擎 — 规则未落, 复查会拒绝但 run 被唤醒
+                        resolver(hitl_exec, True)
+                logger.info(f"HITL 一次性批准已唤醒 run: {hitl_exec} (action_id={action_id}, 不落规则)")
+                return {"action_id": action_id, "approved": True, "confirmed": True, "once": True}
         confirmed = await permission_manager.confirm_guard(
             action_id, approved, approved_by="web", scope=str(body.get("scope") or "*")
         )
