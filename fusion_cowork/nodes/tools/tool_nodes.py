@@ -521,14 +521,20 @@ class PythonREPLNode(BaseNode):
         if variables:
             script_lines.append("")
 
+        # issue #180: stdin 只读一次存变量 — 旧版 eval(sys.stdin.read()) 先耗尽管道,
+        # SyntaxError 分支再读 stdin 得到空串, 多语句代码静默不执行还报 success
         script_lines.extend(
             [
+                "_src = sys.stdin.read()",
                 "try:",
-                "    _result = eval(sys.stdin.read())",
+                "    _result = eval(compile(_src, '<user_code>', 'eval'))",
                 "    print(json.dumps({'result': repr(_result), 'type': type(_result).__name__}))",
                 "except SyntaxError:",
-                "    exec(sys.stdin.read())",
-                "    print(json.dumps({'result': 'executed', 'type': 'NoneType'}))",
+                "    try:",
+                "        exec(compile(_src, '<user_code>', 'exec'))",
+                "        print(json.dumps({'result': 'executed', 'type': 'NoneType'}))",
+                "    except Exception as e:",
+                "        print(json.dumps({'error': str(e), 'type': type(e).__name__}))",
                 "except Exception as e:",
                 "    print(json.dumps({'error': str(e), 'type': type(e).__name__}))",
             ]

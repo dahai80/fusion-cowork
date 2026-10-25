@@ -32,6 +32,8 @@ def _build_client(tmp_path, store_root, with_key: bool, monkeypatch):
 
     monkey_target = web_api
     monkey_target._WEB_DIR = tmp_path / "web"
+    # issue #168: 本机 ~/.fusion-cowork/web_module_key 会激活鉴权 — 测试隔离, 回归纯 env 契约
+    monkeypatch.setattr(web_api, "_module_key", lambda: "")
     if with_key:
         monkeypatch.setenv("FUSION_COWORK_WEB_API_KEY", STATIC_KEY)
     else:
@@ -98,6 +100,8 @@ def _build_models_client(tmp_path, store_root, monkeypatch, mlx_stub):
 
     web_api._WEB_DIR = tmp_path / "web"
     monkeypatch.delenv("FUSION_COWORK_WEB_API_KEY", raising=False)
+    # issue #168: 本机 ~/.fusion-cowork/web_module_key 会激活鉴权 — 测试隔离
+    monkeypatch.setattr(web_api, "_module_key", lambda: "")
 
     engine = WorkflowEngine()
     app = web_api.create_web_app(

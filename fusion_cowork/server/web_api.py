@@ -372,6 +372,9 @@ class RunRegistry:
             "input_data": s.input_data,
             # issue #143: per-node token 用量 (None = 节点无 LLM 调用)
             "tokens": getattr(s, "tokens", None),
+            # issue #182: 重试可观测 — 最终尝试序号 + 逐次尝试错误
+            "attempt": getattr(s, "attempt", 1),
+            "attempt_errors": getattr(s, "attempt_errors", []),
         }
 
     def list(self) -> List[Dict[str, Any]]:
@@ -966,6 +969,9 @@ def create_web_app(
         record = runs.get(run_id)
         if not record:
             raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"})
+        # issue #181: HITL 等待中标记 — 前端提示"等待人工审批"而非卡死
+        if record.get("status") == "running":
+            record["hitl_pending"] = engine.hitl_pending(run_id)
         return record
 
     # ── W10/B5 运行产物预览 (右栏, 实时随步骤输出刷新) ──
@@ -2100,9 +2106,20 @@ def create_web_app(
                     "confirmed": False,
                     "reason": "所有变更块均被拒绝, 无可批准内容",
                 }
+        # issue #181: confirm 前读取待审批详情 — 本地待审批携带 execution_id,
+        # confirm 落规则后唤醒 HITL 暂停中的 run 原地续跑 (guard 侧无 execution_id, 不受影响)
+        hitl_exec = None
+        details_getter = getattr(permission_manager, "get_pending_details", None)
+        if callable(details_getter):
+            hitl_exec = (details_getter(action_id) or {}).get("execution_id") or None
         confirmed = await permission_manager.confirm_guard(
             action_id, approved, approved_by="web", scope=str(body.get("scope") or "*")
         )
+        if confirmed and hitl_exec:
+            resolver = getattr(engine, "resolve_hitl", None)
+            if callable(resolver):
+                resolver(hitl_exec, approved)
+                logger.info(f"HITL confirm 已唤醒 run: {hitl_exec} approved={approved}")
         # issue #138: 确认落规则后立即持久化 (重启不丢)
         try:
             saver = getattr(permission_manager, "save", None)

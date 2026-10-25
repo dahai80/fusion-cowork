@@ -190,6 +190,8 @@ class NodeConfig:
     max_retries: int = 0
     retry_delay: float = 1.0
     timeout: float = 0.0  # 0 = no timeout
+    # issue #182: 业务失败 (NodeResult FAILED, 非异常) 默认不重试; 显式开启后参与引擎重试
+    retry_on_business_failure: bool = False
     params: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -287,6 +289,7 @@ class BaseNode(ABC):
                 "continue_on_error": self.config.continue_on_error,
                 "max_retries": self.config.max_retries,
                 "retry_delay": self.config.retry_delay,
+                "retry_on_business_failure": self.config.retry_on_business_failure,
                 "timeout": self.config.timeout,
                 "params": self.config.params,
             },
@@ -302,6 +305,7 @@ class BaseNode(ABC):
             continue_on_error=data.get("config", {}).get("continue_on_error", False),
             max_retries=data.get("config", {}).get("max_retries", 0),
             retry_delay=data.get("config", {}).get("retry_delay", 1.0),
+            retry_on_business_failure=data.get("config", {}).get("retry_on_business_failure", False),
             timeout=data.get("config", {}).get("timeout", 0.0),
             params=data.get("config", {}).get("params", {}),
         )

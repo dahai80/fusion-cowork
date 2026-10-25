@@ -333,6 +333,15 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
 
+### 引擎可靠性批次 (v0.5.35, issues #180/#181/#182)
+
+- **#180 — python_repl 多语句修复**: 子进程包装脚本读了两次 stdin — `eval(sys.stdin.read())` 先耗尽管道, `SyntaxError` 分支再读得到空串, 多语句代码静默不执行还报 success。现改为 stdin 只读一次存 `_src`, 先 eval 编译、`SyntaxError` 再 exec 编译; 用户语法/运行时错误如实报节点失败, 不再静默空成功。
+- **#182 — 重试可观测**: `WorkflowStep` 新增 `attempt` (1-based 最终尝试序号) 与 `attempt_errors` (每次失败尝试一条); 两者经 run steps API (`_step_dict`) 暴露。`NodeConfig` 新增 opt-in `retry_on_business_failure` (默认关) — 业务 FAILED 结果仅在节点显式开启后参与引擎重试; 异常/超时重试行为不变。`to_dict`/`from_dict` 往返新字段。
+- **#181 — HITL 暂停等待审批**: 引擎 opt-in 模式 (构造参数 `hitl_pause=True` 或 `FUSION_COWORK_HITL_PAUSE=1`) — 高风险节点落入本地待审批队列时, run 暂停在节点边界 (复用 W8 暂停事件; `cancel()` 仍可唤醒), 不再 deny-fast 失败。`POST /api/permissions/pending/{action_id}/confirm` 现读取待审批条目的 `execution_id`, 规则落盘后唤醒暂停中的 run (`engine.resolve_hitl`), 原地只重跑被闸节点 (输入不变) — 批准的 run 原地续跑 (不重放已执行节点), 拒绝走既有 DENIED/补偿路径。等待期间 `GET /api/runs/{id}` 报 `hitl_pending`。guard 侧 (fusion-guard L3) 待审批无 execution_id, 保持 deny-fast。
+- **测试隔离加固**: web-api 鉴权测试现打桩 `_module_key()` — 本机已签发的网关模块密钥 (`~/.fusion-cowork/web_module_key`) 不再把"未配密钥"契约测试翻成 401。
+
+测试: `tests/test_issue_180_repl_stdin.py` (6 例)、`tests/test_issue_182_retry_observability.py` (7 例)、`tests/test_issue_181_hitl_pause.py` (7 例, 含完整 web confirm 路由接线)。
+
 ### 心跳携带 manifest + 跟随 shell 主题 (v0.5.34, issues #176/#177)
 
 - **#177 — 心跳携带 manifest**: fusion-gateway #284 (`handleShellManifestHeartbeat`) 接受可选 manifest body — 带 id 的 body 触发 `HeartbeatWithManifest`, 收敛陈旧 ext 字段 (pages/searchProviders/notifications); 空 body 仍是纯保活 ping。模块侧现采纳该契约: `_registry_loop_body` 每拍重读磁盘 `web/manifest.json` 并作为心跳 body POST, 磁盘编辑 (增删页面) 一个心跳周期内收敛到网关注册表, 无需重启。重读失败 (文件缺失/损坏) 回退注册时版本, 保活不中断; fm- 密钥鉴权路径 (401 → 重注册) 不变。

@@ -25,7 +25,7 @@ import time
 from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +293,8 @@ class PermissionManager:
                 "ts": time.time(),
                 "workflow": str(ctx.get("workflow", "")),
                 "node_id": str(ctx.get("node_id", "")),
+                # issue #181: HITL — confirm 路由凭 execution_id 唤醒暂停中的 run
+                "execution_id": str(ctx.get("execution_id", "")),
                 # issue #142: 编辑型待审批附 diff 分块 + 重建用原文
                 "diff_blocks": _build_diff_blocks(params),
                 "raw_edit": _build_raw_edit(params),
@@ -466,6 +468,19 @@ class PermissionManager:
                 for action_id, tool_name in self._pending_local_approvals.items()
             )
         return entries
+
+    def get_pending_details(self, action_id: str) -> Optional[Dict[str, Any]]:
+        # issue #181: confirm 路由读取待审批详情 (含 execution_id) 用于唤醒 HITL 暂停的 run
+        with self._lock:
+            return dict(self._pending_local_details.get(action_id) or {})
+
+    def find_pending_by_execution(self, execution_id: str) -> Optional[Dict[str, Any]]:
+        # issue #181: HITL — 按 execution_id 找本地待审批项 (引擎判断是否进入暂停等待)
+        with self._lock:
+            for action_id, details in self._pending_local_details.items():
+                if details.get("execution_id") == execution_id:
+                    return {"action_id": action_id, **details}
+        return None
 
     def approve(self, tool_name: str, scope: str = "*") -> None:
         rule = Permission(tool_name=tool_name, allowed=True, scope=scope)
