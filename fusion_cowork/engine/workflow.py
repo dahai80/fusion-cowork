@@ -22,9 +22,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set
 
-from .permission_manager import reset_approval_context, set_approval_context
 from .hooks import HookEvent
 from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus
+from .permission_manager import reset_approval_context, set_approval_context
 
 logger = logging.getLogger(__name__)
 
@@ -529,11 +529,13 @@ class WorkflowEngine:
         initial_input: Optional[Dict[str, Any]] = None,
         execution_id: str = "",
         resume_steps: Optional[List[Dict[str, Any]]] = None,
+        start_paused: bool = False,
     ) -> WorkflowExecution:
         """执行工作流。
 
         resume_steps: 断点续跑 — 已完成步骤的快照 (to_dict)。
         命中节点跳过执行, 其 output_data 作为下游输入缓存, 从下一节点续跑。
+        start_paused: issue #191 — 恢复的 run 以 paused 起跑, 首个节点边界挂起等 resume。
         """
         exec_id = execution_id or f"exec_{uuid.uuid4().hex[:12]}"
         execution = WorkflowExecution(
@@ -545,8 +547,10 @@ class WorkflowEngine:
         )
         self._executions[exec_id] = execution
         self._cancel_flags[exec_id] = False
-        self._pause_events[exec_id] = asyncio.Event()
-        self._pause_events[exec_id].set()
+        pause_evt = asyncio.Event()
+        if not start_paused:
+            pause_evt.set()
+        self._pause_events[exec_id] = pause_evt
         # R-1: _executions 超上限淘汰最旧终态项, 防 long-running 引擎内存泄漏
         self._trim_executions()
 
@@ -1219,6 +1223,9 @@ class WorkflowEngine:
         if evt is None:
             return False
         # 通知审批人 (复用 NOTIFICATION hook), 待审批项本身已入 PermissionManager 队列
+        # issue #191: 先置 _hitl_waiting 再发事件 — 事件回调里持久化才能看到 hitl_pending
+        self._hitl_waiting.add(exec_id)
+        self._hitl_deadlines[exec_id] = time.time() + self._hitl_timeout
         if self._event_emitter:
             from .events import EventType
 
@@ -1241,8 +1248,6 @@ class WorkflowEngine:
                 },
             )
         logger.info(f"[{exec_id}] HITL: 节点 '{node.name}' 暂停在边界, 等待人工审批")
-        self._hitl_waiting.add(exec_id)
-        self._hitl_deadlines[exec_id] = time.time() + self._hitl_timeout
         evt.clear()
         timed_out = False
         try:

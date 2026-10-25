@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.5.37"
+__version__ = "0.5.38"
 __app_name__ = "Fusion-Cowork"
 
 # ── 节点工具名称映射表（吸纳自 Squish tool_name_map.py） ──
@@ -151,6 +151,7 @@ _LAZY_IMPORTS: dict[str, str] = {
     "coerce_param": "fusion_cowork.engine.node",
     "coerce_params": "fusion_cowork.engine.node",
     "TaskScheduler": "fusion_cowork.engine.scheduler",
+    "RunStateStore": "fusion_cowork.engine.run_persistence",
     "ScheduledTask": "fusion_cowork.engine.scheduler",
     "TaskStatus": "fusion_cowork.engine.scheduler",
     # macOS 节点

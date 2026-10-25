@@ -333,6 +333,16 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
 
+### 运行状态持久恢复 (v0.5.38, issue #191)
+
+- **#191 — `RunStateStore`** (`fusion_cowork/engine/run_persistence.py`): 运行控制状态落 SQLite `<store_root>/run_states.db` (默认 `~/.fusion-cowork/web/run_states.db`)。每个**活跃** run (`running`/`paused`) 一行; 终态行 run 结束即删除, 加载时发现的终态残留行以 WARNING 清理。schema 版本走 `PRAGMA user_version` — 打开更新版本 fusion-cowork 写的库直接 `RuntimeError` 启动失败, 绝不静默降级读取。
+- **#191 — 事件即检查点**: 每个引擎事件 (`RunRegistry._on_event`) 持久化完整记录 — 工作流定义、步骤快照、排队中的改向指令、状态、`paused_reason`。持久化失败仅 WARN; 持久化是旁路, 永不阻塞执行。
+- **#191 — 唯一恢复路径**: `RunRegistry.recover_persisted()` 在 FastAPI startup 执行。每个活跃行重建为 `paused`, 引擎任务以 `start_paused=True` + `resume_steps=<快照>` 重启 — 与进程内 pause/resume 同一条 resume 路径, 步骤级进度和控制状态经同一代码路径恢复。持久化的改向指令重放进新引擎队列, resume 后首个节点边界生效。无法解析的行 ERROR 记录后删除, 绝不静默重试。
+- **#191 — crash 判定响亮**: 持久化状态为 `running` 的行 = 上次会话未清理即退出 (`kill -9`、崩溃)。恢复记 WARNING, 以 `paused` + `paused_reason="crash"` 重建。恢复的 run **绝不自动续跑** — 等人工 `POST /api/runs/{id}/resume` 或新的 HITL 审批。
+- **#191 — 向后兼容**: 未注入 `run_store` 的 `RunRegistry` 保持纯内存 (零持久化); `engine.execute()` 仅在设置时传 `resume_steps`/`start_paused`, 注入的旧引擎不受影响。恢复的 run 跳过 memory-bridge 重复注入 (首步快照已含原始上下文)。详见 `docs/run-recovery.md`。
+
+测试: `tests/test_issue_191_durable_run_state.py` (8 例: store 往返、终态残留响亮清理、schema 版本门、kill -9 崩溃恢复为 paused + HITL 重入 + 快照跳过、恢复后指令重放、手工暂停行按 manual 恢复、坏行响亮废弃、`create_web_app` store 接线)。
+
 ### HITL 默认开启 + 声明治理 (v0.5.37, issues #187/#188)
 
 - **#187 — HITL 暂停等待审批改为默认开启**: `FUSION_COWORK_HITL_PAUSE` 语义翻转 — 除非显式设为 `0`/`false`/`off`/`no` (headless deny-fast, 即 v0.5.37 之前的行为), 高风险节点默认在节点边界暂停等人工审批。**无人值守部署迁移**: 设 `FUSION_COWORK_HITL_PAUSE=0` 保持 deny-fast; 其他值或缺省即暂停等待。

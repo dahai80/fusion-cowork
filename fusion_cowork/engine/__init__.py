@@ -39,6 +39,7 @@ from .node import (
 )
 from .optimizer import OptimizationSuggestion, WorkflowAnalysis, WorkflowOptimizer
 from .permission import Permission, PermissionLevel, PermissionManager
+from .run_persistence import RunStateStore
 from .scheduler import ScheduledTask, TaskScheduler, TaskStatus
 from .schema import OutputSchema
 from .session import Session, SessionStore
@@ -108,4 +109,6 @@ __all__ = [
     # V0.4 AST Diff
     "compute_ast_diff",
     "apply_ast_diff",
+    # issue #191: 运行控制状态持久层
+    "RunStateStore",
 ]
