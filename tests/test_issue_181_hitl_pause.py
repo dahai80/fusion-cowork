@@ -79,9 +79,26 @@ async def _wait_hitl(engine: WorkflowEngine, exec_id: str, timeout: float = 5.0)
 
 
 class TestHitlPause:
-    async def test_default_off_deny_fast(self, pm_no_guard):
+    # issue #187: 默认翻转为 ON — 无 env/参数时高风险节点进 HITL 等待
+    async def test_default_on_pauses(self, pm_no_guard):
         _ProbeNode.calls = 0
         eng = WorkflowEngine(permission_manager=pm_no_guard)
+        assert eng._hitl_pause is True
+        exec_id = "run-187-default-on"
+        task = asyncio.create_task(eng.execute(_wf(), execution_id=exec_id))
+        assert await _wait_hitl(eng, exec_id), "默认配置应进入 HITL 等待"
+        action_id = pm_no_guard.list_pending()[0]["action_id"]
+        await pm_no_guard.confirm_guard(action_id, approved=True, approved_by="test")
+        eng.resolve_hitl(exec_id, True)
+        execution = await asyncio.wait_for(task, timeout=5)
+        assert execution.status.value == "success"
+        assert _ProbeNode.calls == 1
+
+    async def test_env_off_headless_deny_fast(self, pm_no_guard, monkeypatch):
+        monkeypatch.setenv("FUSION_COWORK_HITL_PAUSE", "0")
+        _ProbeNode.calls = 0
+        eng = WorkflowEngine(permission_manager=pm_no_guard)
+        assert eng._hitl_pause is False
         execution = await eng.execute(_wf(), execution_id="run-181-off")
         assert execution.status.value == "failed"
         assert _ProbeNode.calls == 0
@@ -140,6 +157,7 @@ class TestHitlPause:
         _ProbeNode.calls = 0
         eng = WorkflowEngine(permission_manager=pm_no_guard)
         assert eng._hitl_pause is True
+        # issue #187: "1" 仍为显式 ON; 其余任意非 off 值也按 ON 处理
         exec_id = "run-181-env"
         task = asyncio.create_task(eng.execute(_wf(), execution_id=exec_id))
         assert await _wait_hitl(eng, exec_id)

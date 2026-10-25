@@ -5,6 +5,10 @@ import pytest
 
 from fusion_cowork import config_center as _cc_mod
 
+# issue #187: HITL 默认 ON — 测试套件整体按 headless 跑 (deny-fast 语义不变),
+# HITL 专属测试文件在自己的 fixture 里 monkeypatch.delenv 恢复默认 ON 语义
+os.environ.setdefault("FUSION_COWORK_HITL_PAUSE", "0")
+
 
 @pytest.fixture(autouse=True)
 def _isolate_config_center():

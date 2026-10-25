@@ -20,6 +20,8 @@ jobs:
         run: ruff check fusion_cowork/ tests/
       - name: Ruff format check
         run: ruff format --check fusion_cowork/ tests/
+      - name: CLAIM lint (issue #188)
+        run: python scripts/check_claims.py
 
   test-sqlite:
     runs-on: ${{ matrix.os }}

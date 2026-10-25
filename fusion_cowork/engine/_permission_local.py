@@ -493,6 +493,28 @@ class PermissionManager:
                     return {"action_id": action_id, **details}
         return None
 
+    def discard_pending_by_execution(self, execution_id: str) -> List[str]:
+        # issue #187: HITL 超时 — 清掉该 run 的全部滞留本地待审批项 (不落规则), 返回被清 action_id 列表
+        removed: List[str] = []
+        with self._lock:
+            for action_id in list(self._pending_local_details.keys()):
+                if self._pending_local_details[action_id].get("execution_id") == execution_id:
+                    self._pending_local_details.pop(action_id, None)
+                    self._pending_local_approvals.pop(action_id, None)
+                    removed.append(action_id)
+        if removed:
+            logger.info(f"HITL 超时清理待审批项: exec={execution_id} removed={removed}")
+        return removed
+
+    def release_pending_once(self, action_id: str) -> bool:
+        # issue #187: 批准一次 — 只出队该待审批项, 不落任何持久规则 (对应审批卡 "Approve once")
+        with self._lock:
+            existed = self._pending_local_approvals.pop(action_id, None) is not None
+            self._pending_local_details.pop(action_id, None)
+        if existed:
+            logger.info(f"一次性批准 (不落规则): action_id={action_id}")
+        return existed
+
     def approve(self, tool_name: str, scope: str = "*") -> None:
         rule = Permission(tool_name=tool_name, allowed=True, scope=scope)
         with self._lock:

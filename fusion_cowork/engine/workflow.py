@@ -4,7 +4,7 @@
 引擎负责：
 1. 拓扑排序节点执行顺序
 2. 数据传递（节点间通过输入/输出传递）
-3. 并行执行（无依赖节点可并行）
+3. 串行执行（拓扑序逐节点执行, 主循环无并行 — CLAIM: verified by tests/test_engine.py）
 4. 错误处理与重试
 5. 执行状态追踪
 """
@@ -27,6 +27,25 @@ from .hooks import HookEvent
 from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_hitl_timeout(raw: Any) -> float:
+    # issue #187: 审批等待上限解析 — 接受纯秒数或 s/m/h 后缀, 坏值回退默认 1800s
+    val = str(raw or "").strip().lower()
+    if not val:
+        return 1800.0
+    try:
+        if val.endswith("s"):
+            return float(val[:-1])
+        if val.endswith("m"):
+            return float(val[:-1]) * 60
+        if val.endswith("h"):
+            return float(val[:-1]) * 3600
+        return float(val)
+    except ValueError:
+        logger.warning(f"FUSION_COWORK_HITL_TIMEOUT 无法解析: {raw!r}, 回退默认 1800s")
+        return 1800.0
+
 
 # issue #120: run-scoped step logs — `grep "[<run_id>]"` 重建执行时间线。
 # params 仅保留标量, 复杂值汇总, 敏感键脱敏; verdict 区分业务门控 (gated/blocked) 与失败。
@@ -104,6 +123,8 @@ class WorkflowStatus(Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     PARTIAL = "partial"  # 部分成功
+    # issue #187: 完成但有节点被权限拒绝 (超时自动拒绝/人工拒绝) — 绝不静默当成全绿
+    COMPLETED_WITH_DENIALS = "completed_with_denials"
 
 
 @dataclass
@@ -441,8 +462,7 @@ class WorkflowEngine:
 
     类似 n8n 的执行引擎，但完全本地、轻量、异步。
     支持：
-    - 顺序执行（拓扑排序）
-    - 并行执行（无依赖节点）
+    - 串行执行（拓扑排序, ready-set 逐节点执行 — CLAIM: verified by tests/test_engine.py）
     - 错误重试
     - 执行取消
     - 进度回调
@@ -462,13 +482,20 @@ class WorkflowEngine:
         self._cancel_flags: Dict[str, bool] = {}
         # W8: 按执行粒度暂停 — asyncio.Event, set=运行 / clear=暂停; 节点间检查点等待
         self._pause_events: Dict[str, asyncio.Event] = {}
-        # issue #181: HITL — 高风险节点本地待审批时暂停在节点边界, confirm 后原地续跑
-        # opt-in: 构造参数优先, 其次 FUSION_COWORK_HITL_PAUSE=1; 默认关闭保持 deny-fast
+        # issue #187: HITL 默认开启 — 高风险节点本地待审批时暂停在节点边界, confirm 后原地续跑;
+        # fail-closed 哲学不再依赖没人设置的 env。退出须显式: FUSION_COWORK_HITL_PAUSE=0 (headless)
         if hitl_pause is None:
-            hitl_pause = os.environ.get("FUSION_COWORK_HITL_PAUSE", "").strip() == "1"
+            raw = os.environ.get("FUSION_COWORK_HITL_PAUSE", "").strip().lower()
+            hitl_pause = raw not in ("0", "false", "off", "no")
         self._hitl_pause = bool(hitl_pause)
+        # issue #187: 审批等待上限 — 超时自动拒绝, 绝不静默放行
+        self._hitl_timeout = _parse_hitl_timeout(os.environ.get("FUSION_COWORK_HITL_TIMEOUT", "1800"))
+        # exec_id -> 等待截止时间 (epoch ts), 前端倒计时用
+        self._hitl_deadlines: Dict[str, float] = {}
         # exec_id -> 审批决定 (True=批准 / False=拒绝), resolve_hitl 写入
         self._hitl_decisions: Dict[str, bool] = {}
+        # issue #187: 一次性批准的 run 集合 — 唤醒后跳过权限复查 (规则未持久化)
+        self._hitl_once_grants: Set[str] = set()
         # 正挂在 HITL 等待点的 run 集合 (与 W8 手动暂停区分)
         self._hitl_waiting: Set[str] = set()
         # W8/B1: 运行改向指令队列 — 节点边界应用 (set_params/skip_remaining/insert_node)
@@ -524,7 +551,12 @@ class WorkflowEngine:
         self._trim_executions()
 
         # issue #120: run-scoped 日志头 — grep "[<run_id>]" 重建时间线
-        logger.info(f"[{exec_id}] run start: workflow={workflow.name} nodes={len(workflow.nodes)}")
+        # issue #187: 首行记录 HITL 模式 — headless 可审计, 不静默
+        hitl_mode = "pause" if self._hitl_pause else "headless"
+        logger.info(
+            f"[{exec_id}] run start: workflow={workflow.name} nodes={len(workflow.nodes)} "
+            f"hitl_mode={hitl_mode} hitl_timeout={self._hitl_timeout:g}s"
+        )
 
         # Session: auto-create
         session = None
@@ -1033,7 +1065,14 @@ class WorkflowEngine:
 
             # 最终状态
             if execution.status == WorkflowStatus.RUNNING:
-                execution.status = WorkflowStatus.SUCCESS
+                # issue #187: 有节点被权限拒绝的完成 run 单独标记 — 交付可见 "完成了但有否决"
+                if any(s.status == NodeStatus.DENIED for s in execution.steps):
+                    execution.status = WorkflowStatus.COMPLETED_WITH_DENIALS
+                    logger.info(
+                        f"[{exec_id}] run end: 终态 completed_with_denials (denied={sum(1 for s in execution.steps if s.status == NodeStatus.DENIED)})"
+                    )
+                else:
+                    execution.status = WorkflowStatus.SUCCESS
             elif execution.status == WorkflowStatus.FAILED:
                 pass  # 已设置
 
@@ -1153,14 +1192,22 @@ class WorkflowEngine:
         # issue #181: 该 run 是否正挂在 HITL 审批等待点
         return execution_id in self._hitl_waiting
 
-    def resolve_hitl(self, execution_id: str, approved: bool) -> bool:
+    def hitl_deadline(self, execution_id: str) -> Optional[float]:
+        # issue #187: 等待截止时间 (epoch ts), 前端倒计时用; 未等待返回 None
+        return self._hitl_deadlines.get(execution_id)
+
+    def resolve_hitl(self, execution_id: str, approved: bool, once: bool = False) -> bool:
         # issue #181: 审批路由回调 — 记录决定并唤醒暂停中的 run; cancel 共用同一事件
+        # issue #187: once=True 一次性批准 — 不落规则, 唤醒后跳过权限复查直接放行本节点
         evt = self._pause_events.get(execution_id)
         if evt is None:
             return False
         self._hitl_decisions[execution_id] = bool(approved)
+        if approved and once:
+            self._hitl_once_grants.add(execution_id)
+        self._hitl_deadlines.pop(execution_id, None)
         evt.set()
-        logger.info(f"HITL 审批决定: exec={execution_id} approved={approved}")
+        logger.info(f"HITL 审批决定: exec={execution_id} approved={approved} once={once}")
         return True
 
     async def _hitl_await(self, exec_id: str, node: BaseNode, check_input: Dict[str, Any]) -> bool:
@@ -1195,9 +1242,36 @@ class WorkflowEngine:
             )
         logger.info(f"[{exec_id}] HITL: 节点 '{node.name}' 暂停在边界, 等待人工审批")
         self._hitl_waiting.add(exec_id)
+        self._hitl_deadlines[exec_id] = time.time() + self._hitl_timeout
         evt.clear()
-        await evt.wait()
+        timed_out = False
+        try:
+            # issue #187: 有界等待 — 超时自动拒绝, 绝不无限悬挂也不静默放行
+            await asyncio.wait_for(evt.wait(), timeout=self._hitl_timeout)
+        except TimeoutError:
+            timed_out = True
         self._hitl_waiting.discard(exec_id)
+        self._hitl_deadlines.pop(exec_id, None)
+        if timed_out:
+            # 清掉权限队列里的滞留待审批项, 防审批队列无限膨胀
+            discard = getattr(self._permission_manager, "discard_pending_by_execution", None)
+            if callable(discard):
+                removed = discard(exec_id)
+                if removed:
+                    logger.info(f"[{exec_id}] HITL: 超时清理 {len(removed)} 条滞留待审批项")
+            logger.warning(f"[{exec_id}] HITL: 节点 '{node.name}' 审批等待超时 ({self._hitl_timeout:g}s), 自动拒绝")
+            if self._hook_manager:
+                await self._hook_manager.fire(
+                    HookEvent.NOTIFICATION,
+                    {
+                        "kind": "hitl_timeout",
+                        "execution_id": exec_id,
+                        "node_id": node.id,
+                        "node_name": node.name,
+                        "message": f"节点 '{node.name}' 审批等待超时, 已自动拒绝 (run={exec_id})",
+                    },
+                )
+            return False
         approved = self._hitl_decisions.pop(exec_id, None)
         if self._cancel_flags.get(exec_id):
             logger.info(f"[{exec_id}] HITL: 等待中被取消")
@@ -1206,6 +1280,11 @@ class WorkflowEngine:
             logger.info(f"[{exec_id}] HITL: 节点 '{node.name}' 审批拒绝")
             return False
         # 批准 → 规则已由 confirm 路由持久化, 原地重查权限 (只重跑被闸节点)
+        # issue #187: 一次性批准 — 未落规则, 复查必然拒绝, 直接放行本节点
+        if exec_id in self._hitl_once_grants:
+            self._hitl_once_grants.discard(exec_id)
+            logger.info(f"[{exec_id}] HITL: 节点 '{node.name}' 一次性批准, 放行 (不落规则)")
+            return True
         token = set_approval_context({"workflow": "", "node_id": node.id, "execution_id": exec_id})
         try:
             allowed = await self._permission_manager.check(node.name, "execute", check_input)

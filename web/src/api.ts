@@ -85,6 +85,8 @@ export interface RunStep {
 export interface RunRecord extends RunListItem {
     steps: RunStep[];
     result: { summary?: string } | null;
+    hitl_pending?: boolean;
+    hitl_deadline?: number | null;
 }
 
 // issue #150: 引用溯源 — 结构化引用 (文件路径 / 空间消息 id)
@@ -300,6 +302,7 @@ export interface GuardApproval {
     ts?: number;
     workflow?: string;
     node_id?: string;
+    execution_id?: string;
     diff_blocks?: DiffBlock[];
 }
 
@@ -672,17 +675,19 @@ export const api = {
             '/api/models'
         ),
     pendingApprovals: () => get<{ approvals: GuardApproval[] }>('/api/permissions/pending'),
-    confirmApproval: (actionId: string, approved: boolean, scope?: string, acceptedBlocks?: number[]) =>
+    confirmApproval: (actionId: string, approved: boolean, scope?: string, acceptedBlocks?: number[], once?: boolean) =>
         post<{
             action_id: string;
             approved: boolean;
             confirmed: boolean;
+            once?: boolean;
             reason?: string;
             edited_params?: Record<string, unknown>;
         }>(`/api/permissions/pending/${encodeURIComponent(actionId)}/confirm`, {
             approved,
             ...(scope ? { scope } : {}),
             ...(acceptedBlocks ? { accepted_blocks: acceptedBlocks } : {}),
+            ...(once ? { once: true } : {}),
         }),
     spaceInstructions: (spaceId: string) =>
         get<{ space_id: string; instructions: string }>(
@@ -813,6 +818,7 @@ export function statusKind(status: string): 'success' | 'running' | 'error' | 'o
         case 'cancelling':
             return 'running';
         case 'paused':
+        case 'completed_with_denials':
             return 'warning';
         case 'failed':
             return 'error';

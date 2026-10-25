@@ -333,6 +333,17 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
 
+### HITL 默认开启 + 声明治理 (v0.5.37, issues #187/#188)
+
+- **#187 — HITL 暂停等待审批改为默认开启**: `FUSION_COWORK_HITL_PAUSE` 语义翻转 — 除非显式设为 `0`/`false`/`off`/`no` (headless deny-fast, 即 v0.5.37 之前的行为), 高风险节点默认在节点边界暂停等人工审批。**无人值守部署迁移**: 设 `FUSION_COWORK_HITL_PAUSE=0` 保持 deny-fast; 其他值或缺省即暂停等待。
+- **#187 — 有界等待**: `FUSION_COWORK_HITL_TIMEOUT` (默认 `1800` 秒, 支持 `s`/`m`/`h` 后缀) 限制每次 HITL 等待。超时自动拒绝被闸节点 (绝不静默放行), 滞留待审批项从队列清理, 触发 `hitl_timeout` 通知 hook, run 走既有 DENIED 路径。
+- **#187 — `completed_with_denials` 终态**: 被拒节点带 `continue_on_error=true` 的 run 现以 `completed_with_denials` 收尾 (不再误报纯 success) — 交付可见"完成了但有否决" (web `statusKind` 映射为 warning)。
+- **#187 — 一次性批准**: `POST /api/permissions/pending/{action_id}/confirm` 接受 `"once": true` — 出队待审批项并唤醒暂停中的 run (`resolve_hitl(..., once=True)` 一次性放行, 不落权限规则)。缺省仍经 `confirm_guard` 落规则。
+- **#187 — web 审批卡**: run 详情在 `hitl_pending` 期间显示等待审批卡 — 节点名、脱敏参数、按服务端 `hitl_deadline` 的实时倒计时, 三操作: 本次允许 / 总是允许 (落规则) / 拒绝。待审批状态在服务端, 页面刷新不丢; 2s 轮询保持实时。
+- **#188 — 虚假并行声明清理**: `engine/workflow.py` 模块/类 docstring 不再声称并行执行 — 主循环为拓扑序串行 (并如实标注)。能力声明带 `CLAIM: verified by tests/<file>.py` 标签, `scripts/check_claims.py` (接入 CI lint job) 对悬空引用或 `engine/workflow.py` CLAIM 覆盖不足直接失败。
+
+测试: `tests/test_issue_187_hitl_default.py` (21 例: env 语义翻转、`_parse_hitl_timeout` 单元、超时自动拒绝+队列清理+截止时间弹出、`completed_with_denials`、非高危不受影响、一次性批准不落规则往返、discard 助手、web confirm-once + `hitl_deadline` + 刷新持久); `tests/test_issue_181_hitl_pause.py` 默认断言更新; `tests/conftest.py` 套件整体 headless。
+
 ### MCP 客户端节点 (v0.5.36, issue #185)
 
 - **一等 `mcp_client` 节点** (`nodes/ecosystem/mcp_client_node.py`): 工作流可经 Streamable HTTP 调用外部 MCP 工具服务器 — 一节点一次工具调用。节点执行完整三段式 (`initialize` 握手 → `notifications/initialized` → `tools/call`), 复用服务端下发的 `Mcp-Session-Id` 请求头, 同时解析 JSON 与 SSE 帧 (`text/event-stream`) 的 JSON-RPC 响应, 透传自定义 `headers` (鉴权), `isError` 结果如实报节点失败。补齐 cowork 作为 MCP 服务端/客户端的不对称, 移除日常 DAG 里的 `python_repl` 逃生通道。
