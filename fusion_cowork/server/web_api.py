@@ -631,9 +631,7 @@ class RunRegistry:
         if not self._engine.add_directive(run_id, directive):
             return "rejected"
         # issue #191: 全量 payload 落 record — 恢复重放需要完整指令 (仅 action 不够)
-        record.setdefault("directives", []).append(
-            {"action": action, "at": time.time(), "payload": dict(directive)}
-        )
+        record.setdefault("directives", []).append({"action": action, "at": time.time(), "payload": dict(directive)})
         self._persist(run_id)
         self._broadcast(run_id, {"event": "run_directive", "at": time.time(), "run": self._public(record)})
         logger.info(f"运行改向指令已排队: {run_id} action={action}")
@@ -966,9 +964,7 @@ def create_web_app(
     from ..engine.run_persistence import RunStateStore
 
     if run_store is None:
-        run_store = RunStateStore(
-            Path(store_root) / "run_states.db" if store_root else None
-        )
+        run_store = RunStateStore(Path(store_root) / "run_states.db" if store_root else None)
     runs = RunRegistry(engine, event_emitter=emitter, run_store=run_store)
     if scheduler is None:
         from ..engine.scheduler import TaskScheduler

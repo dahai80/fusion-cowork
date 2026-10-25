@@ -250,9 +250,7 @@ class TestCrashRecovery:
                     "nodes": [{"id": "n1", "name": LOW_NODE, "config": {}}],
                     "edges": [],
                 },
-                "steps": [
-                    {"node_id": "n1", "status": "success", "output_data": {"low": True}, "node_name": LOW_NODE}
-                ],
+                "steps": [{"node_id": "n1", "status": "success", "output_data": {"low": True}, "node_name": LOW_NODE}],
                 "directives": [],
                 "memory": False,
             },
