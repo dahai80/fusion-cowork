@@ -192,6 +192,13 @@ class NodeConfig:
     timeout: float = 0.0  # 0 = no timeout
     # issue #182: 业务失败 (NodeResult FAILED, 非异常) 默认不重试; 显式开启后参与引擎重试
     retry_on_business_failure: bool = False
+    # issue #189: 节点执行器 (simple=直接 node.execute, agent=委托 fusion-agent-studio)
+    executor: str = "simple"
+    agent: str = ""
+    tools: List[str] = field(default_factory=list)
+    model: str = ""
+    max_turns: int = 0
+    budget_tokens: int = 0
     params: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -291,6 +298,12 @@ class BaseNode(ABC):
                 "retry_delay": self.config.retry_delay,
                 "retry_on_business_failure": self.config.retry_on_business_failure,
                 "timeout": self.config.timeout,
+                "executor": self.config.executor,
+                "agent": self.config.agent,
+                "tools": self.config.tools,
+                "model": self.config.model,
+                "max_turns": self.config.max_turns,
+                "budget_tokens": self.config.budget_tokens,
                 "params": self.config.params,
             },
             "status": self.status.value,
@@ -307,6 +320,12 @@ class BaseNode(ABC):
             retry_delay=data.get("config", {}).get("retry_delay", 1.0),
             retry_on_business_failure=data.get("config", {}).get("retry_on_business_failure", False),
             timeout=data.get("config", {}).get("timeout", 0.0),
+            executor=data.get("config", {}).get("executor", "simple"),
+            agent=data.get("config", {}).get("agent", ""),
+            tools=list(data.get("config", {}).get("tools", []) or []),
+            model=data.get("config", {}).get("model", ""),
+            max_turns=int(data.get("config", {}).get("max_turns", 0) or 0),
+            budget_tokens=int(data.get("config", {}).get("budget_tokens", 0) or 0),
             params=data.get("config", {}).get("params", {}),
         )
         return cls(node_id=data.get("id", ""), config=config)

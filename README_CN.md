@@ -333,6 +333,18 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
 
+### 节点执行器与并行调度 (v0.5.40, issue #189)
+
+- **#189 — `NodeExecutor` 协议** (`fusion_cowork/engine/executors.py`): 引擎不再直连 `node.execute()`, 而是按节点解析执行器 (`executor_for_node`)。`SimpleExecutor` (默认) 原样转发, 现有工作流零行为变化; `AgentExecutor` 把任务文本交给 fusion-agent-studio 的 agent, 并回传真实多轮循环 (`turns`/`tool_calls`/`tokens`)。
+- **#189 — 逐节点执行器配置**: `NodeConfig` 新增 `executor`/`agent`/`tools`/`model`/`max_turns`/`budget_tokens` (均由 `to_dict()`/`from_dict()` 序列化), 单条 DAG 可混合确定性节点与 agent 节点。未知执行器名记 WARNING 后回退 `simple`。
+- **#189 — agent 通道**: UDS `subagent.run`/`subagent.transcript` (`/tmp/fusion-studio.sock`, `FUSION_AGENT_STUDIO_SOCKET`) 支持全部逐节点覆盖; HTTP 通道 (`FUSION_AGENT_STUDIO_URL`, 默认 `:11442`) 不支持, 因此显式记降级 WARNING 而非假装生效。daemon 缺失 → 节点可见失败, 绝不静默降级为普通 LLM 调用。
+- **#189 — ready-set 波次调度**: 前驱已完成的节点同波执行, 受并发度约束。解析顺序: `execute(concurrency=N)` > `FUSION_COWORK_MAX_CONCURRENCY` > `1`。并发 `1` 与历史串行拓扑循环完全等价。`start.sh` 导出 `FUSION_COWORK_MAX_CONCURRENCY=4`, 服务进程默认并行, 库默认仍串行。
+- **#189 — 并发下的确定性**: 步骤统一按拓扑序 (而非完成序) 落盘后再通知进度, REST/SSE/步骤日志在串行与并行下完全一致。改向指令 (`set_params`/`insert_node`/`skip_remaining`) 在波次边界针对首个未执行节点生效; HITL 审批经 `_RunState.hitl_lock` 按 run 串行。
+- **#189 — 校验策略**: 无连线节点不再是校验错误 — 记 `工作流含无连线节点, 将作为独立分支执行` 后作为独立分支运行, 这正是"N 个独立节点并行"得以表达的前提。
+- **#189 — 可观测性**: `WorkflowStep.executor`、`WorkflowExecution.concurrency`/`executors`, run start/end 日志带 `concurrency=... executors={'simple': 2, 'agent': 1}`, 最终 summary 同步给出执行器混比。
+
+测试: `tests/test_issue_189_node_executor.py` (33 例 + 1 例 live-AS 跳过: 波次并发墙钟/重叠/峰值、env 解析、配置往返、UDS 成功/partial/失败/transcript 容错、HTTP 完成/失败/超时/覆盖降级、混合 DAG 端到端、agent 失败语义、跨 agent 节点断点续跑)。文档: `docs/node-executors.md`。
+
 ### 运行状态持久恢复 (v0.5.38, issue #191)
 
 - **#191 — `RunStateStore`** (`fusion_cowork/engine/run_persistence.py`): 运行控制状态落 SQLite `<store_root>/run_states.db` (默认 `~/.fusion-cowork/web/run_states.db`)。每个**活跃** run (`running`/`paused`) 一行; 终态行 run 结束即删除, 加载时发现的终态残留行以 WARNING 清理。schema 版本走 `PRAGMA user_version` — 打开更新版本 fusion-cowork 写的库直接 `RuntimeError` 启动失败, 绝不静默降级读取。

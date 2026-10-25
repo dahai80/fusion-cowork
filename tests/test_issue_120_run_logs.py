@@ -122,7 +122,11 @@ class TestEngineLogs:
         await eng.execute(wf, execution_id=run_id)
         text = [r.getMessage() for r in caplog.records]
         # issue #187: run start 行追加 hitl_mode/hitl_timeout 字段
-        assert f"[{run_id}] run start: workflow=log-wf nodes=1 hitl_mode=headless hitl_timeout=1800s" in text
+        # issue #189: run start 行追加 concurrency/executors 字段
+        assert (
+            f"[{run_id}] run start: workflow=log-wf nodes=1 hitl_mode=headless hitl_timeout=1800s "
+            "concurrency=1 executors={'simple': 1}"
+        ) in text
         assert f"[{run_id}] step start: node=echo_120 node_id=" in "".join(text)
         assert any("verdict=success" in m and f"[{run_id}] step end" in m for m in text)
         assert f"[{run_id}] run end:    outcome=success" in "".join(text)
