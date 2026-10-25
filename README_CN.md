@@ -333,6 +333,14 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 - **#126 (P3) — 模型目录只回 chat**: `/api/models` 默认只回 chat 可用模型 (`engine_type` 不在非 chat 集合); `?all=1` 返回原始列表; `total` 携带原始计数。`_is_chat_model` 与 `NLWorkflowGenerator._pick_chat_model` 共用。
 - **#127 (P3) — vendor 同步 + web 测试**: vendor `@fusion/web-sdk`/`web-ui` 与上游字节一致 (含 #19/#20 修复); `web/tests/sdk.test.ts` 新增首个 `bun test` 套件, 覆盖 #96 runtime-key 接缝 + #20 content-type 契约 (`bun run test`)。
 
+### MCP 客户端节点 (v0.5.36, issue #185)
+
+- **一等 `mcp_client` 节点** (`nodes/ecosystem/mcp_client_node.py`): 工作流可经 Streamable HTTP 调用外部 MCP 工具服务器 — 一节点一次工具调用。节点执行完整三段式 (`initialize` 握手 → `notifications/initialized` → `tools/call`), 复用服务端下发的 `Mcp-Session-Id` 请求头, 同时解析 JSON 与 SSE 帧 (`text/event-stream`) 的 JSON-RPC 响应, 透传自定义 `headers` (鉴权), `isError` 结果如实报节点失败。补齐 cowork 作为 MCP 服务端/客户端的不对称, 移除日常 DAG 里的 `python_repl` 逃生通道。
+- **URL 粒度权限**: `mcp_client` 为 HIGH_RISK 节点 (远程工具执行面), `Permission.matches` 新增 `url:` 前缀 scope — `approve("mcp_client", scope="url:http://127.0.0.1:11483/**")` 只授权单个服务, 不放开任意目标, 也不弱化整体权限模型。中文别名: `MCP工具` / `MCP调用` / `调用MCP`。
+- 经 `import_all_nodes()` 注册 (现 13 个节点模块); 兄弟服务调用不再绕 `fetch_url` 的环回 SSRF 拦截 — 本节点即为此设计的正路。
+
+测试: `tests/test_issue_185_mcp_client_node.py` (11 例: 完整协议序列与会话头断言、JSON+SSE 响应解析、isError 失败路径、连接失败可见、缺参/非法参数快速失败、自定义头透传、注册、HIGH_RISK 列表、url-scope 权限匹配单元+管理器级、未授权拒绝)。
+
 ### 引擎可靠性批次 (v0.5.35, issues #180/#181/#182)
 
 - **#180 — python_repl 多语句修复**: 子进程包装脚本读了两次 stdin — `eval(sys.stdin.read())` 先耗尽管道, `SyntaxError` 分支再读得到空串, 多语句代码静默不执行还报 success。现改为 stdin 只读一次存 `_src`, 先 eval 编译、`SyntaxError` 再 exec 编译; 用户语法/运行时错误如实报节点失败, 不再静默空成功。

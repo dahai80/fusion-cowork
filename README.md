@@ -400,6 +400,14 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
 
+### MCP Client Node (v0.5.36, issue #185)
+
+- **First-class `mcp_client` node** (`nodes/ecosystem/mcp_client_node.py`): workflows can call external MCP tool servers over the Streamable HTTP transport — one node = one tool call. The node performs the full three-step sequence (`initialize` handshake → `notifications/initialized` → `tools/call`), reuses the server-issued `Mcp-Session-Id` header on subsequent requests, parses both JSON and SSE-framed (`text/event-stream`) JSON-RPC replies, forwards custom `headers` (e.g. auth), and surfaces `isError` results as visible node failures. This closes the cowork-as-MCP-server / cowork-as-MCP-client gap and removes the `python_repl` escape hatch from routine DAGs.
+- **URL-scoped permissions**: `mcp_client` is a HIGH_RISK node (remote tool-execution surface) and `Permission.matches` gains a `url:` scope prefix — `approve("mcp_client", scope="url:http://127.0.0.1:11483/**")` authorizes exactly one service without opening arbitrary targets or blanket code execution. Chinese aliases: `MCP工具` / `MCP调用` / `调用MCP`.
+- Registered via `import_all_nodes()` (13 node modules now); `fetch_url`'s loopback SSRF guard no longer matters for sibling-service calls — this node is the intended path for them.
+
+Tests: `tests/test_issue_185_mcp_client_node.py` (11 cases: full protocol sequence with session-header assertions, JSON + SSE reply parsing, `isError` failure path, connection failure visibility, missing/invalid params fail-fast, custom header forwarding, registration, HIGH_RISK listing, url-scope permission matching unit + manager level, unapproved deny).
+
 ### Engine Reliability Batch (v0.5.35, issues #180/#181/#182)
 
 - **#180 — python_repl multi-statement fix**: the subprocess wrapper consumed stdin twice — `eval(sys.stdin.read())` drained the pipe, so the `SyntaxError` fallback re-read an empty stream and multi-statement code silently did nothing while reporting success. The wrapper now reads stdin once into `_src`, eval-compiles first and exec-compiles on `SyntaxError`; user syntax/runtime errors are reported as node failures instead of a silent empty success.

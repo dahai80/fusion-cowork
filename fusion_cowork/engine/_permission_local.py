@@ -154,6 +154,9 @@ HIGH_RISK_NODES = frozenset(
         # 外部运行时触发 (issue #133): studio_run 提交 agent-studio graph/agent
         # 执行, 触发远端多步 agent 行为, 同 fetch_url 须显式放行
         "studio_run",
+        # issue #185: mcp_client 调用外部 MCP 服务器的任意工具 (远程执行面),
+        # 须显式放行; 支持 url: 前缀 scope 精确授权单个服务
+        "mcp_client",
     }
 )
 
@@ -195,6 +198,14 @@ class Permission:
             prefix = self.scope[8:].replace("*", "")
             cmd = params.get("command", "")
             if isinstance(cmd, str) and cmd.startswith(prefix):
+                return True
+            return False
+        if self.scope.startswith("url:"):
+            # issue #185: url: 前缀 scope — 按 URL 前缀授权 (mcp_client 等远程调用节点),
+            # 授权单个服务不放开任意目标; ** 通配尾段
+            prefix = self.scope[4:].replace("**", "").rstrip("/")
+            target = params.get("url", "")
+            if isinstance(target, str) and target.rstrip("/").startswith(prefix):
                 return True
             return False
         return True

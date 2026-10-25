@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.5.35"
+__version__ = "0.5.36"
 __app_name__ = "Fusion-Cowork"
 
 # ── 节点工具名称映射表（吸纳自 Squish tool_name_map.py） ──
@@ -124,6 +124,10 @@ NODE_NAME_ALIASES: dict[str, str] = {
     # Studio 互通 (fusion-agent-studio, issue #133)
     "运行Studio": "studio_run",
     "Studio运行": "studio_run",
+    # MCP 客户端 (外部 MCP 工具服务器, issue #185)
+    "MCP工具": "mcp_client",
+    "MCP调用": "mcp_client",
+    "调用MCP": "mcp_client",
 }
 
 # ── Lazy Import 注册表（吸纳自 Squish 的 __getattr__ 机制） ──
