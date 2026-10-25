@@ -22,7 +22,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set
 
-from ._permission_local import reset_approval_context, set_approval_context
+from .permission_manager import reset_approval_context, set_approval_context
 from .hooks import HookEvent
 from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus
 

@@ -1,68 +1,39 @@
 """#111: fusion-harness funnels/compactor adoption.
 
-The two kernel modules are consumed behind adapters:
+The kernel modules are consumed behind adapters (hard dependency, #190/#2 —
+the in-tree fallback copies are deleted; an import failure is loud):
 - Compactor drives context compaction for every space LLM call (LLMFunnel).
 - LifecycleBus receives mirrored workflow events and space LLM lifecycle.
-CI installs `.[test]` only, so the in-tree verbatim copies are exercised there.
 """
 
-import ast
-import importlib
+import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import patch
-
-import pytest
 
 from fusion_cowork.engine.events import EventEmitter, WorkflowEvent
 
 ENGINE = Path(__file__).resolve().parent.parent / "fusion_cowork" / "engine"
 
-try:
-    import fusion_harness  # noqa: F401
 
-    HAVE_KERNEL = True
-except ImportError:
-    HAVE_KERNEL = False
-
-
-def _block_harness():
-    return {
-        "fusion_harness": None,
-        "fusion_harness.compactor": None,
-        "fusion_harness.funnels": None,
-        "fusion_harness.permissions": None,
-    }
-
-
-def test_kernel_source_present():
-    import fusion_cowork.engine.compactor as compactor
-    import fusion_cowork.engine.funnels as funnels
-
-    assert compactor.KERNEL_SOURCE in ("fusion-harness", "local")
-    assert funnels.KERNEL_SOURCE in ("fusion-harness", "local")
+def test_hard_dependency_import_error_is_loud():
+    # #190/#2: no fallback — a missing fusion-harness install must fail
+    # loudly instead of silently swapping in a local copy.
+    code = (
+        "import sys\n"
+        "for m in ('fusion_harness', 'fusion_harness.funnels', "
+        "'fusion_harness.compactor', 'fusion_harness.permissions'):\n"
+        "    sys.modules[m] = None\n"
+        "try:\n"
+        "    import fusion_cowork.engine.funnels\n"
+        "except ImportError:\n"
+        "    print('LOUD_IMPORT_ERROR')\n"
+        "    sys.exit(0)\n"
+        "print('UNEXPECTED_SUCCESS')\n"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert "LOUD_IMPORT_ERROR" in out.stdout, out.stdout + out.stderr
 
 
-def test_fallback_import_works():
-    with patch.dict(sys.modules, _block_harness()):
-        sys.modules.pop("fusion_cowork.engine.compactor", None)
-        sys.modules.pop("fusion_cowork.engine.funnels", None)
-        sys.modules.pop("fusion_cowork.engine._funnels_local", None)
-        compactor = importlib.import_module("fusion_cowork.engine.compactor")
-        funnels = importlib.import_module("fusion_cowork.engine.funnels")
-        assert compactor.KERNEL_SOURCE == "local"
-        assert funnels.KERNEL_SOURCE == "local"
-        assert hasattr(compactor, "Compactor")
-        assert hasattr(compactor, "CompactionConfig")
-        assert hasattr(funnels, "LifecycleBus")
-        assert hasattr(funnels, "LLMFunnel")
-        assert hasattr(funnels, "ToolFunnel")
-    sys.modules.pop("fusion_cowork.engine.compactor", None)
-    sys.modules.pop("fusion_cowork.engine.funnels", None)
-    sys.modules.pop("fusion_cowork.engine._funnels_local", None)
-
-
-@pytest.mark.skipif(not HAVE_KERNEL, reason="fusion-harness not installed")
 def test_public_surface_matches_kernel():
     import fusion_cowork.engine.compactor as compactor
     import fusion_cowork.engine.funnels as funnels
@@ -76,10 +47,9 @@ def test_public_surface_matches_kernel():
             assert getattr(mod, name) is not None
 
 
-def test_local_copy_parseable():
-    for name in ["_compactor_local.py", "_funnels_local.py", "_kernel_permissions_local.py"]:
-        tree = ast.parse((ENGINE / name).read_text())
-        assert tree.body
+def test_no_fallback_copies_remain():
+    leftovers = sorted(p.name for p in ENGINE.glob("_*_local.py"))
+    assert leftovers == [], f"kernel fallback copies still present: {leftovers}"
 
 
 def test_event_emitter_mirrors_to_lifecycle_bus():

@@ -54,9 +54,9 @@ def pm_no_guard(monkeypatch):
 
     monkeypatch.setattr(guard_mod, "guard_enabled", lambda: False)
     # 探针节点不在静态 HIGH_RISK_NODES 里 — 动态并入, 避免与真实 shell_exec 注册冲突
-    from fusion_cowork.engine import _permission_local
+    from fusion_cowork.engine import permission_manager
 
-    monkeypatch.setattr(_permission_local, "HIGH_RISK_NODES", _permission_local.HIGH_RISK_NODES | {HITL_NODE})
+    monkeypatch.setattr(permission_manager, "HIGH_RISK_NODES", permission_manager.HIGH_RISK_NODES | {HITL_NODE})
     return PermissionManager(level=PermissionLevel.CONFIRM)
 
 

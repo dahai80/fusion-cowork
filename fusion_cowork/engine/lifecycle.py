@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import os
 
-from .funnels import KERNEL_SOURCE, LifecycleBus
+from .funnels import LifecycleBus
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ def get_lifecycle_bus() -> LifecycleBus:
     if _bus is None:
         jsonl_dir = os.environ.get("FUSION_COWORK_LIFECYCLE_DIR") or None
         _bus = LifecycleBus(jsonl_dir=jsonl_dir)
-        logger.info(f"LifecycleBus initialized kernel={KERNEL_SOURCE} jsonl_dir={jsonl_dir or '-'}")
+        logger.info(f"LifecycleBus initialized jsonl_dir={jsonl_dir or '-'}")
     return _bus
 
 

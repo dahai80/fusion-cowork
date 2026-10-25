@@ -17,7 +17,7 @@ STATIC_KEY = "test-key-138"
 
 
 def test_approval_rules_survive_restart(tmp_path):
-    from fusion_cowork.engine._permission_local import PermissionManager
+    from fusion_cowork.engine.permission_manager import PermissionManager
 
     target = str(tmp_path / "perms.json")
     pm1 = PermissionManager()
@@ -38,7 +38,7 @@ def client(monkeypatch, tmp_path):
 
     monkeypatch.setenv("FUSION_COWORK_WEB_API_KEY", STATIC_KEY)
     web_api._WEB_DIR = tmp_path / "web"
-    import fusion_cowork.engine._permission_local as _perm
+    import fusion_cowork.engine.permission_manager as _perm
 
     monkeypatch.setattr(_perm, "_PERMISSIONS_FILE", str(tmp_path / "perms.json"))
     app = web_api.create_web_app(

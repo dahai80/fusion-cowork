@@ -14,7 +14,7 @@ import pytest
 
 import fusion_cowork.nodes.ecosystem  # noqa: F401  触发 @register_node
 from fusion_cowork import NODE_NAME_ALIASES
-from fusion_cowork.engine._permission_local import HIGH_RISK_NODES
+from fusion_cowork.engine.permission_manager import HIGH_RISK_NODES
 from fusion_cowork.engine.node import NodeCategory, NodeConfig, NodeRegistry, NodeStatus
 from fusion_cowork.nodes.ecosystem.studio_node import StudioRunNode
 

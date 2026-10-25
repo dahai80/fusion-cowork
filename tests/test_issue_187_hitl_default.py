@@ -52,9 +52,9 @@ def pm_no_guard(monkeypatch):
     monkeypatch.delenv("FUSION_GUARD_ENABLED", raising=False)
     monkeypatch.delenv("FUSION_COWORK_HITL_PAUSE", raising=False)
     monkeypatch.delenv("FUSION_COWORK_HITL_TIMEOUT", raising=False)
-    from fusion_cowork.engine import _permission_local
+    from fusion_cowork.engine import permission_manager
 
-    monkeypatch.setattr(_permission_local, "HIGH_RISK_NODES", _permission_local.HIGH_RISK_NODES | {HITL_NODE})
+    monkeypatch.setattr(permission_manager, "HIGH_RISK_NODES", permission_manager.HIGH_RISK_NODES | {HITL_NODE})
     return PermissionManager(level=PermissionLevel.CONFIRM)
 
 

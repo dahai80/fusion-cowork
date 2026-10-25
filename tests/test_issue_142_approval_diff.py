@@ -50,7 +50,7 @@ def test_unified_diff_text_headers():
 
 
 def test_local_pending_details_diff_blocks():
-    from fusion_cowork.engine._permission_local import PermissionManager
+    from fusion_cowork.engine.permission_manager import PermissionManager
 
     pm = PermissionManager()
     ok = asyncio.run(
@@ -119,7 +119,7 @@ def client(monkeypatch, tmp_path):
 
     monkeypatch.setenv("FUSION_COWORK_WEB_API_KEY", STATIC_KEY)
     web_api._WEB_DIR = tmp_path / "web"
-    import fusion_cowork.engine._permission_local as _perm
+    import fusion_cowork.engine.permission_manager as _perm
 
     monkeypatch.setattr(_perm, "_PERMISSIONS_FILE", str(tmp_path / "perms.json"))
     app = web_api.create_web_app(
