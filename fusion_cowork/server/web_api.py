@@ -171,6 +171,17 @@ def _narrow_pending_edit(permission_manager: Any, action_id: str, accepted_raw: 
     return edited
 
 
+def _team_poll_interval() -> float:
+    # issue #190: 无推送能力对端的兜底轮询间隔 (秒)
+    raw = os.environ.get("FUSION_INBOX_POLL_INTERVAL", "5")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(f"FUSION_INBOX_POLL_INTERVAL 非法: {raw!r}, 回落 5s")
+        return 5.0
+    return value if value > 0 else 5.0
+
+
 def _iso_to_epoch(value: Any) -> float:
     """ISO 时间字符串转 epoch; 非法/空值返回 0。"""
     if not isinstance(value, str) or not value:
@@ -428,6 +439,7 @@ class RunRegistry:
         workflow_id: str = "",
         workflow_name: str = "",
         memory: bool = True,
+        message_input: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         from ..engine import Workflow
 
@@ -453,7 +465,7 @@ class RunRegistry:
         }
         self._runs[run_id] = record
         self._persist(run_id)
-        task = asyncio.create_task(self._execute(run_id, wf))
+        task = asyncio.create_task(self._execute(run_id, wf, message_input=message_input))
         self._tasks[run_id] = task
         logger.info(f"工作流运行已启动: {run_id} ({record['workflow_name']}) memory={record['memory']}")
         return {"run_id": run_id, "status": "running"}
@@ -464,6 +476,7 @@ class RunRegistry:
         wf: Any,
         start_paused: bool = False,
         resume_steps: Optional[List[Dict[str, Any]]] = None,
+        message_input: Optional[Dict[str, Any]] = None,
     ) -> None:
         record = self._runs[run_id]
         try:
@@ -475,13 +488,19 @@ class RunRegistry:
 
                 bridge = MemoryBridge.from_env()
             initial_input: Optional[Dict[str, Any]] = None
+            # issue #190: 邮箱派发的消息体作为首节点输入 (记忆召回据此让位)
+            if message_input:
+                initial_input = dict(message_input)
+                logger.info(f"[{run_id}] 消息输入已注入首节点 ({len(initial_input)} 字段)")
             # issue #191: 恢复续跑不再重复召回 — 首轮已注入过, 再注入会覆盖已完成首节点的快照输出
             if bridge is not None and not resume_steps:
                 query = f"{wf.name} {getattr(wf, 'description', '') or ''}".strip()
                 ctx = await bridge.retrieve_context(query)
                 if ctx:
                     record["memory_context"] = ctx
-                    initial_input = {"memory_context": ctx}
+                    base = dict(initial_input or {})
+                    base["memory_context"] = ctx
+                    initial_input = base
                     logger.info(f"[{run_id}] 记忆上下文已注入首节点输入 ({len(ctx)} chars)")
             # issue #191: 仅在恢复场景传新参 — 注入的旧版/测试引擎无这两个 kwarg 也不破
             engine_kwargs: Dict[str, Any] = {}
@@ -918,6 +937,10 @@ def create_web_app(
     rag_base_url: Optional[str] = None,
     rag_wired_path: Optional[Path] = None,
     run_store: Any = None,
+    team_db: Optional[str] = None,
+    team_roster: Any = None,
+    team_mailbox: Any = None,
+    runner_pool: Any = None,
 ):
     try:
         from fastapi import FastAPI, HTTPException, Request, WebSocket
@@ -997,6 +1020,63 @@ def create_web_app(
     # W22: 跨设备同步引擎接缝 — 注入后 /api/deliver 可投递; 默认 None (503 诚实不可用)
     app.state.cross_sync = cross_sync
 
+    # issue #190: 团队消息消费栈 — 花名册 + durable 信箱 + 常驻消费池
+    from ..orchestrator.runner_pool import RunnerPool
+    from ..orchestrator.team_mailbox import CoworkRoster, TeamMailbox
+
+    if team_roster is None:
+        team_roster = CoworkRoster(team_db)
+    if team_mailbox is None:
+        team_mailbox = TeamMailbox(team_db)
+
+    async def _team_dispatch(agent: Dict[str, Any], message: Dict[str, Any]) -> str:
+        workflow_id = str(agent.get("workflow_id") or "")
+        record = store.get(workflow_id)
+        if not record:
+            raise RuntimeError(f"工作流定义不存在: {workflow_id}")
+        body = message.get("body") or ""
+        try:
+            payload = json.loads(body)
+        except (TypeError, ValueError):
+            payload = {"input": body}
+        if not isinstance(payload, dict):
+            payload = {"input": body}
+        payload.setdefault("input", body)
+        payload["sender"] = message.get("sender", "")
+        payload["message_id"] = message.get("message_id", "")
+        payload["team"] = message.get("team", "")
+        started = runs.start(
+            record.get("workflow") or {},
+            workflow_id=workflow_id,
+            workflow_name=record.get("name", workflow_id),
+            memory=False,
+            message_input=payload,
+        )
+        logger.info(f"团队派发: agent={agent.get('agent_id')} workflow={workflow_id} run={started['run_id']}")
+        return started["run_id"]
+
+    async def _team_get_run(run_id: str) -> Optional[Dict[str, Any]]:
+        record = runs.get(run_id)
+        if not record:
+            return None
+        return {
+            "status": record.get("status"),
+            "last_result": (record.get("result") or {}).get("summary"),
+            "last_error": record.get("error"),
+        }
+
+    if runner_pool is None:
+        runner_pool = RunnerPool(
+            roster=team_roster,
+            mailbox=team_mailbox,
+            dispatch=_team_dispatch,
+            get_run=_team_get_run,
+            poll_interval=_team_poll_interval(),
+        )
+    app.state.team_roster = team_roster
+    app.state.team_mailbox = team_mailbox
+    app.state.runner_pool = runner_pool
+
     # issue #154: webhook push 出口 (未配 FUSION_COWORK_PUSH_WEBHOOK_URL = no-op)
     from .push import PushEgress
 
@@ -1013,6 +1093,25 @@ def create_web_app(
         recovered = await runs.recover_persisted()
         if recovered:
             logger.warning(f"启动恢复: 从持久层重建 {recovered} 个活跃 run (均以 paused 起跑, 等待人工 resume/审批)")
+
+    @app.on_event("startup")
+    async def _start_team_pool():
+        # issue #190: 花名册有启用 agent 即拉起消费池; FUSION_COWORK_RUNNER_POOL=1 强制常驻
+        try:
+            enabled = len(app.state.team_roster.list(enabled_only=True))
+        except Exception as e:
+            logger.error(f"团队消费池启动失败 (花名册不可读): {e}")
+            return
+        forced = os.environ.get("FUSION_COWORK_RUNNER_POOL", "").strip().lower() in ("1", "true", "yes", "on")
+        if enabled or forced:
+            await app.state.runner_pool.start()
+            logger.info(f"团队消费池已启动: {enabled} 个 consumer, 轮询 {app.state.runner_pool.poll_interval}s")
+        else:
+            logger.info("团队消费池未启动: 花名册无启用 agent (fusion-cowork team register 登记)")
+
+    @app.on_event("shutdown")
+    async def _stop_team_pool():
+        await app.state.runner_pool.stop()
 
     @app.middleware("http")
     async def _auth_middleware(request: Request, call_next):
@@ -2716,6 +2815,76 @@ def create_web_app(
         if not s:
             raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"会话不存在: {session_id}"})
         return _serialize_session(s)
+
+    # ── issue #190: 团队消息面 — 花名册 / 信箱 / 消费池生命周期 ──
+    @app.get("/api/team/status")
+    async def team_status():
+        return app.state.runner_pool.status()
+
+    @app.get("/api/team/roster")
+    async def team_roster_list():
+        items = app.state.team_roster.list()
+        return {"agents": items, "count": len(items), "db": app.state.team_mailbox.path}
+
+    @app.post("/api/team/roster", status_code=201)
+    async def team_roster_register(request: Request):
+        body = await request.json()
+        try:
+            row = app.state.team_roster.register(
+                agent_id=str(body.get("agent_id") or ""),
+                workflow_id=str(body.get("workflow_id") or ""),
+                name=str(body.get("name") or ""),
+                team=str(body.get("team") or ""),
+                enabled=bool(body.get("enabled", True)),
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail={"code": "invalid_roster", "message": str(e)}) from e
+        app.state.runner_pool.wake()
+        return row
+
+    @app.delete("/api/team/roster/{agent_id}")
+    async def team_roster_remove(agent_id: str):
+        if not app.state.team_roster.remove(agent_id):
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"agent 未登记: {agent_id}"})
+        return {"removed": agent_id}
+
+    @app.post("/api/team/send", status_code=201)
+    async def team_send(request: Request):
+        body = await request.json()
+        try:
+            message = app.state.team_mailbox.send(
+                sender=str(body.get("sender") or ""),
+                recipient=str(body.get("recipient") or ""),
+                body=str(body.get("body") or ""),
+                kind=str(body.get("kind") or "message"),
+                team=str(body.get("team") or ""),
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail={"code": "invalid_message", "message": str(e)}) from e
+        return message
+
+    @app.get("/api/team/inbox")
+    async def team_inbox(agent_id: str, unread: int = 1, limit: int = 100):
+        if not agent_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_agent", "message": "agent_id 必填"})
+        messages = app.state.team_mailbox.inbox(agent_id, unread_only=bool(unread), limit=limit)
+        return {"agent_id": agent_id, "messages": messages, "count": len(messages)}
+
+    @app.post("/api/team/notify")
+    async def team_notify():
+        # 推送路径: 对端 daemon 写信箱后调用本接口, 消费池立即醒来 (而非等轮询)
+        app.state.runner_pool.wake()
+        return {"notified": True, "running": app.state.runner_pool.running}
+
+    @app.post("/api/team/pool/start")
+    async def team_pool_start():
+        await app.state.runner_pool.start()
+        return {"running": app.state.runner_pool.running}
+
+    @app.post("/api/team/pool/stop")
+    async def team_pool_stop():
+        await app.state.runner_pool.stop()
+        return {"running": app.state.runner_pool.running}
 
     # ── P2 W12/W13 空间协作面 — space 域子应用挂载 (含 SSE / WS / artifacts) ──
     app.mount("/api/space", space_api)

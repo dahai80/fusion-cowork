@@ -749,6 +749,43 @@ FUSION_MEMORY_E2E=1 FUSION_MEMORY_API_KEY=<key> pytest tests/test_memory_e2e.py 
 
 ---
 
+## 📬 Team Messaging — Durable Mailbox + Resident Consumers (v0.5.39, issue #190)
+
+Cross-process, cross-project agent messaging without any external RPC pull. Cowork runs a **daemon-resident consumer pool**: every agent registered in the roster consumes its own inbox, dispatches the message to a workflow, and writes the result back to the sender as a reply.
+
+- **Durable mailbox** — messages live in SQLite (`~/.fusion-cowork/team.db`), not in an in-memory queue. Unacked messages survive daemon restarts; `ack` only happens **after** dispatch returns a run id, so a crash redelivers (at-least-once).
+- **Schema-compatible with agent-studio** — the `mailbox` table is byte-identical to `agent_runtime/durable_roster.py`. Point both daemons at the same file (`FUSION_TEAM_DB` / `FUSION_COWORK_TEAM_DB`) and cowork agents talk to agent-studio agents directly. Cowork keeps its own roster in a separate `cowork_roster` table so the two daemons never steal each other's rows.
+- **Push + poll** — local sends wake the pool instantly (`TeamMailbox.on_send`); remote daemons can `POST /api/team/notify`; a configurable poll (`FUSION_INBOX_POLL_INTERVAL`, default 5s) covers peers with no notify hook.
+- **No manual pull** — no `desk.*` RPC call is needed to move a conversation forward. The pool starts with `web serve` whenever the roster has an enabled agent (`FUSION_COWORK_RUNNER_POOL=1` forces it).
+- **Observable** — `GET /api/team/status` reports live consumers, per-agent backlog, oldest unacked age, consumed/reply/error counters; the same values export to OTLP as `fusion_team_mailbox_depth`, `fusion_team_oldest_unacked_age_seconds`, `fusion_team_mailbox_consumed_total`, `fusion_team_mailbox_replies_total`.
+
+```bash
+# register a resident consumer bound to a workflow
+fusion-cowork team register reviewer --workflow wf-review --team qa
+
+# send a message (local; wakes the pool immediately)
+fusion-cowork team send --from alice --to reviewer "review PR 42"
+
+# inspect
+fusion-cowork team roster
+fusion-cowork team inbox reviewer
+fusion-cowork team status        # requires the web daemon on :11461
+
+# pool lifecycle (daemon-side)
+fusion-cowork team start
+fusion-cowork team stop
+```
+
+Shared mailbox with fusion-agent-studio:
+
+```bash
+export FUSION_TEAM_DB=~/.fusion-team/team.db   # both daemons read the same file
+```
+
+Full walkthrough, wire contract and failure semantics: `docs/team-messaging.md`. Tests: `tests/test_issue_190_mailbox_consumers.py`.
+
+---
+
 ## 🔧 Node Reference
 
 ### macOS System Nodes

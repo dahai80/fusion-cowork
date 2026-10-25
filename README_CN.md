@@ -566,6 +566,43 @@ FUSION_MEMORY_E2E=1 FUSION_MEMORY_API_KEY=<key> pytest tests/test_memory_e2e.py 
 
 ---
 
+## 📬 团队消息 — durable 信箱 + 常驻消费池 (v0.5.39, issue #190)
+
+跨进程、跨项目的 agent 消息面，不需要任何外部 RPC 拉动。cowork 常驻一个**消费池**：花名册里登记的每个 agent 自己消费信箱，把消息派发给工作流，跑完把结果作为回信投回发送方。
+
+- **Durable 信箱** — 消息落 SQLite (`~/.fusion-cowork/team.db`)，不是内存队列。未 ack 消息重启不丢；派发拿到 run id **之后**才 ack，崩溃后重投（at-least-once）。
+- **与 agent-studio 同构** — `mailbox` 表与 `agent_runtime/durable_roster.py` 完全一致。两个 daemon 指向同一个文件（`FUSION_TEAM_DB` / `FUSION_COWORK_TEAM_DB`）即可让 cowork agent 与 agent-studio agent 直接对话。cowork 自己的花名册落在独立 `cowork_roster` 表，两个 daemon 不会互抢消息。
+- **推送 + 轮询** — 本地发送经 `TeamMailbox.on_send` 立即唤醒消费池；远端 daemon 可 `POST /api/team/notify`；`FUSION_INBOX_POLL_INTERVAL`（默认 5s）兜底没有通知能力的对端。
+- **无需人工拉动** — 推进对话不需要任何 `desk.*` RPC 调用。花名册有启用 agent 时 `web serve` 自动拉起消费池（`FUSION_COWORK_RUNNER_POOL=1` 强制常驻）。
+- **可观测** — `GET /api/team/status` 返回活 consumer 数、每 agent 积压、最老未 ack 年龄、已消费/回信/错误计数；同一组指标导出 OTLP：`fusion_team_mailbox_depth`、`fusion_team_oldest_unacked_age_seconds`、`fusion_team_mailbox_consumed_total`、`fusion_team_mailbox_replies_total`。
+
+```bash
+# 登记常驻 consumer，绑定工作流
+fusion-cowork team register reviewer --workflow wf-review --team qa
+
+# 发消息（本地发送即刻唤醒消费池）
+fusion-cowork team send --from alice --to reviewer "review PR 42"
+
+# 查看
+fusion-cowork team roster
+fusion-cowork team inbox reviewer
+fusion-cowork team status        # 需要 web daemon 在 :11461
+
+# 消费池生命周期
+fusion-cowork team start
+fusion-cowork team stop
+```
+
+与 fusion-agent-studio 共享信箱：
+
+```bash
+export FUSION_TEAM_DB=~/.fusion-team/team.db   # 两个 daemon 读同一文件
+```
+
+完整链路、线上契约与失败语义见 `docs/team-messaging.md`；测试 `tests/test_issue_190_mailbox_consumers.py`。
+
+---
+
 ## 🔧 节点参考
 
 ### macOS 系统节点
