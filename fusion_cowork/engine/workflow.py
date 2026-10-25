@@ -4,7 +4,8 @@
 引擎负责：
 1. 拓扑排序节点执行顺序
 2. 数据传递（节点间通过输入/输出传递）
-3. 串行执行（拓扑序逐节点执行, 主循环无并行 — CLAIM: verified by tests/test_engine.py）
+3. ready-set 波次执行（前驱完成的节点同波并行, concurrency=1 退化为串行
+   — CLAIM: verified by tests/test_issue_189_node_executor.py）
 4. 错误处理与重试
 5. 执行状态追踪
 """
@@ -20,8 +21,9 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
+from .executors import NodeExecutionContext, executor_for_node, executor_names
 from .hooks import HookEvent
 from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus
 from .permission_manager import reset_approval_context, set_approval_context
@@ -147,6 +149,8 @@ class WorkflowStep:
     # issue #182: 重试可观测 — 最终尝试序号 (1-based) + 每次尝试的错误 (成功尝试不记)
     attempt: int = 1
     attempt_errors: List[str] = field(default_factory=list)
+    # issue #189: 该步使用的执行器 (simple/agent)
+    executor: str = "simple"
 
 
 @dataclass
@@ -163,6 +167,22 @@ class WorkflowExecution:
     steps: List[WorkflowStep] = field(default_factory=list)
     error: Optional[str] = None
     result_summary: str = ""
+    # issue #189: run 级并发上限 + 执行器分布 (simple:N, agent:M)
+    concurrency: int = 1
+    executors: Dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
+class _RunState:
+    """issue #189: 单次 run 的执行共享状态 (波次调度器与单节点执行器共享)。"""
+
+    exec_id: str
+    workflow: Workflow
+    execution: WorkflowExecution
+    node_results: Dict[str, NodeResult]
+    passed_data: Dict[str, Dict[str, Any]]
+    completed_ids: Set[str]
+    hitl_lock: asyncio.Lock
 
 
 @dataclass
@@ -363,15 +383,16 @@ class Workflow:
         if not start_nodes:
             errors.append("工作流没有起始节点（所有节点都有上游依赖）")
 
-        # 检查孤立节点
+        # 检查孤立节点 — issue #189: 并行波次下无连线的独立分支是合法形态
+        # (旧版直接报错, 导致 "3 个无依赖节点并行" 的工作流根本无法校验通过);
+        # 这里仅告警, 调度器会把它们作为独立波次执行
         all_connected: Set[str] = set()
         for edge in self.edges:
             all_connected.add(edge.source_id)
             all_connected.add(edge.target_id)
         isolated = set(self.nodes.keys()) - all_connected
         if len(self.nodes) > 1 and isolated:
-            for nid in isolated:
-                errors.append(f"节点 '{self.nodes[nid].config.label or nid}' 是孤立的")
+            logger.warning(f"工作流含无连线节点, 将作为独立分支执行: {sorted(isolated)}")
 
         # 检查每个节点配置
         for nid, node in self.nodes.items():
@@ -462,7 +483,7 @@ class WorkflowEngine:
 
     类似 n8n 的执行引擎，但完全本地、轻量、异步。
     支持：
-    - 串行执行（拓扑排序, ready-set 逐节点执行 — CLAIM: verified by tests/test_engine.py）
+    - 拓扑排序 + ready-set 波次执行（concurrency=1 串行, >1 同波并行 — CLAIM: verified by tests/test_engine.py）
     - 错误重试
     - 执行取消
     - 进度回调
@@ -523,6 +544,21 @@ class WorkflowEngine:
             except Exception as e:
                 logger.error(f"进度回调出错: {e}")
 
+    def _resolve_concurrency(self, requested: int) -> int:
+        # issue #189: 显式传入优先; 否则读 env; 默认 1 (保持旧串行语义, 生产 start.sh 设 4)
+        try:
+            if requested and int(requested) > 0:
+                return int(requested)
+        except (TypeError, ValueError):
+            logger.warning(f"并发上限非法: {requested!r}, 忽略")
+        raw = os.environ.get("FUSION_COWORK_MAX_CONCURRENCY", "").strip()
+        if raw:
+            try:
+                return max(1, int(raw))
+            except ValueError:
+                logger.warning(f"FUSION_COWORK_MAX_CONCURRENCY 非法: {raw!r}, 使用 1")
+        return 1
+
     async def execute(
         self,
         workflow: Workflow,
@@ -530,20 +566,25 @@ class WorkflowEngine:
         execution_id: str = "",
         resume_steps: Optional[List[Dict[str, Any]]] = None,
         start_paused: bool = False,
+        concurrency: int = 0,
     ) -> WorkflowExecution:
         """执行工作流。
 
         resume_steps: 断点续跑 — 已完成步骤的快照 (to_dict)。
         命中节点跳过执行, 其 output_data 作为下游输入缓存, 从下一节点续跑。
         start_paused: issue #191 — 恢复的 run 以 paused 起跑, 首个节点边界挂起等 resume。
+        concurrency: issue #189 — 同波并行节点上限; 0 = FUSION_COWORK_MAX_CONCURRENCY (默认 1 串行)。
         """
         exec_id = execution_id or f"exec_{uuid.uuid4().hex[:12]}"
+        effective_concurrency = self._resolve_concurrency(concurrency)
         execution = WorkflowExecution(
             id=exec_id,
             workflow_id=workflow.id,
             workflow_name=workflow.name,
             status=WorkflowStatus.RUNNING,
             started_at=time.time(),
+            concurrency=effective_concurrency,
+            executors=executor_names(list(workflow.nodes.values())),
         )
         self._executions[exec_id] = execution
         self._cancel_flags[exec_id] = False
@@ -559,7 +600,8 @@ class WorkflowEngine:
         hitl_mode = "pause" if self._hitl_pause else "headless"
         logger.info(
             f"[{exec_id}] run start: workflow={workflow.name} nodes={len(workflow.nodes)} "
-            f"hitl_mode={hitl_mode} hitl_timeout={self._hitl_timeout:g}s"
+            f"hitl_mode={hitl_mode} hitl_timeout={self._hitl_timeout:g}s "
+            f"concurrency={effective_concurrency} executors={execution.executors}"
         )
 
         # Session: auto-create
@@ -668,14 +710,24 @@ class WorkflowEngine:
                 return execution
 
         try:
+            state = _RunState(
+                exec_id=exec_id,
+                workflow=workflow,
+                execution=execution,
+                node_results=node_results,
+                passed_data=passed_data,
+                completed_ids=completed_ids,
+                hitl_lock=asyncio.Lock(),
+            )
             order_idx = 0
-            while order_idx < len(order):
+            done: Set[str] = set()
+            while True:
                 # 检查取消
                 if self._cancel_flags.get(exec_id, False):
                     execution.status = WorkflowStatus.CANCELLED
                     break
 
-                # W8: 暂停检查点 — 当前节点完成后挂起, resume/cancel 唤醒
+                # W8: 暂停检查点 — 本波次完成后挂起, resume/cancel 唤醒
                 pause_evt = self._pause_events.get(exec_id)
                 if pause_evt is not None and not pause_evt.is_set():
                     logger.info(f"执行已暂停, 等待恢复: {exec_id}")
@@ -685,16 +737,22 @@ class WorkflowEngine:
                         break
                     logger.info(f"执行已恢复: {exec_id}")
 
-                # W8/B1: 在节点边界应用排队中的运行改向指令, 再取下一个节点
+                # issue #189: 先把游标推进到首个未执行节点, 再应用改向指令 —
+                # 波次执行下 order_idx 仍指向本波已完成的节点, 若直接应用,
+                # set_params 的默认目标会落在已执行节点上 (参数覆盖被丢弃),
+                # skip_remaining 还会把已完成的节点再记一条 skipped 步骤。
+                while order_idx < len(order) and order[order_idx] in done:
+                    order_idx += 1
+                # W8/B1: 在节点边界应用排队中的运行改向指令, 再取下一批节点
                 order_idx = self._apply_directives(
                     exec_id, workflow, order, order_idx, node_results, passed_data, execution
                 )
+                while order_idx < len(order) and order[order_idx] in done:
+                    order_idx += 1
                 if order_idx >= len(order):
                     break
-                node_id = order[order_idx]
-                order_idx += 1
 
-                # HI-19: 预算检查 — enforce 且已超预算则中止 (BudgetTracker 无 exhausted 方法, 用 _enforce+cost 判)
+                # HI-19: 预算检查 — enforce 且已超预算则中止
                 if self._budget_tracker is not None and self._budget_tracker._enforce:
                     if self._budget_tracker._record.cost_usd >= self._budget_tracker._max_budget_usd:
                         logger.warning(
@@ -705,367 +763,50 @@ class WorkflowEngine:
                         execution.error = "预算耗尽: 执行被中止"
                         break
 
-                node = workflow.nodes.get(node_id)
-                if not node:
-                    continue
+                # issue #189: ready-set 波次 — 前驱全部完成的节点同波执行。
+                # concurrency=1 时每波只取拓扑序首个, 与旧串行循环逐节点等价。
+                unscheduled = order[order_idx:]
+                ready: List[str] = []
+                for nid in unscheduled:
+                    preds = {e.source_id for e in workflow.edges if e.target_id == nid}
+                    if preds <= done:
+                        ready.append(nid)
+                if not ready:
+                    logger.warning(f"[{exec_id}] 无就绪节点 (前驱未调度), 按拓扑序强制推进: {unscheduled[0]}")
+                    ready = unscheduled[:1]
+                wave = ready[:1] if effective_concurrency <= 1 else ready[:effective_concurrency]
 
-                # 断点续跑: 已完成节点跳过执行 (P1-2)
-                if node_id in completed_ids:
-                    cached = node_results.get(node_id)
-                    skip_step = WorkflowStep(
-                        node_id=node_id,
-                        node_name=node.name,
-                        node_display_name=node.config.label or node.display_name,
-                        status=NodeStatus.SKIPPED,
-                        started_at=time.time(),
-                        input_data=passed_data.get(node_id, {}),
-                        output_data=cached.data if cached else {},
-                        summary="恢复自快照, 跳过重跑",
-                    )
-                    skip_step.completed_at = time.time()
-                    skip_step.execution_time = 0
-                    execution.steps.append(skip_step)
-                    self._notify_progress(execution, skip_step)
-                    logger.debug(f"断点续跑: 跳过节点 '{node.name}' (恢复自快照)")
-                    continue
+                logger.debug(f"[{exec_id}] 波次开始: concurrency={effective_concurrency} nodes={wave}")
+                if len(wave) == 1:
+                    results = [await self._run_node(state, wave[0])]
+                else:
+                    results = await asyncio.gather(*(self._run_node(state, nid) for nid in wave))
 
-                # 收集输入数据
-                # A-1: 端口路由接线 — edge.source_output/target_input 原为装饰品 (execute 合并全部上游)。
-                # 默认 edge (source_output="output", target_input="input") 保持全合并 (向后兼容,
-                # 现有节点读 inputs.get("data") 等); 非 default 显式端口 → 按 source_output 取值,
-                # 按 target_input 落键, 消除扇出节点多路输入互相污染。
-                node_input = {}
-                in_edges = [e for e in workflow.edges if e.target_id == node_id]
-                for edge in in_edges:
-                    up_id = edge.source_id
-                    if up_id not in passed_data:
-                        continue
-                    src = passed_data[up_id]
-                    if edge.source_output == "output" and edge.target_input == "input":
-                        node_input.update(src)
-                    else:
-                        val = src.get(edge.source_output) if isinstance(src, dict) else src
-                        if val is not None:
-                            node_input[edge.target_input] = val
-
-                # 加上初始输入
-                if node_id in passed_data:
-                    node_input.update(passed_data[node_id])
-
-                # Permission check
-                if self._permission_manager:
-                    # issue #142: 审批检查须看到生效参数 — config.params 与上游输入合并,
-                    # 否则 apply_edit 等参数在节点 config 里的高危操作, 审批卡无参数可展示
-                    check_input = {**(node.config.params or {}), **node_input}
-                    # issue #138: 写审批上下文 (workflow/node_id) 供高风险拒绝的审批卡展示
-                    # issue #181: 附带 execution_id, HITL confirm 路由凭它唤醒暂停中的 run
-                    token = set_approval_context(
-                        {"workflow": workflow.name, "node_id": node_id, "execution_id": exec_id}
-                    )
-                    allowed = await self._permission_manager.check(node.name, "execute", check_input)
-                    reset_approval_context(token)
-                    if not allowed and self._hitl_pause and not node.config.continue_on_error:
-                        # issue #181: 本地待审批命中本 run → 暂停在节点边界等人工决定,
-                        # 批准后原地重查权限续跑 (只重跑被闸节点); 拒绝/无待审批走原 deny-fast
-                        allowed = await self._hitl_await(exec_id, node, check_input)
-                    if not allowed:
-                        logger.warning(f"节点 '{node.name}' 被权限系统拒绝执行")
-                        step = WorkflowStep(
-                            node_id=node_id,
-                            node_name=node.name,
-                            node_display_name=node.config.label or node.display_name,
-                            status=NodeStatus.DENIED,
-                            started_at=time.time(),
-                            input_data=check_input,
-                        )
-                        step.completed_at = time.time()
-                        step.execution_time = 0
-                        step.error = "权限拒绝: 需要手动审批"
-                        execution.steps.append(step)
-                        logger.warning(
-                            f"[{exec_id}] step end:   node={node.name} verdict=gated duration={step.execution_time:.3f}s "
-                            f"params={_sanitize_params(node_input)} error={step.error}"
-                        )
-                        # P1-10 (audit 0912): purge the denied node's data from
-                        # the cache so downstream nodes cannot silently consume
-                        # unauthorized intermediate results.
-                        passed_data.pop(node_id, None)
-                        for _e in workflow.edges:
-                            if _e.source_id == node_id:
-                                passed_data.pop(_e.target_id, None)
-                        # P1-11 (audit 0912): emit NODE_DENIED + notification so
-                        # approvers actually learn about the pending action
-                        # (previously only a log line — workflows died silently
-                        # waiting for an approval nobody knew about).
-                        if self._event_emitter:
-                            self._event_emitter.create_event(
-                                EventType.NODE_DENIED,
-                                execution_id=exec_id,
-                                node_id=node_id,
-                                node_name=node.name,
-                                data={"error": step.error, "input_data": node_input},
-                            )
-                        if self._hook_manager:
-                            await self._hook_manager.fire(
-                                HookEvent.NOTIFICATION,
-                                {
-                                    "kind": "permission_denied",
-                                    "execution_id": exec_id,
-                                    "node_id": node_id,
-                                    "node_name": node.name,
-                                    "message": f"节点 '{node.name}' 被权限系统拒绝, 需人工审批",
-                                },
-                            )
-                        if not node.config.continue_on_error:
-                            execution.status = WorkflowStatus.FAILED
-                            execution.error = f"节点 '{node.name}' 权限拒绝"
-                            break
-                        continue
-
-                # Hook: PRE_NODE_EXECUTE
-                if self._hook_manager:
-                    hctx = await self._hook_manager.fire(
-                        HookEvent.PRE_NODE_EXECUTE,
-                        {
-                            "execution_id": exec_id,
-                            "node_id": node_id,
-                            "node_name": node.name,
-                            "input_data": node_input,
-                        },
-                    )
-                    if hctx and hctx.cancelled:
-                        logger.info(f"节点 '{node.name}' 被Hook取消")
-                        step = WorkflowStep(
-                            node_id=node_id,
-                            node_name=node.name,
-                            node_display_name=node.config.label or node.display_name,
-                            status=NodeStatus.CANCELLED,
-                            started_at=time.time(),
-                            input_data=node_input,
-                        )
-                        step.completed_at = time.time()
-                        step.execution_time = 0
-                        step.error = "被Hook取消"
-                        execution.steps.append(step)
-                        logger.warning(
-                            f"[{exec_id}] step end:   node={node.name} verdict=blocked duration={step.execution_time:.3f}s "
-                            f"params={_sanitize_params(node_input)} error={step.error}"
-                        )
-                        if not node.config.continue_on_error:
-                            execution.status = WorkflowStatus.CANCELLED
-                            break
-                        continue
-                    if hctx and hctx.modified_data:
-                        node_input = hctx.modified_data.get("input_data", node_input)
-
-                # 创建步骤记录
-                step = WorkflowStep(
-                    node_id=node_id,
-                    node_name=node.name,
-                    node_display_name=node.config.label or node.display_name,
-                    status=NodeStatus.RUNNING,
-                    started_at=time.time(),
-                    input_data=node_input,
-                )
-                execution.steps.append(step)
-
-                # issue #120: run-scoped step start — INFO
-                logger.info(f"[{exec_id}] step start: node={node.name} node_id={node_id}")
-
-                # 执行节点 — CR-11: 状态只存 WorkflowStep, 不在共享 BaseNode 上写
-                # (并发执行同一 Workflow 时原地改 node.status/result 会互相覆盖)
-                try:
-                    # Event: NODE_START
-                    if self._event_emitter:
-                        from .events import EventType
-
-                        self._event_emitter.create_event(
-                            EventType.NODE_START,
-                            execution_id=exec_id,
-                            node_id=node_id,
-                            node_name=node.name,
-                            data={"input_data": node_input},
-                        )
-                    # A-1: 接线 NodeConfig.timeout/max_retries/retry_delay (原死配置)。
-                    # timeout>0 → asyncio.wait_for 兜底, 节点卡死不再拖垮事件循环;
-                    # max_retries>0 → 失败/异常重试, retry_delay 退避, 瞬时故障自愈。
-                    timeout = float(node.config.timeout or 0.0)
-                    max_retries = int(node.config.max_retries or 0)
-                    retry_delay = float(node.config.retry_delay or 0.0)
-                    # issue #182: 业务失败 (FAILED 结果而非异常) 默认不重试, 显式 opt-in 后参与重试
-                    retry_business = bool(node.config.retry_on_business_failure)
-                    result = None
-                    last_err = None
-                    # issue #182: 每次尝试的错误留痕, 成功后写入 step.attempt_errors 供 API 观测
-                    attempt_errors: List[str] = []
-                    final_attempt = 1
-                    for attempt in range(max_retries + 1):
-                        final_attempt = attempt + 1
-                        try:
-                            if timeout > 0:
-                                result = await asyncio.wait_for(node.execute(node_input), timeout=timeout)
-                            else:
-                                result = await node.execute(node_input)
-                            if result.status == NodeStatus.FAILED:
-                                err_txt = result.error or "业务失败"
-                                attempt_errors.append(err_txt)
-                                if retry_business and attempt < max_retries:
-                                    logger.warning(
-                                        f"节点 '{node.name}' 业务失败 attempt={attempt + 1}/{max_retries + 1}: {err_txt}"
-                                    )
-                                    if retry_delay > 0:
-                                        await asyncio.sleep(retry_delay)
-                                    continue
-                                # 业务失败但未 opt-in / 重试耗尽
-                                break
-                            # 成功
-                            break
-                        except TimeoutError as te:
-                            last_err = f"节点 '{node.name}' 超时 (timeout={timeout}s): {te}"
-                            attempt_errors.append(last_err)
-                            logger.warning(f"{last_err} attempt={attempt + 1}/{max_retries + 1}")
-                            result = None
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as ne:
-                            last_err = str(ne)
-                            attempt_errors.append(f"异常: {last_err}")
-                            logger.warning(f"节点 '{node.name}' 异常 attempt={attempt + 1}/{max_retries + 1}: {ne}")
-                            result = None
-                        if attempt < max_retries and retry_delay > 0:
-                            await asyncio.sleep(retry_delay)
-                    if result is None:
-                        # 重试耗尽仍无成功结果 → 构造失败 NodeResult
-                        result = NodeResult(
-                            status=NodeStatus.FAILED,
-                            error=last_err or f"节点 '{node.name}' 重试 {max_retries} 次后仍失败",
-                        )
-
-                    # issue #182: 尝试次数与逐次错误写入 step, run steps API 可观测
-                    step.attempt = final_attempt
-                    step.attempt_errors = attempt_errors
-                    step.status = result.status
-                    step.completed_at = time.time()
-                    step.execution_time = step.completed_at - step.started_at
-                    step.output_data = result.data or {}
-                    step.tokens = _extract_tokens(step.output_data)
-                    step.error = result.error
-                    step.summary = result.summary
-
-                    # Hook: POST_NODE_EXECUTE
-                    if self._hook_manager:
-                        await self._hook_manager.fire(
-                            HookEvent.POST_NODE_EXECUTE,
-                            {
-                                "execution_id": exec_id,
-                                "node_id": node_id,
-                                "node_name": node.name,
-                                "result": result,
-                            },
-                        )
-
-                    # 缓存结果
-                    node_results[node_id] = result
-                    passed_data[node_id] = result.data or {}
-
-                    # 结构化输出校验 (P1-9) — 节点声明 schema 时强制校验
-                    if result.schema and result.status == NodeStatus.SUCCESS:
-                        try:
-                            if not result.validate():
-                                logger.warning(f"节点 '{node.name}' 输出未通过 schema 校验")
-                                result.error = f"输出未通过结构化 schema 校验: {node.name}"
-                                result.status = NodeStatus.FAILED
-                                step.status = NodeStatus.FAILED
-                                step.error = result.error
-                                if not node.config.continue_on_error:
-                                    execution.status = WorkflowStatus.FAILED
-                                    execution.error = result.error
-                                    break
-                        except Exception as ve:
-                            logger.error(f"节点 '{node.name}' schema 校验异常: {ve}")
-                            result.error = f"schema 校验异常: {ve}"
-                            result.status = NodeStatus.FAILED
-                            step.status = NodeStatus.FAILED
-                            step.error = result.error
-                            if not node.config.continue_on_error:
-                                execution.status = WorkflowStatus.FAILED
-                                execution.error = result.error
-                                break
-
-                    # 通知进度
-                    verdict = _node_verdict(result.status, result.data)
-                    if verdict == "success":
-                        logger.info(
-                            f"[{exec_id}] step end:   node={node.name} verdict={verdict} "
-                            f"duration={step.execution_time:.3f}s params={_sanitize_params(node_input)} error="
-                        )
-                    else:
-                        logger.warning(
-                            f"[{exec_id}] step end:   node={node.name} verdict={verdict} "
-                            f"duration={step.execution_time:.3f}s params={_sanitize_params(node_input)} "
-                            f"error={result.error or ''}"
-                        )
-
+                # issue #189: 并发完成顺序不确定, 步骤统一按拓扑序落盘, 保证确定性
+                position = {nid: idx for idx, nid in enumerate(order)}
+                collected: List[Tuple[int, WorkflowStep]] = []
+                control = "continue"
+                control_error = ""
+                for nid, (steps, node_control, node_error) in zip(wave, results):
+                    done.add(nid)
+                    for step in steps:
+                        collected.append((position.get(step.node_id, len(order)), step))
+                    if node_control == "cancel":
+                        control = "cancel"
+                        control_error = node_error or control_error
+                    elif node_control == "fail" and control != "cancel":
+                        control = "fail"
+                        control_error = node_error or control_error
+                for _, step in sorted(collected, key=lambda item: item[0]):
+                    execution.steps.append(step)
                     self._notify_progress(execution, step)
-
-                    # Event: NODE_END
-                    if self._event_emitter:
-                        from .events import EventType
-
-                        self._event_emitter.create_event(
-                            EventType.NODE_END,
-                            execution_id=exec_id,
-                            node_id=node_id,
-                            node_name=node.name,
-                            data={"status": result.status.value},
-                        )
-
-                    if result.status == NodeStatus.FAILED:
-                        if self._hook_manager:
-                            await self._hook_manager.fire(
-                                HookEvent.NODE_ERROR,
-                                {
-                                    "execution_id": exec_id,
-                                    "node_id": node_id,
-                                    "node_name": node.name,
-                                    "error": result.error,
-                                },
-                            )
-                        if not node.config.continue_on_error:
-                            execution.status = WorkflowStatus.FAILED
-                            execution.error = f"节点 '{node.config.label or node.name}' 执行失败: {result.error}"
-                            break
-                        else:
-                            logger.warning(f"节点 '{node.config.label or node.name}' 失败但继续执行")
-
-                except Exception as e:
-                    step.status = NodeStatus.FAILED
-                    step.completed_at = time.time()
-                    step.execution_time = step.completed_at - step.started_at
-                    step.error = str(e)
-                    logger.error(f"节点 '{node.config.label or node.name}' 执行异常: {e}")
-                    logger.warning(
-                        f"[{exec_id}] step end:   node={node.name} verdict=failed duration={step.execution_time:.3f}s "
-                        f"params={_sanitize_params(node_input)} error={step.error}"
-                    )
-
-                    if self._hook_manager:
-                        await self._hook_manager.fire(
-                            HookEvent.NODE_ERROR,
-                            {
-                                "execution_id": exec_id,
-                                "node_id": node_id,
-                                "node_name": node.name,
-                                "error": str(e),
-                            },
-                        )
-
-                    self._notify_progress(execution, step)
-
-                    if not node.config.continue_on_error:
-                        execution.status = WorkflowStatus.FAILED
-                        execution.error = f"节点 '{node.config.label or node.name}' 异常: {e}"
-                        break
+                if control == "cancel":
+                    execution.status = WorkflowStatus.CANCELLED
+                    break
+                if control == "fail":
+                    execution.status = WorkflowStatus.FAILED
+                    execution.error = control_error
+                    break
 
             # 最终状态
             if execution.status == WorkflowStatus.RUNNING:
@@ -1141,16 +882,19 @@ class WorkflowEngine:
             # issue #120: run-scoped run end — outcome/total/steps
             logger.info(
                 f"[{exec_id}] run end:    outcome={execution.status.value} "
-                f"total={execution.total_time:.3f}s steps={len(execution.steps)}"
+                f"total={execution.total_time:.3f}s steps={len(execution.steps)} "
+                f"concurrency={execution.concurrency} executors={execution.executors}"
             )
 
             # 生成摘要
             success_count = sum(1 for s in execution.steps if s.status == NodeStatus.SUCCESS)
             total_count = len(execution.steps)
+            executor_text = ", ".join(f"{k}:{v}" for k, v in sorted(execution.executors.items()))
             execution.result_summary = (
                 f"工作流 '{workflow.name}' 执行完成: "
                 f"{success_count}/{total_count} 节点成功, "
-                f"耗时 {execution.total_time:.2f}s"
+                f"耗时 {execution.total_time:.2f}s, "
+                f"并发={execution.concurrency} 执行器={executor_text or 'simple:0'}"
             )
 
             del self._cancel_flags[exec_id]
@@ -1158,6 +902,379 @@ class WorkflowEngine:
             self._directives.pop(exec_id, None)
 
         return execution
+
+    async def _run_node(self, state: _RunState, node_id: str) -> Tuple[List[WorkflowStep], str, str]:
+        """执行单个节点, 返回 (步骤列表, 控制指令, 错误)。
+
+        控制指令: continue=继续调度 / fail=整个 run 失败 / cancel=整个 run 取消。
+        步骤由调度器统一按拓扑序落盘, 保证并发下执行记录顺序确定。
+        """
+        workflow = state.workflow
+        exec_id = state.exec_id
+        node_results = state.node_results
+        passed_data = state.passed_data
+        node = workflow.nodes.get(node_id)
+        if node is None:
+            logger.warning(f"[{exec_id}] 待执行节点缺失, 跳过: {node_id}")
+            return [], "continue", ""
+        executor = executor_for_node(node)
+
+        # 断点续跑: 已完成节点跳过执行 (P1-2)
+        if node_id in state.completed_ids:
+            cached = node_results.get(node_id)
+            skip_step = WorkflowStep(
+                node_id=node_id,
+                node_name=node.name,
+                node_display_name=node.config.label or node.display_name,
+                status=NodeStatus.SKIPPED,
+                started_at=time.time(),
+                input_data=passed_data.get(node_id, {}),
+                output_data=cached.data if cached else {},
+                summary="恢复自快照, 跳过重跑",
+                executor=executor.name,
+            )
+            skip_step.completed_at = time.time()
+            skip_step.execution_time = 0
+            logger.debug(f"断点续跑: 跳过节点 '{node.name}' (恢复自快照)")
+            return [skip_step], "continue", ""
+
+        # 收集输入数据
+        # A-1: 端口路由接线 — edge.source_output/target_input 原为装饰品 (execute 合并全部上游)。
+        # 默认 edge (source_output="output", target_input="input") 保持全合并 (向后兼容,
+        # 现有节点读 inputs.get("data") 等); 非 default 显式端口 → 按 source_output 取值,
+        # 按 target_input 落键, 消除扇出节点多路输入互相污染。
+        node_input = {}
+        in_edges = [e for e in workflow.edges if e.target_id == node_id]
+        for edge in in_edges:
+            up_id = edge.source_id
+            if up_id not in passed_data:
+                continue
+            src = passed_data[up_id]
+            if edge.source_output == "output" and edge.target_input == "input":
+                node_input.update(src)
+            else:
+                val = src.get(edge.source_output) if isinstance(src, dict) else src
+                if val is not None:
+                    node_input[edge.target_input] = val
+
+        # 加上初始输入
+        if node_id in passed_data:
+            node_input.update(passed_data[node_id])
+
+        # Permission check — issue #189: 同 run 内 HITL 闸门串行, 避免多节点共用
+        # _hitl_decisions[exec_id] 时审批决定互相串台
+        if self._permission_manager:
+            # issue #142: 审批检查须看到生效参数 — config.params 与上游输入合并
+            check_input = {**(node.config.params or {}), **node_input}
+            async with state.hitl_lock:
+                # issue #138: 写审批上下文 (workflow/node_id) 供高风险拒绝的审批卡展示
+                # issue #181: 附带 execution_id, HITL confirm 路由凭它唤醒暂停中的 run
+                token = set_approval_context({"workflow": workflow.name, "node_id": node_id, "execution_id": exec_id})
+                try:
+                    allowed = await self._permission_manager.check(node.name, "execute", check_input)
+                finally:
+                    reset_approval_context(token)
+                if not allowed and self._hitl_pause and not node.config.continue_on_error:
+                    # issue #181: 本地待审批命中本 run → 暂停在节点边界等人工决定
+                    allowed = await self._hitl_await(exec_id, node, check_input)
+            if not allowed:
+                logger.warning(f"节点 '{node.name}' 被权限系统拒绝执行")
+                step = WorkflowStep(
+                    node_id=node_id,
+                    node_name=node.name,
+                    node_display_name=node.config.label or node.display_name,
+                    status=NodeStatus.DENIED,
+                    started_at=time.time(),
+                    input_data=check_input,
+                    executor=executor.name,
+                )
+                step.completed_at = time.time()
+                step.execution_time = 0
+                step.error = "权限拒绝: 需要手动审批"
+                logger.warning(
+                    f"[{exec_id}] step end:   node={node.name} verdict=gated duration={step.execution_time:.3f}s "
+                    f"executor={executor.name} params={_sanitize_params(node_input)} error={step.error}"
+                )
+                # P1-10 (audit 0912): purge the denied node's data from
+                # the cache so downstream nodes cannot silently consume
+                # unauthorized intermediate results.
+                passed_data.pop(node_id, None)
+                for _e in workflow.edges:
+                    if _e.source_id == node_id:
+                        passed_data.pop(_e.target_id, None)
+                # P1-11 (audit 0912): emit NODE_DENIED + notification so
+                # approvers actually learn about the pending action
+                if self._event_emitter:
+                    from .events import EventType
+
+                    self._event_emitter.create_event(
+                        EventType.NODE_DENIED,
+                        execution_id=exec_id,
+                        node_id=node_id,
+                        node_name=node.name,
+                        data={"error": step.error, "input_data": node_input},
+                    )
+                if self._hook_manager:
+                    await self._hook_manager.fire(
+                        HookEvent.NOTIFICATION,
+                        {
+                            "kind": "permission_denied",
+                            "execution_id": exec_id,
+                            "node_id": node_id,
+                            "node_name": node.name,
+                            "message": f"节点 '{node.name}' 被权限系统拒绝, 需人工审批",
+                        },
+                    )
+                if not node.config.continue_on_error:
+                    return [step], "fail", f"节点 '{node.name}' 权限拒绝"
+                return [step], "continue", ""
+
+        # Hook: PRE_NODE_EXECUTE
+        if self._hook_manager:
+            hctx = await self._hook_manager.fire(
+                HookEvent.PRE_NODE_EXECUTE,
+                {
+                    "execution_id": exec_id,
+                    "node_id": node_id,
+                    "node_name": node.name,
+                    "input_data": node_input,
+                },
+            )
+            if hctx and hctx.cancelled:
+                logger.info(f"节点 '{node.name}' 被Hook取消")
+                step = WorkflowStep(
+                    node_id=node_id,
+                    node_name=node.name,
+                    node_display_name=node.config.label or node.display_name,
+                    status=NodeStatus.CANCELLED,
+                    started_at=time.time(),
+                    input_data=node_input,
+                    executor=executor.name,
+                )
+                step.completed_at = time.time()
+                step.execution_time = 0
+                step.error = "被Hook取消"
+                logger.warning(
+                    f"[{exec_id}] step end:   node={node.name} verdict=blocked duration={step.execution_time:.3f}s "
+                    f"executor={executor.name} params={_sanitize_params(node_input)} error={step.error}"
+                )
+                if not node.config.continue_on_error:
+                    return [step], "cancel", ""
+                return [step], "continue", ""
+            if hctx and hctx.modified_data:
+                node_input = hctx.modified_data.get("input_data", node_input)
+
+        # 创建步骤记录
+        step = WorkflowStep(
+            node_id=node_id,
+            node_name=node.name,
+            node_display_name=node.config.label or node.display_name,
+            status=NodeStatus.RUNNING,
+            started_at=time.time(),
+            input_data=node_input,
+            executor=executor.name,
+        )
+
+        # issue #120: run-scoped step start — INFO
+        logger.info(f"[{exec_id}] step start: node={node.name} node_id={node_id} executor={executor.name}")
+
+        # 执行节点 — CR-11: 状态只存 WorkflowStep, 不在共享 BaseNode 上写
+        # (并发执行同一 Workflow 时原地改 node.status/result 会互相覆盖)
+        try:
+            # Event: NODE_START
+            if self._event_emitter:
+                from .events import EventType
+
+                self._event_emitter.create_event(
+                    EventType.NODE_START,
+                    execution_id=exec_id,
+                    node_id=node_id,
+                    node_name=node.name,
+                    data={"input_data": node_input},
+                )
+            # A-1: 接线 NodeConfig.timeout/max_retries/retry_delay (原死配置)。
+            timeout = float(node.config.timeout or 0.0)
+            max_retries = int(node.config.max_retries or 0)
+            retry_delay = float(node.config.retry_delay or 0.0)
+            # issue #182: 业务失败 (FAILED 结果而非异常) 默认不重试, 显式 opt-in 后参与重试
+            retry_business = bool(node.config.retry_on_business_failure)
+            result = None
+            last_err = None
+            # issue #182: 每次尝试的错误留痕, 成功后写入 step.attempt_errors 供 API 观测
+            attempt_errors: List[str] = []
+            final_attempt = 1
+            for attempt in range(max_retries + 1):
+                final_attempt = attempt + 1
+                ctx = NodeExecutionContext(
+                    execution_id=exec_id,
+                    workflow_id=workflow.id,
+                    workflow_name=workflow.name,
+                    node_id=node_id,
+                    attempt=final_attempt,
+                )
+                try:
+                    if timeout > 0:
+                        result = await asyncio.wait_for(executor.execute(node, node_input, ctx), timeout=timeout)
+                    else:
+                        result = await executor.execute(node, node_input, ctx)
+                    if result.status == NodeStatus.FAILED:
+                        err_txt = result.error or "业务失败"
+                        attempt_errors.append(err_txt)
+                        if retry_business and attempt < max_retries:
+                            logger.warning(
+                                f"节点 '{node.name}' 业务失败 attempt={attempt + 1}/{max_retries + 1}: {err_txt}"
+                            )
+                            if retry_delay > 0:
+                                await asyncio.sleep(retry_delay)
+                            continue
+                        # 业务失败但未 opt-in / 重试耗尽
+                        break
+                    # 成功
+                    break
+                except TimeoutError as te:
+                    last_err = f"节点 '{node.name}' 超时 (timeout={timeout}s): {te}"
+                    attempt_errors.append(last_err)
+                    logger.warning(f"{last_err} attempt={attempt + 1}/{max_retries + 1}")
+                    result = None
+                except asyncio.CancelledError:
+                    raise
+                except Exception as ne:
+                    last_err = str(ne)
+                    attempt_errors.append(f"异常: {last_err}")
+                    logger.warning(f"节点 '{node.name}' 异常 attempt={attempt + 1}/{max_retries + 1}: {ne}")
+                    result = None
+                if attempt < max_retries and retry_delay > 0:
+                    await asyncio.sleep(retry_delay)
+            if result is None:
+                # 重试耗尽仍无成功结果 → 构造失败 NodeResult
+                result = NodeResult(
+                    status=NodeStatus.FAILED,
+                    error=last_err or f"节点 '{node.name}' 重试 {max_retries} 次后仍失败",
+                )
+
+            # issue #182: 尝试次数与逐次错误写入 step, run steps API 可观测
+            step.attempt = final_attempt
+            step.attempt_errors = attempt_errors
+            step.status = result.status
+            step.completed_at = time.time()
+            step.execution_time = step.completed_at - step.started_at
+            step.output_data = result.data or {}
+            step.tokens = _extract_tokens(step.output_data)
+            step.error = result.error
+            step.summary = result.summary
+
+            # Hook: POST_NODE_EXECUTE
+            if self._hook_manager:
+                await self._hook_manager.fire(
+                    HookEvent.POST_NODE_EXECUTE,
+                    {
+                        "execution_id": exec_id,
+                        "node_id": node_id,
+                        "node_name": node.name,
+                        "result": result,
+                    },
+                )
+
+            # 缓存结果
+            node_results[node_id] = result
+            passed_data[node_id] = result.data or {}
+
+            # 结构化输出校验 (P1-9) — 节点声明 schema 时强制校验
+            if result.schema and result.status == NodeStatus.SUCCESS:
+                try:
+                    if not result.validate():
+                        logger.warning(f"节点 '{node.name}' 输出未通过 schema 校验")
+                        result.error = f"输出未通过结构化 schema 校验: {node.name}"
+                        result.status = NodeStatus.FAILED
+                        step.status = NodeStatus.FAILED
+                        step.error = result.error
+                        if not node.config.continue_on_error:
+                            return [step], "fail", result.error
+                except Exception as ve:
+                    logger.error(f"节点 '{node.name}' schema 校验异常: {ve}")
+                    result.error = f"schema 校验异常: {ve}"
+                    result.status = NodeStatus.FAILED
+                    step.status = NodeStatus.FAILED
+                    step.error = result.error
+                    if not node.config.continue_on_error:
+                        return [step], "fail", result.error
+
+            # 通知进度
+            verdict = _node_verdict(result.status, result.data)
+            if verdict == "success":
+                logger.info(
+                    f"[{exec_id}] step end:   node={node.name} verdict={verdict} "
+                    f"duration={step.execution_time:.3f}s executor={executor.name} "
+                    f"params={_sanitize_params(node_input)} error="
+                )
+            else:
+                logger.warning(
+                    f"[{exec_id}] step end:   node={node.name} verdict={verdict} "
+                    f"duration={step.execution_time:.3f}s executor={executor.name} "
+                    f"params={_sanitize_params(node_input)} error={result.error or ''}"
+                )
+
+            # Event: NODE_END
+            if self._event_emitter:
+                from .events import EventType
+
+                self._event_emitter.create_event(
+                    EventType.NODE_END,
+                    execution_id=exec_id,
+                    node_id=node_id,
+                    node_name=node.name,
+                    data={"status": result.status.value},
+                )
+
+            if result.status == NodeStatus.FAILED:
+                if self._hook_manager:
+                    await self._hook_manager.fire(
+                        HookEvent.NODE_ERROR,
+                        {
+                            "execution_id": exec_id,
+                            "node_id": node_id,
+                            "node_name": node.name,
+                            "error": result.error,
+                        },
+                    )
+                if not node.config.continue_on_error:
+                    return (
+                        [step],
+                        "fail",
+                        f"节点 '{node.config.label or node.name}' 执行失败: {result.error}",
+                    )
+                logger.warning(f"节点 '{node.config.label or node.name}' 失败但继续执行")
+
+        except Exception as e:
+            step.status = NodeStatus.FAILED
+            step.completed_at = time.time()
+            step.execution_time = step.completed_at - step.started_at
+            step.error = str(e)
+            logger.error(f"节点 '{node.config.label or node.name}' 执行异常: {e}")
+            logger.warning(
+                f"[{exec_id}] step end:   node={node.name} verdict=failed duration={step.execution_time:.3f}s "
+                f"executor={executor.name} params={_sanitize_params(node_input)} error={step.error}"
+            )
+
+            if self._hook_manager:
+                await self._hook_manager.fire(
+                    HookEvent.NODE_ERROR,
+                    {
+                        "execution_id": exec_id,
+                        "node_id": node_id,
+                        "node_name": node.name,
+                        "error": str(e),
+                    },
+                )
+
+            if not node.config.continue_on_error:
+                return (
+                    [step],
+                    "fail",
+                    f"节点 '{node.config.label or node.name}' 异常: {e}",
+                )
+
+        return [step], "continue", ""
 
     def cancel(self, execution_id: str) -> bool:
         """取消正在执行的工作流。"""

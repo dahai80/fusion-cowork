@@ -19,6 +19,9 @@ ACTIVATE="${VENV}/bin/activate"
 LOG_DIR="${PROJ_DIR}/logs"
 PID_FILE="${PROJ_DIR}/.fusion-cowork.pid"
 SOCK_FILE="/tmp/fusion-cowork.sock"
+# issue #189: ready-set 波次并发 — 服务进程默认 4 路并行 (代码默认 1 = 旧串行),
+# 运维可用同名环境变量覆盖, 设为 1 即完全退回串行调度。
+export FUSION_COWORK_MAX_CONCURRENCY="${FUSION_COWORK_MAX_CONCURRENCY:-4}"
 
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'
