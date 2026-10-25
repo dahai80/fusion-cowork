@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -122,6 +123,9 @@ class WorkflowStep:
     output_data: Dict[str, Any] = field(default_factory=dict)
     # issue #143: 节点 token 用量聚合 (来自输出 usage 字段), 供 run 瀑布展示
     tokens: Optional[Dict[str, int]] = None
+    # issue #182: 重试可观测 — 最终尝试序号 (1-based) + 每次尝试的错误 (成功尝试不记)
+    attempt: int = 1
+    attempt_errors: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -452,11 +456,21 @@ class WorkflowEngine:
         event_emitter=None,
         trajectory_recorder=None,
         budget_tracker=None,
+        hitl_pause=None,
     ):
         self._executions: Dict[str, WorkflowExecution] = {}
         self._cancel_flags: Dict[str, bool] = {}
         # W8: 按执行粒度暂停 — asyncio.Event, set=运行 / clear=暂停; 节点间检查点等待
         self._pause_events: Dict[str, asyncio.Event] = {}
+        # issue #181: HITL — 高风险节点本地待审批时暂停在节点边界, confirm 后原地续跑
+        # opt-in: 构造参数优先, 其次 FUSION_COWORK_HITL_PAUSE=1; 默认关闭保持 deny-fast
+        if hitl_pause is None:
+            hitl_pause = os.environ.get("FUSION_COWORK_HITL_PAUSE", "").strip() == "1"
+        self._hitl_pause = bool(hitl_pause)
+        # exec_id -> 审批决定 (True=批准 / False=拒绝), resolve_hitl 写入
+        self._hitl_decisions: Dict[str, bool] = {}
+        # 正挂在 HITL 等待点的 run 集合 (与 W8 手动暂停区分)
+        self._hitl_waiting: Set[str] = set()
         # W8/B1: 运行改向指令队列 — 节点边界应用 (set_params/skip_remaining/insert_node)
         self._directives: Dict[str, List[Dict[str, Any]]] = {}
         self._progress_callbacks: List[callable] = []
@@ -708,9 +722,16 @@ class WorkflowEngine:
                     # 否则 apply_edit 等参数在节点 config 里的高危操作, 审批卡无参数可展示
                     check_input = {**(node.config.params or {}), **node_input}
                     # issue #138: 写审批上下文 (workflow/node_id) 供高风险拒绝的审批卡展示
-                    token = set_approval_context({"workflow": workflow.name, "node_id": node_id})
+                    # issue #181: 附带 execution_id, HITL confirm 路由凭它唤醒暂停中的 run
+                    token = set_approval_context(
+                        {"workflow": workflow.name, "node_id": node_id, "execution_id": exec_id}
+                    )
                     allowed = await self._permission_manager.check(node.name, "execute", check_input)
                     reset_approval_context(token)
+                    if not allowed and self._hitl_pause and not node.config.continue_on_error:
+                        # issue #181: 本地待审批命中本 run → 暂停在节点边界等人工决定,
+                        # 批准后原地重查权限续跑 (只重跑被闸节点); 拒绝/无待审批走原 deny-fast
+                        allowed = await self._hitl_await(exec_id, node, check_input)
                     if not allowed:
                         logger.warning(f"节点 '{node.name}' 被权限系统拒绝执行")
                         step = WorkflowStep(
@@ -835,24 +856,44 @@ class WorkflowEngine:
                     timeout = float(node.config.timeout or 0.0)
                     max_retries = int(node.config.max_retries or 0)
                     retry_delay = float(node.config.retry_delay or 0.0)
+                    # issue #182: 业务失败 (FAILED 结果而非异常) 默认不重试, 显式 opt-in 后参与重试
+                    retry_business = bool(node.config.retry_on_business_failure)
                     result = None
                     last_err = None
+                    # issue #182: 每次尝试的错误留痕, 成功后写入 step.attempt_errors 供 API 观测
+                    attempt_errors: List[str] = []
+                    final_attempt = 1
                     for attempt in range(max_retries + 1):
+                        final_attempt = attempt + 1
                         try:
                             if timeout > 0:
                                 result = await asyncio.wait_for(node.execute(node_input), timeout=timeout)
                             else:
                                 result = await node.execute(node_input)
-                            # 成功或节点级 FAILED (业务失败不重试, 仅异常/超时重试)
+                            if result.status == NodeStatus.FAILED:
+                                err_txt = result.error or "业务失败"
+                                attempt_errors.append(err_txt)
+                                if retry_business and attempt < max_retries:
+                                    logger.warning(
+                                        f"节点 '{node.name}' 业务失败 attempt={attempt + 1}/{max_retries + 1}: {err_txt}"
+                                    )
+                                    if retry_delay > 0:
+                                        await asyncio.sleep(retry_delay)
+                                    continue
+                                # 业务失败但未 opt-in / 重试耗尽
+                                break
+                            # 成功
                             break
                         except TimeoutError as te:
                             last_err = f"节点 '{node.name}' 超时 (timeout={timeout}s): {te}"
+                            attempt_errors.append(last_err)
                             logger.warning(f"{last_err} attempt={attempt + 1}/{max_retries + 1}")
                             result = None
                         except asyncio.CancelledError:
                             raise
                         except Exception as ne:
                             last_err = str(ne)
+                            attempt_errors.append(f"异常: {last_err}")
                             logger.warning(f"节点 '{node.name}' 异常 attempt={attempt + 1}/{max_retries + 1}: {ne}")
                             result = None
                         if attempt < max_retries and retry_delay > 0:
@@ -864,6 +905,9 @@ class WorkflowEngine:
                             error=last_err or f"节点 '{node.name}' 重试 {max_retries} 次后仍失败",
                         )
 
+                    # issue #182: 尝试次数与逐次错误写入 step, run steps API 可观测
+                    step.attempt = final_attempt
+                    step.attempt_errors = attempt_errors
                     step.status = result.status
                     step.completed_at = time.time()
                     step.execution_time = step.completed_at - step.started_at
@@ -1104,6 +1148,74 @@ class WorkflowEngine:
     def is_paused(self, execution_id: str) -> bool:
         evt = self._pause_events.get(execution_id)
         return evt is not None and not evt.is_set()
+
+    def hitl_pending(self, execution_id: str) -> bool:
+        # issue #181: 该 run 是否正挂在 HITL 审批等待点
+        return execution_id in self._hitl_waiting
+
+    def resolve_hitl(self, execution_id: str, approved: bool) -> bool:
+        # issue #181: 审批路由回调 — 记录决定并唤醒暂停中的 run; cancel 共用同一事件
+        evt = self._pause_events.get(execution_id)
+        if evt is None:
+            return False
+        self._hitl_decisions[execution_id] = bool(approved)
+        evt.set()
+        logger.info(f"HITL 审批决定: exec={execution_id} approved={approved}")
+        return True
+
+    async def _hitl_await(self, exec_id: str, node: BaseNode, check_input: Dict[str, Any]) -> bool:
+        # issue #181: 无本地待审批 (如 guard 在线的 L3) → 返回 False 走原 deny-fast, 不悬挂
+        finder = getattr(self._permission_manager, "find_pending_by_execution", None)
+        if not callable(finder) or not finder(exec_id):
+            return False
+        evt = self._pause_events.get(exec_id)
+        if evt is None:
+            return False
+        # 通知审批人 (复用 NOTIFICATION hook), 待审批项本身已入 PermissionManager 队列
+        if self._event_emitter:
+            from .events import EventType
+
+            self._event_emitter.create_event(
+                EventType.NODE_DENIED,
+                execution_id=exec_id,
+                node_id=node.id,
+                node_name=node.name,
+                data={"error": "HITL: 等待人工审批", "hitl": True, "input_data": check_input},
+            )
+        if self._hook_manager:
+            await self._hook_manager.fire(
+                HookEvent.NOTIFICATION,
+                {
+                    "kind": "hitl_pending",
+                    "execution_id": exec_id,
+                    "node_id": node.id,
+                    "node_name": node.name,
+                    "message": f"节点 '{node.name}' 暂停等待人工审批 (run={exec_id})",
+                },
+            )
+        logger.info(f"[{exec_id}] HITL: 节点 '{node.name}' 暂停在边界, 等待人工审批")
+        self._hitl_waiting.add(exec_id)
+        evt.clear()
+        await evt.wait()
+        self._hitl_waiting.discard(exec_id)
+        approved = self._hitl_decisions.pop(exec_id, None)
+        if self._cancel_flags.get(exec_id):
+            logger.info(f"[{exec_id}] HITL: 等待中被取消")
+            return False
+        if approved is not True:
+            logger.info(f"[{exec_id}] HITL: 节点 '{node.name}' 审批拒绝")
+            return False
+        # 批准 → 规则已由 confirm 路由持久化, 原地重查权限 (只重跑被闸节点)
+        token = set_approval_context({"workflow": "", "node_id": node.id, "execution_id": exec_id})
+        try:
+            allowed = await self._permission_manager.check(node.name, "execute", check_input)
+        finally:
+            reset_approval_context(token)
+        if allowed:
+            logger.info(f"[{exec_id}] HITL: 节点 '{node.name}' 审批通过, 原地续跑")
+        else:
+            logger.warning(f"[{exec_id}] HITL: 审批通过但权限复查仍拒绝: {node.name}")
+        return allowed
 
     def add_directive(self, execution_id: str, directive: Dict[str, Any]) -> bool:
         """W8/B1: 排队一条运行改向指令, 在下一节点边界生效。

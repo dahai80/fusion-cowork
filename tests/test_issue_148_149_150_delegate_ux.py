@@ -92,6 +92,8 @@ class TestIssue148ChatDelegate:
         from fusion_cowork.server import web_api
 
         web_api._WEB_DIR = tmp_path / "web"
+        # issue #168: 本机 ~/.fusion-cowork/web_module_key 会激活鉴权 — 显式设 env key 匹配 _auth()
+        monkeypatch.setenv("FUSION_COWORK_WEB_API_KEY", STATIC_KEY)
 
         class _NLRisk:
             async def generate(self, prompt, context=None):
