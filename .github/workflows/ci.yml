@@ -36,7 +36,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install --upgrade pip
-      - run: pip install "git+https://github.com/dahai80/fusion-harness.git@v0.2.0"
       - run: pip install -e ".[test,cloud,web,office]"
       - name: Test (SQLite backend, default marks)
         run: python -m pytest tests/ -q --tb=short -m "not slow and not chaos and not postgres"
@@ -67,7 +66,6 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
-      - run: pip install "git+https://github.com/dahai80/fusion-harness.git@v0.2.0"
       - run: pip install -e ".[test,cloud,web,office]"
       - name: Test (Postgres backend integration)
         run: python -m pytest tests/ -q --tb=short -m "postgres"
@@ -80,7 +78,6 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
-      - run: pip install "git+https://github.com/dahai80/fusion-harness.git@v0.2.0"
       - run: pip install -e ".[test,cloud,web,office]"
       - name: Slow + chaos tests
         run: python -m pytest tests/ -q --tb=short -m "slow or chaos"
@@ -111,7 +108,6 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
-      - run: pip install "git+https://github.com/dahai80/fusion-harness.git@v0.2.0"
       - run: pip install -e ".[test,cloud,web,office]"
       - run: pip install pip-audit
       - name: pip-audit (high/critical CVEs fail)
