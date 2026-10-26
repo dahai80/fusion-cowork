@@ -66,10 +66,19 @@ pip install -e ".[web]"
 # Office deliverables (xlsx_write / pptx_write nodes, issue #151 #152)
 pip install -e ".[office]"
 
+# Harness kernel + plugins ecosystem (required at engine import, issue #196)
+pip install -e ".[plugins]"
+
 # Or use uv (faster)
 uv venv --python 3.11
 uv pip install -e ".[test]"
 ```
+
+> Note: a bare `pip install -e ".[test]"` installs and runs tests, but importing
+> `fusion_cowork.engine` additionally requires the fusion-harness kernel
+> (ships in the `[plugins]` extra, git tag only — not on PyPI). Without it the
+> engine shims fail at import with an actionable install hint
+> (`engine/_harness_guard.py`, issue #196).
 
 ### Basic Usage
 

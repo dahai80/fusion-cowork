@@ -1,6 +1,6 @@
 [project]
 name = "fusion-cowork"
-version = "0.5.40"
+version = "0.5.41"
 description = "Fusion-Cowork — macOS 原生、本地优先、零代码桌面智能自动化平台"
 authors = [
     { name = "Fusion-MLX Team" },
@@ -44,7 +44,11 @@ test = [
 ]
 plugins = [
     "fusion-plugins-ecosystem>=0.3.3",
-    # #190/#2: canonical harness kernel — hard dependency (no fallback copies).
+    # #190/#2: canonical harness kernel, required at import (no fallback copies).
+    # #196: NOT a core dependency — fusion-harness ships only as a git tag
+    # (not on PyPI), a core dep would break bare installs at pip-resolution
+    # time with a cryptic error. Bare installs fail instead at import with an
+    # actionable install hint (engine/_harness_guard.py).
     "fusion-harness>=0.2.0",
 ]
 cloud = [
