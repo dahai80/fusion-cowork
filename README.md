@@ -67,6 +67,9 @@ pip install -e ".[web]"
 pip install -e ".[office]"
 
 # Harness kernel + plugins ecosystem (required at engine import, issue #196)
+# Monorepo: the extra resolves (sibling fusion-plugins-ecosystem already installed).
+# Standalone clone: install the kernel directly from its git tag instead:
+#   pip install 'git+https://github.com/dahai80/fusion-harness.git@v0.2.0'
 pip install -e ".[plugins]"
 
 # Or use uv (faster)
@@ -74,10 +77,13 @@ uv venv --python 3.11
 uv pip install -e ".[test]"
 ```
 
-> Note: a bare `pip install -e ".[test]"` installs and runs tests, but importing
-> `fusion_cowork.engine` additionally requires the fusion-harness kernel
-> (ships in the `[plugins]` extra, git tag only — not on PyPI). Without it the
-> engine shims fail at import with an actionable install hint
+> Note: a bare `pip install -e ".[test]"` installs, but running the full test
+> suite additionally requires the fusion-harness kernel — install with
+> `pip install 'git+https://github.com/dahai80/fusion-harness.git@v0.2.0'`
+> (or `pip install -e ".[plugins]"` inside the monorepo, where the sibling
+> `fusion-plugins-ecosystem` is already installed). The suite imports
+> `fusion_cowork.engine`, whose shims need fusion-harness (git tag only — not
+> on PyPI); without it, collection fails with the actionable install hint
 > (`engine/_harness_guard.py`, issue #196).
 
 ### Basic Usage
@@ -1003,8 +1009,11 @@ fusion-cowork ai generate "Every night at 9pm, clean my Downloads folder and bac
 ## 🧪 Running Tests
 
 ```bash
-# Install test dependencies
-pip install -e ".[test]"
+# Install test dependencies (same recipe as CI)
+pip install -e ".[test,cloud,web,office]"
+# fusion-harness kernel — engine shims need it, git tag only (issue #198)
+pip install 'git+https://github.com/dahai80/fusion-harness.git@v0.2.0'
+# (monorepo alternative: pip install -e ".[plugins]")
 
 # Run all tests
 pytest tests/ -v

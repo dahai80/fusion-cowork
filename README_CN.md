@@ -66,6 +66,9 @@ pip install -e ".[web]"
 pip install -e ".[office]"
 
 # harness 内核 + plugins 生态（engine import 必需，issue #196）
+# monorepo 内 extra 可解析（同仓 fusion-plugins-ecosystem 已装）。
+# 独立克隆时请直接从 git tag 装内核：
+#   pip install 'git+https://github.com/dahai80/fusion-harness.git@v0.2.0'
 pip install -e ".[plugins]"
 
 # 或使用 uv（更快）
@@ -73,10 +76,14 @@ uv venv --python 3.11
 uv pip install -e ".[test]"
 ```
 
-> 说明：裸装 `pip install -e ".[test]"` 可以安装并跑测试，但 import
-> `fusion_cowork.engine` 还需要 fusion-harness 内核（在 `[plugins]` extra 中，
-> 仅 git tag 发行，不在 PyPI）。缺包时引擎 shim 会在 import 期给出可执行的
-> 安装指引（`engine/_harness_guard.py`，issue #196）。
+> 说明：裸装 `pip install -e ".[test]"` 只完成安装，跑完整测试套件还需要
+> fusion-harness 内核 — 先执行
+> `pip install 'git+https://github.com/dahai80/fusion-harness.git@v0.2.0'`
+> （monorepo 内也可 `pip install -e ".[plugins]"`，同仓的
+> `fusion-plugins-ecosystem` 已装好）。测试套件会 import
+> `fusion_cowork.engine`，其 shim 需要 fusion-harness（仅 git tag 发行，不在
+> PyPI）；缺包时收集期即报出可执行的安装指引
+> （`engine/_harness_guard.py`，issue #196）。
 
 ### 基础使用
 
@@ -816,8 +823,11 @@ fusion-cowork ai generate "每天晚上9点自动清理下载文件夹并备份�
 ## 🧪 运行测试
 
 ```bash
-# 安装测试依赖
-pip install -e ".[test]"
+# 安装测试依赖（与 CI 同 recipe）
+pip install -e ".[test,cloud,web,office]"
+# fusion-harness 内核 — engine shim 必需，仅 git tag 发行（issue #198）
+pip install 'git+https://github.com/dahai80/fusion-harness.git@v0.2.0'
+# （monorepo 内可改用：pip install -e ".[plugins]"）
 
 # 运行所有测试
 pytest tests/ -v
