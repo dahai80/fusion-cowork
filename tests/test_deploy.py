@@ -7,6 +7,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import time
 import urllib.request
 
@@ -169,4 +170,6 @@ def test_serve_binds_all_interfaces_health():
 
 
 def sys_python() -> str:
-    return shutil.which("python3") or "python3"
+    # #198: 用当前解释器, 不走 PATH — PATH 下的 python3 可能是另一个环境
+    # (venv 未激活时解析到 homebrew python, 缺 fusion_cowork, serve 启动失败)
+    return sys.executable
