@@ -65,10 +65,18 @@ pip install -e ".[web]"
 # 办公交付节点（xlsx_write / pptx_write，issue #151 #152）
 pip install -e ".[office]"
 
+# harness 内核 + plugins 生态（engine import 必需，issue #196）
+pip install -e ".[plugins]"
+
 # 或使用 uv（更快）
 uv venv --python 3.11
 uv pip install -e ".[test]"
 ```
+
+> 说明：裸装 `pip install -e ".[test]"` 可以安装并跑测试，但 import
+> `fusion_cowork.engine` 还需要 fusion-harness 内核（在 `[plugins]` extra 中，
+> 仅 git tag 发行，不在 PyPI）。缺包时引擎 shim 会在 import 期给出可执行的
+> 安装指引（`engine/_harness_guard.py`，issue #196）。
 
 ### 基础使用
 
