@@ -37,7 +37,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install --upgrade pip
       - run: pip install fusion-harness
-- run: pip install -e ".[test,cloud,web,office]"
+      - run: pip install -e ".[test,cloud,web,office]"
       - name: Test (SQLite backend, default marks)
         run: python -m pytest tests/ -q --tb=short -m "not slow and not chaos and not postgres"
       - name: Coverage
@@ -68,7 +68,7 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: pip install fusion-harness
-- run: pip install -e ".[test,cloud,web,office]"
+      - run: pip install -e ".[test,cloud,web,office]"
       - name: Test (Postgres backend integration)
         run: python -m pytest tests/ -q --tb=short -m "postgres"
 
@@ -81,7 +81,7 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: pip install fusion-harness
-- run: pip install -e ".[test,cloud,web,office]"
+      - run: pip install -e ".[test,cloud,web,office]"
       - name: Slow + chaos tests
         run: python -m pytest tests/ -q --tb=short -m "slow or chaos"
 
@@ -112,7 +112,7 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: pip install fusion-harness
-- run: pip install -e ".[test,cloud,web,office]"
+      - run: pip install -e ".[test,cloud,web,office]"
       - run: pip install pip-audit
       - name: pip-audit (high/critical CVEs fail)
         run: pip-audit -f columns --ignore-vuln GHSA-xxxx

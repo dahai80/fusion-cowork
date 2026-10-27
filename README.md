@@ -68,8 +68,9 @@ pip install -e ".[office]"
 
 # Harness kernel + plugins ecosystem (required at engine import, issue #196)
 # Monorepo: the extra resolves (sibling fusion-plugins-ecosystem already installed).
-# Standalone clone: install the kernel directly from its git tag instead:
-#   pip install 'git+https://github.com/dahai80/fusion-harness.git@v0.2.0'
+# Standalone clone: the extra does not resolve (fusion-plugins-ecosystem is a
+# monorepo sibling, not on PyPI) — install the kernel from PyPI instead:
+#   pip install fusion-harness
 pip install -e ".[plugins]"
 
 # Or use uv (faster)
@@ -79,11 +80,10 @@ uv pip install -e ".[test]"
 
 > Note: a bare `pip install -e ".[test]"` installs, but running the full test
 > suite additionally requires the fusion-harness kernel — install with
-> `pip install 'git+https://github.com/dahai80/fusion-harness.git@v0.2.0'`
-> (or `pip install -e ".[plugins]"` inside the monorepo, where the sibling
-> `fusion-plugins-ecosystem` is already installed). The suite imports
-> `fusion_cowork.engine`, whose shims need fusion-harness (git tag only — not
-> on PyPI); without it, collection fails with the actionable install hint
+> `pip install fusion-harness` (or `pip install -e ".[plugins]"` inside the
+> monorepo, where the sibling `fusion-plugins-ecosystem` is already installed).
+> The suite imports `fusion_cowork.engine`, whose shims need fusion-harness;
+> without it, collection fails with the actionable install hint
 > (`engine/_harness_guard.py`, issue #196).
 
 ### Basic Usage
@@ -1011,8 +1011,8 @@ fusion-cowork ai generate "Every night at 9pm, clean my Downloads folder and bac
 ```bash
 # Install test dependencies (same recipe as CI)
 pip install -e ".[test,cloud,web,office]"
-# fusion-harness kernel — engine shims need it, git tag only (issue #198)
-pip install 'git+https://github.com/dahai80/fusion-harness.git@v0.2.0'
+# fusion-harness kernel — engine shims need it (issue #198, PyPI since 0.2.1)
+pip install fusion-harness
 # (monorepo alternative: pip install -e ".[plugins]")
 
 # Run all tests
