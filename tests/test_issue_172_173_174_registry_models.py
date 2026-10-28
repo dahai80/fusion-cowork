@@ -71,7 +71,7 @@ class TestRawKeyIssuance:
     async def test_gateway_shaped_response_persists_key(self, monkeypatch, _key_path):
         # issue #173 复现路径: 真实网关只回 raw_key, 之前被静默丢弃
         monkeypatch.setenv("FUSION_SHELL_GATEWAY_URL", "http://gw")
-        monkeypatch.setenv("FUSION_GATEWAY_ADMIN_KEY", "admin-secret")
+        monkeypatch.setenv("FUSION_ADMIN_KEY", "admin-secret")
         issued = {
             "code": "ok",
             "message": "key issued",

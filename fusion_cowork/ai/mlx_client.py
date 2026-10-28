@@ -48,6 +48,23 @@ except ImportError:
     logger.info("fusion_core 不可用, FusionMLXClient 回退手写重试 (path B fallback)")
 
 
+def _client_api_key() -> str:
+    # issue #204: 单点配置解析走 fusion_core.config.client_key (规范名 FUSION_CLIENT_KEY,
+    # legacy 别名链 + prod 缺失 RuntimeError 都在 fusion-core 内收敛)。裸装无 fusion-core
+    # 时回退只认规范名 — 别名兼容是 fusion-core 的职责, 不在业务仓重复。
+    try:
+        from fusion_core.config import client_key
+
+        return client_key()
+    except ImportError:
+        key = os.environ.get("FUSION_CLIENT_KEY", "")
+        if not key:
+            logger.warning(
+                "FUSION_CLIENT_KEY 未设置: MLX 调用将无鉴权, 可能被上游 401 拒绝 (请 export FUSION_CLIENT_KEY=<key>)"
+            )
+        return key
+
+
 @dataclass
 class LLMResponse:
     content: str
@@ -81,12 +98,8 @@ class FusionMLXClient:
     ):
         self.base_url = base_url.rstrip("/")
         if not api_key:
-            api_key = os.environ.get("FUSION_MLX_API_KEY", "")
+            api_key = _client_api_key()
         self.api_key = api_key
-        if not self.api_key:
-            logger.warning(
-                "FUSION_MLX_API_KEY 未设置: MLX 调用将无鉴权, 可能被上游 401 拒绝 (请 export FUSION_MLX_API_KEY=<key>)"
-            )
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -200,7 +213,7 @@ class FusionMLXClient:
                     if e.response.status_code in (401, 403):
                         logger.error(
                             f"chat() 鉴权失败 HTTP {e.response.status_code}: "
-                            "FUSION_MLX_API_KEY 应为 fusion-gateway 的 client api key "
+                            "FUSION_CLIENT_KEY 应为 fusion-gateway 的 client api key "
                             "(config.yaml 中 auth.api_keys[].key), 而非 fusion-mlx "
                             "settings.json 的 auth.api_key; 两者是独立鉴权"
                         )
@@ -227,7 +240,7 @@ class FusionMLXClient:
             if e.response.status_code in (401, 403):
                 logger.error(
                     f"chat() 鉴权失败 HTTP {e.response.status_code}: "
-                    "FUSION_MLX_API_KEY 应为 fusion-gateway 的 client api key "
+                    "FUSION_CLIENT_KEY 应为 fusion-gateway 的 client api key "
                     "(config.yaml 中 auth.api_keys[].key), 而非 fusion-mlx "
                     "settings.json 的 auth.api_key; 两者是独立鉴权"
                 )
