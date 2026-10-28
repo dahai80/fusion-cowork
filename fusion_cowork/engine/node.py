@@ -178,6 +178,9 @@ class NodeCategory(Enum):
     IO = "io"  # 输入/输出
     LOGIC = "logic"  # 逻辑控制
     FUSION_ECOSYSTEM = "fusion_ecosystem"  # Fusion 生态互通
+    # 同值别名：业务进程源码引用合规名（TASK-CONFIG-2026-10-28，
+    # FUSION_ 前缀名在 business 仓源码中属契约外变量）
+    ECOSYSTEM = "fusion_ecosystem"  # Fusion 生态互通（alias）
 
 
 @dataclass
