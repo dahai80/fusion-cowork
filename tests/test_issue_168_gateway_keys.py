@@ -102,7 +102,7 @@ class TestManifestOmitsApiKey:
 class TestRegistryLoopIssuesKey:
     async def test_registration_persists_issued_key(self, monkeypatch):
         monkeypatch.setenv("FUSION_SHELL_GATEWAY_URL", "http://gw")
-        monkeypatch.setenv("FUSION_GATEWAY_ADMIN_KEY", "admin-secret")
+        monkeypatch.setenv("FUSION_ADMIN_KEY", "admin-secret")
         manifest = {"id": "fusion-cowork"}
         issued = {"api_key": "fm-fusion-cowork-deadbeef01", "key_id": "k1"}
         client = _FakeClient([_response(200, issued), _response(200, {})])
@@ -112,14 +112,14 @@ class TestRegistryLoopIssuesKey:
 
     async def test_no_key_in_response_nothing_persisted(self, monkeypatch):
         monkeypatch.setenv("FUSION_SHELL_GATEWAY_URL", "http://gw")
-        monkeypatch.setenv("FUSION_GATEWAY_ADMIN_KEY", "admin-secret")
+        monkeypatch.setenv("FUSION_ADMIN_KEY", "admin-secret")
         client = _FakeClient([_response(200, {"ok": True}), _response(200, {})])
         await _drive(client, {"id": "fusion-cowork"})
         assert load_module_key() == ""
 
     async def test_heartbeat_uses_issued_key(self, monkeypatch):
         monkeypatch.setenv("FUSION_SHELL_GATEWAY_URL", "http://gw")
-        monkeypatch.setenv("FUSION_GATEWAY_ADMIN_KEY", "admin-secret")
+        monkeypatch.setenv("FUSION_ADMIN_KEY", "admin-secret")
         save_module_key("fm-issued-heartbeat")
         client = _FakeClient([_response(200, {}), _response(200, {}), _response(200, {})])
         await _drive(client, {"id": "fusion-cowork"})
@@ -129,7 +129,7 @@ class TestRegistryLoopIssuesKey:
 
     async def test_heartbeat_401_with_issued_key_reregisters(self, monkeypatch):
         monkeypatch.setenv("FUSION_SHELL_GATEWAY_URL", "http://gw")
-        monkeypatch.setenv("FUSION_GATEWAY_ADMIN_KEY", "admin-secret")
+        monkeypatch.setenv("FUSION_ADMIN_KEY", "admin-secret")
         save_module_key("fm-stale")
         client = _FakeClient([_response(200, {}), _response(401), _response(200, {}), _response(200, {})])
         await _drive(client, {"id": "fusion-cowork"})

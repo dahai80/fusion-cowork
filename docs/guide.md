@@ -398,10 +398,11 @@ curl http://localhost:11438/health
 
 ```
 Is it a 401 / auth error calling AI?
-├─ YES → You likely put the fusion-mlx key into FUSION_MLX_API_KEY.
+├─ YES → You likely put the fusion-mlx key into FUSION_CLIENT_KEY.
 │        That variable wants the fusion-gateway CLIENT key
 │        (from gateway config.yaml auth.api_keys[].key), NOT the mlx backend key.
-│        Fix: export FUSION_MLX_API_KEY="<gateway-client-key>"
+│        Fix: export FUSION_CLIENT_KEY="<gateway-client-key>"
+│        (legacy alias FUSION_MLX_API_KEY still honored via fusion-core, deprecated)
 │        Two separate auth layers — see README "鉴权说明".
 
 Is fusion-mlx unreachable (ai status = down)?

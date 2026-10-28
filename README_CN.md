@@ -131,20 +131,20 @@ fusion-cowork desk rpc
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `FUSION_MLX_API_KEY` | `local` | **fusion-gateway 客户端 api key**（取自 fusion-gateway `config.yaml` 中 `auth.api_keys[].key`）。**不是** fusion-mlx `settings.json` 的 `auth.api_key` —— gateway 与 mlx 是两套独立鉴权。 |
+| `FUSION_CLIENT_KEY` | _(未设)_ | **fusion-gateway 客户端 api key**（取自 fusion-gateway `config.yaml` 中 `auth.api_keys[].key`）。**不是** fusion-mlx `settings.json` 的 `auth.api_key` —— gateway 与 mlx 是两套独立鉴权。经 `fusion_core.config.client_key()` 单点解析 (issue #204);legacy 别名 `FUSION_MLX_API_KEY`/`MLX_API_KEY` 由 fusion-core 兼容 (弃用告警);`FUSION_PROFILE=prod` 缺 key 直接报错。 |
 | `FUSION_MLX_URL` | `http://localhost:11432/v1` | fusion-mlx 基础 URL (经 fusion-gateway netlayer) |
 | `FUSION_MLX_MODEL` | _(未设)_ | NL 工作流生成 (`NLWorkflowGenerator`) 默认 chat 模型。显式指定一个支持 chat 的模型 id,避免误选 `image_gen`/`video_gen` 模型 (issue #85) |
 | `FUSION_RAG_URL` | `http://localhost:11436` | fusion-rag (fusion-kb) 基础 URL |
 
 > **鉴权说明**: fusion-cowork 通过 fusion-gateway(:11432) 调 fusion-mlx,存在**两套独立鉴权**:
-> 1. **gateway client key** —— 客户端请求 gateway 时用,即本变量 `FUSION_MLX_API_KEY`(取自 gateway `config.yaml` 的 `auth.api_keys[].key`)
+> 1. **gateway client key** —— 客户端请求 gateway 时用,即本变量 `FUSION_CLIENT_KEY`(取自 gateway `config.yaml` 的 `auth.api_keys[].key`;legacy 别名 `FUSION_MLX_API_KEY`/`MLX_API_KEY` 由 fusion-core 兼容,已弃用)
 > 2. **mlx backend key** —— gateway 转发到 mlx 时用,配置在 gateway `config.yaml` 的 `backends.fusion-mlx.api_key`,客户端无需关心
 >
-> 常见 401 错误:把 mlx 的 key 填进了 `FUSION_MLX_API_KEY`。应填 gateway 的 client key。
+> 常见 401 错误:把 mlx 的 key 填进了 `FUSION_CLIENT_KEY`。应填 gateway 的 client key。
 
 ```bash
 # 示例：设置 API 密钥为 fusion-gateway 的 client key（来自 config.yaml 的 auth.api_keys）
-export FUSION_MLX_API_KEY="fg-admin-key"
+export FUSION_CLIENT_KEY="fg-admin-key"
 fusion-cowork desk rpc
 
 # 会话管理
@@ -526,7 +526,7 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 ### 独立模式鉴权与网关注册 (v0.5.6, issue #96/#97) + P0 页面 (v0.5.7) + P1 委托与会话 (v0.5.8)
 
 - **运行时密钥接缝**: 独立发布构建下 API key 运行时解析 — `window.__FUSION_COWORK_WEB_API_KEY__` > `localStorage['fusion-cowork-web-api-key']` > 构建期 `VITE_API_KEY` (遗留回退)。无 key 则省略鉴权头 (keyless serve 姿态, 127.0.0.1 绑定)。独立 HTTP 包装器对带 body 请求始终补 `content-type: application/json` (上游 fusion-web-shell#22)。
-- **网关 shell 注册**: `web serve` 启动后向 fusion-gateway 注册 `web/manifest.json` 并心跳保活 — 需同时配置 `FUSION_SHELL_GATEWAY_URL` + `FUSION_GATEWAY_ADMIN_KEY` (`FUSION_SHELL_MANIFEST` 覆盖 manifest 路径)。未配置则完全跳过。对齐 agent-studio 的 `shell_registry`。
+- **网关 shell 注册**: `web serve` 启动后向 fusion-gateway 注册 `web/manifest.json` 并心跳保活 — 需同时配置 `FUSION_SHELL_GATEWAY_URL` + `FUSION_ADMIN_KEY` (经 `fusion_core.config.admin_key()` 单点解析, issue #204; `FUSION_SHELL_MANIFEST` 覆盖 manifest 路径)。未配置则完全跳过。对齐 agent-studio 的 `shell_registry`。
 
 浏览器里的 DAG 工作流画布 — fusion-cowork 接入统一 Web Shell (PRD N-6)。
 

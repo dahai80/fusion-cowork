@@ -66,7 +66,7 @@ def _heartbeats(calls):
 def manifest_env(tmp_path, monkeypatch):
     path = tmp_path / "manifest.json"
     monkeypatch.setenv("FUSION_SHELL_GATEWAY_URL", "http://gw")
-    monkeypatch.setenv("FUSION_GATEWAY_ADMIN_KEY", "admin-secret")
+    monkeypatch.setenv("FUSION_ADMIN_KEY", "admin-secret")
     monkeypatch.setenv("FUSION_SHELL_MANIFEST", str(path))
     _write_manifest(path, [{"route": "/workflows"}])
     return path

@@ -133,7 +133,7 @@ fusion-cowork desk rpc
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FUSION_MLX_API_KEY` | `local` | **fusion-gateway client api key** (a key from `auth.api_keys[].key` in fusion-gateway `config.yaml`). NOT the fusion-mlx `settings.json` `auth.api_key` — gateway and mlx use separate auth. |
+| `FUSION_CLIENT_KEY` | _(unset)_ | **fusion-gateway client api key** (a key from `auth.api_keys[].key` in fusion-gateway `config.yaml`). NOT the fusion-mlx `settings.json` `auth.api_key` — gateway and mlx use separate auth. Resolved via `fusion_core.config.client_key()` (issue #204); legacy `FUSION_MLX_API_KEY`/`MLX_API_KEY` still honored as deprecated aliases by fusion-core. `FUSION_PROFILE=prod` + missing key = fail fast. |
 | `FUSION_MLX_URL` | `http://localhost:11432/v1` | fusion-mlx base URL — full URL, highest priority (overrides host/port) |
 | `FUSION_MLX_HOST` | `localhost` | fusion-mlx host (composed with `FUSION_MLX_PORT`; used only when `FUSION_MLX_URL` unset) |
 | `FUSION_MLX_PORT` | `11432` | fusion-mlx port (composed with `FUSION_MLX_HOST`; used only when `FUSION_MLX_URL` unset) |
@@ -149,14 +149,14 @@ fusion-cowork desk rpc
 > ```
 >
 > **鉴权说明**: fusion-cowork 通过 fusion-gateway(:11432) 调 fusion-mlx,存在**两套独立鉴权**:
-> 1. **gateway client key** — 客户端请求 gateway 时用,即本变量 `FUSION_MLX_API_KEY`(取自 gateway `config.yaml` 的 `auth.api_keys[].key`)
+> 1. **gateway client key** — 客户端请求 gateway 时用,即本变量 `FUSION_CLIENT_KEY`(取自 gateway `config.yaml` 的 `auth.api_keys[].key`; issue #204 前叫 `FUSION_MLX_API_KEY`, 别名仍兼容)
 > 2. **mlx backend key** — gateway 转发到 mlx 时用,配置在 gateway `config.yaml` 的 `backends.fusion-mlx.api_key`,客户端无需关心
 >
-> 常见 401 错误:把 mlx 的 key 填进了 `FUSION_MLX_API_KEY`。应填 gateway 的 client key。本地单机直连 (上面 `FUSION_MLX_PORT=11434`) 时则相反 — 此时 `FUSION_MLX_API_KEY` 应填 mlx 的 key。
+> 常见 401 错误:把 mlx 的 key 填进了 `FUSION_CLIENT_KEY`。应填 gateway 的 client key。本地单机直连 (上面 `FUSION_MLX_PORT=11434`) 时则相反 — 此时 `FUSION_CLIENT_KEY` 应填 mlx 的 key。
 
 ```bash
 # Example: set API key to a fusion-gateway client key (from config.yaml auth.api_keys)
-export FUSION_MLX_API_KEY="fg-admin-key"
+export FUSION_CLIENT_KEY="fg-admin-key"
 fusion-cowork desk rpc
 
 # Session management
@@ -594,7 +594,7 @@ Under the unified shell the module is served at `/shell/<id>/` — origin-root `
 ### Standalone auth & gateway registration (v0.5.6, issues #96/#97)
 
 - **Runtime key seam**: in a standalone release build the API key resolves at runtime — `window.__FUSION_COWORK_WEB_API_KEY__` > `localStorage['fusion-cowork-web-api-key']` > build-time `VITE_API_KEY` (legacy). No key → headers omitted (keyless serve posture, 127.0.0.1 bind). The standalone HTTP wrapper always sets `content-type: application/json` on bodied requests (upstream fusion-web-shell#22).
-- **Gateway shell registration**: `web serve` registers `web/manifest.json` with fusion-gateway and keeps a heartbeat when both `FUSION_SHELL_GATEWAY_URL` + `FUSION_GATEWAY_ADMIN_KEY` are set (`FUSION_SHELL_MANIFEST` overrides the manifest path). Unset → fully skipped. Mirrors agent-studio's `shell_registry`.
+- **Gateway shell registration**: `web serve` registers `web/manifest.json` with fusion-gateway and keeps a heartbeat when both `FUSION_SHELL_GATEWAY_URL` + `FUSION_ADMIN_KEY` are set (`FUSION_SHELL_MANIFEST` overrides the manifest path; admin key resolved via `fusion_core.config.admin_key()`, issue #204). Unset → fully skipped. Mirrors agent-studio's `shell_registry`.
 
 DAG workflow canvas in the browser — fusion-cowork joins the unified web shell (PRD N-6).
 

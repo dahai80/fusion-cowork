@@ -46,6 +46,27 @@ from .utils.logger import setup_logger
 
 logger = logging.getLogger(__name__)
 
+
+def _set_process_title(title: str) -> None:
+    # issue #203: 长驻进程在 ps/Activity Monitor 里必须显示 "fusion-cowork <role>",
+    # 不能是裸的 homebrew "Python"。优先 fusion_core.proc (共享 helper), 裸装无
+    # fusion-core 时直接试 setproctitle, 两者都不可用则降级 debug 日志 (标题保持默认)。
+    try:
+        from fusion_core.proc import set_process_title
+
+        set_process_title(title)
+        return
+    except ImportError:
+        pass
+    try:
+        import setproctitle
+
+        setproctitle.setproctitle(title)
+        logger.debug("process title set: %s", title)
+    except Exception as exc:
+        logger.debug("setproctitle unavailable, process title stays default (%s): %s", title, exc)
+
+
 # 全局实例 — 延迟初始化避免测试污染
 _engine = None
 _scheduler = None
@@ -1030,6 +1051,7 @@ def desk_rpc(sock: str, http_port: int):
     HTTP 通道承载 fusion-studio PluginBridge 的 plugins/* 集成面板 (issue #48)。
     --http-port 0 可禁用 HTTP (仅 UDS)。
     """
+    _set_process_title("fusion-cowork desk-rpc")
     from .server.desk_rpc import DeskRPCServer
 
     rt = _build_runtime()
@@ -1121,11 +1143,12 @@ def web_serve(port: int, host: str):
     鉴权: FUSION_COWORK_WEB_API_KEY 配置后, 所有 /api 路径要求
     Authorization: Bearer 或 x-api-key (gateway /shell 代理注入); 未配置放行
     (默认仅本机绑定)。
-    shell 注册 (issue #97): FUSION_SHELL_GATEWAY_URL + FUSION_GATEWAY_ADMIN_KEY
+    shell 注册 (issue #97): FUSION_SHELL_GATEWAY_URL + FUSION_ADMIN_KEY
     同时配置时, 后台任务向网关注册 web/manifest.json 并心跳保活。
     跨设备同步 (#123): FUSION_COWORK_CROSS_SYNC=1 时启动 CrossDeviceSync
     (W22 /api/deliver 通道), 参数走 FUSION_COWORK_SYNC_HOST/PORT/TOKEN/CERT/KEY。
     """
+    _set_process_title(f"fusion-cowork web :{port}")
     import asyncio
 
     bind_host = host or os.environ.get("FUSION_BIND_HOST", "127.0.0.1")
@@ -1147,7 +1170,7 @@ def web_serve(port: int, host: str):
         console.print_warning("FUSION_COWORK_WEB_API_KEY 未配置 — 鉴权放行 (仅建议本机绑定使用)")
     register_enabled = shell_registration_enabled()
     if not register_enabled:
-        console.print_info("shell 网关注册未启用 (FUSION_SHELL_GATEWAY_URL / FUSION_GATEWAY_ADMIN_KEY 未配置)")
+        console.print_info("shell 网关注册未启用 (FUSION_SHELL_GATEWAY_URL / FUSION_ADMIN_KEY 未配置)")
 
     async def _serve():
         scheduler = getattr(app.state, "scheduler", None)
@@ -2026,6 +2049,7 @@ def remote():
 @click.option("--tls-key", default="", help="TLS 私钥路径 (PEM)")
 def remote_serve(host: str, port: int, token: str, tls_cert: str, tls_key: str):
     """启动远程控制服务 (可选 TLS)。"""
+    _set_process_title("fusion-cowork remote")
     from .server.remote import RemoteControlServer
 
     server = RemoteControlServer(host=host, port=port, token=token or None, tls_cert=tls_cert, tls_key=tls_key)
@@ -3425,6 +3449,7 @@ def serve(host: str, port: int, json_log: bool, metrics_port: int):
     Dockerfile CMD / k8s ENTRYPOINT 用此命令。
     本地开发仍用 `desk rpc` (UDS + HTTP 双通道)。
     """
+    _set_process_title(f"fusion-cowork serve :{port}")
     import asyncio
 
     from .nodes import import_all_nodes

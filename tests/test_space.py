@@ -1047,14 +1047,18 @@ class TestFusionMLXClientEnhancements:
 
         from fusion_cowork.ai.mlx_client import FusionMLXClient
 
-        saved = os.environ.pop("FUSION_MLX_API_KEY", None)
+        saved = {}
+        for var in ("FUSION_CLIENT_KEY", "FUSION_MLX_API_KEY", "MLX_API_KEY"):
+            val = os.environ.pop(var, None)
+            if val is not None:
+                saved[var] = val
         try:
             client = FusionMLXClient()
             assert client.api_key == ""
             assert client.api_key != "local"
         finally:
-            if saved is not None:
-                os.environ["FUSION_MLX_API_KEY"] = saved
+            for var, val in saved.items():
+                os.environ[var] = val
 
     def test_custom_base_url_still_works(self):
         from fusion_cowork.ai.mlx_client import FusionMLXClient

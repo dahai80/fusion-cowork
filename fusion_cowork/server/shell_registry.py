@@ -3,7 +3,7 @@
 web serve 启动时向 fusion-gateway shell 注册表注册 web/manifest.json
 (POST /api/v1/shell/manifests, fg-key auth) 并周期心跳保活
 (heartbeat_timeout 后网关置灰)。env 门控 — 需同时配置:
-- FUSION_SHELL_GATEWAY_URL + FUSION_GATEWAY_ADMIN_KEY
+- FUSION_SHELL_GATEWAY_URL + FUSION_ADMIN_KEY
 可选 FUSION_SHELL_MANIFEST 覆盖 manifest 路径。未配置则静默跳过 (默认 OFF)。
 /shell/fusion-cowork/ 静态代理本身是网关配置 — 动态 manifest 只驱动菜单入口。
 """
@@ -20,7 +20,6 @@ from typing import Any, Dict
 logger = logging.getLogger(__name__)
 
 GATEWAY_URL_ENV = "FUSION_SHELL_GATEWAY_URL"
-ADMIN_KEY_ENV = "FUSION_GATEWAY_ADMIN_KEY"
 MANIFEST_PATH_ENV = "FUSION_SHELL_MANIFEST"
 UPSTREAM_OVERRIDE_ENV = "FUSION_COWORK_WEB_UPSTREAM"
 REGISTER_INTERVAL_SECONDS = 15.0
@@ -47,6 +46,21 @@ def save_module_key(key: str) -> bool:
     MODULE_KEY_PATH.chmod(0o600)
     logger.info(f"网关签发模块密钥已持久化: {MODULE_KEY_PATH} ({_mask_key(key)})")
     return True
+
+
+def _gateway_admin_key() -> str:
+    # issue #204: admin key 单点解析走 fusion_core.config.admin_key (规范名
+    # FUSION_ADMIN_KEY, prod 缺失 RuntimeError 在 fusion-core 内收敛)。裸装无
+    # fusion-core 时回退只认规范名, 不在本仓重复别名链。
+    try:
+        from fusion_core.config import admin_key
+
+        return admin_key()
+    except ImportError:
+        key = os.environ.get("FUSION_ADMIN_KEY", "")
+        if not key:
+            logger.warning("FUSION_ADMIN_KEY 未设置: shell 网关注册不可用 (向 fusion-gateway admin API 索取)")
+        return key
 
 
 def _mask_key(key: str) -> str:
@@ -78,7 +92,11 @@ def _default_manifest_path() -> Path:
 
 
 def shell_registration_enabled() -> bool:
-    return bool(os.environ.get(GATEWAY_URL_ENV, "").strip() and os.environ.get(ADMIN_KEY_ENV, "").strip())
+    # URL 未配置时短路, 不触发 admin key 解析 (prod 缺 key 的 RuntimeError 只在
+    # 明确要注册时才是配置错误)
+    if not os.environ.get(GATEWAY_URL_ENV, "").strip():
+        return False
+    return bool(_gateway_admin_key().strip())
 
 
 def load_manifest() -> Dict[str, Any]:
@@ -114,7 +132,7 @@ def load_manifest() -> Dict[str, Any]:
 async def _registry_loop_body(client: Any, manifest: Dict[str, Any], interval: float) -> None:
     module_id = str(manifest["id"])
     gateway = os.environ.get(GATEWAY_URL_ENV, "").strip().rstrip("/")
-    admin_key = os.environ.get(ADMIN_KEY_ENV, "").strip()
+    admin_key = _gateway_admin_key().strip()
     admin_headers = {"Authorization": f"Bearer {admin_key}", "Content-Type": "application/json"}
     registered = False
     while True:

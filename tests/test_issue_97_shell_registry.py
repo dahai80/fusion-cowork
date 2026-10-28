@@ -12,7 +12,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    for var in ("FUSION_SHELL_GATEWAY_URL", "FUSION_GATEWAY_ADMIN_KEY", "FUSION_SHELL_MANIFEST"):
+    for var in ("FUSION_SHELL_GATEWAY_URL", "FUSION_ADMIN_KEY", "FUSION_SHELL_MANIFEST"):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -24,7 +24,7 @@ def _manifest(tmp_path: Path) -> Path:
 
 def _env(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("FUSION_SHELL_GATEWAY_URL", "http://127.0.0.1:22432")
-    monkeypatch.setenv("FUSION_GATEWAY_ADMIN_KEY", "fg-admin")
+    monkeypatch.setenv("FUSION_ADMIN_KEY", "fg-admin")
     monkeypatch.setenv("FUSION_SHELL_MANIFEST", str(_manifest(tmp_path)))
 
 
@@ -38,7 +38,7 @@ class TestGating:
         from fusion_cowork.server.shell_registry import shell_registration_enabled
 
         monkeypatch.setenv("FUSION_SHELL_GATEWAY_URL", "http://127.0.0.1:11432")
-        monkeypatch.setenv("FUSION_GATEWAY_ADMIN_KEY", "fg-admin")
+        monkeypatch.setenv("FUSION_ADMIN_KEY", "fg-admin")
         assert shell_registration_enabled() is True
 
     def test_enabled_requires_admin_key(self, monkeypatch):
@@ -129,7 +129,7 @@ class TestRegistryLoop:
         from fusion_cowork.server.shell_registry import shell_registry_loop
 
         monkeypatch.setenv("FUSION_SHELL_GATEWAY_URL", "http://127.0.0.1:22432")
-        monkeypatch.setenv("FUSION_GATEWAY_ADMIN_KEY", "fg-admin")
+        monkeypatch.setenv("FUSION_ADMIN_KEY", "fg-admin")
         monkeypatch.setenv("FUSION_SHELL_MANIFEST", str(tmp_path / "missing.json"))
 
         async def _go():
