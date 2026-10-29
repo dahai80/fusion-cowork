@@ -76,6 +76,30 @@ wait_healthy() {
     return 1
 }
 
+# ── Port-registry self-check (issue #219, config Phase 3.3) ─────────
+# 启动前核对自身 port-registry.yaml 登记: 未登记端口在 start 即失败,
+# 而不是事后被 CI check-ports 抓到。缺登记文件 = warn 放行 (独立部署);
+# FUSION_SKIP_REGISTRY_CHECK=1 可显式跳过。
+registry_selfcheck() {
+    local service="fusion-cowork"
+    local port="${FUSION_PORT:-11438}"
+    local registry="${FUSION_REGISTRY:-$HOME/fusion/architecture/port-registry.yaml}"
+    if [[ ! -f "${registry}" ]]; then
+        log_warn "port-registry.yaml not found at ${registry} — registry self-check skipped"
+        return 0
+    fi
+    if grep -A3 "^  ${service}:" "${registry}" 2>/dev/null | grep -q "port: ${port}$"; then
+        log_info "Registry self-check OK (${service} port ${port} registered)"
+        return 0
+    fi
+    if [[ "${FUSION_SKIP_REGISTRY_CHECK:-}" == "1" ]]; then
+        log_warn "registry check bypassed (FUSION_SKIP_REGISTRY_CHECK=1)"
+        return 0
+    fi
+    log_error "port ${port} for ${service} not registered in ${registry} — refusing to start"
+    return 1
+}
+
 # ── Preflight checks ────────────────────────────────────────────────
 preflight() {
     log_step "Preflight checks"
@@ -93,6 +117,11 @@ preflight() {
 
     # Ensure log directory
     mkdir -p "${LOG_DIR}"
+
+    # issue #219: 端口登记自检 — 未登记拒绝启动
+    if ! registry_selfcheck; then
+        return 1
+    fi
 
     log_info "Preflight OK (socket=${SOCK_FILE})"
     return 0
@@ -362,13 +391,16 @@ Commands:
   log [N|-f] Tail server log (default 50 lines, -f to follow)
   clean      Rotate old logs, clear __pycache__, remove stale PID/socket
   doctor     Health check (venv, CLI, socket, upstream services)
+  registry-check  Port-registry self-check only (issue #219; exit 1 if unregistered)
   container  容器/云模式 — 前台 HTTP 单通道 (无 UDS, 不探 venv, uvicorn 接管 SIGTERM)
   help       Show this help
 
 Environment:
   SOCK_FILE          Unix Domain Socket path (default: /tmp/fusion-cowork.sock)
   FUSION_BIND_HOST   bind host (default: 127.0.0.1, single-machine)
-  FUSION_PORT        容器模式 HTTP 端口 (default: 11438)
+  FUSION_PORT        HTTP 端口 (default: 11438; registry self-check 对此端口)
+  FUSION_REGISTRY    port-registry.yaml path (default: $HOME/fusion/architecture/port-registry.yaml)
+  FUSION_SKIP_REGISTRY_CHECK  set to 1 to bypass the registry self-check
 EOF
 }
 
@@ -384,6 +416,7 @@ case "${cmd}" in
     log)               show_log "${1:-}" ;;
     clean)             do_clean   ;;
     doctor)            do_doctor  ;;
+    registry-check)    registry_selfcheck ;;
     container)         do_container ;;
     help|-h|--help)    usage ;;
     *)

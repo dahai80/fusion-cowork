@@ -1392,7 +1392,9 @@ def create_web_app(
 
     # ── W6 调度任务 (migration doc §6 P0) ──
     def _make_task_executor(workflow_id: str):
-        async def _exec(task_id: str) -> None:
+        # issue #218: TaskScheduler._run_task 以零参调用 executor (await executor()),
+        # 旧签名 _exec(task_id) 每次触发都 TypeError, 连败 5 次后任务被置 FAILED。
+        async def _exec() -> None:
             record = store.get(workflow_id)
             if not record:
                 logger.error(f"定时任务执行器找不到工作流: {workflow_id}")
@@ -1400,7 +1402,7 @@ def create_web_app(
             runs.start(
                 record.get("workflow") or {}, workflow_id=workflow_id, workflow_name=record.get("name", workflow_id)
             )
-            logger.info(f"定时任务 {task_id} 已触发工作流 {workflow_id}")
+            logger.info(f"定时任务已触发工作流 {workflow_id}")
 
         return _exec
 

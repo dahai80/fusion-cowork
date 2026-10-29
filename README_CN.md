@@ -359,6 +359,12 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 
 测试: `tests/test_issue_189_node_executor.py` (33 例 + 1 例 live-AS 跳过: 波次并发墙钟/重叠/峰值、env 解析、配置往返、UDS 成功/partial/失败/transcript 容错、HTTP 完成/失败/超时/覆盖降级、混合 DAG 端到端、agent 失败语义、跨 agent 节点断点续跑)。文档: `docs/node-executors.md`。
 
+### 定时任务执行器修复 + 启动端口登记自检 (v0.5.50, issues #218/#219)
+
+- **#218 — 定时任务真正能跑了**: `_make_task_executor` 的闭包带 `task_id` 参数, 而 `TaskScheduler._run_task` 以零参调用执行器 (`await executor()`) — cron/interval 每次触发都 `TypeError`, 连败 5 次被调度器自动置 FAILED。Web 控制台调度页创建的任务从未产生过任何 run。执行器改为零参, 经 `RunRegistry.start` 触发工作流并记录触发日志; 工作流定义缺失时显式报错 (ERROR 日志) 而非拖垮调度器。测试: `tests/test_issue_218_scheduler_executor.py` (触发产生真实 run 且 `fail_count == 0`; 执行器签名无必填参数)。
+- **#219 — 启动前端口登记自检**: `start.sh` 启动前核对本机 `FUSION_PORT` (默认 11438) 已在 `architecture/port-registry.yaml` (`FUSION_REGISTRY` 可覆盖路径) 的 `fusion-cowork:` 条目下登记 — 未登记端口在 `start` 即报错拒绝启动, 而不是事后被 CI `check-ports` 抓到。缺登记文件 = warn 放行 (独立部署); `FUSION_SKIP_REGISTRY_CHECK=1` 显式跳过。新增 `./start.sh registry-check` 子命令独立执行检查 (未登记 exit 1)。容器模式不变 (容器内无 monorepo 登记文件)。测试: `tests/test_issue_219_start_registry_check.py` (已登记/错误端口/缺文件/跳过/自定义端口)。
+- **CI flake 修复 (main)**: `tests/test_issue_190_mailbox_consumers.py` 推送用例原先轮询 `calls` 即提前退出, `pool.stop()` 可能恰好在 `dispatch()` 与 `ack`/`consumed` 计数之间取消 `_dispatch_one` — 慢速 CI 机器上 `consumed` 恒 0 (`assert 0 == 1`)。两个用例改为轮询 `pool.metrics["consumed"]` 后再 stop。测试自身竞态, 非 RunnerPool 缺陷; 停机期取消属合法行为。
+
 ### HITL 一次性拒绝唤醒 Run (v0.5.49, issue #216)
 
 - **#216 — `once: true` 拒绝同样唤醒暂停中的 run**: `POST /api/permissions/pending/{action_id}/confirm` 携带 `{"approved": false, "once": true}` 原先只出队卡片、不调 `resolve_hitl` — 控制流落入 `confirm_guard`, 条目已被 release, 返回 `confirmed: false`, run 挂在 HITL 等待直到 1800s 超时自动拒绝。现在拒绝路径也唤醒 (`resolve_hitl(exec, False)`), 与一次性批准对称: 卡片出队、节点 DENIED、run 立即到终态, 且**不落持久拒绝规则** (下次运行仍会暂停)。调用方获得干净的一次性拒绝语义, 不再需要旧 workaround — `once: false` 拒绝会落 `{"allowed": false, "scope": "*"}` 规则, 永久秒拒该节点后续所有调用。

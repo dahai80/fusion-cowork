@@ -326,8 +326,10 @@ class TestRunnerPool:
         await pool.start()
         try:
             pool.mailbox.send("alice", "agent-a", "pushed")
+            # 轮询 consumed 而非 calls: dispatch 返回后 ack/consumed 计数还在途,
+            # 提前 stop() 会在中途取消 _dispatch_one, 慢机上 consumed 恒 0 (CI flake)
             for _ in range(100):
-                if calls:
+                if pool.metrics["consumed"]:
                     break
                 await asyncio.sleep(0.02)
         finally:
@@ -357,8 +359,10 @@ class TestRunnerPool:
         monkeypatch.setattr(pool, "_refresh_metrics", _refresh)
         await pool.start()
         try:
+            # 轮询 consumed (而非 calls): 在 ack/consumed 落定后才 stop,
+            # 否则慢机上 stop() 恰好取消 ack 途中的 _dispatch_one (CI flake)
             for _ in range(100):
-                if calls:
+                if pool.metrics["consumed"]:
                     break
                 await asyncio.sleep(0.02)
         finally:
