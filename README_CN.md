@@ -359,6 +359,10 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 
 测试: `tests/test_issue_189_node_executor.py` (33 例 + 1 例 live-AS 跳过: 波次并发墙钟/重叠/峰值、env 解析、配置往返、UDS 成功/partial/失败/transcript 容错、HTTP 完成/失败/超时/覆盖降级、混合 DAG 端到端、agent 失败语义、跨 agent 节点断点续跑)。文档: `docs/node-executors.md`。
 
+### MCP 客户端 JSON 字符串参数 (v0.5.47, issue #211)
+
+- **#211 — `mcp_client` 接受 JSON 字符串 `arguments`**: 本节点输出恒为文本 (`data["result"]`), 因此两个 `mcp_client` 之间的连边 `{"source_output": "result", "target_input": "arguments"}` 会把字符串传给下游, 下游在任何 HTTP 调用前就报 `arguments 须为 JSON 对象`, 导致 `mcp_client → mcp_client` 无法串联。现在字符串参数 (来自 inputs 或 params) 先 trim 再 `json.loads` 解析: 合法 JSON 对象直接使用, 非法 JSON 报 `JSON 字符串解析失败`, 合法但非对象的 JSON 保持原错误; 非字符串非对象的行为不变。
+
 ### HTTP 请求节点 + Run 归因 + MCP 注册表检查 (v0.5.46, issues #206–#210)
 
 - **#206 — 通用 `http_request` 节点** (`nodes/tools/http_request_node.py`): 一节点一次 HTTP 请求 (`method`/`url`/`headers`/`body`/`timeout`), 外部应用可在 DAG 里直接回调自家 REST API, 无需跑 MCP 服务器。body/headers 支持 `${dotted.path}` 模板 (从节点输入解析, 含 run 级 `inputs` 注入); 未命中保留字面量并记 WARNING。响应 JSON 进 step 输出 (`status_code`/`json`/`text`/`headers`) 供下游消费; 非 2xx 映射为节点失败, run 状态对账成立。HIGH_RISK 节点 + `url:` scope 授权 (同 `mcp_client`); 面向本机/内网自家服务, 不做 SSRF 私网拦截。
