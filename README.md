@@ -415,6 +415,10 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
 
+### HITL Reject-once Wakes the Run (v0.5.49, issue #216)
+
+- **#216 — reject with `once: true` wakes the suspended run**: `POST /api/permissions/pending/{action_id}/confirm` with `{"approved": false, "once": true}` used to dequeue the pending card but never call `resolve_hitl` — control fell through to `confirm_guard`, which found no entry (already released) and returned `confirmed: false`, so the run hung at the HITL await until the 1800s timeout auto-denied it. The once branch now wakes the run on reject too (`resolve_hitl(exec, False)`), mirroring approve-once: the card is released, the node is DENIED, the run reaches a terminal state immediately, and **no deny rule is persisted** (the next run pauses again). Callers get one-time reject semantics without the old workaround's side effect — `once: false` rejects persisted a `{"allowed": false, "scope": "*"}` rule that insta-denied every future call of that node.
+
 ### MCP Registry-check Degraded-mode Warning (v0.5.48, issue #214)
 
 - **#214 — visible degraded mode**: when `fusion_core` is not importable (bare CI install), the `mcp_client` registry check used to skip with only a DEBUG line — the audit silently disappeared. The skip branch now emits a WARNING (`注册表审计降级跳过`) carrying the target `url` + `tool`, once per process (no CI-loop log spam). In full fusion deployments fusion-core is a hard dependency, so the warning never fires. `docs/mcp-registry.md` documents the degraded-mode behavior.
