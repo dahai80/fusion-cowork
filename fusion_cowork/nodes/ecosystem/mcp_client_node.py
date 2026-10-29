@@ -123,6 +123,18 @@ class MCPClientNode(BaseNode):
             return NodeResult(status=NodeStatus.FAILED, error="缺少 url 或 tool 参数", summary="参数缺失")
         if not url.startswith(("http://", "https://")):
             return NodeResult(status=NodeStatus.FAILED, error=f"非法 URL: {url}", summary="参数非法")
+        if isinstance(arguments, str):
+            # issue #211: 上游 mcp_client 输出是文本, 连边后本节点收到 JSON 字符串 — 解析后继续
+            raw_arguments = arguments
+            try:
+                arguments = json.loads(raw_arguments.strip())
+            except json.JSONDecodeError as e:
+                return NodeResult(
+                    status=NodeStatus.FAILED,
+                    error=f"arguments 须为 JSON 对象 (JSON 字符串解析失败: {e})",
+                    summary="参数非法",
+                )
+            logger.info(f"mcp_client: arguments 由 JSON 字符串解析 tool={tool} chars={len(raw_arguments)}")
         if not isinstance(arguments, dict):
             return NodeResult(status=NodeStatus.FAILED, error="arguments 须为 JSON 对象", summary="参数非法")
 
