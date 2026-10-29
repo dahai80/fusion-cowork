@@ -426,6 +426,9 @@ class RunRegistry:
                 "finished_at": r.get("finished_at"),
                 "error": r.get("error"),
                 "review": r.get("review"),
+                # issue #207: 来源/标签随列表透出 (缺省 None, 老调用方零变化)
+                "source": r.get("source"),
+                "labels": r.get("labels"),
             }
             for r in sorted(self._runs.values(), key=lambda x: -x["created_at"])
         ]
@@ -440,6 +443,8 @@ class RunRegistry:
         workflow_name: str = "",
         memory: bool = True,
         message_input: Optional[Dict[str, Any]] = None,
+        source: str = "",
+        labels: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         from ..engine import Workflow
 
@@ -462,12 +467,18 @@ class RunRegistry:
             "memory": bool(memory),
             # issue #191: 暂停原因 (manual|hitl|crash), 恢复语义用
             "paused_reason": "",
+            # issue #207: 来源/标签 (调用方归因), 缺省空
+            "source": str(source or ""),
+            "labels": dict(labels or {}),
         }
         self._runs[run_id] = record
         self._persist(run_id)
         task = asyncio.create_task(self._execute(run_id, wf, message_input=message_input))
         self._tasks[run_id] = task
-        logger.info(f"工作流运行已启动: {run_id} ({record['workflow_name']}) memory={record['memory']}")
+        logger.info(
+            f"工作流运行已启动: {run_id} ({record['workflow_name']}) memory={record['memory']} "
+            f"source={record['source'] or '-'} labels={len(record['labels'])}"
+        )
         return {"run_id": run_id, "status": "running"}
 
     async def _execute(
@@ -572,6 +583,9 @@ class RunRegistry:
                             "workflow_name": record_ref.get("workflow_name", ""),
                             "status": record_ref.get("status", ""),
                             "error": record_ref.get("error"),
+                            # issue #207: 归因字段随事件外发, webhook 接收方可按来源路由
+                            "source": record_ref.get("source", ""),
+                            "labels": dict(record_ref.get("labels") or {}),
                         },
                     )
                 )
@@ -802,11 +816,12 @@ def _serialize_session(s: Any) -> Dict[str, Any]:
     }
 
 
-def _make_pending_push_callback(push_egress):
+def _make_pending_push_callback(push_egress, runs: Any = None):
     """issue #154: 审批入队 → webhook 推送回调工厂 (best-effort, 不抛)。
 
     在事件循环内被调用 (engine 权限检查 await 链), 直接 create_task;
     无事件循环时跳过 — webhook 是 best-effort, 不为它开新循环。
+    issue #207: 注入 RunRegistry 时按 execution_id 附 run 归因 (run_source/run_labels)。
     """
 
     def _cb(info: dict) -> None:
@@ -815,7 +830,16 @@ def _make_pending_push_callback(push_egress):
         except RuntimeError:
             logger.debug("push 回调无事件 loop, 跳过 (best-effort)")
             return
-        loop.create_task(push_egress.push_event("approval_requested", info))
+        payload = dict(info)
+        if runs is not None:
+            try:
+                record = runs.get(str(info.get("execution_id") or ""))
+                if record:
+                    payload["run_source"] = record.get("source", "")
+                    payload["run_labels"] = dict(record.get("labels") or {})
+            except Exception as e:
+                logger.debug(f"审批事件 run 归因失败 (忽略): {e}")
+        loop.create_task(push_egress.push_event("approval_requested", payload))
 
     return _cb
 
@@ -1085,7 +1109,7 @@ def create_web_app(
     runs.push = push_egress
     # issue #154: 审批入队 → webhook 推送 (permission manager 回调, best-effort)
     if permission_manager is not None:
-        permission_manager.on_pending_created = _make_pending_push_callback(push_egress)
+        permission_manager.on_pending_created = _make_pending_push_callback(push_egress, runs)
 
     # issue #191: 启动即恢复 — SQLite 里的活跃 run (paused/崩溃残留 running) 重建为 paused, 等人工 resume/审批
     @app.on_event("startup")
@@ -1203,7 +1227,31 @@ def create_web_app(
             memory = body.get("memory", True)
             if not isinstance(memory, bool):
                 raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "memory 须为 boolean"})
-            return runs.start(workflow_def, workflow_id=workflow_id, workflow_name=workflow_name, memory=memory)
+            # issue #209: per-run 输入 — 与邮箱派发同语义 (message_input 注入首节点),
+            # inputs 优先, initial_input 兼容别名; 非 dict 一律 400 不再静默丢弃
+            inputs_obj = body.get("inputs", body.get("initial_input"))
+            if inputs_obj is not None and not isinstance(inputs_obj, dict):
+                raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "inputs 须为 JSON 对象"})
+            # issue #207: per-run 来源/标签 — 全部可选, 校验类型后落 run 记录
+            source = body.get("source", "")
+            if not isinstance(source, str):
+                raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "source 须为字符串"})
+            labels = body.get("labels")
+            if labels is None:
+                labels = {}
+            if not isinstance(labels, dict) or not all(
+                isinstance(k, str) and isinstance(v, str) for k, v in labels.items()
+            ):
+                raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "labels 须为字符串到字符串的对象"})
+            return runs.start(
+                workflow_def,
+                workflow_id=workflow_id,
+                workflow_name=workflow_name,
+                memory=memory,
+                message_input=inputs_obj,
+                source=source,
+                labels=labels,
+            )
         except ValueError as exc:
             # issue #135 F-2: 坏边形状/含环等工作流定义错误 → 400 可读信息, 不 500
             raise HTTPException(

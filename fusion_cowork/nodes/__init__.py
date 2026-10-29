@@ -18,6 +18,7 @@ _NODE_MODULES = (
     "fusion_cowork.nodes.io.deliverables",
     "fusion_cowork.nodes.logic.logic_nodes",
     "fusion_cowork.nodes.tools.tool_nodes",
+    "fusion_cowork.nodes.tools.http_request_node",
     "fusion_cowork.nodes.browser.browser_nodes",
     "fusion_cowork.nodes.browser.cdp_nodes",
     "fusion_cowork.nodes.ecosystem.trainer_node",
