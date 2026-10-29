@@ -359,6 +359,10 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 
 测试: `tests/test_issue_189_node_executor.py` (33 例 + 1 例 live-AS 跳过: 波次并发墙钟/重叠/峰值、env 解析、配置往返、UDS 成功/partial/失败/transcript 容错、HTTP 完成/失败/超时/覆盖降级、混合 DAG 端到端、agent 失败语义、跨 agent 节点断点续跑)。文档: `docs/node-executors.md`。
 
+### MCP 注册表审计降级警告 (v0.5.48, issue #214)
+
+- **#214 — 降级模式可见**: `fusion_core` 不可导入时 (CI 裸装), `mcp_client` 注册表检查原先只留一条 DEBUG 日志就静默跳过 — 审计悄悄消失。现在跳过分支发 WARNING (`注册表审计降级跳过`), 携带目标 `url` + `tool`, 每进程只发一次 (避免 CI 循环刷屏)。完整 fusion 部署中 fusion-core 是硬依赖, 该警告永不触发。`docs/mcp-registry.md` 已记录降级行为。
+
 ### MCP 客户端 JSON 字符串参数 (v0.5.47, issue #211)
 
 - **#211 — `mcp_client` 接受 JSON 字符串 `arguments`**: 本节点输出恒为文本 (`data["result"]`), 因此两个 `mcp_client` 之间的连边 `{"source_output": "result", "target_input": "arguments"}` 会把字符串传给下游, 下游在任何 HTTP 调用前就报 `arguments 须为 JSON 对象`, 导致 `mcp_client → mcp_client` 无法串联。现在字符串参数 (来自 inputs 或 params) 先 trim 再 `json.loads` 解析: 合法 JSON 对象直接使用, 非法 JSON 报 `JSON 字符串解析失败`, 合法但非对象的 JSON 保持原错误; 非字符串非对象的行为不变。

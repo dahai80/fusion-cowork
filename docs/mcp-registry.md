@@ -83,8 +83,11 @@ verdict = check_approval(url, tool_scope=tool)
   the node still proceeds — the HIGH_RISK permission gate (with `url:` scope
   operator approval) is the enforcement point; the registry check is
   observability for governance drift
-- registry unreadable / `fusion_core` absent (bare CI install) → check skipped
-  (debug log), no behavior change
+- registry unreadable / `fusion_core` absent (bare CI install) → check skipped,
+  no behavior change. Since #214 the absent-`fusion_core` skip emits a
+  **WARNING** (`注册表审计降级跳过`) with the target url + tool, once per
+  process, so degraded mode is visible instead of silent; in full fusion
+  deployments fusion-core is a hard dependency and this warning never fires.
 
 Override: an operator `approve("mcp_client", scope="url:...")` rule makes the
 call legitimate even when the registry verdict is `unknown` — the warning is

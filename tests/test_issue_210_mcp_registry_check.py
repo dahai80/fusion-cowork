@@ -139,15 +139,22 @@ class TestWarnLevelVerdicts:
         assert "registry file corrupt" in warns[0]
         assert _TRACE_RE.search(warns[0])
 
-    async def test_fusion_core_absent_skips_silently(self, monkeypatch, caplog):
+    async def test_fusion_core_absent_warns_once_per_process(self, monkeypatch, caplog):
+        import fusion_cowork.nodes.ecosystem.mcp_client_node as mcp_mod
+
         monkeypatch.setitem(sys.modules, "fusion_core", None)
+        monkeypatch.setattr(mcp_mod, "_registry_skip_warned", False)
         node = _make_node({"url": "http://127.0.0.1:11500/mcp", "tool": "t"})
         _bind(node, _ok_transport())
         with caplog.at_level(logging.DEBUG, logger=LOGGER_NAME):
-            result = await node.execute({})
-        assert result.status.value == "success"
-        assert not [m for m in _logs(caplog, logging.WARNING) if "注册表" in m or "registry" in m]
-        assert any("跳过注册表审计" in m for m in _logs(caplog, logging.DEBUG))
+            first = await node.execute({})
+            second = await node.execute({})
+        assert first.status.value == "success"
+        assert second.status.value == "success"
+        warns = [m for m in _logs(caplog, logging.WARNING) if "降级跳过" in m]
+        assert len(warns) == 1
+        assert "url=http://127.0.0.1:11500/mcp" in warns[0]
+        assert "tool=t" in warns[0]
 
 
 class TestRealFusionCore:
