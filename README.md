@@ -415,6 +415,10 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
 
+### MCP Registry-check Degraded-mode Warning (v0.5.48, issue #214)
+
+- **#214 — visible degraded mode**: when `fusion_core` is not importable (bare CI install), the `mcp_client` registry check used to skip with only a DEBUG line — the audit silently disappeared. The skip branch now emits a WARNING (`注册表审计降级跳过`) carrying the target `url` + `tool`, once per process (no CI-loop log spam). In full fusion deployments fusion-core is a hard dependency, so the warning never fires. `docs/mcp-registry.md` documents the degraded-mode behavior.
+
 ### MCP Client JSON-string Arguments (v0.5.47, issue #211)
 
 - **#211 — `mcp_client` accepts JSON-string `arguments`**: the node's own output is text (`data["result"]`), so an edge `{"source_output": "result", "target_input": "arguments"}` between two `mcp_client` nodes delivered a string and the downstream node failed with `arguments 须为 JSON 对象` before any HTTP call, making `mcp_client → mcp_client` chaining impossible. String arguments (from inputs or params) are now trimmed and `json.loads`-parsed; a valid JSON object is used as-is, invalid JSON fails with `JSON 字符串解析失败`, and valid JSON that is not an object keeps the original error. Non-string, non-dict values are unchanged.

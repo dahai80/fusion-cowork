@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 _JSONRPC_VERSION = "2025-03-26"
 _PROPOSED_MCP_VERSION = "2025-03-26"
 
+# issue #214: fusion-core 缺席时降级警告每进程只发一次
+_registry_skip_warned = False
+
 
 @register_node
 class MCPClientNode(BaseNode):
@@ -64,11 +67,14 @@ class MCPClientNode(BaseNode):
     def _registry_check(self, url: str, tool: str) -> None:
         # issue #210: 对照 architecture/mcp-server-registry.json 审计外部 MCP 调用。
         # warn 级不阻断 (local-first 自家服务优先可用), verdict + correlation_id 落审计日志;
-        # fusion-core 缺席 (CI 裸装) 时静默跳过。
+        # issue #214: fusion-core 缺席 (CI 裸装) 时 WARNING 提示审计降级 (每进程一次, 防 CI 循环刷屏)。
+        global _registry_skip_warned
         try:
             from fusion_core import check_approval
         except ImportError:
-            logger.debug("mcp_client: fusion_core.mcp_registry 不可用, 跳过注册表审计")
+            if not _registry_skip_warned:
+                _registry_skip_warned = True
+                logger.warning(f"mcp_client: fusion_core.mcp_registry 不可用, 注册表审计降级跳过 url={url} tool={tool}")
             return
         correlation_id = ""
         try:
