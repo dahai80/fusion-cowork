@@ -61,6 +61,37 @@ class MCPClientNode(BaseNode):
         # 测试接缝: 子类/monkeypatch 可注入 MockTransport
         return httpx.AsyncClient(timeout=timeout)
 
+    def _registry_check(self, url: str, tool: str) -> None:
+        # issue #210: 对照 architecture/mcp-server-registry.json 审计外部 MCP 调用。
+        # warn 级不阻断 (local-first 自家服务优先可用), verdict + correlation_id 落审计日志;
+        # fusion-core 缺席 (CI 裸装) 时静默跳过。
+        try:
+            from fusion_core import check_approval
+        except ImportError:
+            logger.debug("mcp_client: fusion_core.mcp_registry 不可用, 跳过注册表审计")
+            return
+        correlation_id = ""
+        try:
+            from fusion_cowork.observability.trace import get_trace_id
+
+            correlation_id = get_trace_id() or ""
+        except Exception:
+            correlation_id = ""
+        try:
+            verdict = check_approval(url, tool_scope=tool)
+        except Exception as e:
+            logger.warning(f"mcp_client: 注册表检查失败 {url} tool={tool} correlation_id={correlation_id}: {e}")
+            return
+        if verdict.action == "approved":
+            logger.info(
+                f"mcp_client: registry approved server={verdict.server} tool={tool} correlation_id={correlation_id}"
+            )
+        else:
+            logger.warning(
+                f"mcp_client: registry {verdict.action} server={verdict.server} tool={tool} "
+                f"reason={verdict.reason} correlation_id={correlation_id}"
+            )
+
     @staticmethod
     def _parse_reply(resp: httpx.Response) -> Dict[str, Any]:
         # Streamable HTTP 服务器可能以 SSE 帧回 JSON-RPC 响应 — 两种 content-type 都解析
@@ -96,6 +127,8 @@ class MCPClientNode(BaseNode):
             return NodeResult(status=NodeStatus.FAILED, error="arguments 须为 JSON 对象", summary="参数非法")
 
         base_headers = {"Accept": "application/json, text/event-stream", **extra_headers}
+        # issue #210: 握手前先做注册表审计 (warn 级, 不阻断)
+        self._registry_check(url, tool)
         logger.info(f"mcp_client: 调用 {url} tool={tool}")
         try:
             async with self._client(timeout) as client:

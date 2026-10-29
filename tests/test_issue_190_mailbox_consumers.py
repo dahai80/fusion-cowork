@@ -335,6 +335,37 @@ class TestRunnerPool:
         assert len(calls) == 1
         assert pool.metrics["consumed"] == 1
 
+    async def test_wake_during_tick_not_lost(self, tmp_path, monkeypatch):
+        # tick 期间到达的 send 不能被随后的 clear 吞掉 (macOS CI 慢机曾等满 poll_interval)
+        calls = []
+        pushed = []
+
+        async def dispatch(agent, message):
+            calls.append(message["message_id"])
+            return "run_1"
+
+        pool = self._pool(tmp_path, dispatch)
+        pool.poll_interval = 30.0
+        original = pool._refresh_metrics
+
+        def _refresh():
+            if not pushed:
+                pushed.append(True)
+                pool.mailbox.send("alice", "agent-a", "raced")
+            original()
+
+        monkeypatch.setattr(pool, "_refresh_metrics", _refresh)
+        await pool.start()
+        try:
+            for _ in range(100):
+                if calls:
+                    break
+                await asyncio.sleep(0.02)
+        finally:
+            await pool.stop()
+        assert len(calls) == 1
+        assert pool.metrics["consumed"] == 1
+
     async def test_status_reports_agents_and_metrics(self, tmp_path):
         async def dispatch(agent, message):
             return "run_1"

@@ -359,6 +359,16 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 
 测试: `tests/test_issue_189_node_executor.py` (33 例 + 1 例 live-AS 跳过: 波次并发墙钟/重叠/峰值、env 解析、配置往返、UDS 成功/partial/失败/transcript 容错、HTTP 完成/失败/超时/覆盖降级、混合 DAG 端到端、agent 失败语义、跨 agent 节点断点续跑)。文档: `docs/node-executors.md`。
 
+### HTTP 请求节点 + Run 归因 + MCP 注册表检查 (v0.5.46, issues #206–#210)
+
+- **#206 — 通用 `http_request` 节点** (`nodes/tools/http_request_node.py`): 一节点一次 HTTP 请求 (`method`/`url`/`headers`/`body`/`timeout`), 外部应用可在 DAG 里直接回调自家 REST API, 无需跑 MCP 服务器。body/headers 支持 `${dotted.path}` 模板 (从节点输入解析, 含 run 级 `inputs` 注入); 未命中保留字面量并记 WARNING。响应 JSON 进 step 输出 (`status_code`/`json`/`text`/`headers`) 供下游消费; 非 2xx 映射为节点失败, run 状态对账成立。HIGH_RISK 节点 + `url:` scope 授权 (同 `mcp_client`); 面向本机/内网自家服务, 不做 SSRF 私网拦截。
+- **#207 — per-run 来源/标签**: `POST /api/runs` 新增可选 `source` (字符串) 与 `labels` (字符串到字符串对象), 类型校验 (非法则 400), 落 run 记录并在 `GET /api/runs` + `GET /api/runs/{id}` + 事件广播透出; `PushEgress` 的 `run_finished`/`approval_requested` 载荷同步携带 (审批事件用 `run_source`/`run_labels` 键), webhook 接收方可按来源应用路由。全部增量, 老调用方零变化。
+- **#209 — HTTP 传 per-run inputs**: `POST /api/runs` 新增可选 `inputs` (别名 `initial_input`), 以 `message_input` 语义转发到 `RunRegistry.start` — 与邮箱派发路径一致, 首节点直接拿到运行参数, 不再需要把参数烤进一次性工作流定义副本。非 dict 一律 400, 不再静默丢弃。
+- **#210 — MCP 服务器注册表检查**: `mcp_client` 节点在 `initialize` 握手前调用 `fusion_core.mcp_registry.check_approval(url, tool_scope=tool)` (需 fusion-core >= 0.9.0)。`denied`/`unknown` 记 WARNING (含 verdict reason + correlation id, 即 `fc_` 观测 trace id) 但不阻断 — HIGH_RISK `url:` scope 人工审批仍是执法点。注册表不可读或 fusion-core 缺席 (CI 裸装) 时跳过检查, 零行为变化。
+- **#208 — 消费侧注册表与凭证约定文档**: 新增 [`docs/mcp-registry.md`](docs/mcp-registry.md) — 受理服务器清单 (`architecture/mcp-server-registry.json`, 解析顺序 + mtime 缓存)、按 scope 人工审批、消费侧凭证发放 (`identity_issuance` / `env_ref`, "不自带密钥", Sheets 服务器示例)、warn 级执法、correlation id 审计契约。
+
+测试: `tests/test_issue_206_http_request_node.py`、`tests/test_issue_207_run_labels.py`、`tests/test_issue_209_runs_inputs.py`、`tests/test_issue_210_mcp_registry_check.py`。
+
 ### 运行状态持久恢复 (v0.5.38, issue #191)
 
 - **#191 — `RunStateStore`** (`fusion_cowork/engine/run_persistence.py`): 运行控制状态落 SQLite `<store_root>/run_states.db` (默认 `~/.fusion-cowork/web/run_states.db`)。每个**活跃** run (`running`/`paused`) 一行; 终态行 run 结束即删除, 加载时发现的终态残留行以 WARNING 清理。schema 版本走 `PRAGMA user_version` — 打开更新版本 fusion-cowork 写的库直接 `RuntimeError` 启动失败, 绝不静默降级读取。

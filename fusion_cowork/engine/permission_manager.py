@@ -157,6 +157,9 @@ HIGH_RISK_NODES = frozenset(
         # issue #185: mcp_client 调用外部 MCP 服务器的任意工具 (远程执行面),
         # 须显式放行; 支持 url: 前缀 scope 精确授权单个服务
         "mcp_client",
+        # issue #206: http_request 任意目标请求面 (可带鉴权头/模板注入请求体),
+        # 须显式放行; 同 mcp_client 支持 url: 前缀 scope
+        "http_request",
     }
 )
 
@@ -413,6 +416,8 @@ class PermissionManager:
                 "params": _sanitize_approval_params(params),
                 "workflow": str(ctx.get("workflow", "")),
                 "node_id": str(ctx.get("node_id", "")),
+                # issue #207: 审批事件附 run 归因 — push 接收方按来源路由
+                "execution_id": str(ctx.get("execution_id", "")),
                 "ts": time.time(),
             }
             cb(info)

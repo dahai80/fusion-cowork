@@ -92,13 +92,16 @@ class RunnerPool:
 
     async def _loop(self) -> None:
         while self._running:
+            # 先 clear 再 tick: tick 期间到达的 send/wake 会保留 set 状态,
+            # 下一轮 wait 立即返回 — 旧顺序 (tick 后 clear) 会吞掉该唤醒,
+            # 消息只能等满 poll_interval 才被消费 (macOS CI 慢机暴露)。
+            self._wake_event.clear()
             try:
                 await self.tick()
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 logger.exception(f"邮箱消费池 tick 失败: {e}")
-            self._wake_event.clear()
             try:
                 await asyncio.wait_for(self._wake_event.wait(), timeout=self.poll_interval)
             except TimeoutError:
