@@ -1242,7 +1242,9 @@ def create_web_app(
             if not isinstance(labels, dict) or not all(
                 isinstance(k, str) and isinstance(v, str) for k, v in labels.items()
             ):
-                raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "labels 须为字符串到字符串的对象"})
+                raise HTTPException(
+                    status_code=400, detail={"code": "bad_request", "message": "labels 须为字符串到字符串的对象"}
+                )
             return runs.start(
                 workflow_def,
                 workflow_id=workflow_id,

@@ -122,7 +122,9 @@ class HttpRequestNode(BaseNode):
             if not isinstance(body, (dict, list)):
                 request_kwargs["content"] = str(body)
 
-        logger.info(f"http_request: {method} {url} (body={'有' if 'json' in request_kwargs or 'content' in request_kwargs else '无'})")
+        logger.info(
+            f"http_request: {method} {url} (body={'有' if 'json' in request_kwargs or 'content' in request_kwargs else '无'})"
+        )
         try:
             async with self._client(timeout) as client:
                 resp = await client.request(method, url, **request_kwargs)

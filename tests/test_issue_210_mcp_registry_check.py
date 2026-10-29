@@ -32,14 +32,16 @@ def _ok_transport(order=None):
         if order is not None:
             order.append(body.get("method"))
         if body.get("method") == "initialize":
-            return httpx.Response(
-                200, headers={"Mcp-Session-Id": "s1"}, json={"jsonrpc": "2.0", "id": 1, "result": {}}
-            )
+            return httpx.Response(200, headers={"Mcp-Session-Id": "s1"}, json={"jsonrpc": "2.0", "id": 1, "result": {}})
         if body.get("method") == "notifications/initialized":
             return httpx.Response(202)
         return httpx.Response(
             200,
-            json={"jsonrpc": "2.0", "id": 2, "result": {"content": [{"type": "text", "text": "done"}], "isError": False}},
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {"content": [{"type": "text", "text": "done"}], "isError": False},
+            },
         )
 
     return handler

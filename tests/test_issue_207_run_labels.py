@@ -106,8 +106,9 @@ class TestRunsCreateForwarding:
     def _capture_start(self, monkeypatch, client):
         started = []
 
-        def _record_start(workflow_def, workflow_id="", workflow_name="", memory=True, message_input=None,
-                          source="", labels=None):
+        def _record_start(
+            workflow_def, workflow_id="", workflow_name="", memory=True, message_input=None, source="", labels=None
+        ):
             started.append(
                 {
                     "workflow_def": workflow_def,
