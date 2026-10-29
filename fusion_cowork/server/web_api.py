@@ -2432,6 +2432,14 @@ def create_web_app(
                         resolver(hitl_exec, True)
                 logger.info(f"HITL 一次性批准已唤醒 run: {hitl_exec} (action_id={action_id}, 不落规则)")
                 return {"action_id": action_id, "approved": True, "confirmed": True, "once": True}
+            if released and not approved:
+                # issue #216: 一次性拒绝同样要唤醒 run (拒绝路径无 once-grant, 不落规则),
+                # 否则卡片出队后 confirm_guard 查不到条目返回 False, run 挂到 HITL 超时自动拒绝
+                resolver = getattr(engine, "resolve_hitl", None)
+                if callable(resolver):
+                    resolver(hitl_exec, False)
+                logger.info(f"HITL 一次性拒绝已唤醒 run: {hitl_exec} (action_id={action_id}, 不落规则)")
+                return {"action_id": action_id, "approved": False, "confirmed": True, "once": True}
         confirmed = await permission_manager.confirm_guard(
             action_id, approved, approved_by="web", scope=str(body.get("scope") or "*")
         )
