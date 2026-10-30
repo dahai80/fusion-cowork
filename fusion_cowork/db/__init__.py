@@ -5,7 +5,7 @@
 - backup: pg_dump 备份/恢复
 - placeholders: ? → $1/$2 占位符归一化 (跨后端 SQL 复用)
 
-单 SpaceStore 类按 dsn 选后端: 传 dsn 或 env FUSION_PG_DSN → postgres (asyncpg);
+单 SpaceStore 类按 dsn 选后端: 传 dsn 或 env DATABASE_URL (旧名 FUSION_PG_DSN, issue #221) → postgres (asyncpg);
 只传 data_dir → sqlite (aiosqlite)。946 测试零改动 (仍传 data_dir)。
 """
 

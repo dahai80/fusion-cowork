@@ -135,6 +135,26 @@ fusion-cowork desk rpc
 | `FUSION_MLX_URL` | `http://localhost:11432/v1` | fusion-mlx 基础 URL (经 fusion-gateway netlayer) |
 | `FUSION_MLX_MODEL` | _(未设)_ | NL 工作流生成 (`NLWorkflowGenerator`) 默认 chat 模型。显式指定一个支持 chat 的模型 id,避免误选 `image_gen`/`video_gen` 模型 (issue #85) |
 | `FUSION_RAG_URL` | `http://localhost:11436` | fusion-rag (fusion-kb) 基础 URL |
+| `DATABASE_URL` | _(未设)_ | **规范 Postgres DSN** (issue #221, 规范 DB-3) —— 如 `postgresql://127.0.0.1:5432/fusion_cowork`。设置后 `SpaceStore`/`SessionStore`（及 `db migrate/backup/restore`）走共享 PostgreSQL 后端;未设则内嵌 SQLite。旧名 `FUSION_PG_DSN` 仍兼容（优先级更低） |
+| `REDIS_URL` | _(未设)_ | **预留**（规范 DB-7）—— 如 `redis://127.0.0.1:6379/1`。fusion-cowork 目前无 Redis 依赖;登记此约定,后续 cache/pubsub 接入统一走共享单实例 |
+
+#### 数据库规范 (issue #221)
+
+遵循 monorepo 统一规范 `architecture/fusion-db-conventions-1030.md`:
+
+- **共享单实例 PostgreSQL** `127.0.0.1:5432`，**一应用一库** (DB-2): fusion-cowork 使用 `fusion_cowork` 库。
+- **仅环境变量配置** (DB-3): 连接串来自 `DATABASE_URL`（或 `--dsn` 参数）,不落配置文件;`.env.example` 只含占位值,**仓库不含凭据** (DB-4)。
+- **首次运行**: 需先一次性建库 —— `createdb fusion_cowork`。应用**连接时幂等建 schema** (DB-9: `CREATE TABLE IF NOT EXISTS` + 版本化 `MigrationRunner`),无需额外建表步骤。
+- **纯内嵌状态保留 SQLite** (DB-5): web 运行状态 (`~/.fusion-cowork/web/run_states.db`)、调度任务、权限规则、orchestrator 团队邮箱 —— 均为单进程单服务状态,无跨服务读取方,按规范保留 SQLite。若将来出现跨服务消费方,经 `DATABASE_URL` 迁至共享 PostgreSQL。
+
+```bash
+# 一次性建库 (schema 连接时自动创建, 幂等)
+createdb fusion_cowork
+
+# 之后任意入口接共享 PostgreSQL 后端启动
+export DATABASE_URL=postgresql://127.0.0.1:5432/fusion_cowork
+fusion-cowork desk rpc          # 或: web serve / db migrate / db backup
+```
 
 > **鉴权说明**: fusion-cowork 通过 fusion-gateway(:11432) 调 fusion-mlx,存在**两套独立鉴权**:
 > 1. **gateway client key** —— 客户端请求 gateway 时用,即本变量 `FUSION_CLIENT_KEY`(取自 gateway `config.yaml` 的 `auth.api_keys[].key`;legacy 别名 `FUSION_MLX_API_KEY`/`MLX_API_KEY` 由 fusion-core 兼容,已弃用)
