@@ -6,7 +6,7 @@
          sidebar_modules, space_notifications (+ schema_migrations)。
 
 后端选择 (Option C 单类):
-- 传 dsn 或 env FUSION_PG_DSN → postgres (asyncpg pool, RLS 纵深防御)
+- 传 dsn 或 env DATABASE_URL (issue #221, 规范 DB-3; 旧名 FUSION_PG_DSN 仍接受) → postgres (asyncpg pool, RLS 纵深防御)
 - 只传 data_dir → sqlite (aiosqlite WAL, 测试/本地替身)
 
 SQL 全用 ? 占位符 (SQLite 风格); postgres 路径经 _DbHandle.exec 自动 ?→$1,$2 归一化。
@@ -43,7 +43,9 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_DATA_DIR = os.path.expanduser("~/.fusion-cowork/spaces")
 _DB_FILENAME = "spaces.db"
-_PG_DSN_ENV = "FUSION_PG_DSN"
+# issue #221 (规范 DB-3): DATABASE_URL 为唯一规范连接名; FUSION_PG_DSN 旧名仍接受
+_PG_DSN_ENV = "DATABASE_URL"
+_PG_DSN_ENV_LEGACY = "FUSION_PG_DSN"
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS spaces (
@@ -336,7 +338,7 @@ def _pg_executor(conn: Any):
 class SpaceStore:
     """协作空间存储 — 双后端 (sqlite/postgres) 异步 CRUD。
 
-    传 dsn (或 env FUSION_PG_DSN) → postgres asyncpg pool; 只传 data_dir → sqlite aiosqlite。
+    传 dsn (或 env DATABASE_URL, 旧名 FUSION_PG_DSN) → postgres asyncpg pool; 只传 data_dir → sqlite aiosqlite。
     """
 
     def __init__(
@@ -345,7 +347,7 @@ class SpaceStore:
         trajectory_exporter=None,
         dsn: Optional[str] = None,
     ):
-        self._dsn = dsn or os.environ.get(_PG_DSN_ENV)
+        self._dsn = dsn or os.environ.get(_PG_DSN_ENV) or os.environ.get(_PG_DSN_ENV_LEGACY)
         self._backend = "postgres" if self._dsn else "sqlite"
         self._data_dir = data_dir
         self._db_path = os.path.join(data_dir, _DB_FILENAME)

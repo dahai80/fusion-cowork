@@ -142,6 +142,26 @@ fusion-cowork desk rpc
 | `FUSION_IDENTITY_ENABLED` | _(unset)_ | opt-in: set `1` to activate fusion-identity as sole JWT issuer + tenant registry (issue #88). Default OFF = zero behavior change (local JWT/static-token dev path unchanged) |
 | `FUSION_IDENTITY_URL` | `http://127.0.0.1:11470` | fusion-identity service base URL (only used when `FUSION_IDENTITY_ENABLED=1`) |
 | `FUSION_IDENTITY_SERVICE_TOKEN` | _(unset)_ | service token sent as `Authorization: Bearer` to fusion-identity `/verify`. Required when enabled (else identity client stays None) |
+| `DATABASE_URL` | _(unset)_ | **canonical Postgres DSN** (issue #221, convention DB-3) — e.g. `postgresql://127.0.0.1:5432/fusion_cowork`. Set → `SpaceStore`/`SessionStore` (and `db migrate/backup/restore`) use the shared PostgreSQL backend; unset → embedded SQLite. Legacy `FUSION_PG_DSN` still honored (lower priority) |
+| `REDIS_URL` | _(unset)_ | **reserved** (convention DB-7) — e.g. `redis://127.0.0.1:6379/1`. fusion-cowork has no Redis dependency today; documented so future cache/pubsub adoption uses the shared single-instance convention |
+
+#### Database conventions (issue #221)
+
+Per `architecture/fusion-db-conventions-1030.md` (monorepo-wide conventions):
+
+- **One shared PostgreSQL** at `127.0.0.1:5432`, **one database per app** (DB-2): fusion-cowork owns `fusion_cowork`.
+- **Env-only config** (DB-3): connection comes from `DATABASE_URL` (or `--dsn` flag), never from a config file; `.env.example` ships placeholder values with **no credentials** (DB-4).
+- **First run**: the database must exist once before first start — `createdb fusion_cowork` (or `CREATE DATABASE fusion_cowork;`). The app **creates its schema idempotently on connect** (DB-9: `CREATE TABLE IF NOT EXISTS` + versioned `MigrationRunner`), so no schema step is needed beyond that.
+- **Embedded-only state stays SQLite** (DB-5): web run-state (`~/.fusion-cowork/web/run_states.db`), scheduler tasks, permission rules, and the orchestrator team mailbox are single-process, single-service state with no cross-service readers — they remain SQLite by design. If any of them ever gains a cross-service consumer, migrate it to the shared PostgreSQL via `DATABASE_URL`.
+
+```bash
+# One-time: create the database (schema is created automatically on connect)
+createdb fusion_cowork
+
+# Then start any entrypoint with the shared PostgreSQL backend
+export DATABASE_URL=postgresql://127.0.0.1:5432/fusion_cowork
+fusion-cowork desk rpc          # or: web serve / db migrate / db backup
+```
 
 > **base_url 优先级** (issue #83): `FUSION_MLX_URL` (整 URL) > `FUSION_MLX_HOST` + `FUSION_MLX_PORT` > 默认 `localhost:11432`。默认不变 → 多节点/gateway 部署字节级无影响。**本地单机直连 mlx** (绕过 gateway, 用 mlx key 而非 gateway key):
 > ```bash

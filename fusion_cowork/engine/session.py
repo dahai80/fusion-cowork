@@ -2,7 +2,7 @@
 
 双后端 (v0.4.0):
 - SQLite (默认): sync sqlite3, 测试/本地路径
-- Postgres (dsn 或 env FUSION_PG_DSN): asyncpg via 后台 loop 线程桥, 保留 sync 接口 (DeskRPC sync dispatch 依赖)
+- Postgres (dsn 或 env DATABASE_URL, 旧名 FUSION_PG_DSN): asyncpg via 后台 loop 线程桥, 保留 sync 接口 (DeskRPC sync dispatch 依赖)
 
 支持：
 - 会话创建与恢复（resume）
@@ -31,7 +31,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = str(Path.home() / ".fusion-cowork" / "sessions.db")
 SESSION_EXPIRE_DAYS = 30
-_PG_DSN_ENV = "FUSION_PG_DSN"
+# issue #221 (规范 DB-3): DATABASE_URL 为唯一规范连接名; FUSION_PG_DSN 旧名仍接受
+_PG_DSN_ENV = "DATABASE_URL"
+_PG_DSN_ENV_LEGACY = "FUSION_PG_DSN"
 
 _PG_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -153,7 +155,7 @@ class Session:
 
 class SessionStore:
     def __init__(self, db_path: Optional[str] = None, dsn: Optional[str] = None):
-        self._dsn = dsn or os.environ.get(_PG_DSN_ENV)
+        self._dsn = dsn or os.environ.get(_PG_DSN_ENV) or os.environ.get(_PG_DSN_ENV_LEGACY)
         self._backend = "postgres" if self._dsn else "sqlite"
         self._db_path = db_path or DEFAULT_DB_PATH
         self._pg: Optional[_AsyncPgBackend] = None

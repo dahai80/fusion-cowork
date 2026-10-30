@@ -3353,15 +3353,15 @@ def db():
 
 
 @db.command("backup")
-@click.option("--dsn", default="", help="Postgres DSN (缺则读 env FUSION_PG_DSN)")
+@click.option("--dsn", default="", help="Postgres DSN (缺则读 env DATABASE_URL / FUSION_PG_DSN)")
 @click.option("--dest", default="", help="备份输出路径 (.sql.gz)")
 def db_backup(dsn: str, dest: str):
     """pg_dump 备份到 .sql.gz。"""
     import os
 
-    dsn = dsn or os.environ.get("FUSION_PG_DSN", "")
+    dsn = dsn or os.environ.get("DATABASE_URL", "") or os.environ.get("FUSION_PG_DSN", "")
     if not dsn:
-        console.print_error("缺 DSN — 传 --dsn 或设 env FUSION_PG_DSN")
+        console.print_error("缺 DSN — 传 --dsn 或设 env DATABASE_URL")
         raise SystemExit(1)
     if not dest:
         from datetime import datetime
@@ -3375,16 +3375,16 @@ def db_backup(dsn: str, dest: str):
 
 
 @db.command("restore")
-@click.option("--dsn", default="", help="Postgres DSN (缺则读 env FUSION_PG_DSN)")
+@click.option("--dsn", default="", help="Postgres DSN (缺则读 env DATABASE_URL / FUSION_PG_DSN)")
 @click.option("--src", required=True, help="备份文件 (.sql.gz)")
 @click.option("--confirm", is_flag=True, help="确认覆盖现有数据库 (破坏性)")
 def db_restore(dsn: str, src: str, confirm: bool):
     """从 .sql.gz 恢复 (破坏性, 需 --confirm)。"""
     import os
 
-    dsn = dsn or os.environ.get("FUSION_PG_DSN", "")
+    dsn = dsn or os.environ.get("DATABASE_URL", "") or os.environ.get("FUSION_PG_DSN", "")
     if not dsn:
-        console.print_error("缺 DSN — 传 --dsn 或设 env FUSION_PG_DSN")
+        console.print_error("缺 DSN — 传 --dsn 或设 env DATABASE_URL")
         raise SystemExit(1)
     from .db.backup import BackupManager
 
@@ -3394,15 +3394,15 @@ def db_restore(dsn: str, src: str, confirm: bool):
 
 
 @db.command("migrate")
-@click.option("--dsn", default="", help="Postgres DSN (缺则读 env FUSION_PG_DSN)")
+@click.option("--dsn", default="", help="Postgres DSN (缺则读 env DATABASE_URL / FUSION_PG_DSN)")
 def db_migrate(dsn: str):
     """执行待应用的数据库迁移 (版本化, 幂等)。"""
     import asyncio
     import os
 
-    dsn = dsn or os.environ.get("FUSION_PG_DSN", "")
+    dsn = dsn or os.environ.get("DATABASE_URL", "") or os.environ.get("FUSION_PG_DSN", "")
     if not dsn:
-        console.print_error("缺 DSN — 传 --dsn 或设 env FUSION_PG_DSN")
+        console.print_error("缺 DSN — 传 --dsn 或设 env DATABASE_URL")
         raise SystemExit(1)
 
     async def _run():
