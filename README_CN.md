@@ -379,6 +379,13 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 
 测试: `tests/test_issue_189_node_executor.py` (33 例 + 1 例 live-AS 跳过: 波次并发墙钟/重叠/峰值、env 解析、配置往返、UDS 成功/partial/失败/transcript 容错、HTTP 完成/失败/超时/覆盖降级、混合 DAG 端到端、agent 失败语义、跨 agent 节点断点续跑)。文档: `docs/node-executors.md`。
 
+### 引擎运行暂停/恢复 + 运行中指令注入 (v0.5.52, issue #227)
+
+- **`inject` 指令 (决策 D3)**: `POST /api/runs/{id}/directive` 传 `{"action": "inject", "instruction": "跳过差旅类目"}` 排队一条用户修正, 在**下一节点边界**生效: 目标节点 (显式 `node_id`, 缺省 = 下一待执行节点) 的输入并入 `user_instruction` 键 (可选 `merge` dict 同桶合并), 时间线落一条 **"用户修正" 标记步** (`WorkflowStep.user_correction=true`, 零耗时, run 视图渲染为 `用户修正: <指令>`)。空指令排队即拒 (409) — 绝不静默丢弃。崩溃恢复的指令重放 (v0.5.38/#191) 覆盖 `inject`, 与其他 action 同路。
+- **暂停/恢复为 graceful 语义 (审计确认, 行为不变)**: `pause()` 在**当前波次完成后**的节点边界检查点挂起 — 步骤中途暂停绝不杀在途工作; `resume()` 从停点原样续跑。经 `POST /api/runs/{id}/pause|resume` + 接管 WS (`{"method": "pause"|"resume"|"directive"}`) 暴露。
+- **无人值守保证 ("合上电脑它还在跑")**: run 是 web 进程内的服务端 asyncio 任务 — 浏览器/客户端断开绝不取消执行。叠加持久运行状态 (v0.5.38: 每个事件全量落盘 `run_states.db`) 与启动恢复 (v0.5.39/#191: 活跃行重建为 `paused` 等人工 resume), 一个 run 扛得住客户端掉线、进程重启、`kill -9`, 步骤进度不丢。
+- 测试: `tests/test_issue_227_engine_injection.py` (12 例: 注入送达 + 时间线标记、显式目标 + merge、空指令早拒、未知目标不拖垮 run、未知执行拒绝、graceful 暂停当前步收尾、路由 202/409、`_step_dict` 透出 `user_correction`、`DIRECTIVE_ACTIONS` 契约)。
+
 ### 定时任务执行器修复 + 启动端口登记自检 (v0.5.50, issues #218/#219)
 
 - **#218 — 定时任务真正能跑了**: `_make_task_executor` 的闭包带 `task_id` 参数, 而 `TaskScheduler._run_task` 以零参调用执行器 (`await executor()`) — cron/interval 每次触发都 `TypeError`, 连败 5 次被调度器自动置 FAILED。Web 控制台调度页创建的任务从未产生过任何 run。执行器改为零参, 经 `RunRegistry.start` 触发工作流并记录触发日志; 工作流定义缺失时显式报错 (ERROR 日志) 而非拖垮调度器。测试: `tests/test_issue_218_scheduler_executor.py` (触发产生真实 run 且 `fail_count == 0`; 执行器签名无必填参数)。
