@@ -379,6 +379,14 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 
 测试: `tests/test_issue_189_node_executor.py` (33 例 + 1 例 live-AS 跳过: 波次并发墙钟/重叠/峰值、env 解析、配置往返、UDS 成功/partial/失败/transcript 容错、HTTP 完成/失败/超时/覆盖降级、混合 DAG 端到端、agent 失败语义、跨 agent 节点断点续跑)。文档: `docs/node-executors.md`。
 
+### 运行时间线内联审批 (v0.5.55, issue #225)
+
+- **审批卡渲染在暂停步骤位** (M7): HITL 卡片内嵌在波次时间线里被闸节点等待的位置 — HiTL 是产品原则而非设置开关。`node_id` 在 DAG 中定位不到的卡片回落到 run 视图顶部 (绝不丢失)。
+- **每卡四动作** — 拒绝 / **编辑参数** / 本次允许 / 总是允许。*编辑参数* 打开内联 JSON 编辑器 (预填待审参数); 提交后以**一次性批准**生效, 编辑后的对象在节点边界并入被闸节点输入 (`按此参数执行`)。非法 JSON / 非对象草稿在前端即被拒 (`parseParamsDraft`, `web/src/runview.ts`)。
+- **引擎参数覆盖**: `WorkflowEngine.resolve_hitl(exec, approved, once, params=...)` 记录一次性覆盖; 审批唤醒 run 后, 覆盖并入被闸节点输入 (未覆盖键保留原值) 并即消费 — 不落任何持久状态, 拒绝路径绝不应用。confirm 路由透传 `edited_params`, 与 `once` 同样的 TypeError 回退链。
+- **决定即自动续跑** (#181/#187/#216 语义不变): 批准/拒绝原地唤醒挂起的 run, 审计与 ApprovalsPage 流程完全一致。多入口触达保留: 首页铃铛、侧栏、🔔 通知、跨运行 ApprovalsPage 队列全部照常 — 本 issue 只把 *场景内* 体验挪到暂停位。
+- 测试: `tests/test_issue_225_inline_approvals.py` (5 例: 编辑参数并入被闸节点输入 + 无残留、拒绝时参数不生效、路由 `edited_params` 送达 resolver、非 dict 忽略、拒绝唤醒无覆盖) + `parseParamsDraft` 4 例 bun; 回归已证 (补丁前代码 3 例失败)。
+
 ### 统一运行视图 (v0.5.54, issue #224)
 
 - **专用运行页** (`web/src/pages/RunViewPage.tsx`, 深链 `#/runs/<run_id>`): 一次运行的全部步骤同屏可见 — 运行列表回归纯列表 (内联详情删除, 约 380 行), `打开` 动作深链到本页。页面按 `workflow_def` 渲染**拓扑波次** (并行分支同阶段并排, `并行 N 路`/`阶段 N` 标签, 未执行节点虚线占位), 纯函数 `computeWaves` 位于 `web/src/runview.ts`。

@@ -4,7 +4,7 @@ import type { StatusKind } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
 import { type GuardApproval, type RunRecord, type RunStep, type SpaceArtifact, api, statusKind } from '../api';
 import { useT } from '../i18n';
-import { capabilitiesInUse, computeWaves, stepCapability } from '../runview';
+import { capabilitiesInUse, computeWaves, parseParamsDraft, stepCapability } from '../runview';
 import { sdk, streamSse } from '../sdk';
 import { HitlCountdown, RunArtifactPane, StepDrawer } from './RunsPage';
 
@@ -127,6 +127,10 @@ export function RunViewPage({ runId }: { runId: string }) {
     const waves = computeWaves(record.workflow_def ?? {});
     const caps = capabilitiesInUse(record.steps ?? []);
     const correctionLines = (record.steps ?? []).filter((s) => s.user_correction);
+    // issue #225: 审批卡内联到被闸节点位置; 无法定位的卡片浮在顶部 (fallback)
+    const waveNodeIds = new Set(waves.flatMap((w) => w.nodes.map((n) => n.id)));
+    const inlineApprovals = hitlApprovals.filter((a) => a.node_id && waveNodeIds.has(a.node_id));
+    const floatingApprovals = hitlApprovals.filter((a) => !a.node_id || !waveNodeIds.has(a.node_id));
 
     async function steer(fn: () => Promise<unknown>, failMsg: string) {
         try {
@@ -138,15 +142,22 @@ export function RunViewPage({ runId }: { runId: string }) {
         }
     }
 
-    async function hitlConfirm(actionId: string, approved: boolean, once: boolean) {
+    async function hitlConfirm(
+        actionId: string,
+        approved: boolean,
+        once: boolean,
+        editedParams?: Record<string, unknown>
+    ) {
         setHitlBusy(actionId);
         try {
-            await api.confirmApproval(actionId, approved, undefined, undefined, once);
+            await api.confirmApproval(actionId, approved, undefined, undefined, once, editedParams);
             sdk.toast.show({
                 level: 'success',
                 message: approved
                     ? once
-                        ? t('已批准 (本次)', 'Approved (once)')
+                        ? editedParams
+                            ? t('已批准并应用编辑参数', 'Approved with edited params')
+                            : t('已批准 (本次)', 'Approved (once)')
                         : t('已批准并记住', 'Approved and remembered')
                     : t('已拒绝', 'Denied'),
             });
@@ -265,46 +276,16 @@ export function RunViewPage({ runId }: { runId: string }) {
                 </div>
             ) : null}
 
-            {/* issue #187: HITL 审批卡 — UC-2 打断链路在 run 视图内闭环 */}
+            {/* issue #187/#225: HITL 审批卡 — 内联到被闸步骤位, 定位不到的浮在顶部 */}
             {record.hitl_pending
-                ? hitlApprovals.map((a) => (
-                      <div key={a.action_id} className="rounded-md border border-warning/60 bg-warning/5 p-2">
-                          <div className="flex items-center justify-between text-xs">
-                              <span className="font-medium text-text-primary">
-                                  {t('等待审批', 'Awaiting approval')} — {a.node_id ?? a.tool_name}
-                              </span>
-                              {record.hitl_deadline ? <HitlCountdown deadline={record.hitl_deadline} /> : null}
-                          </div>
-                          <div className="mt-1 font-mono text-[11px] text-text-secondary">
-                              {a.tool_name}({JSON.stringify(a.params ?? {})})
-                          </div>
-                          <div className="mt-2 flex items-center gap-2">
-                              <button
-                                  type="button"
-                                  disabled={hitlBusy === a.action_id}
-                                  className="rounded-md border border-success px-2 py-1 text-xs text-success hover:bg-success/10 disabled:opacity-50"
-                                  onClick={() => void hitlConfirm(a.action_id, true, true)}
-                              >
-                                  {t('本次允许', 'Approve once')}
-                              </button>
-                              <button
-                                  type="button"
-                                  disabled={hitlBusy === a.action_id}
-                                  className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted disabled:opacity-50"
-                                  onClick={() => void hitlConfirm(a.action_id, true, false)}
-                              >
-                                  {t('总是允许', 'Always allow')}
-                              </button>
-                              <button
-                                  type="button"
-                                  disabled={hitlBusy === a.action_id}
-                                  className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-error/10 disabled:opacity-50"
-                                  onClick={() => void hitlConfirm(a.action_id, false, false)}
-                              >
-                                  {t('拒绝', 'Deny')}
-                              </button>
-                          </div>
-                      </div>
+                ? floatingApprovals.map((a) => (
+                      <InlineApprovalCard
+                          key={a.action_id}
+                          approval={a}
+                          deadline={record.hitl_deadline ?? undefined}
+                          busy={hitlBusy === a.action_id}
+                          onConfirm={hitlConfirm}
+                      />
                   ))
                 : null}
 
@@ -362,6 +343,21 @@ export function RunViewPage({ runId }: { runId: string }) {
                                         const step = (record.steps ?? []).find(
                                             (s) => s.node_id === wn.id && !s.user_correction
                                         );
+                                        // issue #225: 审批卡内联在暂停步骤位 (M7 badge)
+                                        const approval = record.hitl_pending
+                                            ? inlineApprovals.find((a) => a.node_id === wn.id)
+                                            : undefined;
+                                        if (approval) {
+                                            return (
+                                                <InlineApprovalCard
+                                                    key={wn.id}
+                                                    approval={approval}
+                                                    deadline={record.hitl_deadline ?? undefined}
+                                                    busy={hitlBusy === approval.action_id}
+                                                    onConfirm={hitlConfirm}
+                                                />
+                                            );
+                                        }
                                         if (!step) {
                                             return (
                                                 <div
@@ -467,6 +463,119 @@ export function RunViewPage({ runId }: { runId: string }) {
                     </div>
                 </div>
             ) : null}
+        </div>
+    );
+}
+
+// issue #225: 内联审批卡 — 渲染在被闸步骤位 (M7), 四动作: 拒绝 / 编辑参数 / 本次允许 / 总是允许
+function InlineApprovalCard({
+    approval,
+    deadline,
+    busy,
+    onConfirm,
+}: {
+    approval: GuardApproval;
+    deadline?: number;
+    busy: boolean;
+    onConfirm: (actionId: string, approved: boolean, once: boolean, editedParams?: Record<string, unknown>) => void;
+}) {
+    const t = useT();
+    const [editing, setEditing] = useState(false);
+    const [draft, setDraft] = useState('');
+    const [draftError, setDraftError] = useState('');
+
+    function startEdit() {
+        setDraft(JSON.stringify(approval.params ?? {}, null, 4));
+        setDraftError('');
+        setEditing(true);
+    }
+
+    function submitEdit() {
+        const parsed = parseParamsDraft(draft);
+        if (!parsed.ok) {
+            setDraftError(
+                parsed.error === 'invalid_json'
+                    ? t('JSON 解析失败', 'Invalid JSON')
+                    : t('参数须为 JSON 对象', 'Params must be a JSON object')
+            );
+            return;
+        }
+        void onConfirm(approval.action_id, true, true, parsed.params);
+    }
+
+    return (
+        <div className="rounded-md border border-warning/60 bg-warning/5 p-2">
+            <div className="flex items-center justify-between text-xs">
+                <span className="font-medium text-text-primary">
+                    {approval.node_id ?? approval.tool_name} · {t('等待审批', 'Awaiting approval')}
+                </span>
+                {deadline ? <HitlCountdown deadline={deadline} /> : null}
+            </div>
+            <div className="mt-1 font-mono text-[11px] text-text-secondary">
+                {approval.tool_name}({JSON.stringify(approval.params ?? {})})
+            </div>
+            {editing ? (
+                <div className="mt-2">
+                    <textarea
+                        className="min-h-20 w-full resize-y rounded-md border border-border bg-bg p-2 font-mono text-[11px] text-text-primary"
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        spellCheck={false}
+                    />
+                    {draftError ? <div className="mt-1 text-[10px] text-error">{draftError}</div> : null}
+                    <div className="mt-1 flex items-center gap-2">
+                        <button
+                            type="button"
+                            disabled={busy}
+                            className="rounded-md border border-success px-2 py-1 text-xs text-success hover:bg-success/10 disabled:opacity-50"
+                            onClick={submitEdit}
+                        >
+                            {t('按此参数执行', 'Run with these params')}
+                        </button>
+                        <button
+                            type="button"
+                            className="rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-bg-muted"
+                            onClick={() => setEditing(false)}
+                        >
+                            {t('取消', 'Cancel')}
+                        </button>
+                    </div>
+                </div>
+            ) : null}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                    type="button"
+                    disabled={busy}
+                    className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-error/10 disabled:opacity-50"
+                    onClick={() => void onConfirm(approval.action_id, false, false)}
+                >
+                    {t('拒绝', 'Reject')}
+                </button>
+                <button
+                    type="button"
+                    disabled={busy}
+                    className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted disabled:opacity-50"
+                    onClick={startEdit}
+                >
+                    {t('编辑参数', 'Edit params')}
+                </button>
+                <button
+                    type="button"
+                    disabled={busy}
+                    className="rounded-md border border-success px-2 py-1 text-xs text-success hover:bg-success/10 disabled:opacity-50"
+                    onClick={() => void onConfirm(approval.action_id, true, true)}
+                >
+                    {t('本次允许', 'Allow once')}
+                </button>
+                <button
+                    type="button"
+                    disabled={busy}
+                    className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted disabled:opacity-50"
+                    onClick={() => void onConfirm(approval.action_id, true, false)}
+                >
+                    {t('总是允许', 'Always allow')}
+                </button>
+            </div>
         </div>
     );
 }

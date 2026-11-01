@@ -2488,11 +2488,17 @@ def create_web_app(
             if released and approved:
                 resolver = getattr(engine, "resolve_hitl", None)
                 if callable(resolver):
+                    # issue #225: 审批卡 "编辑参数" — edited_params 随批准并入被闸节点输入
+                    edited = body.get("edited_params")
+                    edited = edited if isinstance(edited, dict) and edited else None
                     try:
-                        resolver(hitl_exec, True, once=True)
+                        resolver(hitl_exec, True, once=True, params=edited)
                     except TypeError:
-                        # 兼容无 once 参数的旧引擎 — 规则未落, 复查会拒绝但 run 被唤醒
-                        resolver(hitl_exec, True)
+                        try:
+                            resolver(hitl_exec, True, once=True)
+                        except TypeError:
+                            # 兼容无 once 参数的旧引擎 — 规则未落, 复查会拒绝但 run 被唤醒
+                            resolver(hitl_exec, True)
                 logger.info(f"HITL 一次性批准已唤醒 run: {hitl_exec} (action_id={action_id}, 不落规则)")
                 return {"action_id": action_id, "approved": True, "confirmed": True, "once": True}
             if released and not approved:

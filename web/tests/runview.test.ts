@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { capabilitiesInUse, computeWaves, stepCapability } from '../src/runview';
+import { capabilitiesInUse, computeWaves, parseParamsDraft, stepCapability } from '../src/runview';
 
 // issue #224: unified run view pure helpers — wave grouping (M4 parallel
 // branches) + capability annotation (M10) + capabilities-in-use rail.
@@ -63,8 +63,21 @@ describe('computeWaves', () => {
     });
 
     it('no edges = single sequential wave', () => {
-        const waves = computeWaves({ nodes: [{ id: 'a', name: 'n' }, { id: 'b', name: 'n' }] });
-        expect(waves).toEqual([{ depth: 0, nodes: [{ id: 'a', name: 'n', label: undefined }, { id: 'b', name: 'n', label: undefined }] }]);
+        const waves = computeWaves({
+            nodes: [
+                { id: 'a', name: 'n' },
+                { id: 'b', name: 'n' },
+            ],
+        });
+        expect(waves).toEqual([
+            {
+                depth: 0,
+                nodes: [
+                    { id: 'a', name: 'n', label: undefined },
+                    { id: 'b', name: 'n', label: undefined },
+                ],
+            },
+        ]);
     });
 
     it('empty def = no waves', () => {
@@ -133,5 +146,29 @@ describe('capabilitiesInUse', () => {
 
     it('empty steps = empty rail', () => {
         expect(capabilitiesInUse([])).toEqual([]);
+    });
+});
+
+// issue #225: 审批卡 "编辑参数" 草稿解析
+describe('parseParamsDraft', () => {
+    it('accepts a JSON object', () => {
+        expect(parseParamsDraft('{"amount": 10, "payee": "acme"}')).toEqual({
+            ok: true,
+            params: { amount: 10, payee: 'acme' },
+        });
+    });
+
+    it('accepts an empty object', () => {
+        expect(parseParamsDraft('{}')).toEqual({ ok: true, params: {} });
+    });
+
+    it('rejects invalid JSON', () => {
+        expect(parseParamsDraft('{amount: 10}')).toEqual({ ok: false, error: 'invalid_json' });
+    });
+
+    it('rejects non-object JSON', () => {
+        expect(parseParamsDraft('[1, 2]')).toEqual({ ok: false, error: 'not_object' });
+        expect(parseParamsDraft('42')).toEqual({ ok: false, error: 'not_object' });
+        expect(parseParamsDraft('null')).toEqual({ ok: false, error: 'not_object' });
     });
 });

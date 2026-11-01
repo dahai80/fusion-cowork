@@ -128,3 +128,21 @@ export function capabilitiesInUse(
     }
     return order;
 }
+
+// issue #225: 审批卡 "编辑参数" 草稿解析 — 只接受 JSON 对象。
+export type ParamsDraftResult =
+    | { ok: true; params: Record<string, unknown> }
+    | { ok: false; error: 'invalid_json' | 'not_object' };
+
+export function parseParamsDraft(text: string): ParamsDraftResult {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(text);
+    } catch {
+        return { ok: false, error: 'invalid_json' };
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        return { ok: false, error: 'not_object' };
+    }
+    return { ok: true, params: parsed as Record<string, unknown> };
+}
