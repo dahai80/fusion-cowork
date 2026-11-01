@@ -83,7 +83,14 @@ class TestRunsCreateInputs:
         started = []
 
         def _record_start(
-            workflow_def, workflow_id="", workflow_name="", memory=True, message_input=None, source="", labels=None
+            workflow_def,
+            workflow_id="",
+            workflow_name="",
+            memory=True,
+            message_input=None,
+            source="",
+            labels=None,
+            space_id="",  # issue #223: runs_create 透传工作区归属
         ):
             started.append({"message_input": message_input})
             return {"run_id": "run_stub", "status": "running"}

@@ -379,6 +379,14 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 
 测试: `tests/test_issue_189_node_executor.py` (33 例 + 1 例 live-AS 跳过: 波次并发墙钟/重叠/峰值、env 解析、配置往返、UDS 成功/partial/失败/transcript 容错、HTTP 完成/失败/超时/覆盖降级、混合 DAG 端到端、agent 失败语义、跨 agent 节点断点续跑)。文档: `docs/node-executors.md`。
 
+### 工作目录优先的任务首页 (v0.5.53, issue #223)
+
+- **工作目录 = Space (决策 D2)**: Anthropic 对齐里的 "working directory" 映射到 fusion 协作空间 — 不新增后端实体。任务、会话与产物始终归属于所选 Space, 与成员共享。
+- **run↔工作区关联**: `POST /api/runs` 接受可选 `space_id` (字符串, 其他类型 400); 落 run 记录、**持久化**到 `run_states.db` (schema v2 — v1 库幂等 `ALTER TABLE` 原地迁移, 无版本跳变)、**崩溃恢复后保留** (#191), 并在 `GET /api/runs` 条目透出。`GET /api/runs?space_id=<id>` 按目录过滤; 不带参数所有调用方看到的全量列表零变化。
+- **`GET /api/workspaces`**: 目录选择态聚合 — 每个 Space 带 `member_count` (含建目录自动登记的 owner)、`task_count` (绑定到它的 run 数) 与 `last_run_at` (最近一次 run, 无则 `null`)。诚实不可用: space 栈未装配时返回 `{"workspaces": [], "available": false}` (前端收起为提示); store 故障返回 502 `upstream_error`, 单个目录成员计数失败降级 `member_count: 0` 并 WARNING。
+- **任务优先首页** (`web/src/pages/HomePage.tsx`, 默认路由 `#/home`): **态零** — 目录选择器: 最近 + 团队共享的 Space 卡片 (名称、`N 成员 · M 任务`、最近活动、进入动作) 与新建表单 (名称/描述/受邀成员 id, 经 `addSpaceMember` 落库); 选中目录持久化到 `localStorage["cowork.activeWorkspace"]`。**态一** — 活动目录内的任务优先首页: 常驻顶栏上下文 (`📁 <目录> ▾ · N 成员共享`, 点击切换)、大 NL 任务输入复用既有委托引擎 (`/api/ai/generate-workflow`)、`⚙` 能力选择器 (已安装扩展技能名作为提示词上下文追加)、**M3 计划预览卡** (节点 chip 列表、`▶ 运行` 以 `source: "home"` 启动并绑定目录、`在画布中编辑` 深链 `#/canvas/<id>`、放弃)、按目录过滤的最近任务卡 (状态徽标、`打开` 到 `#/runs`、`追问` 预填输入框)、带待审数的审批铃铛 (`#/approvals`)。`web/manifest.json` 声明 `/home` 页面条目供 shell 挂载。
+- 测试: `tests/test_issue_223_workspace_home.py` (11 例: workspaces 聚合含 `available:false` + 502 + 成员计数降级、runs `space_id` 过滤/往返/400、store v2 往返 + v1→v2 迁移 + v1 行默认值、恢复保留 `space_id`)。
+
 ### 引擎运行暂停/恢复 + 运行中指令注入 (v0.5.52, issue #227)
 
 - **`inject` 指令 (决策 D3)**: `POST /api/runs/{id}/directive` 传 `{"action": "inject", "instruction": "跳过差旅类目"}` 排队一条用户修正, 在**下一节点边界**生效: 目标节点 (显式 `node_id`, 缺省 = 下一待执行节点) 的输入并入 `user_instruction` 键 (可选 `merge` dict 同桶合并), 时间线落一条 **"用户修正" 标记步** (`WorkflowStep.user_correction=true`, 零耗时, run 视图渲染为 `用户修正: <指令>`)。空指令排队即拒 (409) — 绝不静默丢弃。崩溃恢复的指令重放 (v0.5.38/#191) 覆盖 `inject`, 与其他 action 同路。

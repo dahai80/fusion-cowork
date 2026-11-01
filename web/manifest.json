@@ -19,6 +19,11 @@
     "category": "platform",
     "pages": [
         {
+            "route": "/home",
+            "title": "首页",
+            "title_en": "Home"
+        },
+        {
             "route": "/workflows",
             "title": "工作流",
             "title_en": "Workflows"

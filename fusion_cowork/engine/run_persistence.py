@@ -14,7 +14,8 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger("fusion_cowork.run_persistence")
 
 # 前向兼容闸门: 读到高于本版本的库直接报错 (loud), 绝不带着不认识的格式静默跑
-SCHEMA_VERSION = 1
+# v2 (issue #223): +space_id 列 — run 归属工作区 (Space), 首页按目录过滤
+SCHEMA_VERSION = 2
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS run_states (
@@ -27,6 +28,7 @@ CREATE TABLE IF NOT EXISTS run_states (
     steps TEXT NOT NULL DEFAULT '[]',
     directives TEXT NOT NULL DEFAULT '[]',
     memory INTEGER NOT NULL DEFAULT 1,
+    space_id TEXT NOT NULL DEFAULT '',
     created_at REAL NOT NULL DEFAULT 0,
     updated_at REAL NOT NULL DEFAULT 0
 );
@@ -54,6 +56,12 @@ class RunStateStore:
                 f"请升级 fusion-cowork 后再启动 (拒绝静默降级读取)"
             )
         self._conn.executescript(_SCHEMA_SQL)
+        if version < 2:
+            # issue #223: v1 库补列 — 幂等 ALTER (列存在时忽略 OperationalError)
+            try:
+                self._conn.execute("ALTER TABLE run_states ADD COLUMN space_id TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
         if version < SCHEMA_VERSION:
             self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self._conn.commit()
@@ -73,8 +81,8 @@ class RunStateStore:
                 """
                 INSERT OR REPLACE INTO run_states
                     (run_id, workflow_id, workflow_name, status, paused_reason, workflow_def,
-                     steps, directives, memory, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     steps, directives, memory, space_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -86,6 +94,7 @@ class RunStateStore:
                     json.dumps(record.get("steps") or [], ensure_ascii=False),
                     json.dumps(record.get("directives") or [], ensure_ascii=False),
                     1 if record.get("memory", True) else 0,
+                    str(record.get("space_id") or ""),
                     float(record.get("created_at") or time.time()),
                     time.time(),
                 ),

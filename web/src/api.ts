@@ -67,6 +67,24 @@ export interface RunListItem {
     finished_at: number | null;
     error: string | null;
     review: RunReview | null;
+    source?: string | null;
+    labels?: Record<string, string> | null;
+    // issue #223: 归属工作区 ("" = 未绑定目录)
+    space_id?: string;
+}
+
+// issue #223: 首页目录选择态聚合 — Space 卡片 + 成员/任务计数 + 最近活动
+export interface WorkspaceInfo {
+    id: string;
+    name: string;
+    description: string;
+    owner_id: string;
+    status: string;
+    created_at?: string;
+    updated_at?: string;
+    member_count: number;
+    task_count: number;
+    last_run_at?: number | null;
 }
 
 export interface RunStep {
@@ -543,9 +561,20 @@ export const api = {
     updateWorkflow: (id: string, record: { name: string; description: string; workflow: unknown }) =>
         sdk.http.put<WorkflowRecord>(`/api/workflows/${encodeURIComponent(id)}`, record).then((r) => r.data),
     deleteWorkflow: (id: string) => sdk.http.delete(`/api/workflows/${encodeURIComponent(id)}`),
-    startRun: (body: { workflow?: unknown; workflow_id?: string; name?: string; memory?: boolean }) =>
-        post<{ run_id: string; status: string }>('/api/runs', body),
-    runs: () => get<{ runs: RunListItem[]; count: number }>('/api/runs'),
+    startRun: (body: {
+        workflow?: unknown;
+        workflow_id?: string;
+        name?: string;
+        memory?: boolean;
+        inputs?: Record<string, unknown>;
+        source?: string;
+        labels?: Record<string, string>;
+        space_id?: string;
+    }) => post<{ run_id: string; status: string }>('/api/runs', body),
+    runs: (spaceId = '') =>
+        get<{ runs: RunListItem[]; count: number }>(
+            `/api/runs${spaceId ? `?space_id=${encodeURIComponent(spaceId)}` : ''}`
+        ),
     run: (id: string) => get<RunRecord>(`/api/runs/${encodeURIComponent(id)}`),
     runArtifacts: (id: string) =>
         get<{ artifacts: RunArtifact[]; count: number; review: RunReview | null }>(
@@ -621,6 +650,10 @@ export const api = {
     spaces: () => get<SpaceInfo[]>('/api/space/spaces'),
     createSpace: (body: { name: string; description?: string }) => post<SpaceInfo>('/api/space/spaces', body),
     deleteSpace: (id: string) => sdk.http.delete(`/api/space/spaces/${encodeURIComponent(id)}`),
+    // issue #223: 首页目录聚合 + 工作区内邀请成员
+    workspaces: () => get<{ workspaces: WorkspaceInfo[]; available: boolean }>('/api/workspaces'),
+    addSpaceMember: (id: string, body: { user_id: string; role?: string; display_name?: string }) =>
+        post<SpaceMemberInfo>(`/api/space/spaces/${encodeURIComponent(id)}/members`, body),
     spaceMembers: (id: string) => get<SpaceMemberInfo[]>(`/api/space/spaces/${encodeURIComponent(id)}/members`),
     spaceMessages: (id: string) => get<SpaceMessage[]>(`/api/space/spaces/${encodeURIComponent(id)}/messages`),
     sendSpaceMessage: (id: string, content: string, model = '') =>
