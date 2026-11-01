@@ -416,8 +416,12 @@ class RunRegistry:
             "user_correction": bool(getattr(s, "user_correction", False)),
         }
 
-    def list(self) -> List[Dict[str, Any]]:
+    def list(self, space_id: str = "") -> List[Dict[str, Any]]:
         self._gc()
+        # issue #223: space_id 过滤 — 首页 "最近任务 (本目录)" 按工作区收口
+        items = sorted(self._runs.values(), key=lambda x: -x["created_at"])
+        if space_id:
+            items = [r for r in items if str(r.get("space_id") or "") == space_id]
         return [
             {
                 "run_id": r["run_id"],
@@ -431,8 +435,10 @@ class RunRegistry:
                 # issue #207: 来源/标签随列表透出 (缺省 None, 老调用方零变化)
                 "source": r.get("source"),
                 "labels": r.get("labels"),
+                # issue #223: 归属工作区 (缺省 "" = 未绑定目录, 老数据零变化)
+                "space_id": str(r.get("space_id") or ""),
             }
-            for r in sorted(self._runs.values(), key=lambda x: -x["created_at"])
+            for r in items
         ]
 
     def get(self, run_id: str) -> Optional[Dict[str, Any]]:
@@ -447,6 +453,7 @@ class RunRegistry:
         message_input: Optional[Dict[str, Any]] = None,
         source: str = "",
         labels: Optional[Dict[str, str]] = None,
+        space_id: str = "",
     ) -> Dict[str, Any]:
         from ..engine import Workflow
 
@@ -472,6 +479,8 @@ class RunRegistry:
             # issue #207: 来源/标签 (调用方归因), 缺省空
             "source": str(source or ""),
             "labels": dict(labels or {}),
+            # issue #223: run 归属工作区 (Space) — 首页按目录过滤/聚合
+            "space_id": str(space_id or ""),
         }
         self._runs[run_id] = record
         self._persist(run_id)
@@ -720,6 +729,8 @@ class RunRegistry:
                 "memory": bool(row.get("memory", 1)),
                 "recovered": True,
                 "directives": [],
+                # issue #223: 恢复保留工作区归属 (v1 行无此列 → 空串, 语义 = 未绑定)
+                "space_id": str(row.get("space_id") or ""),
             }
             self._runs[run_id] = record
             task = asyncio.create_task(self._execute(run_id, wf, start_paused=True, resume_steps=steps))
@@ -1248,6 +1259,10 @@ def create_web_app(
                 raise HTTPException(
                     status_code=400, detail={"code": "bad_request", "message": "labels 须为字符串到字符串的对象"}
                 )
+            # issue #223: run 归属工作区 — 首页在活动目录上下文里启动的 run 带目录 id
+            space_id = body.get("space_id", "")
+            if not isinstance(space_id, str):
+                raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "space_id 须为字符串"})
             return runs.start(
                 workflow_def,
                 workflow_id=workflow_id,
@@ -1256,6 +1271,7 @@ def create_web_app(
                 message_input=inputs_obj,
                 source=source,
                 labels=labels,
+                space_id=space_id,
             )
         except ValueError as exc:
             # issue #135 F-2: 坏边形状/含环等工作流定义错误 → 400 可读信息, 不 500
@@ -1264,8 +1280,50 @@ def create_web_app(
             ) from exc
 
     @app.get("/api/runs")
-    async def runs_list():
-        return {"runs": runs.list(), "count": len(runs.list())}
+    async def runs_list(space_id: str = ""):
+        # issue #223: ?space_id= 工作区过滤 — 缺省返回全部 (老调用方零变化)
+        items = runs.list(space_id=space_id)
+        return {"runs": items, "count": len(items)}
+
+    # ── issue #223: 首页目录选择态聚合 — Space 卡片 + 成员数 + 任务数 + 最近活动 ──
+    @app.get("/api/workspaces")
+    async def workspaces_list():
+        if space_store is None:
+            # space 栈未装配 (无 [web] data dir) — 诚实告知不可用, 前端态零收起
+            return {"workspaces": [], "available": False}
+        try:
+            spaces = await space_store.list_spaces(limit=100)
+        except Exception as e:
+            logger.error(f"workspaces 聚合失败: {e}")
+            raise HTTPException(
+                status_code=502, detail={"code": "upstream_error", "message": f"工作区列表失败: {e}"}
+            ) from e
+        run_items = runs.list()
+        out: List[Dict[str, Any]] = []
+        for sp in spaces:
+            d = sp.to_dict() if hasattr(sp, "to_dict") else dict(sp)
+            sid = str(d.get("id") or "")
+            try:
+                member_count = await space_store.count_members(sid)
+            except Exception as e:
+                logger.warning(f"workspaces 成员计数失败 space={sid}: {e}")
+                member_count = 0
+            ws_runs = [r for r in run_items if str(r.get("space_id") or "") == sid]
+            out.append(
+                {
+                    "id": sid,
+                    "name": d.get("name", ""),
+                    "description": d.get("description", ""),
+                    "owner_id": d.get("owner_id", ""),
+                    "status": d.get("status", ""),
+                    "created_at": d.get("created_at"),
+                    "updated_at": d.get("updated_at"),
+                    "member_count": int(member_count),
+                    "task_count": len(ws_runs),
+                    "last_run_at": max((r.get("created_at") or 0 for r in ws_runs), default=None),
+                }
+            )
+        return {"workspaces": out, "available": True}
 
     @app.get("/api/runs/{run_id}")
     async def runs_get(run_id: str):

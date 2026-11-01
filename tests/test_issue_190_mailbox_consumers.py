@@ -525,7 +525,9 @@ class TestTeamWebApi:
         started = []
         original_start = web_app.state.run_registry.start
 
-        def _record_start(workflow_def, workflow_id="", workflow_name="", memory=True, message_input=None):
+        def _record_start(
+            workflow_def, workflow_id="", workflow_name="", memory=True, message_input=None, **kwargs
+        ):  # **kwargs: 兼容 runs_create 新增透传 (source/labels/space_id)
             started.append(
                 {
                     "workflow_id": workflow_id,

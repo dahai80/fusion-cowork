@@ -11,6 +11,7 @@ import { CanvasPage } from './pages/CanvasPage';
 import { ClusterPage } from './pages/ClusterPage';
 import { DelegatePage } from './pages/DelegatePage';
 import { ExtensionsPage } from './pages/ExtensionsPage';
+import { HomePage } from './pages/HomePage';
 import { MobilePage } from './pages/MobilePage';
 import { NodesPage } from './pages/NodesPage';
 import { PluginsPage } from './pages/PluginsPage';
@@ -24,11 +25,13 @@ import { UsagePage } from './pages/UsagePage';
 import { WorkflowsPage } from './pages/WorkflowsPage';
 import { embeddedParam, isEmbedded } from './sdk';
 
-// Hash router (no router dep). Routes: workflows, delegate, canvas
-// (#/canvas/<id>), runs, sessions, nodes, templates, schedule. Standalone
+// Hash router (no router dep). Routes: home (default landing, issue #223),
+// workflows, delegate, canvas (#/canvas/<id>), runs, sessions, nodes,
+// templates, schedule. Standalone
 // shows its own header tabs; when the shell embeds us (?embedded=1 or
 // iframe) the shell owns the chrome — own navigation hides (spec S7).
 type Route =
+    | 'home'
     | 'workflows'
     | 'delegate'
     | 'canvas'
@@ -48,6 +51,7 @@ type Route =
     | 'm';
 
 const ROUTES: Route[] = [
+    'home',
     'workflows',
     'delegate',
     'runs',
@@ -70,6 +74,7 @@ function parseHash(): { route: Route; arg: string } {
     const h = window.location.hash.replace(/^#\/?/, '');
     const [head, arg = ''] = h.split('/');
     if (head === 'canvas') return { route: 'canvas', arg };
+    if (head === 'home') return { route: 'home', arg };
     if (head === 'delegate') return { route: 'delegate', arg };
     if (head === 'runs') return { route: 'runs', arg };
     if (head === 'sessions') return { route: 'sessions', arg };
@@ -85,11 +90,13 @@ function parseHash(): { route: Route; arg: string } {
     if (head === 'skills') return { route: 'skills', arg };
     if (head === 'extensions') return { route: 'extensions', arg };
     if (head === 'm') return { route: 'm', arg };
-    return { route: 'workflows', arg };
+    return { route: 'home', arg };
 }
 
 function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
     switch (r) {
+        case 'home':
+            return t('首页', 'Home');
         case 'workflows':
             return t('工作流', 'Workflows');
         case 'delegate':
@@ -193,7 +200,9 @@ export function App() {
                 </header>
             ) : null}
             <main className={`min-h-0 flex-1 ${route === 'canvas' ? 'overflow-hidden' : 'overflow-y-auto p-4'}`}>
-                {route === 'workflows' ? (
+                {route === 'home' ? (
+                    <HomePage />
+                ) : route === 'workflows' ? (
                     <WorkflowsPage
                         onEdit={(id) => {
                             window.location.hash = `#/canvas/${id}`;
