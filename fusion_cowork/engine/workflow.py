@@ -520,6 +520,8 @@ class WorkflowEngine:
         self._hitl_decisions: Dict[str, bool] = {}
         # issue #187: 一次性批准的 run 集合 — 唤醒后跳过权限复查 (规则未持久化)
         self._hitl_once_grants: Set[str] = set()
+        # issue #225: exec_id -> 审批时编辑的参数覆盖 — 批准唤醒后并入被闸节点输入
+        self._hitl_param_overrides: Dict[str, Dict[str, Any]] = {}
         # 正挂在 HITL 等待点的 run 集合 (与 W8 手动暂停区分)
         self._hitl_waiting: Set[str] = set()
         # W8/B1: 运行改向指令队列 — 节点边界应用 (set_params/skip_remaining/insert_node)
@@ -980,6 +982,12 @@ class WorkflowEngine:
                 if not allowed and self._hitl_pause and not node.config.continue_on_error:
                     # issue #181: 本地待审批命中本 run → 暂停在节点边界等人工决定
                     allowed = await self._hitl_await(exec_id, node, check_input)
+                    # issue #225: 审批编辑参数 — 批准唤醒后并入被闸节点输入 (仅本次执行)
+                    override = self._hitl_param_overrides.pop(exec_id, None)
+                    if allowed and override:
+                        node_input.update(override)
+                        check_input.update(override)
+                        logger.info(f"[{exec_id}] HITL: 审批编辑参数已并入节点输入: {sorted(override)}")
             if not allowed:
                 logger.warning(f"节点 '{node.name}' 被权限系统拒绝执行")
                 step = WorkflowStep(
@@ -1320,18 +1328,26 @@ class WorkflowEngine:
         # issue #187: 等待截止时间 (epoch ts), 前端倒计时用; 未等待返回 None
         return self._hitl_deadlines.get(execution_id)
 
-    def resolve_hitl(self, execution_id: str, approved: bool, once: bool = False) -> bool:
+    def resolve_hitl(
+        self, execution_id: str, approved: bool, once: bool = False, params: Optional[Dict[str, Any]] = None
+    ) -> bool:
         # issue #181: 审批路由回调 — 记录决定并唤醒暂停中的 run; cancel 共用同一事件
         # issue #187: once=True 一次性批准 — 不落规则, 唤醒后跳过权限复查直接放行本节点
+        # issue #225: params — 审批卡 "编辑参数" 后的覆盖, 批准时并入被闸节点输入
         evt = self._pause_events.get(execution_id)
         if evt is None:
             return False
         self._hitl_decisions[execution_id] = bool(approved)
         if approved and once:
             self._hitl_once_grants.add(execution_id)
+        if approved and isinstance(params, dict) and params:
+            self._hitl_param_overrides[execution_id] = dict(params)
         self._hitl_deadlines.pop(execution_id, None)
         evt.set()
-        logger.info(f"HITL 审批决定: exec={execution_id} approved={approved} once={once}")
+        logger.info(
+            f"HITL 审批决定: exec={execution_id} approved={approved} once={once} "
+            f"params_override={'yes' if isinstance(params, dict) and params else 'no'}"
+        )
         return True
 
     async def _hitl_await(self, exec_id: str, node: BaseNode, check_input: Dict[str, Any]) -> bool:

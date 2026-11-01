@@ -725,7 +725,14 @@ export const api = {
             '/api/models'
         ),
     pendingApprovals: () => get<{ approvals: GuardApproval[] }>('/api/permissions/pending'),
-    confirmApproval: (actionId: string, approved: boolean, scope?: string, acceptedBlocks?: number[], once?: boolean) =>
+    confirmApproval: (
+        actionId: string,
+        approved: boolean,
+        scope?: string,
+        acceptedBlocks?: number[],
+        once?: boolean,
+        editedParams?: Record<string, unknown>
+    ) =>
         post<{
             action_id: string;
             approved: boolean;
@@ -738,6 +745,7 @@ export const api = {
             ...(scope ? { scope } : {}),
             ...(acceptedBlocks ? { accepted_blocks: acceptedBlocks } : {}),
             ...(once ? { once: true } : {}),
+            ...(editedParams ? { edited_params: editedParams } : {}),
         }),
     spaceInstructions: (spaceId: string) =>
         get<{ space_id: string; instructions: string }>(

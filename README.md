@@ -435,6 +435,14 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
 
+### Inline Approvals in the Run Timeline (v0.5.55, issue #225)
+
+- **Approval cards render at the paused step position** (M7): the HITL card sits inside the wave timeline exactly where the gated node waits — HiTL as a product principle, not a settings toggle. Cards whose `node_id` cannot be located in the DAG fall back to the top of the run view (never lost).
+- **Four actions per card** — reject / **edit params** / allow once / always allow. *Edit params* opens an inline JSON editor prefilled with the pending params; on submit the edited object is approved **once** and merged into the gated node's input at the boundary (`Run with these params`). Invalid JSON / non-object drafts are rejected client-side (`parseParamsDraft` in `web/src/runview.ts`).
+- **Engine param override**: `WorkflowEngine.resolve_hitl(exec, approved, once, params=...)` records a one-shot override; after the approval wakes the run, the override merges into the gated node's input (unspecified keys keep their original values) and is consumed — nothing persists and denied runs never apply it. The confirm route passes `edited_params` through with the same TypeError fallback chain as `once`.
+- **Resolution auto-resumes** (unchanged from #181/#187/#216): approve/reject wakes the suspended run in place; audit identical to the ApprovalsPage flow. Multi-entry reach preserved: home bell, sidebar, 🔔 notifications, and the cross-run ApprovalsPage queue all keep working — this issue only moves the *in-context* experience.
+- Tests: `tests/test_issue_225_inline_approvals.py` (5 cases: edited params merged into gated node input + no residue, params ignored on deny, route `edited_params` reaches the resolver, non-dict ignored, reject wakes with no override) + 4 new `parseParamsDraft` bun cases; regression-proven (3 fail on pre-patch code).
+
 ### Unified Run View (v0.5.54, issue #224)
 
 - **Dedicated run page** (`web/src/pages/RunViewPage.tsx`, deep link `#/runs/<run_id>`): every step of a run on one screen — the Runs list is now list-only (inline detail removed, ~380 lines) and its `Open` action deep-links here. The page renders **topological waves** from `workflow_def` (parallel branches side-by-side in one stage row, `并行 N 路`/`阶段 N` labels, pending nodes as dashed placeholders) via pure helper `computeWaves` in `web/src/runview.ts`.
