@@ -1,0 +1,575 @@
+import { useAutoRetry } from '@fusion/web-ui';
+import { EmptyState, ErrorState, SkeletonLines, StatusBadge } from '@fusion/web-ui';
+import type { StatusKind } from '@fusion/web-ui';
+import { useEffect, useState } from 'react';
+import { type GuardApproval, type RunRecord, type RunStep, type SpaceArtifact, api, statusKind } from '../api';
+import { useT } from '../i18n';
+import { capabilitiesInUse, computeWaves, stepCapability } from '../runview';
+import { sdk, streamSse } from '../sdk';
+import { HitlCountdown, RunArtifactPane, StepDrawer } from './RunsPage';
+
+// issue #224: unified run view (#/runs/<id>) — one screen to watch and steer
+// a run: wave-grouped timeline (parallel branches side-by-side, M4), user
+// correction lines from #227 inject markers, capability annotations (M10),
+// interrupt composer + pause (M5), workspace drawer (M6), capabilities-in-use
+// rail, dismissible first-run hint. RunsPage keeps the list + inline detail.
+
+const POLL_MS = 5000;
+const HINT_KEY = 'cowork.runview.hintDismissed';
+
+export function RunViewPage({ runId }: { runId: string }) {
+    const t = useT();
+    const [reloadKey, setReloadKey] = useState(0);
+    const { data, error, loading } = useAutoRetry(() => api.run(runId), [runId, reloadKey]);
+    const [live, setLive] = useState<RunRecord | null>(null);
+    const [sseOk, setSseOk] = useState(false);
+    const [openStep, setOpenStep] = useState('');
+    const [drawerOpen, setDrawerOpen] = useState(false);
+    const [hintDismissed, setHintDismissed] = useState(true);
+    const [instruction, setInstruction] = useState('');
+    const [sending, setSending] = useState(false);
+    // issue #187/#224: HITL 审批卡 + 交付审查在 run 视图内闭环 (UC-2 打断全链路)
+    const [hitlApprovals, setHitlApprovals] = useState<GuardApproval[]>([]);
+    const [hitlBusy, setHitlBusy] = useState('');
+    const [reviewNote, setReviewNote] = useState('');
+
+    useEffect(() => {
+        try {
+            setHintDismissed(localStorage.getItem(HINT_KEY) === '1');
+        } catch {
+            setHintDismissed(false);
+        }
+    }, []);
+
+    function dismissHint() {
+        setHintDismissed(true);
+        try {
+            localStorage.setItem(HINT_KEY, '1');
+        } catch {
+            // storage unavailable — in-session dismiss only
+        }
+    }
+
+    // W13/B2: 步骤 SSE 实时推送, 失败回落轮询 (与 RunsPage 同源数据)
+    useEffect(() => {
+        const ac = new AbortController();
+        setLive(null);
+        setSseOk(false);
+        streamSse(
+            `/api/runs/${encodeURIComponent(runId)}/events`,
+            (event, payload) => {
+                if (event === 'ping') return;
+                const run = (payload as { run?: RunRecord } | null)?.run;
+                if (run) {
+                    setLive(run);
+                    setSseOk(true);
+                }
+            },
+            ac.signal
+        )
+            .then(() => setSseOk(false))
+            .catch((e) => {
+                if (!ac.signal.aborted) {
+                    console.warn('[cowork-web] run view SSE unavailable, falling back to polling', e);
+                    setSseOk(false);
+                }
+            });
+        return () => ac.abort();
+    }, [runId]);
+
+    const record = live ?? data;
+
+    useEffect(() => {
+        if (sseOk) return;
+        if (record?.status === 'running' || record?.status === 'pending') {
+            const timer = window.setTimeout(() => setReloadKey((k) => k + 1), POLL_MS);
+            return () => window.clearTimeout(timer);
+        }
+    }, [record, sseOk]);
+
+    // issue #187: HITL 等待时轮询审批卡 (按 execution_id 过滤), 2s
+    useEffect(() => {
+        if (!record?.hitl_pending) {
+            setHitlApprovals([]);
+            return;
+        }
+        let alive = true;
+        const load = async () => {
+            try {
+                const res = await api.pendingApprovals();
+                if (!alive) return;
+                setHitlApprovals((res.approvals ?? []).filter((a) => a.execution_id === runId));
+            } catch (e) {
+                console.warn('[cowork-web] hitl pending approvals fetch failed', e);
+            }
+        };
+        void load();
+        const timer = window.setInterval(load, 2000);
+        return () => {
+            alive = false;
+            window.clearInterval(timer);
+        };
+    }, [record?.hitl_pending, runId]);
+
+    if (loading && !record) return <SkeletonLines rows={6} />;
+    if (error && !record)
+        return (
+            <ErrorState
+                message={error.message}
+                retryLabel={t('重试', 'Retry')}
+                onRetry={() => setReloadKey((k) => k + 1)}
+            />
+        );
+    if (!record) return null;
+
+    const steerable = record.status === 'running' || record.status === 'paused';
+    const totalTokens = (record.steps ?? []).reduce((n, s) => n + (s.tokens?.total_tokens ?? 0), 0);
+    const waves = computeWaves(record.workflow_def ?? {});
+    const caps = capabilitiesInUse(record.steps ?? []);
+    const correctionLines = (record.steps ?? []).filter((s) => s.user_correction);
+
+    async function steer(fn: () => Promise<unknown>, failMsg: string) {
+        try {
+            await fn();
+            setReloadKey((k) => k + 1);
+        } catch (e) {
+            console.error('[cowork-web] steer failed', e);
+            sdk.toast.show({ level: 'error', message: failMsg });
+        }
+    }
+
+    async function hitlConfirm(actionId: string, approved: boolean, once: boolean) {
+        setHitlBusy(actionId);
+        try {
+            await api.confirmApproval(actionId, approved, undefined, undefined, once);
+            sdk.toast.show({
+                level: 'success',
+                message: approved
+                    ? once
+                        ? t('已批准 (本次)', 'Approved (once)')
+                        : t('已批准并记住', 'Approved and remembered')
+                    : t('已拒绝', 'Denied'),
+            });
+            setReloadKey((k) => k + 1);
+        } catch (e) {
+            console.error('[cowork-web] hitl confirm failed', e);
+            sdk.toast.show({ level: 'error', message: t('审批失败', 'Approval failed') });
+        } finally {
+            setHitlBusy('');
+        }
+    }
+
+    // W9: 交付审查 — pending_review → approved/rejected
+    async function reviewRun(approved: boolean) {
+        try {
+            await api.reviewRun(runId, approved, reviewNote);
+            sdk.toast.show({
+                level: 'success',
+                message: approved ? t('审查通过', 'Approved') : t('已退回', 'Rejected'),
+            });
+            setReviewNote('');
+            setReloadKey((k) => k + 1);
+        } catch (e) {
+            console.error('[cowork-web] run review failed', e);
+            sdk.toast.show({ level: 'error', message: t('审查失败', 'Review failed') });
+        }
+    }
+
+    async function sendInstruction() {
+        const text = instruction.trim();
+        if (!text || sending) return;
+        setSending(true);
+        try {
+            await api.directive(runId, { action: 'inject', instruction: text });
+            sdk.toast.show({
+                level: 'success',
+                message: t('指令已排队，下一节点边界生效', 'Queued — lands at the next node boundary'),
+            });
+            setInstruction('');
+            setReloadKey((k) => k + 1);
+        } catch (e) {
+            console.error('[cowork-web] inject failed', e);
+            sdk.toast.show({ level: 'error', message: t('指令发送失败', 'Failed to send') });
+        } finally {
+            setSending(false);
+        }
+    }
+
+    return (
+        <div className="mx-auto flex h-full max-w-6xl flex-col gap-3">
+            {/* 头部: 返回 + run 身份 + 控制 */}
+            <div className="flex flex-wrap items-center gap-2">
+                <button
+                    type="button"
+                    className="rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-bg-muted"
+                    onClick={() => {
+                        window.location.hash = '#/runs';
+                    }}
+                >
+                    ← {t('运行列表', 'Runs')}
+                </button>
+                <span className="font-mono text-sm text-text-primary">{record.run_id}</span>
+                <span className="text-xs text-text-secondary">{record.workflow_name || record.workflow_id}</span>
+                <StatusBadge status={statusKind(record.status) as StatusKind} label={record.status} />
+                {totalTokens > 0 ? (
+                    <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-text-muted">
+                        Σ {totalTokens} tok
+                    </span>
+                ) : null}
+                {correctionLines.length > 0 ? (
+                    <span className="rounded border border-accent px-1.5 py-0.5 text-[10px] text-accent">
+                        {t(`已修正 ×${correctionLines.length}`, `${correctionLines.length} corrections`)}
+                    </span>
+                ) : null}
+                <div className="flex-1" />
+                {record.status === 'running' ? (
+                    <button
+                        type="button"
+                        className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
+                        onClick={() => void steer(() => api.pauseRun(runId), t('暂停失败', 'Pause failed'))}
+                    >
+                        ⏸ {t('暂停', 'Pause')}
+                    </button>
+                ) : null}
+                {record.status === 'paused' ? (
+                    <button
+                        type="button"
+                        className="rounded-md border border-success px-2 py-1 text-xs text-success hover:bg-success/10"
+                        onClick={() => void steer(() => api.resumeRun(runId), t('恢复失败', 'Resume failed'))}
+                    >
+                        ▶ {t('继续', 'Resume')}
+                    </button>
+                ) : null}
+                {record.space_id ? (
+                    <button
+                        type="button"
+                        className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
+                        onClick={() => setDrawerOpen(!drawerOpen)}
+                    >
+                        📁 {t('工作区', 'Workspace')}
+                    </button>
+                ) : null}
+            </div>
+            {record.error ? <div className="text-xs text-error">{record.error}</div> : null}
+            {record.result?.summary ? <div className="text-xs text-text-secondary">{record.result.summary}</div> : null}
+
+            {/* 首次教育提示 (可关) */}
+            {!hintDismissed ? (
+                <div className="flex items-center justify-between rounded-md border border-accent/50 bg-accent/5 px-3 py-1.5 text-xs text-text-secondary">
+                    <span>
+                        {t('每一步可见 · 随时可追加指令或打断', 'Every step visible · redirect or interrupt any time')}
+                    </span>
+                    <button type="button" className="text-text-muted hover:text-text-primary" onClick={dismissHint}>
+                        ✕
+                    </button>
+                </div>
+            ) : null}
+
+            {/* issue #187: HITL 审批卡 — UC-2 打断链路在 run 视图内闭环 */}
+            {record.hitl_pending
+                ? hitlApprovals.map((a) => (
+                      <div key={a.action_id} className="rounded-md border border-warning/60 bg-warning/5 p-2">
+                          <div className="flex items-center justify-between text-xs">
+                              <span className="font-medium text-text-primary">
+                                  {t('等待审批', 'Awaiting approval')} — {a.node_id ?? a.tool_name}
+                              </span>
+                              {record.hitl_deadline ? <HitlCountdown deadline={record.hitl_deadline} /> : null}
+                          </div>
+                          <div className="mt-1 font-mono text-[11px] text-text-secondary">
+                              {a.tool_name}({JSON.stringify(a.params ?? {})})
+                          </div>
+                          <div className="mt-2 flex items-center gap-2">
+                              <button
+                                  type="button"
+                                  disabled={hitlBusy === a.action_id}
+                                  className="rounded-md border border-success px-2 py-1 text-xs text-success hover:bg-success/10 disabled:opacity-50"
+                                  onClick={() => void hitlConfirm(a.action_id, true, true)}
+                              >
+                                  {t('本次允许', 'Approve once')}
+                              </button>
+                              <button
+                                  type="button"
+                                  disabled={hitlBusy === a.action_id}
+                                  className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted disabled:opacity-50"
+                                  onClick={() => void hitlConfirm(a.action_id, true, false)}
+                              >
+                                  {t('总是允许', 'Always allow')}
+                              </button>
+                              <button
+                                  type="button"
+                                  disabled={hitlBusy === a.action_id}
+                                  className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-error/10 disabled:opacity-50"
+                                  onClick={() => void hitlConfirm(a.action_id, false, false)}
+                              >
+                                  {t('拒绝', 'Deny')}
+                              </button>
+                          </div>
+                      </div>
+                  ))
+                : null}
+
+            {/* W9: 交付审查 — pending_review 在 run 视图内通过/退回 */}
+            {record.review?.status === 'pending_review' ? (
+                <div className="rounded-md border border-border p-2">
+                    <div className="flex items-center gap-2">
+                        <input
+                            className="flex-1 rounded-md border border-border bg-bg px-2 py-1 text-xs text-text-primary"
+                            placeholder={t('审查意见 (可选)', 'Review note (optional)')}
+                            value={reviewNote}
+                            onChange={(e) => setReviewNote(e.target.value)}
+                        />
+                        <button
+                            type="button"
+                            className="rounded-md border border-success px-2 py-1 text-xs text-success hover:bg-success/10"
+                            onClick={() => void reviewRun(true)}
+                        >
+                            {t('通过交付', 'Approve')}
+                        </button>
+                        <button
+                            type="button"
+                            className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-error/10"
+                            onClick={() => void reviewRun(false)}
+                        >
+                            {t('退回', 'Reject')}
+                        </button>
+                    </div>
+                </div>
+            ) : null}
+
+            {/* 主体: 时间线 + 右栏 (能力清单/工作区抽屉) */}
+            <div className="flex min-h-0 flex-1 gap-3">
+                <div className="min-w-0 flex-1 space-y-3 overflow-y-auto pr-1">
+                    {waves.length === 0 ? (
+                        <EmptyState title={t('暂无步骤', 'No steps yet')} />
+                    ) : (
+                        waves.map((wave) => (
+                            <div key={wave.depth}>
+                                <div className="pb-1 text-[10px] font-medium uppercase tracking-wide text-text-muted">
+                                    {t(
+                                        wave.nodes.length > 1
+                                            ? `并行 ${wave.nodes.length} 路`
+                                            : `阶段 ${wave.depth + 1}`,
+                                        wave.nodes.length > 1
+                                            ? `parallel ×${wave.nodes.length}`
+                                            : `stage ${wave.depth + 1}`
+                                    )}
+                                </div>
+                                <div
+                                    className="grid gap-2"
+                                    style={{ gridTemplateColumns: `repeat(${wave.nodes.length}, minmax(0, 1fr))` }}
+                                >
+                                    {wave.nodes.map((wn) => {
+                                        const step = (record.steps ?? []).find(
+                                            (s) => s.node_id === wn.id && !s.user_correction
+                                        );
+                                        if (!step) {
+                                            return (
+                                                <div
+                                                    key={wn.id}
+                                                    className="rounded-md border border-dashed border-border p-2 text-[11px] text-text-muted"
+                                                >
+                                                    {wn.label || wn.name} · {t('等待', 'pending')}
+                                                </div>
+                                            );
+                                        }
+                                        return (
+                                            <div key={wn.id}>
+                                                <StepCard
+                                                    step={step}
+                                                    expanded={openStep === wn.id}
+                                                    onToggle={() => setOpenStep(openStep === wn.id ? '' : wn.id)}
+                                                />
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ))
+                    )}
+                    {/* 修正行 — #227 inject 标记步渲染为对话线 */}
+                    {correctionLines.map((s, i) => (
+                        <div
+                            key={`corr-${i}`}
+                            className="rounded-md border border-accent/40 bg-accent/5 px-3 py-1.5 text-xs"
+                        >
+                            <span className="text-accent">👤 {t('用户修正', 'User correction')}</span>
+                            <span className="pl-2 text-text-secondary">{s.summary}</span>
+                        </div>
+                    ))}
+                </div>
+
+                {/* 右栏: 能力清单 (M10 rail) */}
+                <div className="w-56 shrink-0 space-y-2 overflow-y-auto">
+                    <div className="rounded-md border border-border p-2">
+                        <div className="pb-1 text-[10px] font-medium uppercase tracking-wide text-text-muted">
+                            {t('使用中的能力', 'Capabilities in use')}
+                        </div>
+                        {caps.length === 0 ? (
+                            <div className="text-[11px] text-text-muted">{t('暂无', 'None yet')}</div>
+                        ) : (
+                            caps.map((c) => (
+                                <div key={`${c.kind}:${c.label}:${c.detail ?? ''}`} className="py-0.5 text-[11px]">
+                                    <span className="text-text-primary">
+                                        {c.kind === 'connector'
+                                            ? '🔌'
+                                            : c.kind === 'subagent'
+                                              ? '🤖'
+                                              : c.kind === 'skill'
+                                                ? '⚙'
+                                                : '✨'}{' '}
+                                        {c.label}
+                                    </span>
+                                    {c.detail ? (
+                                        <span className="pl-1 font-mono text-[10px] text-text-muted">{c.detail}</span>
+                                    ) : null}
+                                    {c.count > 1 ? (
+                                        <span className="pl-1 text-[10px] text-text-muted">×{c.count}</span>
+                                    ) : null}
+                                </div>
+                            ))
+                        )}
+                    </div>
+                    {/* W10/B5: run 产物预览 — 右栏实时随步骤输出刷新 */}
+                    <RunArtifactPane
+                        runId={runId}
+                        active={record.status === 'running' || record.status === 'pending'}
+                        reviewStatus={record.review?.status ?? null}
+                    />
+                </div>
+
+                {/* 工作区抽屉 (M6) — run 归属目录的 Space 产物 */}
+                {drawerOpen && record.space_id ? (
+                    <WorkspaceDrawer spaceId={record.space_id} onClose={() => setDrawerOpen(false)} />
+                ) : null}
+            </div>
+
+            {/* M5: 底部打断 composer */}
+            {steerable ? (
+                <div className="rounded-lg border border-border bg-bg-elevated p-2">
+                    <div className="flex items-end gap-2">
+                        <textarea
+                            className="min-h-11 flex-1 resize-y rounded-md border border-border bg-bg p-2 text-sm text-text-primary"
+                            placeholder={t(
+                                '追加指令，如「跳过差旅类目」— 在下一节点边界并入',
+                                'Add an instruction, e.g. "skip travel" — lands at the next node boundary'
+                            )}
+                            value={instruction}
+                            onChange={(e) => setInstruction(e.target.value)}
+                        />
+                        <button
+                            type="button"
+                            disabled={!instruction.trim() || sending}
+                            className="rounded-md bg-brand px-3 py-2 text-sm text-white disabled:opacity-50"
+                            onClick={() => void sendInstruction()}
+                        >
+                            {sending ? t('发送中…', 'Sending…') : t('发送指令', 'Send')}
+                        </button>
+                    </div>
+                </div>
+            ) : null}
+        </div>
+    );
+}
+
+// 步骤卡: 状态/耗时 + M10 能力标注 + 展开 input/output (复用 RunsPage StepDrawer)
+function StepCard({ step, expanded, onToggle }: { step: RunStep; expanded: boolean; onToggle: () => void }) {
+    const t = useT();
+    const cap = stepCapability(step);
+    const denied = step.status === 'denied';
+    return (
+        <div
+            className={`rounded-md border bg-bg-elevated ${denied ? 'border-dashed border-warning' : 'border-border'}`}
+        >
+            <button type="button" className="flex w-full flex-col gap-1 px-2 py-1.5 text-left" onClick={onToggle}>
+                <div className="flex items-center gap-2">
+                    <span className="truncate text-xs text-text-primary">
+                        {step.node_display_name || step.node_name}
+                    </span>
+                    <StatusBadge status={statusKind(step.status) as StatusKind} label={step.status} />
+                </div>
+                {cap ? (
+                    <div className="truncate text-[10px] text-text-muted">
+                        {t('经由', 'via')}{' '}
+                        {cap.kind === 'connector'
+                            ? t('连接器', 'Connector')
+                            : cap.kind === 'subagent'
+                              ? t('子代理', 'Sub-agent')
+                              : cap.kind === 'skill'
+                                ? t('技能', 'Skill')
+                                : 'AI'}
+                        {cap.detail ? ` · ${cap.detail}` : ''}
+                    </div>
+                ) : null}
+                <div className="flex items-center justify-between text-[10px] text-text-muted">
+                    <span className="truncate font-mono">{step.summary || step.error || `#${step.node_id}`}</span>
+                    <span className="shrink-0 font-mono">{step.execution_time.toFixed(2)}s</span>
+                </div>
+                {step.tokens?.total_tokens ? (
+                    <div className="font-mono text-[10px] text-text-muted">{step.tokens.total_tokens} tok</div>
+                ) : null}
+            </button>
+            {expanded ? <StepDrawer step={step} /> : null}
+        </div>
+    );
+}
+
+// M6 工作区抽屉 — run 归属 Space 的产物列表 + 预览 + 全量入口
+function WorkspaceDrawer({ spaceId, onClose }: { spaceId: string; onClose: () => void }) {
+    const t = useT();
+    const { data, error } = useAutoRetry(() => api.spaceArtifacts(spaceId), [spaceId]);
+    const [selectedId, setSelectedId] = useState('');
+    const artifacts: SpaceArtifact[] = data ?? [];
+    const selected = artifacts.find((a) => a.id === (selectedId || artifacts[0]?.id));
+
+    return (
+        <div className="flex w-72 shrink-0 flex-col rounded-md border border-border p-2">
+            <div className="flex items-center justify-between pb-1">
+                <div className="text-xs font-medium text-text-primary">{t('工作区产物', 'Workspace artifacts')}</div>
+                <button type="button" className="text-xs text-text-muted hover:text-text-primary" onClick={onClose}>
+                    ✕
+                </button>
+            </div>
+            <button
+                type="button"
+                className="self-start pb-1 text-[11px] text-accent hover:underline"
+                onClick={() => {
+                    window.location.hash = '#/spaces';
+                }}
+            >
+                {t('打开完整空间 →', 'Open full space →')}
+            </button>
+            {error ? (
+                <ErrorState message={error.message} retryLabel={t('重试', 'Retry')} onRetry={() => undefined} />
+            ) : artifacts.length === 0 ? (
+                <EmptyState title={t('暂无产物', 'No artifacts yet')} />
+            ) : (
+                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
+                    <div className="flex flex-wrap gap-1">
+                        {artifacts.map((a) => (
+                            <button
+                                key={a.id}
+                                type="button"
+                                className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                                    selected?.id === a.id
+                                        ? 'border-accent text-text-primary'
+                                        : 'border-border text-text-secondary hover:bg-bg-muted'
+                                }`}
+                                onClick={() => setSelectedId(a.id)}
+                            >
+                                {a.name}
+                            </button>
+                        ))}
+                    </div>
+                    {selected ? (
+                        <div className="rounded border border-border bg-bg p-2">
+                            <div className="pb-1 font-mono text-[10px] text-text-muted">{selected.artifact_type}</div>
+                            <pre className="max-h-60 overflow-auto whitespace-pre-wrap text-[11px] text-text-secondary">
+                                {selected.content ?? ''}
+                            </pre>
+                        </div>
+                    ) : null}
+                </div>
+            )}
+        </div>
+    );
+}

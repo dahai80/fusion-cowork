@@ -5,17 +5,15 @@ import type { StatusKind } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
 import {
     type FileReadResult,
-    type GuardApproval,
     type RunArtifact,
     type RunListItem,
-    type RunRecord,
     type RunReview,
     type RunStep,
     api,
     statusKind,
 } from '../api';
 import { useT } from '../i18n';
-import { sdk, streamSse } from '../sdk';
+import { sdk } from '../sdk';
 
 const POLL_MS = 5000; // spec §6.3: monitoring poll 5s
 
@@ -25,7 +23,8 @@ function fmtTime(ts: number | null | undefined, lang: 'zh' | 'en'): string {
 }
 
 // issue #187: HITL 超时倒计时 (服务端 hitl_deadline, 到点自动拒绝)
-function HitlCountdown({ deadline }: { deadline: number }) {
+// issue #224: 导出供 RunViewPage 复用
+export function HitlCountdown({ deadline }: { deadline: number }) {
     const [now, setNow] = useState(Math.floor(Date.now() / 1000));
     useEffect(() => {
         const timer = window.setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
@@ -45,7 +44,6 @@ export function RunsPage() {
     const t = useT();
     const lang = sdk.i18n.lang();
     const [reloadKey, setReloadKey] = useState(0);
-    const [selected, setSelected] = useState<string>('');
     const [statusFilter, setStatusFilter] = useState('');
     const { data, error, loading, attempt, manualRetry } = useAutoRetry(() => api.runs(), [reloadKey]);
 
@@ -187,9 +185,11 @@ export function RunsPage() {
                                 <button
                                     type="button"
                                     className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
-                                    onClick={() => setSelected(r.run_id === selected ? '' : r.run_id)}
+                                    onClick={() => {
+                                        window.location.hash = `#/runs/${r.run_id}`;
+                                    }}
                                 >
-                                    {selected === r.run_id ? t('收起', 'Collapse') : t('详情', 'Detail')}
+                                    {t('打开', 'Open')}
                                 </button>
                             </div>
                         ),
@@ -207,397 +207,13 @@ export function RunsPage() {
                     />
                 }
             />
-            {selected ? <RunDetail runId={selected} /> : null}
-        </div>
-    );
-}
-
-function RunDetail({ runId }: { runId: string }) {
-    const t = useT();
-    const [reloadKey, setReloadKey] = useState(0);
-    const { data, error, loading } = useAutoRetry(() => api.run(runId), [runId, reloadKey]);
-    const [live, setLive] = useState<RunRecord | null>(null);
-    const [sseOk, setSseOk] = useState(false);
-    const [action, setAction] = useState<'set_params' | 'insert_node' | 'skip_remaining'>('set_params');
-    const [nodeId, setNodeId] = useState('');
-    const [payload, setPayload] = useState('{}');
-    const [sending, setSending] = useState(false);
-    const [reviewNote, setReviewNote] = useState('');
-    const [openStep, setOpenStep] = useState('');
-
-    // issue #187: HITL — run 命中待审批节点时轮询审批卡 (approve once / approve node / deny)
-    const [hitlApprovals, setHitlApprovals] = useState<GuardApproval[]>([]);
-    const [hitlBusy, setHitlBusy] = useState('');
-
-    async function hitlConfirm(actionId: string, approved: boolean, once: boolean) {
-        setHitlBusy(actionId);
-        try {
-            await api.confirmApproval(actionId, approved, undefined, undefined, once);
-            sdk.toast.show({
-                level: 'success',
-                message: approved
-                    ? once
-                        ? t('已批准 (本次)', 'Approved (once)')
-                        : t('已批准并记住', 'Approved and remembered')
-                    : t('已拒绝', 'Denied'),
-            });
-            setReloadKey((k) => k + 1);
-        } catch (e) {
-            console.error('[cowork-web] hitl confirm failed', e);
-            sdk.toast.show({ level: 'error', message: t('审批失败', 'Approval failed') });
-        } finally {
-            setHitlBusy('');
-        }
-    }
-
-    // W9: 交付审查 — pending_review → approved/rejected (节点级 guard 审批另属 W19)
-    async function reviewRun(approved: boolean) {
-        try {
-            await api.reviewRun(runId, approved, reviewNote);
-            sdk.toast.show({
-                level: 'success',
-                message: approved ? t('审查通过', 'Approved') : t('已退回', 'Rejected'),
-            });
-            setReviewNote('');
-            setReloadKey((k) => k + 1);
-        } catch (e) {
-            console.error('[cowork-web] run review failed', e);
-            sdk.toast.show({ level: 'error', message: t('审查失败', 'Review failed') });
-        }
-    }
-
-    // W8/B1: 暂停态改向 — 换参 / 插节点 / 跳过剩余, 在下一节点边界生效
-    async function sendDirective() {
-        let parsed: Record<string, unknown> = {};
-        const raw = payload.trim();
-        if (raw && raw !== '{}') {
-            try {
-                parsed = JSON.parse(raw) as Record<string, unknown>;
-            } catch {
-                sdk.toast.show({ level: 'error', message: t('JSON 解析失败', 'Invalid JSON') });
-                return;
-            }
-        }
-        const body: Parameters<typeof api.directive>[1] = { action };
-        if (action === 'set_params') {
-            body.node_id = nodeId || undefined;
-            body.params = parsed;
-        } else if (action === 'insert_node') {
-            body.node = parsed;
-            body.after_node_id = nodeId || undefined;
-        }
-        setSending(true);
-        try {
-            await api.directive(runId, body);
-            sdk.toast.show({ level: 'success', message: t('指令已排队', 'Directive queued') });
-            setPayload('{}');
-            setReloadKey((k) => k + 1);
-        } catch (e) {
-            console.error('[cowork-web] directive failed', e);
-            sdk.toast.show({ level: 'error', message: t('指令发送失败', 'Directive failed') });
-        } finally {
-            setSending(false);
-        }
-    }
-
-    // W13/B2: 步骤日志 SSE 实时推送; 连接失败时回落到 5s 轮询
-    useEffect(() => {
-        const ac = new AbortController();
-        setLive(null);
-        setSseOk(false);
-        streamSse(
-            `/api/runs/${encodeURIComponent(runId)}/events`,
-            (event, payload) => {
-                if (event === 'ping') return;
-                const run = (payload as { run?: RunRecord } | null)?.run;
-                if (run) {
-                    setLive(run);
-                    setSseOk(true);
-                }
-            },
-            ac.signal
-        )
-            .then(() => setSseOk(false))
-            .catch((e) => {
-                if (!ac.signal.aborted) {
-                    console.warn('[cowork-web] run SSE unavailable, falling back to polling', e);
-                    setSseOk(false);
-                }
-            });
-        return () => ac.abort();
-    }, [runId]);
-
-    const record = live ?? data;
-
-    // issue #187: HITL 审批卡数据源 — hitl_pending 时轮询 pending 队列 (按 execution_id 过滤)
-    useEffect(() => {
-        if (!record?.hitl_pending) {
-            setHitlApprovals([]);
-            return;
-        }
-        let alive = true;
-        const load = async () => {
-            try {
-                const res = await api.pendingApprovals();
-                if (!alive) return;
-                setHitlApprovals((res.approvals ?? []).filter((a) => a.execution_id === runId));
-            } catch (e) {
-                console.warn('[cowork-web] hitl pending approvals fetch failed', e);
-            }
-        };
-        void load();
-        const timer = window.setInterval(load, 2000);
-        return () => {
-            alive = false;
-            window.clearInterval(timer);
-        };
-    }, [record?.hitl_pending, runId]);
-
-    useEffect(() => {
-        if (sseOk) return;
-        if (record?.status === 'running' || record?.status === 'pending') {
-            const timer = window.setTimeout(() => setReloadKey((k) => k + 1), POLL_MS);
-            return () => window.clearTimeout(timer);
-        }
-    }, [record, sseOk]);
-
-    if (loading && !record) return <SkeletonLines rows={3} />;
-    if (error && !record)
-        return (
-            <ErrorState
-                message={error.message}
-                retryLabel={t('重试', 'Retry')}
-                onRetry={() => setReloadKey((k) => k + 1)}
-            />
-        );
-    if (!record) return null;
-
-    // #143: run 头部总 token — 瀑布各步聚合
-    const totalTokens = (record.steps ?? []).reduce((n, s) => n + (s.tokens?.total_tokens ?? 0), 0);
-
-    return (
-        <div className="rounded-lg border border-border p-3">
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                    <div className="font-mono text-sm text-text-primary">{record.run_id}</div>
-                    {totalTokens > 0 ? (
-                        <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-text-muted">
-                            Σ {totalTokens} tok
-                        </span>
-                    ) : null}
-                </div>
-                <StatusBadge status={statusKind(record.status) as StatusKind} label={record.status} />
-            </div>
-            {record.error ? <div className="mt-2 text-xs text-error">{record.error}</div> : null}
-            {record.result?.summary ? (
-                <div className="mt-2 text-xs text-text-secondary">{record.result.summary}</div>
-            ) : null}
-            {record.review ? (
-                <div className="mt-2 rounded-md border border-border p-2">
-                    <div className="flex items-center justify-between text-xs">
-                        <span className="text-text-primary">{t('交付审查', 'Delivery review')}</span>
-                        <StatusBadge
-                            status={
-                                record.review.status === 'approved'
-                                    ? 'success'
-                                    : record.review.status === 'rejected'
-                                      ? 'error'
-                                      : 'warning'
-                            }
-                            label={
-                                record.review.status === 'approved'
-                                    ? t('已通过', 'Approved')
-                                    : record.review.status === 'rejected'
-                                      ? t('已退回', 'Rejected')
-                                      : t('待审查', 'Pending review')
-                            }
-                        />
-                    </div>
-                    {record.review.note ? (
-                        <div className="mt-1 text-xs text-text-secondary">{record.review.note}</div>
-                    ) : null}
-                    {record.review.status === 'pending_review' ? (
-                        <div className="mt-2 flex items-center gap-2">
-                            <input
-                                className="flex-1 rounded-md border border-border bg-bg px-2 py-1 text-xs text-text-primary"
-                                placeholder={t('审查意见 (可选)', 'Review note (optional)')}
-                                value={reviewNote}
-                                onChange={(e) => setReviewNote(e.target.value)}
-                            />
-                            <button
-                                type="button"
-                                className="rounded-md border border-success px-2 py-1 text-xs text-success hover:bg-success/10"
-                                onClick={() => void reviewRun(true)}
-                            >
-                                {t('通过交付', 'Approve')}
-                            </button>
-                            <button
-                                type="button"
-                                className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-error/10"
-                                onClick={() => void reviewRun(false)}
-                            >
-                                {t('退回', 'Reject')}
-                            </button>
-                        </div>
-                    ) : null}
-                </div>
-            ) : null}
-            {/* issue #187: HITL 审批卡 — 高风险节点暂停等待人工决定 */}
-            {record.hitl_pending
-                ? hitlApprovals.map((a) => (
-                      <div key={a.action_id} className="mt-3 rounded-md border border-warning/60 bg-warning/5 p-2">
-                          <div className="flex items-center justify-between text-xs">
-                              <span className="font-medium text-text-primary">
-                                  {t('等待审批', 'Awaiting approval')} — {a.node_id ?? a.tool_name}
-                              </span>
-                              {record.hitl_deadline ? <HitlCountdown deadline={record.hitl_deadline} /> : null}
-                          </div>
-                          <div className="mt-1 font-mono text-[11px] text-text-secondary">
-                              {a.tool_name}({JSON.stringify(a.params ?? {})})
-                          </div>
-                          <div className="mt-2 flex items-center gap-2">
-                              <button
-                                  type="button"
-                                  disabled={hitlBusy === a.action_id}
-                                  className="rounded-md border border-success px-2 py-1 text-xs text-success hover:bg-success/10 disabled:opacity-50"
-                                  onClick={() => void hitlConfirm(a.action_id, true, true)}
-                              >
-                                  {t('本次允许', 'Approve once')}
-                              </button>
-                              <button
-                                  type="button"
-                                  disabled={hitlBusy === a.action_id}
-                                  className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted disabled:opacity-50"
-                                  onClick={() => void hitlConfirm(a.action_id, true, false)}
-                              >
-                                  {t('总是允许', 'Always allow')}
-                              </button>
-                              <button
-                                  type="button"
-                                  disabled={hitlBusy === a.action_id}
-                                  className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-error/10 disabled:opacity-50"
-                                  onClick={() => void hitlConfirm(a.action_id, false, false)}
-                              >
-                                  {t('拒绝', 'Deny')}
-                              </button>
-                          </div>
-                      </div>
-                  ))
-                : null}
-            {record.status === 'running' || record.status === 'paused' ? (
-                <div className="mt-3 rounded-md border border-border p-2">
-                    <div className="mb-2 text-xs font-medium text-text-primary">{t('运行改向', 'Run directive')}</div>
-                    <div className="flex flex-wrap items-center gap-2">
-                        <select
-                            className="rounded-md border border-border bg-bg px-2 py-1 text-xs text-text-primary"
-                            value={action}
-                            onChange={(e) => setAction(e.target.value as typeof action)}
-                        >
-                            <option value="set_params">{t('换参数', 'Set params')}</option>
-                            <option value="insert_node">{t('插节点', 'Insert node')}</option>
-                            <option value="skip_remaining">{t('跳过剩余', 'Skip remaining')}</option>
-                        </select>
-                        {action !== 'skip_remaining' ? (
-                            <input
-                                className="w-40 rounded-md border border-border bg-bg px-2 py-1 font-mono text-xs text-text-primary"
-                                placeholder={
-                                    action === 'set_params'
-                                        ? t('节点 ID (空=下一节点)', 'Node ID (empty = next)')
-                                        : t('源节点 ID (可选)', 'After node ID (optional)')
-                                }
-                                value={nodeId}
-                                onChange={(e) => setNodeId(e.target.value)}
-                            />
-                        ) : null}
-                        {action !== 'skip_remaining' ? (
-                            <input
-                                className="min-w-[240px] flex-1 rounded-md border border-border bg-bg px-2 py-1 font-mono text-xs text-text-primary"
-                                placeholder={
-                                    action === 'set_params'
-                                        ? t('参数 JSON', 'Params JSON')
-                                        : t('节点 JSON: {"name": "...", "params": {}}', 'Node JSON')
-                                }
-                                value={payload}
-                                onChange={(e) => setPayload(e.target.value)}
-                            />
-                        ) : null}
-                        <button
-                            type="button"
-                            disabled={sending}
-                            className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted disabled:opacity-50"
-                            onClick={() => void sendDirective()}
-                        >
-                            {sending ? t('发送中…', 'Sending…') : t('发送', 'Send')}
-                        </button>
-                    </div>
-                </div>
-            ) : null}
-            <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-                <div className="space-y-1">
-                    {(record.steps ?? []).map((s) => {
-                        const maxTime = Math.max(...(record.steps ?? []).map((x) => x.execution_time), 0.001);
-                        const barPct = Math.max(4, Math.round((s.execution_time / maxTime) * 100));
-                        const denied = s.status === 'denied';
-                        return (
-                            <div
-                                key={s.node_id}
-                                className={`rounded-md border bg-bg-elevated ${denied ? 'border-dashed border-warning' : 'border-border'}`}
-                            >
-                                <button
-                                    type="button"
-                                    className="flex w-full items-center justify-between px-2 py-1.5 text-left"
-                                    onClick={() => setOpenStep(openStep === s.node_id ? '' : s.node_id)}
-                                >
-                                    <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-2">
-                                            <span className="truncate text-xs text-text-primary">
-                                                {s.node_display_name || s.node_name}
-                                            </span>
-                                            {denied ? (
-                                                <span className="shrink-0 rounded border border-warning px-1 text-[10px] text-warning">
-                                                    {t('被阻塞', 'Blocked')}
-                                                </span>
-                                            ) : null}
-                                            <span className="truncate font-mono text-[10px] text-text-muted">
-                                                {s.summary || s.error || `#${s.node_id}`}
-                                            </span>
-                                        </div>
-                                        <div className="mt-1 h-1 w-full overflow-hidden rounded bg-bg-muted">
-                                            <div
-                                                className={`h-full rounded ${denied ? 'bg-warning' : statusKind(s.status) === 'error' ? 'bg-error' : statusKind(s.status) === 'success' ? 'bg-success' : 'bg-brand'}`}
-                                                style={{ width: `${barPct}%` }}
-                                            />
-                                        </div>
-                                    </div>
-                                    <div className="ml-2 flex shrink-0 items-center gap-2">
-                                        {s.tokens?.total_tokens ? (
-                                            <span className="font-mono text-[10px] text-text-muted">
-                                                {s.tokens.total_tokens} tok
-                                            </span>
-                                        ) : null}
-                                        <span className="font-mono text-[10px] text-text-muted">
-                                            {s.execution_time.toFixed(2)}s
-                                        </span>
-                                        <StatusBadge status={statusKind(s.status) as StatusKind} label={s.status} />
-                                    </div>
-                                </button>
-                                {openStep === s.node_id ? <StepDrawer step={s} /> : null}
-                            </div>
-                        );
-                    })}
-                </div>
-                <RunArtifactPane
-                    runId={runId}
-                    active={record.status === 'running' || record.status === 'pending'}
-                    reviewStatus={record.review?.status ?? null}
-                />
-            </div>
         </div>
     );
 }
 
 // #138 G7/C2: 逐节点 waterfall 详情抽屉 — input/output/error 渐进披露
-function StepDrawer({ step }: { step: RunStep }) {
+// issue #224: 导出供 RunViewPage 复用
+export function StepDrawer({ step }: { step: RunStep }) {
     const t = useT();
     const fmt = (v: Record<string, unknown> | undefined) =>
         v && Object.keys(v).length > 0 ? JSON.stringify(v, null, 4) : '';
@@ -722,7 +338,8 @@ function CitationCards({ citations }: { citations: NonNullable<RunArtifact['cita
     );
 }
 
-function RunArtifactPane({
+// issue #224: 导出供 RunViewPage 复用
+export function RunArtifactPane({
     runId,
     active,
     reviewStatus,
