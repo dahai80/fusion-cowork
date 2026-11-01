@@ -98,6 +98,16 @@ export interface RunStep {
     output_data: Record<string, unknown>;
     input_data?: Record<string, unknown>;
     tokens?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
+    // issue #227: 用户修正标记步 — 时间线渲染为修正行, 非节点执行
+    user_correction?: boolean;
+}
+
+// issue #224: run 视图需要的完整形状 — runs_get 返回全量记录
+// (workflow_def 供拓扑分层, space_id 供工作区抽屉, directives 供指令回显)
+export interface RunWorkflowDef {
+    name?: string;
+    nodes?: { id: string; name: string; config?: { label?: string } }[];
+    edges?: { source_id: string; target_id: string }[];
 }
 
 export interface RunRecord extends RunListItem {
@@ -105,6 +115,10 @@ export interface RunRecord extends RunListItem {
     result: { summary?: string } | null;
     hitl_pending?: boolean;
     hitl_deadline?: number | null;
+    space_id?: string;
+    workflow_def?: RunWorkflowDef | null;
+    directives?: { action: string; payload?: Record<string, unknown>; at?: number }[];
+    paused_reason?: string;
 }
 
 // issue #150: 引用溯源 — 结构化引用 (文件路径 / 空间消息 id)
@@ -591,12 +605,15 @@ export const api = {
     directive: (
         id: string,
         body: {
-            action: 'set_params' | 'insert_node' | 'skip_remaining';
+            action: 'set_params' | 'insert_node' | 'skip_remaining' | 'inject';
             node_id?: string;
             params?: Record<string, unknown>;
             node?: Record<string, unknown>;
             after_node_id?: string;
             input?: Record<string, unknown>;
+            // issue #227/#224: 运行中指令注入 — interrupt composer 发送
+            instruction?: string;
+            merge?: Record<string, unknown>;
         }
     ) =>
         post<{ status: string; run_id: string; action: string }>(`/api/runs/${encodeURIComponent(id)}/directive`, body),

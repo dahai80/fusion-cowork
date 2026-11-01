@@ -435,6 +435,14 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
 
+### Unified Run View (v0.5.54, issue #224)
+
+- **Dedicated run page** (`web/src/pages/RunViewPage.tsx`, deep link `#/runs/<run_id>`): every step of a run on one screen — the Runs list is now list-only (inline detail removed, ~380 lines) and its `Open` action deep-links here. The page renders **topological waves** from `workflow_def` (parallel branches side-by-side in one stage row, `并行 N 路`/`阶段 N` labels, pending nodes as dashed placeholders) via pure helper `computeWaves` in `web/src/runview.ts`.
+- **Capability visibility (M10, weak version)**: steps are annotated with the capability class they exercised — connector (`mcp_client`/`http_request`/`web_search`/`fetch_url`/`cdp_navigate` with tool/url detail), sub-agent (`studio_run` + graph id), skill (`skill.*`), AI (`ai_*`) — derived client-side from node name + input data; a right rail "capabilities in use" card dedupes them across the timeline. No backend fields required.
+- **Steering surface consolidated**: pause/resume buttons, the bottom instruction composer (`inject` directive from #227 — "queued, effective at the next node boundary"), HITL approval cards with countdown (#187), delivery review (approve/reject), artifact preview pane, and the workspace drawer (space artifacts when the run carries a `space_id`) all live on this one page. Live updates via SSE with polling fallback.
+- **Shared components**: `HitlCountdown`, `StepDrawer`, `RunArtifactPane` are exported from `RunsPage.tsx` and reused by the run view — one rendering path for both surfaces.
+- Tests: `tests/test_issue_224_run_view.py` (4 cases: `runs_get` exposes `workflow_def`/`space_id`/`user_correction` on steps, inject directive echoed on the record, `_public` snapshot strips `workflow_def` yet stays JSON-serializable, SSE route serves the snapshot frame) + `web/tests/runview.test.ts` (15 bun cases: wave grouping, capability annotation, capabilities-in-use rail).
+
 ### Workspace-first Task Home (v0.5.53, issue #223)
 
 - **Working directory = Space** (decision D2): the Anthropic-parity "working directory" maps onto a fusion collaboration Space — no new backend entity. Runs, sessions and artifacts stay scoped to the chosen Space, shared with its members.

@@ -15,6 +15,7 @@ import { HomePage } from './pages/HomePage';
 import { MobilePage } from './pages/MobilePage';
 import { NodesPage } from './pages/NodesPage';
 import { PluginsPage } from './pages/PluginsPage';
+import { RunViewPage } from './pages/RunViewPage';
 import { RunsPage } from './pages/RunsPage';
 import { SchedulePage } from './pages/SchedulePage';
 import { SessionsPage } from './pages/SessionsPage';
@@ -213,7 +214,11 @@ export function App() {
                 ) : route === 'delegate' ? (
                     <DelegatePage />
                 ) : route === 'runs' ? (
-                    <RunsPage />
+                    arg ? (
+                        <RunViewPage runId={arg} />
+                    ) : (
+                        <RunsPage />
+                    )
                 ) : route === 'sessions' ? (
                     <SessionsPage />
                 ) : route === 'spaces' ? (

@@ -379,6 +379,14 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 
 测试: `tests/test_issue_189_node_executor.py` (33 例 + 1 例 live-AS 跳过: 波次并发墙钟/重叠/峰值、env 解析、配置往返、UDS 成功/partial/失败/transcript 容错、HTTP 完成/失败/超时/覆盖降级、混合 DAG 端到端、agent 失败语义、跨 agent 节点断点续跑)。文档: `docs/node-executors.md`。
 
+### 统一运行视图 (v0.5.54, issue #224)
+
+- **专用运行页** (`web/src/pages/RunViewPage.tsx`, 深链 `#/runs/<run_id>`): 一次运行的全部步骤同屏可见 — 运行列表回归纯列表 (内联详情删除, 约 380 行), `打开` 动作深链到本页。页面按 `workflow_def` 渲染**拓扑波次** (并行分支同阶段并排, `并行 N 路`/`阶段 N` 标签, 未执行节点虚线占位), 纯函数 `computeWaves` 位于 `web/src/runview.ts`。
+- **能力可见 (M10 弱版本)**: 步骤标注其行使的能力类别 — 连接器 (`mcp_client`/`http_request`/`web_search`/`fetch_url`/`cdp_navigate` 带 tool/url 详情)、子代理 (`studio_run` + graph id)、技能 (`skill.*`)、AI (`ai_*`) — 由前端从节点名 + 输入数据推导; 右栏 "正在使用的能力" 卡片跨时间线去重汇总。无需后端新字段。
+- **操控面收拢**: 暂停/恢复按钮、底部指令输入框 (#227 的 `inject` 指令 — "已排队, 下一节点边界生效")、带倒计时的 HITL 审批卡 (#187)、交付审查 (通过/退回)、产出预览面板、工作区抽屉 (run 带 `space_id` 时透出空间产物) 全部集中在本页。实时更新走 SSE, 轮询兜底。
+- **共享组件**: `HitlCountdown`、`StepDrawer`、`RunArtifactPane` 从 `RunsPage.tsx` 导出并被运行视图复用 — 两个界面同一渲染路径。
+- 测试: `tests/test_issue_224_run_view.py` (4 例: `runs_get` 透出 `workflow_def`/`space_id`/步骤 `user_correction`、inject 指令回显记录、`_public` 快照剥离 `workflow_def` 仍可 JSON 序列化、SSE 路由供快照帧) + `web/tests/runview.test.ts` (15 例 bun: 波次分组、能力标注、能力汇总栏)。
+
 ### 工作目录优先的任务首页 (v0.5.53, issue #223)
 
 - **工作目录 = Space (决策 D2)**: Anthropic 对齐里的 "working directory" 映射到 fusion 协作空间 — 不新增后端实体。任务、会话与产物始终归属于所选 Space, 与成员共享。
