@@ -151,6 +151,9 @@ class WorkflowStep:
     attempt_errors: List[str] = field(default_factory=list)
     # issue #189: 该步使用的执行器 (simple/agent)
     executor: str = "simple"
+    # issue #227: 用户修正标记 — 运行中注入的指令在时间线落一条标记步
+    # (status=skipped 的零耗时标记, 非节点执行), 供 run 视图渲染 "用户修正"
+    user_correction: bool = False
 
 
 @dataclass
@@ -1422,11 +1425,16 @@ class WorkflowEngine:
         """W8/B1: 排队一条运行改向指令, 在下一节点边界生效。
 
         action: set_params (覆盖未执行节点参数) / insert_node (插入临时节点) /
-        skip_remaining (跳过剩余节点)。
+        skip_remaining (跳过剩余节点) / inject (issue #227 运行中注入指令 —
+        下一节点边界把 instruction 写进目标节点输入, 时间线落 "用户修正" 标记)。
         """
         action = str((directive or {}).get("action", ""))
-        if action not in ("set_params", "skip_remaining", "insert_node"):
+        if action not in ("set_params", "skip_remaining", "insert_node", "inject"):
             logger.warning(f"未知运行改向指令: action={action} exec={execution_id}")
+            return False
+        if action == "inject" and not str((directive or {}).get("instruction") or "").strip():
+            # issue #227: 空指令早拒 — 不排队一个注定无效的注入 (API 409 可见)
+            logger.warning(f"注入指令 instruction 为空: exec={execution_id}")
             return False
         if execution_id not in self._pause_events:
             logger.warning(f"运行改向指令目标不存在: exec={execution_id}")
@@ -1511,6 +1519,39 @@ class WorkflowEngine:
                     self._notify_progress(execution, skip_step)
                 del order[cursor:]
                 logger.info(f"运行改向 跳过剩余节点: exec={exec_id} count={len(remaining)}")
+            elif action == "inject":
+                # issue #227 (D3): 运行中指令注入 — 在节点边界把用户指令并入下一待执行
+                # 节点的输入 (node_input 会 update passed_data[target]), 被纠正的步骤带
+                # 新上下文继续; 时间线落一条 "用户修正" 标记步 (零耗时, 非节点执行)。
+                instruction = str(directive.get("instruction") or "").strip()
+                if not instruction:
+                    logger.warning(f"运行改向 注入指令为空: exec={exec_id}")
+                    continue
+                target = str(directive.get("node_id") or (order[cursor] if cursor < len(order) else ""))
+                tnode = workflow.nodes.get(target)
+                if tnode is None:
+                    logger.warning(f"运行改向 注入目标节点不存在: exec={exec_id} node={target}")
+                    continue
+                if target in node_results:
+                    logger.warning(f"运行改向 注入目标已执行, 指令忽略: exec={exec_id} node={target}")
+                    continue
+                bucket = passed_data.setdefault(target, {})
+                bucket["user_instruction"] = instruction
+                if isinstance(directive.get("merge"), dict) and directive["merge"]:
+                    bucket.update(directive["merge"])
+                marker = WorkflowStep(
+                    node_id=target,
+                    node_name=tnode.name,
+                    node_display_name=tnode.config.label or tnode.display_name,
+                    status=NodeStatus.SKIPPED,
+                    started_at=time.time(),
+                    summary=f"用户修正: {instruction[:200]}",
+                    user_correction=True,
+                )
+                marker.completed_at = time.time()
+                execution.steps.append(marker)
+                self._notify_progress(execution, marker)
+                logger.info(f"[{exec_id}] 运行改向 指令注入: node={target} instruction={instruction[:80]!r}")
         return cursor
 
     def get_execution(self, execution_id: str) -> Optional[WorkflowExecution]:

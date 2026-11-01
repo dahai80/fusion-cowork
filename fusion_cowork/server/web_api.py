@@ -412,6 +412,8 @@ class RunRegistry:
             # issue #182: 重试可观测 — 最终尝试序号 + 逐次尝试错误
             "attempt": getattr(s, "attempt", 1),
             "attempt_errors": getattr(s, "attempt_errors", []),
+            # issue #227: 用户修正标记步 (运行中指令注入的落点)
+            "user_correction": bool(getattr(s, "user_correction", False)),
         }
 
     def list(self) -> List[Dict[str, Any]]:
@@ -651,7 +653,8 @@ class RunRegistry:
         logger.info(f"工作流运行已恢复: {run_id}")
         return True
 
-    DIRECTIVE_ACTIONS = ("set_params", "insert_node", "skip_remaining")
+    # issue #227: inject = 运行中指令注入 (下一节点边界并入目标节点输入, 时间线落修正标记)
+    DIRECTIVE_ACTIONS = ("set_params", "insert_node", "skip_remaining", "inject")
 
     def directive(self, run_id: str, directive: Dict[str, Any]) -> Optional[str]:
         """W8/B1: 排队运行改向指令; 返回 None 表示已排队, 否则错误码。"""
@@ -902,7 +905,7 @@ async def _takeover_apply(method: str, params: dict, run_id: str, runs: Any, per
     """issue #154: 转向帧分发 — 复用 RunRegistry + permission manager, 返回回执帧。"""
     if method == "directive":
         action = str(params.get("action", ""))
-        if action not in ("set_params", "insert_node", "skip_remaining"):
+        if action not in RunRegistry.DIRECTIVE_ACTIONS:
             return {"event": "error", "message": f"directive rejected: unknown action {action}"}
         err = runs.directive(run_id, params)
         if err:
