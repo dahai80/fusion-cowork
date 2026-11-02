@@ -454,6 +454,7 @@ class RunRegistry:
         source: str = "",
         labels: Optional[Dict[str, str]] = None,
         space_id: str = "",
+        resume_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         from ..engine import Workflow
 
@@ -484,7 +485,7 @@ class RunRegistry:
         }
         self._runs[run_id] = record
         self._persist(run_id)
-        task = asyncio.create_task(self._execute(run_id, wf, message_input=message_input))
+        task = asyncio.create_task(self._execute(run_id, wf, message_input=message_input, resume_steps=resume_steps))
         self._tasks[run_id] = task
         logger.info(
             f"工作流运行已启动: {run_id} ({record['workflow_name']}) memory={record['memory']} "
@@ -664,6 +665,46 @@ class RunRegistry:
 
     # issue #227: inject = 运行中指令注入 (下一节点边界并入目标节点输入, 时间线落修正标记)
     DIRECTIVE_ACTIONS = ("set_params", "insert_node", "skip_remaining", "inject")
+
+    def resume_from(self, run_id: str, node_id: str) -> Dict[str, Any]:
+        """issue #226: 从历史 run 的指定步骤重跑 — 新 run 链回原 run, 已完成步骤快照续跑。"""
+        record = self._runs.get(run_id)
+        if not record:
+            raise KeyError(run_id)
+        if record["status"] in ("running", "pending", "paused"):
+            raise ValueError("not_terminal")
+        wf_def = record.get("workflow_def") or {}
+        if not wf_def:
+            raise ValueError("no_workflow_def")
+        node_ids = {n.get("id") for n in wf_def.get("nodes", [])}
+        if node_id not in node_ids:
+            raise ValueError("unknown_node")
+        # 目标步骤在时间线中的位置 — 其之前已完成 (success) 的步骤作为续跑快照,
+        # 失败/被拒步骤不含 → 下游从目标节点真正重跑 (重校验由 Workflow.from_dict 完成)
+        steps = record.get("steps") or []
+        idx = next(
+            (i for i, s in enumerate(steps) if s.get("node_id") == node_id and not s.get("user_correction")), None
+        )
+        if idx is None:
+            # 目标节点从未执行 → 全量重跑, 快照为空
+            resume_steps: List[Dict[str, Any]] = []
+        else:
+            resume_steps = [s for s in steps[:idx] if s.get("status") == "success" and not s.get("user_correction")]
+        labels = dict(record.get("labels") or {})
+        labels["resume_of"] = run_id
+        result = self.start(
+            wf_def,
+            workflow_id=record.get("workflow_id", ""),
+            workflow_name=record.get("workflow_name", ""),
+            memory=bool(record.get("memory", True)),
+            source="resume",
+            labels=labels,
+            space_id=record.get("space_id", ""),
+            resume_steps=resume_steps,
+        )
+        new_id = result["run_id"]
+        logger.info(f"resume-from: {run_id} → {new_id} node={node_id} snapshot={len(resume_steps)} 步 (链回原 run)")
+        return {"run_id": new_id, "resumed_from": node_id, "resume_of": run_id, "snapshot_steps": len(resume_steps)}
 
     def directive(self, run_id: str, directive: Dict[str, Any]) -> Optional[str]:
         """W8/B1: 排队运行改向指令; 返回 None 表示已排队, 否则错误码。"""
@@ -1433,6 +1474,31 @@ def create_web_app(
         if err:
             raise HTTPException(status_code=409, detail={"code": err, "message": f"运行改向被拒绝: {run_id}"})
         return {"status": "queued", "run_id": run_id, "action": body.get("action")}
+
+    # ── issue #226: 终态 run 从指定步骤重跑 (新 run 链回原 run) ──
+    @app.post("/api/runs/{run_id}/resume-from")
+    async def runs_resume_from(run_id: str, body: Dict[str, Any]):
+        node_id = str(body.get("node_id") or "").strip()
+        if not node_id:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "node_id 必填"})
+        try:
+            return runs.resume_from(run_id, node_id)
+        except KeyError:
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"}
+            ) from None
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "not_terminal":
+                raise HTTPException(
+                    status_code=409, detail={"code": "not_terminal", "message": f"运行未到终态: {run_id}"}
+                ) from exc
+            if msg == "unknown_node":
+                raise HTTPException(
+                    status_code=400, detail={"code": "unknown_node", "message": f"步骤不存在于工作流: {node_id}"}
+                ) from exc
+            # no_workflow_def / from_dict 校验失败 → 400
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": f"无法重跑: {msg}"}) from exc
 
     # ── W5 模板目录 (migration doc §6 P0) ──
     @app.get("/api/templates")
