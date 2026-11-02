@@ -15,7 +15,7 @@ import re
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -260,12 +260,13 @@ def _artifact_ref_text(card: Dict[str, Any]) -> str:
     )
 
 
-async def _fetch_artifact_card(artifact_id: str, transport: Any = None) -> Optional[Dict[str, Any]]:
-    # issue #233: 拉取 fusion-artifacts-engine v0.6.0 卡片契约 (name/type/kind/current_version/
-    # summary/source_module/is_starred); 任何失败返回 None 由调用方降级, 不阻塞时间线。
-    # transport 参数仅供测试注入 MockTransport, 生产路径走默认连接器。
+async def _fetch_artifact_card_with_status(
+    artifact_id: str, transport: Any = None
+) -> Tuple[Optional[Dict[str, Any]], Optional[int]]:
+    # issue #237: 返回 (卡片, 上游 HTTP 状态)。状态让调用方区分「不存在/无权限」与
+    # 「引擎不可达」; transport 异常/非法 id 返回 (None, None)。
     if not artifact_id or not _ARTIFACT_ID_PATTERN.match(artifact_id):
-        return None
+        return None, None
     base_url = os.environ.get("FUSION_ARTIFACTS_URL", "http://127.0.0.1:11451").rstrip("/")
     api_key = os.environ.get("FUSION_ARTIFACTS_API_KEY", "")
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
@@ -276,16 +277,16 @@ async def _fetch_artifact_card(artifact_id: str, transport: Any = None) -> Optio
             resp = await client.get(f"{base_url}/api/v1/artifacts/{artifact_id}", headers=headers)
         if resp.status_code != 200:
             logger.warning("[artifacts] card fetch %s -> HTTP %s", artifact_id, resp.status_code)
-            return None
+            return None, resp.status_code
         data = resp.json()
     except Exception as exc:
         logger.warning("[artifacts] card fetch %s failed: %s", artifact_id, exc)
-        return None
+        return None, None
     payload = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else data
     if not isinstance(payload, dict):
-        return None
+        return None, 200
     card_id = str(payload.get("id") or artifact_id)
-    return {
+    card = {
         "artifact_id": card_id,
         "name": str(payload.get("name") or ""),
         "type": str(payload.get("type") or ""),
@@ -296,6 +297,13 @@ async def _fetch_artifact_card(artifact_id: str, transport: Any = None) -> Optio
         "is_starred": bool(payload.get("is_starred")),
         "deep_link": f"/shell/fusion-artifacts/#/a/{card_id}",
     }
+    return card, 200
+
+
+async def _fetch_artifact_card(artifact_id: str, transport: Any = None) -> Optional[Dict[str, Any]]:
+    # issue #233 兼容入口: 时间线卡片只关心成功/失败, 状态由 #237 路由消费。
+    card, _ = await _fetch_artifact_card_with_status(artifact_id, transport=transport)
+    return card
 
 
 def _collect_artifacts(steps: List[Any]) -> List[Dict[str, Any]]:
@@ -1608,16 +1616,22 @@ def create_web_app(
     # ── issue #233: artifact 卡片代理 (fusion-artifacts-engine v0.6.0 contract) ──
     @app.get("/api/artifacts/refs/{artifact_id}")
     async def artifacts_ref_card(artifact_id: str):
-        card = await _fetch_artifact_card(artifact_id)
+        # issue #237: 区分「id 非法 / artifact 删除或无权限 / 引擎不可达」三类失败,
+        # 前端据此给出明确提示, 不再静默注入假 ref。
+        card, upstream_status = await _fetch_artifact_card_with_status(artifact_id)
         if card is None:
-            # 无效 id → 404; 引擎不可达/非 200 → 502 (前端降级为纯文本 ref)
             if not artifact_id or not _ARTIFACT_ID_PATTERN.match(artifact_id):
                 raise HTTPException(
                     status_code=404, detail={"code": "bad_id", "message": f"非法 artifact id: {artifact_id}"}
                 )
+            if upstream_status in (401, 403, 404):
+                raise HTTPException(
+                    status_code=404,
+                    detail={"code": "artifact_not_found", "message": f"产物不存在或无权访问: {artifact_id}"},
+                )
             raise HTTPException(
                 status_code=502,
-                detail={"code": "upstream_unavailable", "message": "fusion-artifacts-engine 不可用或 artifact 不存在"},
+                detail={"code": "upstream_unavailable", "message": "fusion-artifacts-engine 不可用"},
             )
         card["ref_text"] = _artifact_ref_text(card)
         return {"artifact": card}

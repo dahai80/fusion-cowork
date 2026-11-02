@@ -360,6 +360,15 @@ export function RunViewPage({ runId }: { runId: string }) {
                         ✚ {t('派生新任务', 'Derive new task')}
                     </button>
                 ) : null}
+                {record.labels?.artifact_ref ? (
+                    <span
+                        title={record.labels.artifact_ref}
+                        className="rounded border border-border px-1.5 py-0.5 text-[10px] text-text-secondary"
+                    >
+                        ▦ {t('来自 Artifacts', 'From Artifacts')} ·{' '}
+                        {record.labels.artifact_name || record.labels.artifact_ref.slice(0, 12)}
+                    </span>
+                ) : null}
                 {record.labels?.resume_of ? (
                     <button
                         type="button"

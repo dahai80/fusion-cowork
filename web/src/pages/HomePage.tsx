@@ -12,6 +12,15 @@ import {
 import type { StatusKind } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
 import { type RunListItem, type WorkspaceInfo, api, statusKind } from '../api';
+import {
+    type ArtifactRef,
+    artifactRefFailureKind,
+    artifactRefFailureMessage,
+    artifactRefFromCard,
+    artifactRefPrompt,
+    artifactRunContext,
+    parseArtifactRefParam,
+} from '../artifactRef';
 import { poolExtraCapabilities, poolSkillNames } from '../capabilities';
 import { buildContextChips, buildReferenceItems, insertRefToken } from '../composer';
 import { useT } from '../i18n';
@@ -258,8 +267,10 @@ function TaskHome({ activeId, onSwitch }: { activeId: string; onSwitch: () => vo
         () => (activeId ? api.spaceArtifacts(activeId) : Promise.resolve([])),
         [activeId]
     );
-    // issue #233: 产物模块深链 ?artifact_ref=<id> — 轻量 ref 注入 composer, 一次性消费
-    const [artifactRefName, setArtifactRefName] = useState('');
+    // issue #237: 产物模块深链 ?artifact_ref=<id> — 解析成功注入 composer 与 run 上下文,
+    // 失败显示可关闭提示 (不再静默注入假 ref)
+    const [artifactRef, setArtifactRef] = useState<ArtifactRef | null>(null);
+    const [artifactNotice, setArtifactNotice] = useState('');
 
     useEffect(() => {
         try {
@@ -279,29 +290,31 @@ function TaskHome({ activeId, onSwitch }: { activeId: string; onSwitch: () => vo
     }, []);
 
     useEffect(() => {
-        // issue #233: /shell/fusion-cowork/?artifact_ref=<id> (hash 前的 search 参数)。
-        // 消费后立刻从 URL 抹除 — 刷新不重复注入; 引擎不可达时降级为最小 ref 文本。
-        let refId = '';
+        // issue #237: /shell/fusion-cowork/?artifact_ref=<id> (hash 前的 search 参数)。
+        // 消费后立刻从 URL 抹除 — 刷新不重复注入; 失败显式提示且不注入上下文。
+        const parsed = parseArtifactRefParam(window.location.search);
+        if (!parsed.present) return;
         try {
-            refId = new URLSearchParams(window.location.search).get('artifact_ref') || '';
-            if (refId) {
-                window.history.replaceState(null, '', window.location.pathname + window.location.hash);
-            }
+            window.history.replaceState(null, '', window.location.pathname + window.location.hash);
         } catch {
-            refId = '';
+            console.warn('[home] 无法从 URL 移除 artifact_ref 参数');
         }
-        if (!refId) return;
-        api.artifactCard(refId).then(
+        if (!parsed.valid) {
+            setArtifactNotice(artifactRefFailureMessage('bad_id', t));
+            return;
+        }
+        api.artifactCard(parsed.id).then(
             (r) => {
-                setArtifactRefName(r.artifact.name || refId);
-                setPrompt(`基于产物「${r.artifact.name || refId}」继续任务：\n${r.artifact.ref_text}\n\n新的要求：`);
+                const ref = artifactRefFromCard(r.artifact, parsed.id);
+                setArtifactRef(ref);
+                setPrompt(artifactRefPrompt(ref));
             },
-            () => {
-                setArtifactRefName(refId);
-                setPrompt(`基于产物 ${refId} 继续任务：\n[Artifact: | ID: ${refId} | ]\n\n新的要求：`);
+            (e) => {
+                console.warn('[home] artifact_ref 解析失败', parsed.id, e);
+                setArtifactNotice(artifactRefFailureMessage(artifactRefFailureKind(e), t));
             }
         );
-    }, []);
+    }, [t]);
 
     const space = (ws.data?.workspaces ?? []).find((w) => w.id === activeId);
     const pendingCount = (approvals.data?.approvals ?? []).length;
@@ -359,8 +372,13 @@ function TaskHome({ activeId, onSwitch }: { activeId: string; onSwitch: () => vo
         deriveFrom,
         deriveLabel: t('派生自', 'Derived from'),
         onClearDerive: () => setDeriveFrom(''),
-        artifactRefName,
-        onClearArtifact: () => setArtifactRefName(''),
+        artifactRefName: artifactRef?.name ?? '',
+        artifactFromArtifacts: artifactRef !== null,
+        onClearArtifact: () => {
+            // 未编辑时一并清掉注入的提示词; 用户改过则保留其编辑内容
+            if (artifactRef) setPrompt((p) => (p === artifactRefPrompt(artifactRef) ? '' : p));
+            setArtifactRef(null);
+        },
     });
 
     async function generatePreview() {
@@ -398,6 +416,7 @@ function TaskHome({ activeId, onSwitch }: { activeId: string; onSwitch: () => vo
                 memory: true,
                 source: 'home',
                 space_id: activeId,
+                ...artifactRunContext(artifactRef),
             });
             window.location.hash = '#/runs';
         } catch (e) {
@@ -525,6 +544,23 @@ function TaskHome({ activeId, onSwitch }: { activeId: string; onSwitch: () => vo
                     },
                 }}
             />
+
+            {artifactNotice ? (
+                <div
+                    role="alert"
+                    className="mt-2 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-text-secondary"
+                >
+                    <span className="flex-1">{artifactNotice}</span>
+                    <button
+                        type="button"
+                        aria-label={t('关闭提示', 'Dismiss')}
+                        className="shrink-0 rounded px-1 text-text-muted hover:bg-bg-muted hover:text-text-primary"
+                        onClick={() => setArtifactNotice('')}
+                    >
+                        ×
+                    </button>
+                </div>
+            ) : null}
 
             {error ? <div className="pt-2 text-xs text-error">{error}</div> : null}
 

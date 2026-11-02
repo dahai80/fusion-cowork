@@ -36,6 +36,7 @@ export interface ContextChipInput {
     deriveLabel?: string;
     onClearDerive?: () => void;
     artifactRefName?: string;
+    artifactFromArtifacts?: boolean;
     onClearArtifact?: () => void;
     waitingApproval?: boolean;
     waitingLabel?: string;
@@ -54,7 +55,10 @@ export function buildContextChips(input: ContextChipInput): ComposerChip[] {
         });
     }
     if (input.artifactRefName && input.onClearArtifact) {
-        chips.push({ key: 'artifact', label: `▦ ${input.artifactRefName}`, onClick: input.onClearArtifact });
+        const label = input.artifactFromArtifacts
+            ? `▦ 来自 Artifacts · ${input.artifactRefName}`
+            : `▦ ${input.artifactRefName}`;
+        chips.push({ key: 'artifact', label, onClick: input.onClearArtifact });
     }
     if (input.waitingApproval) {
         chips.push({ key: 'hitl', label: `⏸ ${input.waitingLabel ?? '等待审批'}`, onClick: () => undefined });
