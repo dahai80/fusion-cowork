@@ -426,7 +426,8 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - **终态 run 只读重开** + 两个历史动作 (UC-5): run 视图对终态已渲染完整时间线 + 产物; 操控控件隐藏, 出现**从步骤重跑 / 派生新任务**。
 - **从步骤 N 重跑**: 终态 run 的每个步骤卡带 `从这里重跑` — `POST /api/runs/{id}/resume-from {node_id}` 创建**链回原 run 的新 run** (`labels.resume_of`, `source: "resume"`), 工作流定义经 `Workflow.from_dict` 重校验 (非法 DAG 400)。目标之前的已完成步骤作为 `resume_steps` 快照 (#191 崩溃恢复原语) 续跑: 输出作为下游输入, 本身跳过; 失败/被拒步骤**不入快照**, 下游真正重执行。工作区 (`space_id`) 与标签继承; 头部 `↻ 重跑自 <run>` chip 链回原 run (审计链保留)。
 - **派生新任务**: 终态 run 上 `✚ 派生新任务` 存一次性预填 (`cowork.derivePrefill`: 任务名 + 上次结果 + run id), 落到首页 composer 预填 (`在之前任务「…」的基础上继续…`) 并带可关溯源提示 — 消费一次, 不持久。
-- 测试: `tests/test_issue_226_resume_derive.py` (6 例: 链回 run + 快照续跑 + 步骤时间线、未执行节点全量重跑、未知节点 400、缺 node_id 400、非终态 409、run 不存在 404); 回归已证 (补丁前代码 5 例失败)。
+- **终态门修复 (v0.5.61)**: 两个历史动作原先用手写集合判定, 漏掉后端真实的 `success`/`partial`, 导致普通成功 run 永不显示入口。`web/src/runstatus.ts` 现按 `WorkflowStatus` 推导终态集合 (`success`、`partial`、`failed`、`cancelled`、`completed_with_denials` 及历史别名), 一个 helper 同时返回两个动作门, run 视图与 delegate 轮询共用。
+- 测试: `tests/test_issue_226_resume_derive.py` (6 例: 链回 run + 快照续跑 + 步骤时间线、未执行节点全量重跑、未知节点 400、缺 node_id 400、非终态 409、run 不存在 404); `web/tests/runstatus226.test.ts` (终态集合完整、活动态、success/partial/failure 两动作均开放); 回归已证 (补丁前代码 5 例失败)。
 
 ### 运行时间线内联审批 (v0.5.55, issue #225)
 
