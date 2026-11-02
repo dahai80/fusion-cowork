@@ -2009,9 +2009,17 @@ def create_web_app(
     @app.get("/api/skills")
     async def skills_list():
         from ..skills import get_package_registry
+        from ..skills.packages import USER_PACKAGES_DIR
 
+        user_dir = str(USER_PACKAGES_DIR)
         packages = get_package_registry().list_packages()
-        return {"skills": [p.to_dict() for p in packages], "count": len(packages)}
+        out = []
+        for p in packages:
+            d = p.to_dict()
+            # issue #255: 用户目录包可经 web 编辑/删除; 内置包只读
+            d["editable"] = bool(p.source) and p.source.startswith(user_dir)
+            out.append(d)
+        return {"skills": out, "count": len(out)}
 
     @app.post("/api/skills/{name:path}/run")
     async def skills_run(name: str, request: Request):
@@ -2033,6 +2041,83 @@ def create_web_app(
             status = 400 if result.get("errors") else 500
             return JSONResponse(result, status_code=status)
         return result
+
+    # ── issue #255: markdown skill 包 CRUD (用户目录 ~/.fusion-cowork/skills) ──
+    def _skill_slug(name: str) -> str:
+        slug = re.sub(r"[^a-z0-9_-]+", "-", name.strip().lstrip("/").lower()).strip("-")
+        if not slug:
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_name", "message": f"技能名无法转为文件名: {name}"}
+            )
+        return slug
+
+    def _reload_skill_packages() -> None:
+        from ..skills.packages import reset_package_registry
+
+        reset_package_registry()
+
+    @app.get("/api/skills/{name:path}/source")
+    async def skills_source(name: str):
+        from ..skills import get_package_registry
+        from ..skills.packages import USER_PACKAGES_DIR
+
+        pkg = get_package_registry().get(name)
+        if pkg is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"})
+        editable = bool(pkg.source) and pkg.source.startswith(str(USER_PACKAGES_DIR))
+        markdown = ""
+        if editable:
+            try:
+                markdown = Path(pkg.source).read_text(encoding="utf-8")
+            except OSError as e:
+                logger.warning(f"[skills] 读包源失败 {pkg.source}: {e}")
+                raise HTTPException(status_code=500, detail={"code": "read_failed", "message": "读取技能包失败"}) from e
+        return {"name": pkg.name, "editable": editable, "markdown": markdown}
+
+    @app.put("/api/skills")
+    async def skills_save(request: Request):
+        from ..skills import get_package_registry
+        from ..skills.packages import USER_PACKAGES_DIR, parse_markdown
+
+        try:
+            body = await request.json()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail={"code": "invalid_json", "message": "invalid json"}) from e
+        markdown = body.get("markdown") if isinstance(body, dict) else None
+        if not isinstance(markdown, str) or not markdown.strip():
+            raise HTTPException(status_code=400, detail={"code": "invalid_body", "message": "markdown 必填"})
+        try:
+            pkg = parse_markdown(markdown)
+        except ValueError as e:
+            return JSONResponse({"saved": False, "problems": [str(e)]}, status_code=400)
+        slug = _skill_slug(pkg.name)
+        target = USER_PACKAGES_DIR / f"{slug}.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(markdown, encoding="utf-8")
+        _reload_skill_packages()
+        logger.info(f"[skills] markdown 包已保存: {pkg.name} -> {target}")
+        saved = get_package_registry().get(pkg.name)
+        d = (saved or pkg).to_dict()
+        d["saved"] = True
+        d["editable"] = True
+        return d
+
+    @app.delete("/api/skills/{name:path}")
+    async def skills_delete(name: str):
+        from ..skills import get_package_registry
+        from ..skills.packages import USER_PACKAGES_DIR
+
+        pkg = get_package_registry().get(name)
+        if pkg is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"})
+        source = Path(pkg.source or "")
+        if not (str(source).startswith(str(USER_PACKAGES_DIR)) and source.exists()):
+            logger.warning(f"[skills] 拒绝删除非用户目录包: {pkg.name} ({pkg.source})")
+            raise HTTPException(status_code=400, detail={"code": "builtin", "message": "内置技能不可删除"})
+        source.unlink()
+        _reload_skill_packages()
+        logger.info(f"[skills] markdown 包已删除: {pkg.name} ({source})")
+        return {"deleted": True, "name": pkg.name}
 
     @app.get("/api/skills/{name:path}")
     async def skills_get(name: str):
