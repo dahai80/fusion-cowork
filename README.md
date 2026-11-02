@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.60-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.61-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -482,7 +482,8 @@ The Artifacts GUI's **"Continue conversation with this artifact"** button opens 
 - **Terminal runs reopen read-only** with two history actions (UC-5): the run view already renders the full timeline + artifacts for terminal states; steering controls hide and **resume-from-step / derive-new-task** appear instead.
 - **Resume from step N**: every step card on a terminal run carries `Resume from this step` — `POST /api/runs/{id}/resume-from {node_id}` creates a **new run linked to the original** (`labels.resume_of`, `source: "resume"`), re-validating the workflow definition through `Workflow.from_dict` (400 on invalid DAG). Steps completed before the target are passed as `resume_steps` snapshots (the #191 crash-recovery primitive): their outputs seed downstream inputs and they are skipped; failed/denied steps are **not** snapshotted, so downstream genuinely re-runs. Workspace (`space_id`) and labels carry over; the header shows a `↻ resumed from <run>` chip linking back to the original (audit chain preserved).
 - **Derive new task**: `✚ Derive new task` on a terminal run stores a one-shot prefill (`cowork.derivePrefill`: task name + last outcome + run id) and lands on the home composer with the prompt pre-filled (`在之前任务「…」的基础上继续…`) and a dismissible provenance note — consumed once, never persisted.
-- Tests: `tests/test_issue_226_resume_derive.py` (6 cases: linked run + snapshot replay + step timeline, never-executed node full rerun, unknown node 400, missing node_id 400, non-terminal 409, missing run 404); regression-proven (5 fail on pre-patch code).
+- **Terminal gate fix (v0.5.61)**: the two history actions were gated on a hand-written set that omitted the backend's real `success`/`partial` statuses, so ordinary successful runs never exposed them. `web/src/runstatus.ts` now derives the terminal set from `WorkflowStatus` (`success`, `partial`, `failed`, `cancelled`, `completed_with_denials`, plus legacy aliases) and returns both action flags from one helper used by the run view; the delegate poller uses the same predicate.
+- Tests: `tests/test_issue_226_resume_derive.py` (6 cases: linked run + snapshot replay + step timeline, never-executed node full rerun, unknown node 400, missing node_id 400, non-terminal 409, missing run 404); `web/tests/runstatus226.test.ts` (terminal set completeness, active states, both actions open for success/partial/failure); regression-proven (5 fail on pre-patch code).
 
 ### Inline Approvals in the Run Timeline (v0.5.55, issue #225)
 

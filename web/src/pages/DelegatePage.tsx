@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { type CanvasEdgeDef, type CanvasNodeDef, type ChatDelegateResult, type RunRecord, api } from '../api';
 import { useT } from '../i18n';
 import { onPreferredModelChange, preferredModel, setPreferredModel } from '../modelPref';
+import { isTerminalRunStatus } from '../runstatus';
 import { sdk } from '../sdk';
 
 // W7: NL delegation entry — prompt → NLWorkflowGenerator (/api/ai/generate-workflow)
@@ -31,8 +32,6 @@ interface GeneratedWorkflow {
     edges: CanvasEdgeDef[];
 }
 
-const TERMINAL_RUN = new Set(['completed', 'success', 'failed', 'canceled']);
-
 // #148: chat-first 执行卡 — auto 模式轮询 run 进度, 终态展示结果 + 产物;
 // plan 模式展示内部计划, 一键批准执行 (工作流已落库, 画布编辑可选)。
 function ChatResultCard({
@@ -57,7 +56,7 @@ function ChatResultCard({
                 const rec = await api.run(runId as string);
                 if (stopped) return;
                 setRun(rec);
-                if (TERMINAL_RUN.has(rec.status)) stopped = true;
+                if (isTerminalRunStatus(rec.status)) stopped = true;
             } catch (e) {
                 console.error('[cowork-web] chat-delegate poll failed', e);
             }
@@ -84,7 +83,7 @@ function ChatResultCard({
         }
     }
 
-    const running = run && !TERMINAL_RUN.has(run.status);
+    const running = run && !isTerminalRunStatus(run.status);
     return (
         <div className="rounded-lg border border-border bg-bg-elevated p-3">
             <div className="flex items-center justify-between">
@@ -138,7 +137,7 @@ function ChatResultCard({
                         <div className="mt-1 text-xs text-text-primary">{run.result.summary}</div>
                     ) : null}
                     {run.error ? <div className="mt-1 text-xs text-error">{run.error}</div> : null}
-                    {!TERMINAL_RUN.has(run.status) ? (
+                    {!isTerminalRunStatus(run.status) ? (
                         <button
                             type="button"
                             className="mt-2 rounded-md border border-border px-3 py-1 text-sm text-text-primary hover:bg-bg-muted"

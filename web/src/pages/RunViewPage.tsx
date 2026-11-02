@@ -27,6 +27,7 @@ import {
     insertRefToken,
 } from '../composer';
 import { useT } from '../i18n';
+import { runHistoryActions } from '../runstatus';
 import { capabilitiesInUse, computeWaves, parseParamsDraft, stepArtifactRefs, stepCapability } from '../runview';
 import { sdk, streamSse } from '../sdk';
 import { HitlCountdown, RunArtifactPane, StepDrawer } from './RunsPage';
@@ -146,12 +147,8 @@ export function RunViewPage({ runId }: { runId: string }) {
     if (!record) return null;
 
     const steerable = record.status === 'running' || record.status === 'paused';
-    // issue #226: 终态 run 只读 — 重跑/派生动作仅在终态开放
-    const terminal =
-        record.status === 'completed' ||
-        record.status === 'completed_with_denials' ||
-        record.status === 'failed' ||
-        record.status === 'cancelled';
+    // issue #226: 终态 run 只读 — 重跑/派生动作仅在终态开放 (集合与 WorkflowStatus 对齐)
+    const historyActions = runHistoryActions(record.status);
     const totalTokens = (record.steps ?? []).reduce((n, s) => n + (s.tokens?.total_tokens ?? 0), 0);
     const waves = computeWaves(record.workflow_def ?? {});
     const caps = capabilitiesInUse(record.steps ?? []);
@@ -351,7 +348,7 @@ export function RunViewPage({ runId }: { runId: string }) {
                         📁 {t('工作区', 'Workspace')}
                     </button>
                 ) : null}
-                {terminal ? (
+                {historyActions.deriveNewTask ? (
                     <button
                         type="button"
                         className="rounded-md border border-accent px-2 py-1 text-xs text-accent hover:bg-accent/10"
@@ -495,7 +492,7 @@ export function RunViewPage({ runId }: { runId: string }) {
                                                     step={step}
                                                     expanded={openStep === wn.id}
                                                     onToggle={() => setOpenStep(openStep === wn.id ? '' : wn.id)}
-                                                    canResume={terminal}
+                                                    canResume={historyActions.resumeFromStep}
                                                     onResumeFrom={resumeFromStep}
                                                 />
                                             </div>
