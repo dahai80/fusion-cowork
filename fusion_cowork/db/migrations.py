@@ -82,6 +82,18 @@ MIGRATIONS: List[Migration] = [
         ],
         backend="both",
     ),
+    # v3: 旧库 (v0.4.0 之前建的 space_notifications / sidebar_modules) 表内无 tenant_id 列 —
+    #     v2 的 CREATE TABLE IF NOT EXISTS 对已存在表是 no-op, 列永远补不上, 查询直接
+    #     `no such column: tenant_id` 500 (issue #253)。ADD COLUMN 重复执行由 runner 吞错幂等。
+    Migration(
+        version=3,
+        name="legacy_tenant_columns",
+        up_sql=[
+            "ALTER TABLE space_notifications ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE sidebar_modules ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''",
+        ],
+        backend="both",
+    ),
 ]
 
 

@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.66-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.67-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -459,6 +459,14 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - Wiring lives in pure helpers (`web/src/composer.ts`: `buildReferenceItems` / `buildContextChips` / `composerApprovalVariant` / `insertRefToken`) so behavior is unit-tested without a DOM.
 - **Acceptance residuals closed (v0.5.62, issue #240)**: the run-view `＠` palette now offers all three reference kinds (workspace directories + recent tasks + the run's own artifacts) instead of artifacts only; a feed-contract test pins `runs_get.hitl_pending` → composer disabled + `⏸ 等待审批` badge so a broken feed is visible; the live UI pass ran the built bundle on `:11461` (SPA + assets + `/api/models` + `/api/workspaces` over the module key).
 - Tests: `web/tests/composer231.test.tsx` (9 cases: reference kinds + tokens, chip clearing, approval variant disabled state, five zones with cowork wiring, fixed pill label across states) + `web/tests/composer240.test.tsx` (paused-run feed, three-kind palette). CI web job now runs `bun run test` (was lint/typecheck/build only); suite 113 bun tests green.
+
+### UI Audit Fixes (v0.5.67, issue #253)
+
+- Playwright click-through of all 18 web routes against `web serve` found three defects; all fixed and re-verified live (0 API failures / 0 console errors across every route, create flows clicked end-to-end).
+- **Legacy-DB tenant migration (v3)** — `space_notifications` / `sidebar_modules` tables created before v0.4.0 lack the `tenant_id` column and every tenant-guarded query 500s (`no such column: tenant_id`, NotificationBell on all pages). New migration v3 `legacy_tenant_columns` adds the column idempotently (duplicate-column swallowed by the runner); tested against a simulated pre-v0.4.0 schema.
+- **Dead `#/workflows` nav route** — `parseHash` had no `workflows` branch so the nav "工作流" button rendered Home; the branch is restored (WorkflowsPage reachable with 新建工作流/编辑/删除/运行).
+- **CapabilitiesPage crash** — markdown-pack skills have no `scopes` key, so `item.scopes.length` white-screened the capability marketplace; defensive `(?? [])` guards on `scopes` and `audit`.
+- Tests: `tests/test_migrations.py` updated + 2 new v3 cases; web suite 120 green (lint/typecheck/build unchanged).
 
 ### New-Workspace Name Must Come From System Directories (v0.5.66, issue #251)
 
