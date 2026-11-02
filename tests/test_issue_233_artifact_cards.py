@@ -161,9 +161,9 @@ class TestArtifactRefRoute:
                 "source_module": "fusion-doc",
                 "is_starred": True,
                 "deep_link": "/shell/fusion-artifacts/#/a/art_1",
-            }
+            }, 200
 
-        monkeypatch.setattr(web_api, "_fetch_artifact_card", fake_fetch)
+        monkeypatch.setattr(web_api, "_fetch_artifact_card_with_status", fake_fetch)
         r = tc.get("/api/artifacts/refs/art_1", headers=_headers())
         assert r.status_code == 200, r.text
         card = r.json()["artifact"]
@@ -176,9 +176,9 @@ class TestArtifactRefRoute:
         from fusion_cowork.server import web_api
 
         async def fake_fetch(artifact_id, transport=None):
-            return None
+            return None, None
 
-        monkeypatch.setattr(web_api, "_fetch_artifact_card", fake_fetch)
+        monkeypatch.setattr(web_api, "_fetch_artifact_card_with_status", fake_fetch)
         r = tc.get("/api/artifacts/refs/art_1", headers=_headers())
         assert r.status_code == 502
         assert r.json()["detail"]["code"] == "upstream_unavailable"

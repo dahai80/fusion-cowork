@@ -408,9 +408,18 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 消费 fusion-artifacts-engine v0.6.0 卡片深链契约 (上游 #77/#78/#80): 会话 payload 保持引擎 ~30 token 轻量 `ref_text`; 卡片按渲染重新拉取, 版本 bump 保持新鲜。
 
 - **步骤产物卡片** — 步骤摘要/输出字符串命中引擎引用格式 (`[Artifact: <名称> | ID: <id> | Version: v<n> | …]`) 时, run 时间线内渲染卡片 (`ArtifactCard`, `web/src/pages/RunViewPage.tsx`): 名称、类型徽章、当前版本、摘要、星标。点击跨 iframe 深链到产物详情 (`/shell/fusion-artifacts/#/a/<id>`)。提取为纯函数 (`findArtifactRefs`/`stepArtifactRefs`, `web/src/runview.ts`, 保序去重), payload 绝不膨胀。
-- **卡片代理路由** — `GET /api/artifacts/refs/{artifact_id}` 从 fusion-artifacts-engine 拉取卡片 (`FUSION_ARTIFACTS_URL`, 默认 `http://127.0.0.1:11451`; 可选 `FUSION_ARTIFACTS_API_KEY` Bearer), 归一化契约字段 (name/type/kind/current_version/summary/source_module/is_starred) 并重建规范 `ref_text`。引擎不可用 → 502, 非法 id → 404; 前端降级为纯文本引用条, 时间线永不阻塞。
-- **"带产物继续对话"** — 产物模块链接到 `/shell/fusion-cowork/?artifact_ref=<id>`; 首页 composer 一次性消费该参数 (立即从 URL 抹除 — 刷新不重复注入), 拉取卡片后以轻量 `ref_text` 预填任务并带可关 `▦ 已注入产物引用` 提示。引擎不可达时预填降级为最小 `[Artifact: | ID: <id> | ]` 引用 — 任务上下文仍带产物 id。
+- **卡片代理路由** — `GET /api/artifacts/refs/{artifact_id}` 从 fusion-artifacts-engine 拉取卡片 (`FUSION_ARTIFACTS_URL`, 默认 `http://127.0.0.1:11451`; 可选 `FUSION_ARTIFACTS_API_KEY` Bearer), 归一化契约字段 (name/type/kind/current_version/summary/source_module/is_starred) 并重建规范 `ref_text`。非法 id → 404 `bad_id`; 上游 401/403/404 → 404 `artifact_not_found`; 不可达/5xx → 502 `upstream_unavailable`; 时间线永不阻塞。
 - 测试: `tests/test_issue_233_artifact_cards.py` (10 例: 引用提取保序/去重/往返、卡片拉取平铺 + `data` 信封、Bearer 鉴权 + 契约路径、非 200/非法 id/不可达 → None、路由 200/502/404) + 5 例 `findArtifactRefs`/`stepArtifactRefs` bun 用例; 回归已证 (补丁前代码 10 例失败)。
+
+### 产物深链续聊 (v0.5.60, issue #237)
+
+产物 GUI 的 **"就此产物继续对话"** 打开 `/shell/fusion-cowork/?artifact_ref=<id>`。首页现在端到端消费该参数, 不再静默忽略。
+
+- **一次性解析** — `parseArtifactRefParam` 按后端模式 (`[A-Za-z0-9_-]{1,128}`) 校验 id, 随后从 URL 抹除参数 — 刷新不重复注入。合法 id 经 `GET /api/artifacts/refs/{id}` 只读解析卡片与最新版本, 不复制产物。
+- **上下文 chip + 提示词** — composer 上下文条出现可移除 `▦ 来自 Artifacts · <名称>` chip, 任务提示词以轻量 `ref_text` 预填。
+- **run 上下文** — 启动任务时发送 `labels.artifact_ref` / `artifact_name` / `artifact_deep_link` 与 `inputs.artifact_ref` (经既有 per-run 输入通道注入首节点)。run 视图头部渲染 `▦ 来自 Artifacts · <名称>` 徽标, 产物引用在运行上下文中可见。
+- **诚实的失败路径** — 非法 id、产物缺失/被撤销 (上游 401/403/404)、引擎不可达分别显示可关闭 `role="alert"` 提示; 不再注入伪造 `[Artifact: | ID: … | ]` 引用, 提示词保持不变。
+- 测试: `tests/test_issue_237_artifact_ref.py` (状态区分、路由 404 `artifact_not_found` vs 502 `upstream_unavailable`、非法 id、run labels/inputs 透传) + `web/tests/artifactref237.test.ts` (参数解析、chip 文案、提示词、run 上下文、失败种类与提示)。
 
 ### 从历史重跑 / 派生 (v0.5.56, issue #226)
 
