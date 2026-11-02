@@ -541,6 +541,7 @@ class RunRegistry:
         labels: Optional[Dict[str, str]] = None,
         space_id: str = "",
         resume_steps: Optional[List[Dict[str, Any]]] = None,
+        ancestor_summary: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         from ..engine import Workflow
 
@@ -568,6 +569,8 @@ class RunRegistry:
             "labels": dict(labels or {}),
             # issue #223: run 归属工作区 (Space) — 首页按目录过滤/聚合
             "space_id": str(space_id or ""),
+            # issue #249: 祖先 run 滚动摘要 (resume 链) — 摘要行进 run 记录, 整链步体不入上下文
+            "ancestor_summary": list(ancestor_summary or []),
         }
         self._runs[run_id] = record
         self._persist(run_id)
@@ -775,17 +778,28 @@ class RunRegistry:
         node_ids = {n.get("id") for n in wf_def.get("nodes", [])}
         if node_id not in node_ids:
             raise ValueError("unknown_node")
-        # 目标步骤在时间线中的位置 — 其之前已完成 (success) 的步骤作为续跑快照,
+        # 目标步骤在时间线中的位置 — 其之前已完成 (success + 断点续跑 skipped 副本) 的步骤作为续跑快照,
         # 失败/被拒步骤不含 → 下游从目标节点真正重跑 (重校验由 Workflow.from_dict 完成)
         steps = record.get("steps") or []
         idx = next(
             (i for i, s in enumerate(steps) if s.get("node_id") == node_id and not s.get("user_correction")), None
         )
+        # issue #249: 快照带预算 — 近 N 步保全量, 更早步收摘要 + step:// 引用;
+        # 祖先摘要滚动续接 (链深增长时上下文亚线性)
+        from ..engine.run_context import build_resume_snapshot, compose_ancestor_summary
+
+        prior_ancestor = list(record.get("ancestor_summary") or [])
         if idx is None:
-            # 目标节点从未执行 → 全量重跑, 快照为空
+            # 目标节点从未执行 → 全量重跑, 快照为空, 祖先摘要原样续接
             resume_steps: List[Dict[str, Any]] = []
+            ancestor_new: List[Dict[str, Any]] = []
+            stats: Dict[str, int] = {"eligible": 0, "snapshot_steps": 0, "estimated_tokens": 0}
         else:
-            resume_steps = [s for s in steps[:idx] if s.get("status") == "success" and not s.get("user_correction")]
+            resume_steps, ancestor_new, stats = build_resume_snapshot(run_id, steps, idx)
+        ancestor_summary, truncated = compose_ancestor_summary(prior_ancestor, ancestor_new)
+        stats["ancestor_total"] = len(ancestor_summary)
+        if truncated:
+            stats["ancestor_truncated"] = truncated
         labels = dict(record.get("labels") or {})
         labels["resume_of"] = run_id
         result = self.start(
@@ -797,10 +811,21 @@ class RunRegistry:
             labels=labels,
             space_id=record.get("space_id", ""),
             resume_steps=resume_steps,
+            ancestor_summary=ancestor_summary,
         )
         new_id = result["run_id"]
-        logger.info(f"resume-from: {run_id} → {new_id} node={node_id} snapshot={len(resume_steps)} 步 (链回原 run)")
-        return {"run_id": new_id, "resumed_from": node_id, "resume_of": run_id, "snapshot_steps": len(resume_steps)}
+        logger.info(
+            f"resume-from: {run_id} → {new_id} node={node_id} snapshot={len(resume_steps)} 步 "
+            f"(链回原 run) context={stats.get('estimated_tokens', 0)}tok "
+            f"ancestor={stats.get('ancestor_total', 0)}"
+        )
+        return {
+            "run_id": new_id,
+            "resumed_from": node_id,
+            "resume_of": run_id,
+            "snapshot_steps": len(resume_steps),
+            "context": stats,
+        }
 
     def directive(self, run_id: str, directive: Dict[str, Any]) -> Optional[str]:
         """W8/B1: 排队运行改向指令; 返回 None 表示已排队, 否则错误码。"""
