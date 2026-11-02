@@ -55,6 +55,56 @@ class TestSystemDirs:
         names = [d["name"] for d in r.json()["directories"]]
         assert names == ["real"]
 
+    def test_subpath_browse_descends(self, client, monkeypatch, tmp_path):
+        tc, _ = client
+        root = tmp_path / "wsroot4"
+        (root / "proj" / "src" / "deep").mkdir(parents=True)
+        monkeypatch.setenv("FUSION_COWORK_WORKSPACE_ROOT", str(root))
+        r = tc.get("/api/workspaces/system-dirs?path=proj", headers=_auth())
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["relative"] == "proj"
+        assert [d["name"] for d in body["directories"]] == ["src"]
+        assert body["directories"][0]["relative"] == "proj/src"
+        r2 = tc.get("/api/workspaces/system-dirs?path=proj/src", headers=_auth())
+        b2 = r2.json()
+        assert b2["relative"] == "proj/src"
+        assert [d["name"] for d in b2["directories"]] == ["deep"]
+        r3 = tc.get("/api/workspaces/system-dirs?path=proj/src/deep", headers=_auth())
+        assert r3.json()["directories"] == []
+        assert r3.json()["relative"] == "proj/src/deep"
+
+    def test_path_escape_is_400(self, client, monkeypatch, tmp_path):
+        tc, _ = client
+        root = tmp_path / "wsroot5"
+        root.mkdir()
+        monkeypatch.setenv("FUSION_COWORK_WORKSPACE_ROOT", str(root))
+        for evil in ("../etc", "..", "a/../../b"):
+            r = tc.get(f"/api/workspaces/system-dirs?path={evil}", headers=_auth())
+            assert r.status_code == 400, (evil, r.text)
+            assert r.json()["detail"]["code"] == "bad_path"
+        # 绝对路径被归一化为根内相对名 → 不可能是越界列举 (400/404 均安全, 严禁 200)
+        r = tc.get("/api/workspaces/system-dirs?path=/etc", headers=_auth())
+        assert r.status_code in (400, 404)
+
+    def test_missing_subdir_is_404(self, client, monkeypatch, tmp_path):
+        tc, _ = client
+        root = tmp_path / "wsroot6"
+        root.mkdir()
+        monkeypatch.setenv("FUSION_COWORK_WORKSPACE_ROOT", str(root))
+        r = tc.get("/api/workspaces/system-dirs?path=ghost", headers=_auth())
+        assert r.status_code == 404
+        assert r.json()["detail"]["code"] == "not_found"
+
+    def test_subpath_dir_is_file_404(self, client, monkeypatch, tmp_path):
+        tc, _ = client
+        root = tmp_path / "wsroot7"
+        root.mkdir()
+        (root / "plain.txt").write_text("x", encoding="utf-8")
+        monkeypatch.setenv("FUSION_COWORK_WORKSPACE_ROOT", str(root))
+        r = tc.get("/api/workspaces/system-dirs?path=plain.txt", headers=_auth())
+        assert r.status_code == 404
+
     def test_missing_root_reports_unavailable(self, client, monkeypatch, tmp_path):
         tc, _ = client
         monkeypatch.setenv("FUSION_COWORK_WORKSPACE_ROOT", str(tmp_path / "nope"))

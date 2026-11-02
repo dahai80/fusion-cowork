@@ -87,10 +87,19 @@ export interface WorkspaceInfo {
     last_run_at?: number | null;
 }
 
-// issue #251: 系统工作目录枚举 — 新建目录名只能从服务端真实目录选
+// issue #251: 系统工作目录枚举 — 新建目录名只能从服务端真实目录选; 支持子目录下钻
 export interface SystemDirectory {
     name: string;
     path: string;
+    relative: string;
+}
+
+export interface SystemDirListing {
+    root: string;
+    root_name: string;
+    relative: string;
+    directories: SystemDirectory[];
+    available: boolean;
 }
 
 export interface RunStep {
@@ -785,9 +794,9 @@ export const api = {
     deleteSpace: (id: string) => sdk.http.delete(`/api/space/spaces/${encodeURIComponent(id)}`),
     // issue #223: 首页目录聚合 + 工作区内邀请成员
     workspaces: () => get<{ workspaces: WorkspaceInfo[]; available: boolean }>('/api/workspaces'),
-    // issue #251: 系统工作目录枚举 — 新建目录名只能从这里选
-    systemDirectories: () =>
-        get<{ root: string; directories: SystemDirectory[]; available: boolean }>('/api/workspaces/system-dirs'),
+    // issue #251: 系统工作目录枚举 — 新建目录名只能从这里选; path= 子目录下钻
+    systemDirectories: (path = '') =>
+        get<SystemDirListing>(`/api/workspaces/system-dirs${path ? `?path=${encodeURIComponent(path)}` : ''}`),
     addSpaceMember: (id: string, body: { user_id: string; role?: string; display_name?: string }) =>
         post<SpaceMemberInfo>(`/api/space/spaces/${encodeURIComponent(id)}/members`, body),
     spaceMembers: (id: string) => get<SpaceMemberInfo[]>(`/api/space/spaces/${encodeURIComponent(id)}/members`),
