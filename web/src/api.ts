@@ -498,6 +498,7 @@ export interface SkillPackageInfo {
     handler: string;
     workflow: Record<string, unknown>;
     source: string;
+    editable?: boolean;
 }
 
 export interface SkillRunResult {
@@ -897,6 +898,15 @@ export const api = {
         if (!res.ok && !body.error) body.error = `run failed: ${res.status}`;
         return body;
     },
+    // issue #255: markdown skill 包 CRUD (用户目录包可编辑, 内置包只读)
+    skillSource: (name: string) =>
+        get<{ name: string; editable: boolean; markdown: string }>(`/api/skills/${encodeURIComponent(name)}/source`),
+    saveSkillPackage: (markdown: string) =>
+        put<SkillPackageInfo & { saved: boolean; editable: boolean; problems?: string[] }>('/api/skills', {
+            markdown,
+        }),
+    deleteSkillPackage: (name: string) =>
+        del<{ deleted: boolean; name: string }>(`/api/skills/${encodeURIComponent(name)}`),
     browserStatus: () => get<BrowserStatus>('/api/browser/status'),
     // issue #170: Extensions console
     extensionSkills: () => get<{ skills: ExtensionSkill[]; count: number }>('/api/extensions/skills'),
