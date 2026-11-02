@@ -58,6 +58,28 @@ class TestFetchStatus:
         assert status == 200
         assert card and card["artifact_id"] == "art_1"
 
+    def test_engine_artifact_envelope_unwraps_fields(self):
+        # issue #243: fusion-artifacts-engine 实测单卡返回 {"artifact": {...}},
+        # 只认 {data:…} 会得到全空卡片。
+        from fusion_cowork.server import web_api
+
+        card, status = asyncio.run(
+            web_api._fetch_artifact_card_with_status("art_1", transport=_transport(200, {"artifact": CARD}))
+        )
+        assert status == 200
+        assert card and card["name"] == "Q3 Report"
+        assert card["type"] == "report"
+        assert card["current_version"] == 3
+
+    def test_flat_payload_still_works(self):
+        from fusion_cowork.server import web_api
+
+        card, status = asyncio.run(
+            web_api._fetch_artifact_card_with_status("art_1", transport=_transport(200, dict(CARD)))
+        )
+        assert status == 200
+        assert card and card["name"] == "Q3 Report"
+
     @pytest.mark.parametrize("upstream", [401, 403, 404])
     def test_gone_or_forbidden_reports_upstream_status(self, upstream):
         from fusion_cowork.server import web_api

@@ -44,3 +44,62 @@ export function poolSkillNames(catalog: CapabilityCatalog | null): string[] {
 export function poolExtraCapabilities(catalog: CapabilityCatalog | null): CapabilityItem[] {
     return [...(catalog?.connectors ?? []), ...(catalog?.subagents ?? [])].filter(usableCapability);
 }
+
+// issue #244 R1: 首访 pitch 卡 — 三类能力一句话定位, 安装任意能力后永久消失。
+export const PITCH_DISMISS_KEY = 'cowork.capabilities.pitchDismissed';
+
+export interface CapabilityPitch {
+    key: CapabilityType;
+    icon: string;
+    title: { zh: string; en: string };
+    desc: { zh: string; en: string };
+}
+
+export function capabilityPitches(): CapabilityPitch[] {
+    return [
+        {
+            key: 'skill',
+            icon: '⚙',
+            title: { zh: '技能', en: 'Skills' },
+            desc: { zh: '领域知识与最佳实践', en: 'Domain knowledge and best practices' },
+        },
+        {
+            key: 'connector',
+            icon: '🔌',
+            title: { zh: '连接器', en: 'Connectors' },
+            desc: { zh: '接入你已在用的工具', en: 'Bring the tools you already use' },
+        },
+        {
+            key: 'subagent',
+            icon: '🤖',
+            title: { zh: '子代理', en: 'Subagents' },
+            desc: { zh: '端到端处理专项任务', en: 'Handle specialized tasks end to end' },
+        },
+    ];
+}
+
+export function pitchesDismissed(): boolean {
+    try {
+        return localStorage.getItem(PITCH_DISMISS_KEY) === '1';
+    } catch {
+        return true;
+    }
+}
+
+export function dismissPitches(): void {
+    try {
+        localStorage.setItem(PITCH_DISMISS_KEY, '1');
+    } catch {
+        // 无 localStorage (隐私模式) — 会话内 state 兜底
+    }
+}
+
+export function hasInstalledCapabilities(
+    catalog: { skills?: CapabilityItem[]; connectors?: CapabilityItem[]; subagents?: CapabilityItem[] } | null
+): boolean {
+    if (!catalog) return false;
+    for (const list of [catalog.skills, catalog.connectors, catalog.subagents]) {
+        if ((list ?? []).some(usableCapability)) return true;
+    }
+    return false;
+}

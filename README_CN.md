@@ -404,6 +404,12 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - **验收残留收口 (v0.5.62, issue #240)**: run 视图 `＠` 面板补齐三类引用 (工作目录 + 最近任务 + 本 run 步骤产物, 原先仅产物); 新增 feed 契约测试钉住 `runs_get.hitl_pending` → composer 禁用 + `⏸ 等待审批` 徽标, 字段断链即刻可见; live UI 走查在 `:11461` 以构建产物完成 (SPA + 静态资源 + `/api/models` + `/api/workspaces`, 模块 key 鉴权)。
 - 测试: `web/tests/composer231.test.tsx` (9 例: 三类引用 + token、chip 清除、审批禁用变体、cowork 接线下的五区、固定 pill 标签跨状态) + `web/tests/composer240.test.tsx` (暂停 run feed、三类引用面板)。CI web job 现执行 `bun run test` (原仅 lint/typecheck/build); bun 套件 113 例全绿。
 
+### 产物深链实测 + 能力市场导流卡 (v0.5.63, issues #243/#244)
+
+- **产物卡片信封修复 (issue #243)**: 对 fusion-artifacts-engine 实测发现单卡端点返回 `{"artifact": {...}}` 信封 (网关风格是 `{"data": {...}}`) — 代理只解 `data`, 深链预填拿到全空卡片。`/api/artifacts/refs/{id}` 现同时解两种信封 + 平铺负载; 上游 401/403/404 映射 404 `artifact_not_found`, 传输失败/其他状态映射 502 `upstream_unavailable`。测试: `tests/test_issue_237_artifact_ref.py` (引擎/网关/平铺信封, 按状态路由)。
+- **key 转发实测确认**: 模块自注册时网关注入动态 `fm-` key (删除调用方 `Authorization`/`Cookie`, 设置 `Authorization: Bearer <issued-key>`); 静态配置 key 仅作兜底。cowork 双收静态 env key + 签发 `fm-` key (24h 宽限); `Authorization: Bearer` 与 `x-api-key` 均收 (SPA 风格实测 200/401/404 矩阵)。
+- **能力导流卡 (issue #244 R1)**: Capabilities 页新增首访导流卡 (技能 ⚙ / 连接器 🔌 / 子代理 🤖), 双语文案; 工作区安装任意能力后永久隐藏 (`localStorage` `cowork.capabilities.pitchDismissed`); 安装成功亦触发收起。连接器鉴权按 R2 范围修订保持通用 OAuth/配置路径 (issue 上已记录理由)。测试: `web/tests/capabilities228.test.tsx` 导流卡用例。
+
 ### 运行时间线产物卡片 (v0.5.57, issue #233)
 
 消费 fusion-artifacts-engine v0.6.0 卡片深链契约 (上游 #77/#78/#80): 会话 payload 保持引擎 ~30 token 轻量 `ref_text`; 卡片按渲染重新拉取, 版本 bump 保持新鲜。

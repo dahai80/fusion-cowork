@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.62-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.63-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -459,6 +459,12 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - Wiring lives in pure helpers (`web/src/composer.ts`: `buildReferenceItems` / `buildContextChips` / `composerApprovalVariant` / `insertRefToken`) so behavior is unit-tested without a DOM.
 - **Acceptance residuals closed (v0.5.62, issue #240)**: the run-view `＠` palette now offers all three reference kinds (workspace directories + recent tasks + the run's own artifacts) instead of artifacts only; a feed-contract test pins `runs_get.hitl_pending` → composer disabled + `⏸ 等待审批` badge so a broken feed is visible; the live UI pass ran the built bundle on `:11461` (SPA + assets + `/api/models` + `/api/workspaces` over the module key).
 - Tests: `web/tests/composer231.test.tsx` (9 cases: reference kinds + tokens, chip clearing, approval variant disabled state, five zones with cowork wiring, fixed pill label across states) + `web/tests/composer240.test.tsx` (paused-run feed, three-kind palette). CI web job now runs `bun run test` (was lint/typecheck/build only); suite 113 bun tests green.
+
+### Artifact Deep-Link Live Pass + Marketplace Pitch Cards (v0.5.63, issues #243/#244)
+
+- **Artifact card envelope fix (issue #243)**: the live pass against fusion-artifacts-engine revealed the single-card endpoint returns the envelope `{"artifact": {...}}` (gateway-style returns `{"data": {...}}`) — the proxy only unwrapped `data`, so deep-link prefill showed an all-empty card. `/api/artifacts/refs/{id}` now unwraps both envelopes plus flat payloads; upstream 401/403/404 map to 404 `artifact_not_found`, transport failure/other statuses to 502 `upstream_unavailable`. Tests: `tests/test_issue_237_artifact_ref.py` (engine/gateway/flat envelopes, per-status routing).
+- **Key forwarding verified**: gateway injects the dynamic `fm-` key when the module self-registers (deletes caller `Authorization`/`Cookie`, sets `Authorization: Bearer <issued-key>`); static config key is fallback only. Cowork dual-accepts static env key + issued `fm-` key with 24h grace; both `Authorization: Bearer` and `x-api-key` accepted (SPA style verified live: 200/401/404 matrix).
+- **Capability pitch cards (issue #244 R1)**: first-visit pitch cards (skill ⚙ / connector 🔌 / subagent 🤖) on the Capabilities page with bilingual copy; hidden permanently once anything is installed in the workspace (`localStorage` `cowork.capabilities.pitchDismissed`); install success also dismisses. Connector authorization stays generic OAuth/config per the R2 scope amendment on the issue (rationale recorded there). Tests: `web/tests/capabilities228.test.tsx` pitch cases.
 
 ### Artifact Cards in the Run Timeline (v0.5.57, issue #233)
 
