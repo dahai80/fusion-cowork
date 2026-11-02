@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.61-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.62-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -457,7 +457,8 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - **Run composer** — same five zones; `＠` offers artifacts produced by the run's own steps.
 - **Approval disabled state (§6)** — while a run pauses awaiting approval the run composer is `disabled` with a `⏸ 等待审批` badge in the context bar; the inline approval cards (#225) remain the only resolution UI — no custom replacement composer.
 - Wiring lives in pure helpers (`web/src/composer.ts`: `buildReferenceItems` / `buildContextChips` / `composerApprovalVariant` / `insertRefToken`) so behavior is unit-tested without a DOM.
-- Tests: `web/tests/composer231.test.tsx` (9 cases: reference kinds + tokens, chip clearing, approval variant disabled state, five zones with cowork wiring, fixed pill label across states). CI web job now runs `bun run test` (was lint/typecheck/build only); suite 86 bun tests green.
+- **Acceptance residuals closed (v0.5.62, issue #240)**: the run-view `＠` palette now offers all three reference kinds (workspace directories + recent tasks + the run's own artifacts) instead of artifacts only; a feed-contract test pins `runs_get.hitl_pending` → composer disabled + `⏸ 等待审批` badge so a broken feed is visible; the live UI pass ran the built bundle on `:11461` (SPA + assets + `/api/models` + `/api/workspaces` over the module key).
+- Tests: `web/tests/composer231.test.tsx` (9 cases: reference kinds + tokens, chip clearing, approval variant disabled state, five zones with cowork wiring, fixed pill label across states) + `web/tests/composer240.test.tsx` (paused-run feed, three-kind palette). CI web job now runs `bun run test` (was lint/typecheck/build only); suite 113 bun tests green.
 
 ### Artifact Cards in the Run Timeline (v0.5.57, issue #233)
 

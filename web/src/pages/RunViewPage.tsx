@@ -47,6 +47,9 @@ export function RunViewPage({ runId }: { runId: string }) {
     const { data, error, loading } = useAutoRetry(() => api.run(runId), [runId, reloadKey]);
     const [live, setLive] = useState<RunRecord | null>(null);
     const [sseOk, setSseOk] = useState(false);
+    // issue #240 R1: ＠ 面板补齐目录/任务引用 — 与首页一致的三类来源
+    const workspacesRes = useAutoRetry(() => api.workspaces(), []);
+    const recentRunsRes = useAutoRetry(() => api.runs(), []);
     const [openStep, setOpenStep] = useState('');
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [hintDismissed, setHintDismissed] = useState(true);
@@ -164,7 +167,7 @@ export function RunViewPage({ runId }: { runId: string }) {
         waitingApproval: approvalVariant.waitingApproval,
         waitingLabel: t('等待审批', 'Awaiting approval'),
     });
-    // issue #231: ＠ 引用面板 — 本 run 步骤产出的 artifact 引用
+    // issue #240 R1: ＠ 引用面板 — 目录/任务/产物三类 (首页同款), 产物来自本 run 步骤
     function insertRunRef(token: string) {
         setInstruction((p) => insertRefToken(p, token));
     }
@@ -172,10 +175,24 @@ export function RunViewPage({ runId }: { runId: string }) {
         (() => {
             const seen = new Set<string>();
             const sources: RefSource[] = [];
+            for (const w of workspacesRes.data?.workspaces ?? []) {
+                if (seen.has(`directory:${w.id}`)) continue;
+                seen.add(`directory:${w.id}`);
+                sources.push({ kind: 'directory', id: w.id, name: w.name });
+            }
+            for (const r of (recentRunsRes.data?.runs ?? []).slice(0, 8)) {
+                if (seen.has(`task:${r.run_id}`)) continue;
+                seen.add(`task:${r.run_id}`);
+                sources.push({
+                    kind: 'task',
+                    id: r.run_id,
+                    name: r.workflow_name || r.run_id.slice(0, 8),
+                });
+            }
             for (const s of record.steps ?? []) {
                 for (const r of stepArtifactRefs(s)) {
-                    if (seen.has(r.artifact_id)) continue;
-                    seen.add(r.artifact_id);
+                    if (seen.has(`artifact:${r.artifact_id}`)) continue;
+                    seen.add(`artifact:${r.artifact_id}`);
                     sources.push({ kind: 'artifact', id: r.artifact_id, name: r.name || r.artifact_id });
                 }
             }
@@ -587,7 +604,7 @@ export function RunViewPage({ runId }: { runId: string }) {
                     contextChips={runContextChips}
                     references={{
                         items: runReferenceItems,
-                        emptyLabel: t('暂无产物可引用', 'No artifacts to reference'),
+                        emptyLabel: t('暂无可引用项', 'No references yet'),
                     }}
                 />
             ) : null}
