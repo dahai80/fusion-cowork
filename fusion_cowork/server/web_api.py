@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -228,6 +229,73 @@ def _step_diff_content(step: Any, out: Dict[str, Any]) -> str:
             )
             return unified_diff_text(old_val, new_val, fromfile=target or old_key, tofile=target or new_key)
     return ""
+
+
+ARTIFACT_REF_PATTERN = re.compile(r"\[Artifact:\s*(?P<name>[^|\]]+?)\s*\|\s*ID:\s*(?P<id>[A-Za-z0-9_\-]+)[^\]]*\]")
+
+_ARTIFACT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_\-]{1,128}$")
+
+
+def find_artifact_refs(text: Any) -> List[Dict[str, str]]:
+    # issue #233: 从文本按序提取 artifact 轻量引用 (保序去重); payload 保持 ~30 token ref 不膨胀
+    if not isinstance(text, str) or not text:
+        return []
+    seen: set = set()
+    refs: List[Dict[str, str]] = []
+    for m in ARTIFACT_REF_PATTERN.finditer(text):
+        ref_id = m.group("id")
+        if ref_id in seen:
+            continue
+        seen.add(ref_id)
+        refs.append({"artifact_id": ref_id, "name": m.group("name").strip()})
+    return refs
+
+
+def _artifact_ref_text(card: Dict[str, Any]) -> str:
+    # issue #233: 重建引擎轻量 ref_text (artifact.get 的 ~30 token 格式)
+    return (
+        f"[Artifact: {card.get('name', '')} | ID: {card.get('artifact_id', '')} | "
+        f"Version: v{card.get('current_version') or 1} | Type: {card.get('type', '')} | "
+        f"Summary: {card.get('summary', '')}]"
+    )
+
+
+async def _fetch_artifact_card(artifact_id: str, transport: Any = None) -> Optional[Dict[str, Any]]:
+    # issue #233: 拉取 fusion-artifacts-engine v0.6.0 卡片契约 (name/type/kind/current_version/
+    # summary/source_module/is_starred); 任何失败返回 None 由调用方降级, 不阻塞时间线。
+    # transport 参数仅供测试注入 MockTransport, 生产路径走默认连接器。
+    if not artifact_id or not _ARTIFACT_ID_PATTERN.match(artifact_id):
+        return None
+    base_url = os.environ.get("FUSION_ARTIFACTS_URL", "http://127.0.0.1:11451").rstrip("/")
+    api_key = os.environ.get("FUSION_ARTIFACTS_API_KEY", "")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=5.0, transport=transport) as client:
+            resp = await client.get(f"{base_url}/api/v1/artifacts/{artifact_id}", headers=headers)
+        if resp.status_code != 200:
+            logger.warning("[artifacts] card fetch %s -> HTTP %s", artifact_id, resp.status_code)
+            return None
+        data = resp.json()
+    except Exception as exc:
+        logger.warning("[artifacts] card fetch %s failed: %s", artifact_id, exc)
+        return None
+    payload = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else data
+    if not isinstance(payload, dict):
+        return None
+    card_id = str(payload.get("id") or artifact_id)
+    return {
+        "artifact_id": card_id,
+        "name": str(payload.get("name") or ""),
+        "type": str(payload.get("type") or ""),
+        "kind": str(payload.get("kind") or ""),
+        "current_version": payload.get("current_version") or 1,
+        "summary": str(payload.get("summary") or ""),
+        "source_module": str(payload.get("source_module") or ""),
+        "is_starred": bool(payload.get("is_starred")),
+        "deep_link": f"/shell/fusion-artifacts/#/a/{card_id}",
+    }
 
 
 def _collect_artifacts(steps: List[Any]) -> List[Dict[str, Any]]:
@@ -1499,6 +1567,23 @@ def create_web_app(
                 ) from exc
             # no_workflow_def / from_dict 校验失败 → 400
             raise HTTPException(status_code=400, detail={"code": "bad_request", "message": f"无法重跑: {msg}"}) from exc
+
+    # ── issue #233: artifact 卡片代理 (fusion-artifacts-engine v0.6.0 contract) ──
+    @app.get("/api/artifacts/refs/{artifact_id}")
+    async def artifacts_ref_card(artifact_id: str):
+        card = await _fetch_artifact_card(artifact_id)
+        if card is None:
+            # 无效 id → 404; 引擎不可达/非 200 → 502 (前端降级为纯文本 ref)
+            if not artifact_id or not _ARTIFACT_ID_PATTERN.match(artifact_id):
+                raise HTTPException(
+                    status_code=404, detail={"code": "bad_id", "message": f"非法 artifact id: {artifact_id}"}
+                )
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "upstream_unavailable", "message": "fusion-artifacts-engine 不可用或 artifact 不存在"},
+            )
+        card["ref_text"] = _artifact_ref_text(card)
+        return {"artifact": card}
 
     # ── W5 模板目录 (migration doc §6 P0) ──
     @app.get("/api/templates")

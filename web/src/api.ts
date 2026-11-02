@@ -121,6 +121,21 @@ export interface RunRecord extends RunListItem {
     paused_reason?: string;
 }
 
+// issue #233: artifact 卡片 — fusion-artifacts-engine v0.6.0 卡片契约
+// (payload 保持轻量 ref, 卡片字段按渲染时重新拉取保证版本新鲜)
+export interface ArtifactCardData {
+    artifact_id: string;
+    name: string;
+    type: string;
+    kind: string;
+    current_version: number;
+    summary: string;
+    source_module: string;
+    is_starred: boolean;
+    deep_link: string;
+    ref_text: string;
+}
+
 // issue #150: 引用溯源 — 结构化引用 (文件路径 / 空间消息 id)
 export interface CitationRef {
     type: string;
@@ -608,6 +623,8 @@ export const api = {
             `/api/runs/${encodeURIComponent(id)}/resume-from`,
             { node_id: nodeId }
         ),
+    // issue #233: artifact 卡片代理 — fusion-artifacts-engine v0.6.0 契约字段
+    artifactCard: (id: string) => get<{ artifact: ArtifactCardData }>(`/api/artifacts/refs/${encodeURIComponent(id)}`),
     directive: (
         id: string,
         body: {

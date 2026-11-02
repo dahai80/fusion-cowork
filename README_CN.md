@@ -379,6 +379,15 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 
 测试: `tests/test_issue_189_node_executor.py` (33 例 + 1 例 live-AS 跳过: 波次并发墙钟/重叠/峰值、env 解析、配置往返、UDS 成功/partial/失败/transcript 容错、HTTP 完成/失败/超时/覆盖降级、混合 DAG 端到端、agent 失败语义、跨 agent 节点断点续跑)。文档: `docs/node-executors.md`。
 
+### 运行时间线产物卡片 (v0.5.57, issue #233)
+
+消费 fusion-artifacts-engine v0.6.0 卡片深链契约 (上游 #77/#78/#80): 会话 payload 保持引擎 ~30 token 轻量 `ref_text`; 卡片按渲染重新拉取, 版本 bump 保持新鲜。
+
+- **步骤产物卡片** — 步骤摘要/输出字符串命中引擎引用格式 (`[Artifact: <名称> | ID: <id> | Version: v<n> | …]`) 时, run 时间线内渲染卡片 (`ArtifactCard`, `web/src/pages/RunViewPage.tsx`): 名称、类型徽章、当前版本、摘要、星标。点击跨 iframe 深链到产物详情 (`/shell/fusion-artifacts/#/a/<id>`)。提取为纯函数 (`findArtifactRefs`/`stepArtifactRefs`, `web/src/runview.ts`, 保序去重), payload 绝不膨胀。
+- **卡片代理路由** — `GET /api/artifacts/refs/{artifact_id}` 从 fusion-artifacts-engine 拉取卡片 (`FUSION_ARTIFACTS_URL`, 默认 `http://127.0.0.1:11451`; 可选 `FUSION_ARTIFACTS_API_KEY` Bearer), 归一化契约字段 (name/type/kind/current_version/summary/source_module/is_starred) 并重建规范 `ref_text`。引擎不可用 → 502, 非法 id → 404; 前端降级为纯文本引用条, 时间线永不阻塞。
+- **"带产物继续对话"** — 产物模块链接到 `/shell/fusion-cowork/?artifact_ref=<id>`; 首页 composer 一次性消费该参数 (立即从 URL 抹除 — 刷新不重复注入), 拉取卡片后以轻量 `ref_text` 预填任务并带可关 `▦ 已注入产物引用` 提示。引擎不可达时预填降级为最小 `[Artifact: | ID: <id> | ]` 引用 — 任务上下文仍带产物 id。
+- 测试: `tests/test_issue_233_artifact_cards.py` (10 例: 引用提取保序/去重/往返、卡片拉取平铺 + `data` 信封、Bearer 鉴权 + 契约路径、非 200/非法 id/不可达 → None、路由 200/502/404) + 5 例 `findArtifactRefs`/`stepArtifactRefs` bun 用例; 回归已证 (补丁前代码 10 例失败)。
+
 ### 从历史重跑 / 派生 (v0.5.56, issue #226)
 
 - **终态 run 只读重开** + 两个历史动作 (UC-5): run 视图对终态已渲染完整时间线 + 产物; 操控控件隐藏, 出现**从步骤重跑 / 派生新任务**。
