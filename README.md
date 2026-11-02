@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.65-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.66-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -459,6 +459,13 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - Wiring lives in pure helpers (`web/src/composer.ts`: `buildReferenceItems` / `buildContextChips` / `composerApprovalVariant` / `insertRefToken`) so behavior is unit-tested without a DOM.
 - **Acceptance residuals closed (v0.5.62, issue #240)**: the run-view `＠` palette now offers all three reference kinds (workspace directories + recent tasks + the run's own artifacts) instead of artifacts only; a feed-contract test pins `runs_get.hitl_pending` → composer disabled + `⏸ 等待审批` badge so a broken feed is visible; the live UI pass ran the built bundle on `:11461` (SPA + assets + `/api/models` + `/api/workspaces` over the module key).
 - Tests: `web/tests/composer231.test.tsx` (9 cases: reference kinds + tokens, chip clearing, approval variant disabled state, five zones with cowork wiring, fixed pill label across states) + `web/tests/composer240.test.tsx` (paused-run feed, three-kind palette). CI web job now runs `bun run test` (was lint/typecheck/build only); suite 113 bun tests green.
+
+### New-Workspace Name Must Come From System Directories (v0.5.66, issue #251)
+
+- The home "＋ New working directory" form no longer takes a hand-typed name — the name must be **selected** from the server's system working directories. New `GET /api/workspaces/system-dirs` enumerates immediate subdirectories of `FUSION_COWORK_WORKSPACE_ROOT` (default: user home), excluding dotfiles/files, capped at 200, sorted; a missing root honestly reports `available: false` with a hint to set the env var.
+- Frontend WorkspacePicker: the name input became a `<select>` (loading / unavailable / empty states); directories already used by an existing workspace are disabled with a count hint; the create button stays disabled until a directory is picked; description/invite inputs unchanged. Selection logic lives in the pure helper `web/src/systemdirs.ts::selectableSystemDirs`.
+- Live-verified on `:11461`: real directories listed from `/Users/dahai/fusion`, a workspace created from a picked directory name, 401 auth matrix correct (test space cleaned up afterwards).
+- Tests: `tests/test_issue_251_system_dirs.py` (6 cases) + `web/tests/systemdirs251.test.ts` (3 cases).
 
 ### Run-Context Token Budget + Rolling Summary (v0.5.65, issue #249)
 

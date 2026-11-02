@@ -1512,6 +1512,27 @@ def create_web_app(
             )
         return {"workspaces": out, "available": True}
 
+    # ── issue #251: 系统工作目录枚举 — 新建目录名必须来自真实目录选择, 不收手输 ──
+    @app.get("/api/workspaces/system-dirs")
+    async def workspaces_system_dirs():
+        root = Path(os.environ.get("FUSION_COWORK_WORKSPACE_ROOT") or Path.home()).expanduser()
+        if not root.is_dir():
+            # 根不存在 → 诚实告知不可用, 前端选择器收起并提示
+            logger.warning(f"system-dirs 根目录不存在: {root}")
+            return {"root": str(root), "directories": [], "available": False}
+        try:
+            entries = sorted(
+                (e for e in root.iterdir() if e.is_dir() and not e.name.startswith(".")),
+                key=lambda e: e.name.lower(),
+            )
+        except OSError as e:
+            logger.error(f"system-dirs 枚举失败 root={root}: {e}")
+            raise HTTPException(
+                status_code=502, detail={"code": "upstream_error", "message": f"目录枚举失败: {e}"}
+            ) from e
+        directories = [{"name": e.name, "path": str(e)} for e in entries[:200]]
+        return {"root": str(root), "directories": directories, "available": True}
+
     @app.get("/api/runs/{run_id}")
     async def runs_get(run_id: str):
         record = runs.get(run_id)
