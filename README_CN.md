@@ -404,6 +404,10 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - **验收残留收口 (v0.5.62, issue #240)**: run 视图 `＠` 面板补齐三类引用 (工作目录 + 最近任务 + 本 run 步骤产物, 原先仅产物); 新增 feed 契约测试钉住 `runs_get.hitl_pending` → composer 禁用 + `⏸ 等待审批` 徽标, 字段断链即刻可见; live UI 走查在 `:11461` 以构建产物完成 (SPA + 静态资源 + `/api/models` + `/api/workspaces`, 模块 key 鉴权)。
 - 测试: `web/tests/composer231.test.tsx` (9 例: 三类引用 + token、chip 清除、审批禁用变体、cowork 接线下的五区、固定 pill 标签跨状态) + `web/tests/composer240.test.tsx` (暂停 run feed、三类引用面板)。CI web job 现执行 `bun run test` (原仅 lint/typecheck/build); bun 套件 113 例全绿。
 
+### 模块清单标题更名 (v0.5.64, issue #246)
+
+- 按 MT-4 命名标准 (产品名, 无残留旧名): `web/manifest.json` 的 `title`/`title_en` 工作流画布 → **Cowork**, 描述改写为点名产品与当前范围 (DAG 编排、协作空间、能力市场); manifest `version` 0.1.0 → 0.1.1 (心跳按 gateway #284 契约携带 manifest, 磁盘编辑一个心跳周期内收敛, 无需重启)。web-shell 侧 sidebar fixture 修正归其 MT-A issue。
+
 ### 产物深链实测 + 能力市场导流卡 (v0.5.63, issues #243/#244)
 
 - **产物卡片信封修复 (issue #243)**: 对 fusion-artifacts-engine 实测发现单卡端点返回 `{"artifact": {...}}` 信封 (网关风格是 `{"data": {...}}`) — 代理只解 `data`, 深链预填拿到全空卡片。`/api/artifacts/refs/{id}` 现同时解两种信封 + 平铺负载; 上游 401/403/404 映射 404 `artifact_not_found`, 传输失败/其他状态映射 502 `upstream_unavailable`。测试: `tests/test_issue_237_artifact_ref.py` (引擎/网关/平铺信封, 按状态路由)。
