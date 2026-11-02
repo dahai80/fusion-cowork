@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.64-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.65-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -459,6 +459,14 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - Wiring lives in pure helpers (`web/src/composer.ts`: `buildReferenceItems` / `buildContextChips` / `composerApprovalVariant` / `insertRefToken`) so behavior is unit-tested without a DOM.
 - **Acceptance residuals closed (v0.5.62, issue #240)**: the run-view `＠` palette now offers all three reference kinds (workspace directories + recent tasks + the run's own artifacts) instead of artifacts only; a feed-contract test pins `runs_get.hitl_pending` → composer disabled + `⏸ 等待审批` badge so a broken feed is visible; the live UI pass ran the built bundle on `:11461` (SPA + assets + `/api/models` + `/api/workspaces` over the module key).
 - Tests: `web/tests/composer231.test.tsx` (9 cases: reference kinds + tokens, chip clearing, approval variant disabled state, five zones with cowork wiring, fixed pill label across states) + `web/tests/composer240.test.tsx` (paused-run feed, three-kind palette). CI web job now runs `bun run test` (was lint/typecheck/build only); suite 113 bun tests green.
+
+### Run-Context Token Budget + Rolling Summary (v0.5.65, issue #249)
+
+- **Resume chains no longer replay full ancestor step lists.** `RunRegistry.resume_from` now builds the snapshot through `engine/run_context.py`: the most recent `FUSION_COWORK_RESUME_KEEP_RECENT` steps (default 8) keep full `output_data` for execution correctness; older eligible steps collapse into rolling `ancestor_summary` entries (per-node outcome + capped key outputs + `step://<run_id>/<node>` reference) — full detail stays in the run record for the timeline UI.
+- **Token budget with graceful detail degradation** (`FUSION_COWORK_RESUME_BUDGET_TOKENS`, default 12000): when the model-facing snapshot exceeds budget, entries demote oldest-first full body → compact (scalars capped at 200 chars, 10 keys) → ref-only (`step://` line), then ancestor summaries drop `output_summary` keys, then entries — never mid-string truncation.
+- **Chain-correctness fix**: resume-of-resume snapshots now include `skipped` preloaded copies (normalized to `success` for the engine snapshot restore) — previously only `success` steps were eligible, so round 3 lost round-1 outputs and silently re-ran the whole chain.
+- **Sub-linear scaling**: `resume-from` responses expose `context` stats (eligible/full/snapshot/ancestor/estimated_tokens/budget); ancestor summary composition caps at 50 entries so chain depth grows the new run's context sub-linearly. Verified by a 3-level chain test (depth-3 context < 2× depth-1; linear replay would be 3×).
+- Tests: `tests/test_issue_249_run_context.py` (9 cases: token heuristic, recent-full/older-summarized split, skipped eligibility, budget demotion levels, summary-key drop, ancestor cap, API chain + sub-linear scaling + tiny-budget run).
 
 ### Module Manifest Title Rename (v0.5.64, issue #246)
 

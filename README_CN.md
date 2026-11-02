@@ -404,6 +404,14 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - **验收残留收口 (v0.5.62, issue #240)**: run 视图 `＠` 面板补齐三类引用 (工作目录 + 最近任务 + 本 run 步骤产物, 原先仅产物); 新增 feed 契约测试钉住 `runs_get.hitl_pending` → composer 禁用 + `⏸ 等待审批` 徽标, 字段断链即刻可见; live UI 走查在 `:11461` 以构建产物完成 (SPA + 静态资源 + `/api/models` + `/api/workspaces`, 模块 key 鉴权)。
 - 测试: `web/tests/composer231.test.tsx` (9 例: 三类引用 + token、chip 清除、审批禁用变体、cowork 接线下的五区、固定 pill 标签跨状态) + `web/tests/composer240.test.tsx` (暂停 run feed、三类引用面板)。CI web job 现执行 `bun run test` (原仅 lint/typecheck/build); bun 套件 113 例全绿。
 
+### Run 上下文 token 预算 + 滚动摘要 (v0.5.65, issue #249)
+
+- **resume 链不再整链回放祖先步骤体。** `RunRegistry.resume_from` 经 `engine/run_context.py` 组快照: 最近 `FUSION_COWORK_RESUME_KEEP_RECENT` 步 (默认 8) 保全量 `output_data` (执行正确性); 更早可选步收进滚动 `ancestor_summary` (每节点结果 + 截断关键输出 + `step://<run_id>/<node>` 引用行) — 完整细节保留在 run 记录里供时间线 UI。
+- **token 预算 + 逐级降细节** (`FUSION_COWORK_RESUME_BUDGET_TOKENS`, 默认 12000): 模型侧快照超预算时, 条目按最老优先降级 full body → compact (标量截 200 字符/10 键) → ref-only (`step://` 行), 再丢祖先摘要 `output_summary` 键, 再丢条目 — 不做字符串中段截断。
+- **链条正确性修复**: resume-of-resume 快照现包含 `skipped` 预载副本 (engine 快照恢复前归一化为 `success`) — 旧逻辑只认 `success`, round 3 丢失 round 1 输出并悄悄整链重跑。
+- **亚线性扩展**: `resume-from` 响应携带 `context` 统计 (eligible/full/snapshot/ancestor/estimated_tokens/budget); 祖先摘要续接封顶 50 条, 链深增长时新 run 上下文亚线性。3 层链测试验证 (depth-3 < 2× depth-1; 线性回放为 3×)。
+- 测试: `tests/test_issue_249_run_context.py` (9 例: token 启发、近全量/远摘要切分、skipped 可选、预算降级层级、摘要键丢弃、祖先封顶、API 链 + 亚线性 + 小预算 run)。
+
 ### 模块清单标题更名 (v0.5.64, issue #246)
 
 - 按 MT-4 命名标准 (产品名, 无残留旧名): `web/manifest.json` 的 `title`/`title_en` 工作流画布 → **Cowork**, 描述改写为点名产品与当前范围 (DAG 编排、协作空间、能力市场); manifest `version` 0.1.0 → 0.1.1 (心跳按 gateway #284 契约携带 manifest, 磁盘编辑一个心跳周期内收敛, 无需重启)。web-shell 侧 sidebar fixture 修正归其 MT-A issue。
