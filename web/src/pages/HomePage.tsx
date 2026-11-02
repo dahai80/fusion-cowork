@@ -12,6 +12,7 @@ import {
 import type { StatusKind } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
 import { type RunListItem, type WorkspaceInfo, api, statusKind } from '../api';
+import { poolExtraCapabilities, poolSkillNames } from '../capabilities';
 import { buildContextChips, buildReferenceItems, insertRefToken } from '../composer';
 import { useT } from '../i18n';
 import { preferredModel, setPreferredModel } from '../modelPref';
@@ -240,7 +241,7 @@ function TaskHome({ activeId, onSwitch }: { activeId: string; onSwitch: () => vo
     const lang = sdk.i18n.lang();
     const ws = useAutoRetry(() => api.workspaces(), []);
     const runs = useAutoRetry(() => api.runs(activeId), [activeId]);
-    const skills = useAutoRetry(() => api.extensionSkills(), []);
+    const capsCatalog = useAutoRetry(() => api.capabilities(activeId), [activeId]);
     const approvals = useAutoRetry(() => api.pendingApprovals(), []);
     const [prompt, setPrompt] = useState('');
     const [preview, setPreview] = useState<PlanPreview | null>(null);
@@ -429,7 +430,9 @@ function TaskHome({ activeId, onSwitch }: { activeId: string; onSwitch: () => vo
         setPreview(null);
     }
 
-    const skillNames = (skills.data?.skills ?? []).map((s) => s.name);
+    // issue #228: capability picker reads the workspace pool.
+    const skillNames = poolSkillNames(capsCatalog.data);
+    const poolExtras = poolExtraCapabilities(capsCatalog.data);
 
     return (
         <div className="mx-auto max-w-4xl">
@@ -504,11 +507,20 @@ function TaskHome({ activeId, onSwitch }: { activeId: string; onSwitch: () => vo
                     },
                     actions: {
                         title: t('能力', 'Capabilities'),
-                        items: skillNames.map((n) => ({
-                            key: n,
-                            label: `${caps.includes(n) ? '✓' : '○'} ⚙ ${n}`,
-                            onClick: () => toggleCap(n),
-                        })),
+                        items: [
+                            ...skillNames.map((n) => ({
+                                key: n,
+                                label: `${caps.includes(n) ? '✓' : '○'} ⚙ ${n}`,
+                                onClick: () => toggleCap(n),
+                            })),
+                            ...poolExtras.map((i) => ({
+                                key: i.id,
+                                label: `${caps.includes(i.name) ? '✓' : '○'} ${i.type === 'connector' ? '🔌' : '🤖'} ${
+                                    i.title || i.name
+                                }`,
+                                onClick: () => toggleCap(i.name),
+                            })),
+                        ],
                         emptyLabel: t('暂无可用能力', 'No capabilities'),
                     },
                 }}

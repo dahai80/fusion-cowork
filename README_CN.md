@@ -379,6 +379,19 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 
 测试: `tests/test_issue_189_node_executor.py` (33 例 + 1 例 live-AS 跳过: 波次并发墙钟/重叠/峰值、env 解析、配置往返、UDS 成功/partial/失败/transcript 容错、HTTP 完成/失败/超时/覆盖降级、混合 DAG 端到端、agent 失败语义、跨 agent 节点断点续跑)。文档: `docs/node-executors.md`。
 
+### 能力市场 (v0.5.59, issue #228)
+
+按工作区安装技能 / 连接器 / 子代理，并在运行时校验。
+
+- **目录来源** — 内置 / JSON / markdown 技能；连接器取自用户配置 (`~/.fusion-cowork/connectors/*.json`)、fusion-rag 已接线知识库与 `fusion_core.mcp_registry`（未安装时如实标记不可用）；子代理来自 DAG 模板与 agent-studio graph/agent（`GET /v1/graphs`、`/v1/agents`，HTTP 失败照实暴露，不编造条目）。
+- **按工作区安装 / 启用 / 卸载** — 状态存 `~/.fusion-cowork/capabilities.json`；非默认工作区经 `SpaceStore` 校验。
+- **运行闸门** — `PermissionManager.capability_gate` 拒绝未安装/已停用能力；未授权的敏感 scope 与未完成 OAuth 的连接器进入既有 HITL 审批；工作区未安装任何技能/连接器时闸门不生效。`WorkflowEngine.set_run_workspace` 把工作区带入审批上下文。
+- **连接器** — 运营方提供带 `sensitive` 标记的 scope；通用授权码 OAuth（PKCE S256、state TTL、`encrypt_at_rest` 加密落盘、撤销）。
+- **子代理** — 定义预览与派生：模板启动本地 run（`POST /api/runs` 带 `space_id`），agent-studio graph/agent 上游执行。
+- **用量与审计** — `RunRegistry` 在 run 结束时记录能力用量（含 denied/gated 结论），`GET /api/capabilities/{type}/{id}/usage` 查询。
+- **Web** — `#/capabilities` 页面（三页签、工作区选择、scope/OAuth/派生操作），任务首页 `⚙` 能力选择器读取工作区池，⌘K 面板经扩展后的 `GET /api/search` 搜索工作流/运行/空间/能力。
+- 详见 `docs/capability-marketplace.md`；测试 `tests/test_issue_228_capability_marketplace.py`、`web/tests/capabilities228.test.tsx`。
+
 ### FCS-1 Composer 合规 (v0.5.58, issue #231)
 
 cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 共享 FCS-1 `Composer` (fusion-web-shell#96/#98, 规范 `fusion-composer-standard-1101`): 五区结构、固定 ⬆ 发送、常驻提示行、无散落工具栏按钮。

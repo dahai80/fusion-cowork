@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.4-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.59-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -434,6 +434,19 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#125 (P2) — manifest upstream/api_key**: `web/manifest.json` declares `upstream` (`http://127.0.0.1:11461`) + `api_key_env`; `shell_registry.load_manifest()` resolves `api_key` from that env at registration time and honors `FUSION_COWORK_WEB_UPSTREAM` overrides. Gateway dynamic proxy (#232 contract) can resolve the module.
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
+
+### Capability Marketplace (v0.5.59, issue #228)
+
+Workspace-scoped pool of skills, connectors and subagents, enforced at run time.
+
+- **Catalog sources** — built-in / JSON / markdown skills; connectors from user configs (`~/.fusion-cowork/connectors/*.json`), fusion-rag wired KBs and `fusion_core.mcp_registry` (honest `unavailable` when absent); subagents from DAG templates and agent-studio graphs/agents (`GET /v1/graphs`, `/v1/agents` — HTTP failures surface, never invented entries).
+- **Install / enable / uninstall per workspace** — state in `~/.fusion-cowork/capabilities.json`; non-default workspace ids validated against `SpaceStore`.
+- **Run gate** — `PermissionManager.capability_gate` denies uninstalled or disabled capabilities, requires approval for ungranted sensitive scopes and for OAuth connectors without credentials (existing HITL queue), and stays inert until the workspace installs its first skill / connector. `WorkflowEngine.set_run_workspace` threads the workspace into the approval context.
+- **Connectors** — operator-supplied scopes with `sensitive` flags; generic authorization-code OAuth with PKCE S256, `state` TTL, encrypted token storage (`encrypt_at_rest`), revoke.
+- **Subagents** — definition preview and spawn: templates start a local run (`POST /api/runs` with `space_id`), agent-studio graphs/agents execute upstream.
+- **Usage & audit** — `RunRegistry` records capability usage on run completion (denied/gated verdicts included), exposed at `GET /api/capabilities/{type}/{id}/usage`.
+- **Web** — `#/capabilities` page (three tabs, workspace selector, scope/OAuth/spawn actions), task-home `⚙` picker reads the workspace pool, and a ⌘K palette searches workflows, runs, spaces and capabilities via the extended `GET /api/search`.
+- Details: `docs/capability-marketplace.md`. Tests: `tests/test_issue_228_capability_marketplace.py`, `web/tests/capabilities228.test.tsx`.
 
 ### FCS-1 Composer Conformance (v0.5.58, issue #231)
 

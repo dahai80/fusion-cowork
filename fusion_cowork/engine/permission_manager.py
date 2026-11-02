@@ -232,6 +232,9 @@ class PermissionManager:
         self._pending_local_details: Dict[str, Dict[str, Any]] = {}
         # issue #154: 待审批入队回调 — 审批请求外发 (webhook push) 挂点
         self.on_pending_created = None
+        # issue #228: 工作区能力闸门 — async (tool, params, workspace_id) -> (verdict, reason);
+        # 未注入 = 零行为变化。verdict: allow / deny / approval (approval 走既有 HITL 待审批)
+        self.capability_gate = None
 
     async def check(self, tool_name: str, action: str = "", params: Dict[str, Any] = None) -> bool:
         # A-6: deny 规则须先于 Hook 批准判定 — 否则 Hook approve 可覆盖显式 deny (绕过)。
@@ -279,6 +282,17 @@ class PermissionManager:
         for rule in rules_snapshot:
             if rule.matches(tool_name, params) and rule.allowed:
                 return True
+
+        # issue #228: 工作区能力池闸门 — 未安装/已停用 → 拒绝; 敏感 scope 未授权 → 走审批
+        if self.capability_gate is not None:
+            workspace_id = str(_approval_context.get({}).get("workspace_id", ""))
+            verdict, reason = await self.capability_gate(tool_name, params or {}, workspace_id)
+            if verdict == "deny":
+                logger.warning(f"能力闸门拒绝: {tool_name} — {reason}")
+                return False
+            if verdict == "approval":
+                logger.info(f"能力闸门待审批: {tool_name} — {reason}")
+                return await self._check_high_risk_guard(tool_name, action, params)
 
         # 高风险节点无显式批准 → 委托 guard (issue #73) 或拒绝 (需 approve 规则或 Hook 放行)
         if tool_name in HIGH_RISK_NODES:

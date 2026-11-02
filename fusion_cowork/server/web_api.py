@@ -386,6 +386,8 @@ class RunRegistry:
         self.run_store = run_store
         # issue #154: webhook push 出口 (未注入 = 不推送, 零行为变化)
         self.push = None
+        # issue #228: 能力用量入账回调 (未注入 = 不记账, 零行为变化)
+        self.capability_recorder = None
         if event_emitter is not None:
             event_emitter.on_event(self._on_event)
 
@@ -599,6 +601,10 @@ class RunRegistry:
                 engine_kwargs["resume_steps"] = resume_steps
             if start_paused:
                 engine_kwargs["start_paused"] = True
+            # issue #228: 运行工作区传给引擎 — 能力闸门按工作区能力池判定
+            setter = getattr(self._engine, "set_run_workspace", None)
+            if callable(setter):
+                setter(run_id, str(record.get("space_id") or ""))
             execution = await self._engine.execute(
                 wf,
                 initial_input=initial_input,
@@ -645,6 +651,12 @@ class RunRegistry:
                     self.run_store.delete(run_id)
                 except Exception as e:
                     logger.warning(f"运行状态清理失败 (忽略) {run_id}: {e}")
+            # issue #228: 能力用量入账 (调用次数/最近使用/审计), 仅记录已装能力
+            if self.capability_recorder is not None:
+                try:
+                    self.capability_recorder(record)
+                except Exception as e:
+                    logger.warning(f"能力用量入账失败 (忽略) {run_id}: {e}")
             # W9: 成功完成的运行进入交付审查队列; 失败/取消不进入
             if record["status"] == "success" and record.get("review") is None:
                 record["review"] = {"status": "pending_review", "note": "", "reviewed_at": None}
@@ -1088,6 +1100,12 @@ def create_web_app(
     team_roster: Any = None,
     team_mailbox: Any = None,
     runner_pool: Any = None,
+    capabilities_store: Any = None,
+    capabilities_path: Optional[Path] = None,
+    connector_dir: Optional[Path] = None,
+    studio_base_url: Optional[str] = None,
+    studio_api_key: Optional[str] = None,
+    capabilities_transport: Any = None,
 ):
     try:
         from fastapi import FastAPI, HTTPException, Request, WebSocket
@@ -1166,6 +1184,25 @@ def create_web_app(
     app.state.run_registry = runs
     # W22: 跨设备同步引擎接缝 — 注入后 /api/deliver 可投递; 默认 None (503 诚实不可用)
     app.state.cross_sync = cross_sync
+
+    # ── issue #228: 能力市场 — 工作区能力池 + 授权闸门 + 用量入账 ──
+    from ..capabilities import OAuthFlow, build_catalog, make_capability_gate, record_run_usage
+    from ..capabilities.store import CapabilityStore
+
+    capability_store = capabilities_store or CapabilityStore(capabilities_path)
+    app.state.capability_store = capability_store
+    _gate_kwargs = {
+        "connector_dir": connector_dir,
+        "rag_wired_path": rag_wired_path,
+    }
+    if getattr(permission_manager, "capability_gate", None) is None:
+        permission_manager.capability_gate = make_capability_gate(capability_store, **_gate_kwargs)
+
+    def _capability_recorder(record: Dict[str, Any]) -> None:
+        record_run_usage(capability_store, record, **_gate_kwargs)
+
+    runs.capability_recorder = _capability_recorder
+    oauth_flow = OAuthFlow(transport=capabilities_transport)
 
     # issue #190: 团队消息消费栈 — 花名册 + durable 信箱 + 常驻消费池
     from ..orchestrator.runner_pool import RunnerPool
@@ -2276,6 +2313,310 @@ def create_web_app(
             if isinstance(h, dict)
         ]
 
+    # ── issue #228: 能力市场 — Skills / Connectors / Sub-agents 统一生命周期 ──
+    from ..capabilities import load_connector_config, normalize_workspace, search_items
+
+    _CAP_KIND = {"skill": "skills", "connector": "connectors", "subagent": "subagents"}
+
+    async def _cap_workspace(raw: Any) -> str:
+        ws = normalize_workspace(raw)
+        if ws == normalize_workspace("") or space_store is None:
+            return ws
+        try:
+            space = await space_store.get_space(ws)
+        except Exception as e:
+            logger.warning(f"能力市场: 工作区校验失败 {ws}: {e}")
+            raise HTTPException(status_code=502, detail={"code": "upstream_error", "message": str(e)}) from e
+        if space is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"工作区不存在: {ws}"})
+        return ws
+
+    async def _cap_catalog(ws: str, types: Optional[List[str]] = None) -> Dict[str, Any]:
+        return await build_catalog(
+            ws,
+            store=capability_store,
+            skills_dir=skills_dir,
+            connector_dir=connector_dir,
+            rag_wired_path=rag_wired_path,
+            studio_base_url=studio_base_url,
+            studio_api_key=studio_api_key,
+            transport=capabilities_transport,
+            types=types,
+        )
+
+    async def _cap_item(ws: str, cap_type: str, cap_id: str) -> Optional[Dict[str, Any]]:
+        catalog = await _cap_catalog(ws, [cap_type])
+        return next((i for i in catalog[_CAP_KIND[cap_type]] if i["id"] == cap_id), None)
+
+    def _cap_type_or_400(cap_type: str) -> str:
+        if cap_type not in _CAP_KIND:
+            raise HTTPException(status_code=400, detail={"code": "bad_type", "message": f"未知能力类型: {cap_type}"})
+        return cap_type
+
+    async def _cap_body(request: Request) -> Dict[str, Any]:
+        try:
+            body = await request.json()
+        except Exception as e:
+            logger.warning(f"能力市场请求体解析失败: {e}")
+            return {}
+        return body if isinstance(body, dict) else {}
+
+    @app.get("/api/capabilities")
+    async def capabilities_list(workspace_id: str = "", q: str = "", type: str = ""):
+        ws = await _cap_workspace(workspace_id)
+        types = [type] if type in _CAP_KIND else None
+        catalog = await _cap_catalog(ws, types)
+        query = q.strip().lower()
+        if query:
+            for key in _CAP_KIND.values():
+                catalog[key] = [
+                    i
+                    for i in catalog[key]
+                    if query
+                    in " ".join(
+                        str(i.get(k) or "") for k in ("name", "title", "title_en", "description", "description_en")
+                    ).lower()
+                ]
+            catalog["count"] = sum(len(catalog[k]) for k in _CAP_KIND.values())
+        return catalog
+
+    @app.post("/api/capabilities/{cap_type}/{cap_id}/install")
+    async def capabilities_install(cap_type: str, cap_id: str, request: Request):
+        _cap_type_or_400(cap_type)
+        body = await _cap_body(request)
+        ws = await _cap_workspace(body.get("workspace_id"))
+        item = await _cap_item(ws, cap_type, cap_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知能力: {cap_id}"})
+        entry = capability_store.install(
+            ws,
+            cap_type,
+            cap_id,
+            name=str(item.get("title") or item.get("name") or cap_id),
+            source=str(item.get("source") or ""),
+            spawn_policy=item.get("spawn_policy") if cap_type == "subagent" else None,
+            actor=str(body.get("actor") or ""),
+        )
+        logger.info(f"能力市场安装: ws={ws} {cap_id} source={item.get('source')}")
+        return {"installed": True, "workspace_id": ws, "capability": entry.to_public()}
+
+    @app.delete("/api/capabilities/{cap_type}/{cap_id}")
+    async def capabilities_uninstall(cap_type: str, cap_id: str, workspace_id: str = ""):
+        _cap_type_or_400(cap_type)
+        ws = normalize_workspace(workspace_id)
+        removed = capability_store.uninstall(ws, cap_type, cap_id)
+        return {"uninstalled": removed, "workspace_id": ws, "id": cap_id}
+
+    @app.patch("/api/capabilities/{cap_type}/{cap_id}/enabled")
+    async def capabilities_enabled(cap_type: str, cap_id: str, request: Request):
+        _cap_type_or_400(cap_type)
+        body = await _cap_body(request)
+        ws = await _cap_workspace(body.get("workspace_id"))
+        enabled = bool(body.get("enabled", True))
+        entry = capability_store.set_enabled(ws, cap_type, cap_id, enabled, actor=str(body.get("actor") or ""))
+        if entry is None:
+            raise HTTPException(status_code=404, detail={"code": "not_installed", "message": f"未安装: {cap_id}"})
+        return {"workspace_id": ws, "capability": entry.to_public()}
+
+    @app.post("/api/capabilities/connectors/{cap_id}/scopes")
+    async def capabilities_scopes(cap_id: str, request: Request):
+        body = await _cap_body(request)
+        ws = await _cap_workspace(body.get("workspace_id"))
+        item = await _cap_item(ws, "connector", cap_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知连接器: {cap_id}"})
+        known = {str(s.get("id")): bool(s.get("sensitive")) for s in item.get("scopes") or []}
+        requested = [str(s) for s in body.get("scopes") or [] if str(s)]
+        unknown = [s for s in requested if s not in known]
+        if unknown:
+            raise HTTPException(status_code=400, detail={"code": "unknown_scope", "message": f"未知 scope: {unknown}"})
+        sensitive = [s for s in requested if known.get(s)]
+        if sensitive and body.get("approve") is not True:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "sensitive_scope_requires_approval", "message": f"敏感 scope 需显式批准: {sensitive}"},
+            )
+        entry = capability_store.grant_scopes(ws, cap_id, requested, actor=str(body.get("actor") or ""))
+        if entry is None:
+            raise HTTPException(status_code=404, detail={"code": "not_installed", "message": f"未安装: {cap_id}"})
+        return {"workspace_id": ws, "capability": entry.to_public(), "sensitive_approved": sensitive}
+
+    @app.post("/api/capabilities/connectors/{cap_id}/oauth/start")
+    async def capabilities_oauth_start(cap_id: str, request: Request):
+        body = await _cap_body(request)
+        ws = await _cap_workspace(body.get("workspace_id"))
+        item = await _cap_item(ws, "connector", cap_id)
+        if item is None or (item.get("auth") or {}).get("kind") != "oauth":
+            raise HTTPException(
+                status_code=404, detail={"code": "oauth_not_configured", "message": f"无 OAuth 配置: {cap_id}"}
+            )
+        raw_id = str(item.get("name") or "")
+        cfg = load_connector_config(connector_dir, raw_id) or {}
+        oauth_cfg = cfg.get("oauth") if isinstance(cfg.get("oauth"), dict) else None
+        if not oauth_cfg:
+            raise HTTPException(
+                status_code=404, detail={"code": "oauth_not_configured", "message": f"无 OAuth 配置: {cap_id}"}
+            )
+        try:
+            started = oauth_flow.start(cap_id, oauth_cfg, workspace_id=ws)
+        except Exception as e:
+            logger.warning(f"OAuth 授权启动失败 {cap_id}: {e}")
+            raise HTTPException(status_code=400, detail={"code": "oauth_not_configured", "message": str(e)}) from e
+        return started
+
+    @app.get("/api/capabilities/oauth/callback")
+    async def capabilities_oauth_callback(code: str = "", state: str = "", error: str = ""):
+        from ..security.encryption import encrypt_at_rest
+
+        if error:
+            logger.warning(f"OAuth 回调返回错误: {error}")
+            return JSONResponse({"connected": False, "error": error}, status_code=400)
+        pending = oauth_flow.pop_state(state)
+        if pending is None:
+            raise HTTPException(
+                status_code=400, detail={"code": "oauth_state_invalid", "message": "state 未知或已过期"}
+            )
+        if not code:
+            raise HTTPException(status_code=400, detail={"code": "oauth_code_missing", "message": "缺少 code"})
+        cap_id = str(pending.get("connector_id") or "")
+        ws = str(pending.get("workspace_id") or "")
+        item = await _cap_item(ws, "connector", cap_id)
+        raw_id = str((item or {}).get("name") or "")
+        cfg = load_connector_config(connector_dir, raw_id) or {}
+        oauth_cfg = cfg.get("oauth") if isinstance(cfg.get("oauth"), dict) else {}
+        try:
+            tokens = await oauth_flow.exchange(pending, code, oauth_cfg)
+        except Exception as e:
+            logger.warning(f"OAuth token 交换失败 {cap_id}: {e}")
+            raise HTTPException(status_code=502, detail={"code": "oauth_exchange_failed", "message": str(e)}) from e
+        encrypted = {k: encrypt_at_rest(str(v)) for k, v in tokens.items()}
+        capability_store.set_credentials(ws, cap_id, encrypted)
+        scopes = [str(s) for s in pending.get("scopes") or []]
+        if scopes:
+            capability_store.grant_scopes(ws, cap_id, scopes)
+        logger.info(f"OAuth 连接完成: ws={ws} {cap_id} scopes={scopes}")
+        return {"connected": True, "workspace_id": ws, "connector_id": cap_id, "scopes": scopes}
+
+    @app.post("/api/capabilities/connectors/{cap_id}/revoke")
+    async def capabilities_oauth_revoke(cap_id: str, request: Request):
+        body = await _cap_body(request)
+        ws = await _cap_workspace(body.get("workspace_id"))
+        revoked = capability_store.clear_credentials(ws, cap_id)
+        return {"revoked": revoked, "workspace_id": ws, "id": cap_id}
+
+    @app.get("/api/capabilities/{cap_type}/{cap_id}/usage")
+    async def capabilities_usage(cap_type: str, cap_id: str, workspace_id: str = ""):
+        _cap_type_or_400(cap_type)
+        ws = normalize_workspace(workspace_id)
+        usage = capability_store.usage(ws, cap_type, cap_id)
+        if usage is None:
+            raise HTTPException(status_code=404, detail={"code": "not_installed", "message": f"未安装: {cap_id}"})
+        usage["workspace_id"] = ws
+        return usage
+
+    @app.get("/api/capabilities/subagents/{cap_id}/definition")
+    async def capabilities_definition(cap_id: str, workspace_id: str = ""):
+        ws = await _cap_workspace(workspace_id)
+        item = await _cap_item(ws, "subagent", cap_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知子代理: {cap_id}"})
+        kind = str((item.get("detail") or {}).get("kind") or "")
+        if kind == "template":
+            from ..templates import TemplateManager
+
+            tpl = TemplateManager().get_template(str(item["detail"]["template_id"]))
+            if tpl is None:
+                raise HTTPException(status_code=404, detail={"code": "not_found", "message": "模板不存在"})
+            return {"kind": "template", "definition": tpl}
+        import httpx
+
+        base = (studio_base_url or os.environ.get("FUSION_AGENT_STUDIO_URL", "http://127.0.0.1:11442")).rstrip("/")
+        key = (studio_api_key or os.environ.get("FUSION_AGENT_STUDIO_API_KEY", "")).strip()
+        headers = {"x-api-key": key} if key else {}
+        detail = item.get("detail") or {}
+        path = (
+            f"/v1/graphs/{detail.get('graph_id')}"
+            if kind == "graph"
+            else f"/v1/agents/{detail.get('agent_id')}/definition"
+        )
+        try:
+            async with httpx.AsyncClient(
+                base_url=base, headers=headers, timeout=5.0, transport=capabilities_transport
+            ) as client:
+                resp = await client.get(path)
+                resp.raise_for_status()
+                return {"kind": kind, "definition": resp.json()}
+        except Exception as e:
+            logger.warning(f"子代理定义拉取失败 {cap_id}: {e}")
+            raise HTTPException(status_code=502, detail={"code": "upstream_unavailable", "message": str(e)}) from e
+
+    @app.post("/api/capabilities/subagents/{cap_id}/spawn")
+    async def capabilities_spawn(cap_id: str, request: Request):
+        body = await _cap_body(request)
+        ws = await _cap_workspace(body.get("workspace_id"))
+        entry = capability_store.get(ws, "subagent", cap_id)
+        if entry is None or not entry.enabled:
+            raise HTTPException(status_code=409, detail={"code": "not_enabled", "message": f"子代理未启用: {cap_id}"})
+        item = await _cap_item(ws, "subagent", cap_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知子代理: {cap_id}"})
+        detail = item.get("detail") or {}
+        policy = entry.spawn_policy or item.get("spawn_policy") or {}
+        if policy.get("requires_approval") and body.get("approve") is not True:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "spawn_approval_required", "message": f"子代理派生需显式批准: {cap_id}"},
+            )
+        text = str(body.get("input") or body.get("goal") or "")
+        kind = str(detail.get("kind") or "")
+        if kind == "template":
+            from ..templates import TemplateManager
+
+            wf = TemplateManager().template_to_workflow(str(detail.get("template_id") or ""))
+            if wf is None:
+                raise HTTPException(status_code=404, detail={"code": "not_found", "message": "模板不存在"})
+            started = runs.start(
+                wf.to_dict(),
+                workflow_id=f"capability:{cap_id}",
+                workflow_name=item.get("title") or wf.name,
+                source="capability",
+                labels={"capability": cap_id},
+                space_id=ws,
+            )
+            logger.info(f"子代理派生 (template): ws={ws} {cap_id} run={started['run_id']}")
+            return {"kind": "template", "run_id": started["run_id"], "route": f"/runs/{started['run_id']}"}
+        import httpx
+
+        base = (studio_base_url or os.environ.get("FUSION_AGENT_STUDIO_URL", "http://127.0.0.1:11442")).rstrip("/")
+        key = (studio_api_key or os.environ.get("FUSION_AGENT_STUDIO_API_KEY", "")).strip()
+        headers = {"x-api-key": key} if key else {}
+        timeout = float(policy.get("timeout_s") or 120)
+        try:
+            async with httpx.AsyncClient(
+                base_url=base, headers=headers, timeout=timeout, transport=capabilities_transport
+            ) as client:
+                if kind == "graph":
+                    graph_id = str(detail.get("graph_id") or "")
+                    resp = await client.post(
+                        f"/v1/graphs/{graph_id}/execute",
+                        json={"graph_id": graph_id, "input_text": text},
+                    )
+                else:
+                    resp = await client.post(
+                        "/v1/runs",
+                        json={"goal": text, "agent_id": str(detail.get("agent_id") or "")},
+                    )
+                resp.raise_for_status()
+                payload = resp.json()
+        except Exception as e:
+            logger.warning(f"子代理派生失败 {cap_id}: {e}")
+            raise HTTPException(status_code=502, detail={"code": "upstream_unavailable", "message": str(e)}) from e
+        capability_store.record_usage(
+            ws, "subagent", cap_id, workflow=str(item.get("title") or ""), detail=text[:80], verdict="spawned"
+        )
+        logger.info(f"子代理派生 ({kind}): ws={ws} {cap_id}")
+        return {"kind": kind, "result": payload, "spawn_policy": policy}
+
     # ── issue #153: 托管浏览器 — 启动 / 关闭 / 状态 / 实时截图侧栏 ──
     @app.post("/api/browser/launch")
     async def browser_launch(request: Request):
@@ -2538,6 +2879,26 @@ def create_web_app(
                 name = str(getattr(s, "name", "") or getattr(s, "id", ""))
                 if query in name.lower():
                     items.append({"title": name, "route": "/spaces", "kind": "space"})
+        # issue #228: 能力市场条目并入 ⌘K 搜索 (技能/连接器/子代理)
+        try:
+            for hit in search_items(
+                q,
+                normalize_workspace(""),
+                store=capability_store,
+                skills_dir=skills_dir,
+                connector_dir=connector_dir,
+                rag_wired_path=rag_wired_path,
+            ):
+                items.append(
+                    {
+                        "title": hit.get("title") or hit.get("name") or hit["id"],
+                        "route": f"/capabilities/{hit['type']}",
+                        "kind": "capability",
+                        "capability_id": hit["id"],
+                    }
+                )
+        except Exception as e:
+            logger.warning(f"搜索能力市场失败 (跳过): {e}")
         items = items[:32]
         logger.info(f"web API 搜索 q={q!r} 命中 {len(items)} 条")
         return {"items": items}
