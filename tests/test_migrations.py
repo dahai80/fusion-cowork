@@ -29,6 +29,11 @@ async def sqlite_runner(tmp_path):
         "sync_events",
     ]:
         await db.execute(f"CREATE TABLE {t} (id TEXT PRIMARY KEY)")
+    # issue #253: 模拟 v0.4.0 之前的旧表 — space_notifications / sidebar_modules 无 tenant_id
+    await db.execute(
+        "CREATE TABLE space_notifications (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, read INTEGER NOT NULL DEFAULT 0)"
+    )
+    await db.execute("CREATE TABLE sidebar_modules (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '')")
     await db.commit()
 
     async def _exec(sql, params=(), read=False):
@@ -46,14 +51,14 @@ async def sqlite_runner(tmp_path):
 async def test_run_pending_applies_all(sqlite_runner):
     runner, db = sqlite_runner
     applied = await runner.run_pending()
-    assert sorted(applied) == [1, 2]
+    assert sorted(applied) == [1, 2, 3]
 
 
 async def test_run_pending_idempotent(sqlite_runner):
     runner, db = sqlite_runner
     first = await runner.run_pending()
     second = await runner.run_pending()
-    assert first == [1, 2]
+    assert first == [1, 2, 3]
     assert second == []
 
 
@@ -62,7 +67,7 @@ async def test_version_recorded(sqlite_runner):
     await runner.run_pending()
     rows = await db.execute("SELECT version FROM schema_migrations ORDER BY version")
     versions = [r[0] for r in await rows.fetchall()]
-    assert versions == [1, 2]
+    assert versions == [1, 2, 3]
 
 
 async def test_only_pending_applied(sqlite_runner):
@@ -71,7 +76,7 @@ async def test_only_pending_applied(sqlite_runner):
     await runner._ensure_migration_table()
     await runner._record(MIGRATIONS[0])
     applied = await runner.run_pending()
-    assert applied == [2]
+    assert applied == [2, 3]
 
 
 async def test_tenant_id_columns_added(sqlite_runner):
@@ -80,6 +85,27 @@ async def test_tenant_id_columns_added(sqlite_runner):
     cols = await db.execute("PRAGMA table_info(spaces)")
     names = {r[1] for r in await cols.fetchall()}
     assert "tenant_id" in names
+
+
+async def test_v3_legacy_tables_get_tenant_id(sqlite_runner):
+    # issue #253: 旧库 space_notifications / sidebar_modules 补 tenant_id, 通知查询不再 500
+    runner, db = sqlite_runner
+    await runner.run_pending()
+    for t in ("space_notifications", "sidebar_modules"):
+        cols = await db.execute(f"PRAGMA table_info({t})")
+        names = {r[1] for r in await cols.fetchall()}
+        assert "tenant_id" in names, t
+    rows = await db.execute("SELECT * FROM space_notifications WHERE tenant_id = ''")
+    assert await rows.fetchall() == []
+
+
+async def test_v3_skipped_when_already_applied(sqlite_runner):
+    # 已记录 v3 的库重复 init 不再重放 ADD COLUMN (runner 吞 duplicate column 错, 幂等)
+    runner, db = sqlite_runner
+    first = await runner.run_pending()
+    second = await runner.run_pending()
+    assert 3 in first
+    assert second == []
 
 
 async def test_custom_migrations_set(tmp_path):

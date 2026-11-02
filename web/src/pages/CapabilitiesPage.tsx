@@ -370,7 +370,7 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
                             ? ` · ${new Date(usage.usage.last_used_at * 1000).toLocaleString()}`
                             : ''}
                     </div>
-                    {usage.audit.length === 0 ? (
+                    {(usage.audit ?? []).length === 0 ? (
                         <div className="text-xs text-text-muted">{t('暂无记录', 'No records yet')}</div>
                     ) : (
                         <ul className="divide-y divide-border text-xs">
@@ -482,7 +482,7 @@ function CapabilityCard(props: {
 
             {item.description ? <div className="text-xs text-text-muted">{item.description}</div> : null}
 
-            {item.scopes.length > 0 ? (
+            {(item.scopes ?? []).length > 0 ? (
                 <div className="flex flex-wrap gap-1">
                     {item.scopes.map((scope) => (
                         <button

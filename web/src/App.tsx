@@ -80,6 +80,7 @@ function parseHash(): { route: Route; arg: string } {
     const [head, arg = ''] = h.split('/');
     if (head === 'canvas') return { route: 'canvas', arg };
     if (head === 'home') return { route: 'home', arg };
+    if (head === 'workflows') return { route: 'workflows', arg };
     if (head === 'delegate') return { route: 'delegate', arg };
     if (head === 'runs') return { route: 'runs', arg };
     if (head === 'sessions') return { route: 'sessions', arg };
