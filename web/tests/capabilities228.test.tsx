@@ -2,8 +2,10 @@ import { describe, expect, it } from 'bun:test';
 import type { CapabilityCatalog, CapabilityItem } from '../src/api';
 import {
     capabilityItems,
+    capabilityPitches,
     capabilityTypeFromRoute,
     filterCapabilities,
+    hasInstalledCapabilities,
     poolExtraCapabilities,
     poolSkillNames,
     usableCapability,
@@ -118,5 +120,28 @@ describe('workspace pool', () => {
             connectors: CATALOG.connectors.map((c) => ({ ...c, installed: false })),
         };
         expect(poolExtraCapabilities(noInstall).map((i) => i.id)).toEqual(['subagent.graph.g1']);
+    });
+});
+
+describe('pitch cards (#244 R1)', () => {
+    it('offers the three anthropic-style pitches', () => {
+        const pitches = capabilityPitches();
+        expect(pitches.map((p) => p.key)).toEqual(['skill', 'connector', 'subagent']);
+        expect(pitches.map((p) => p.title.zh)).toEqual(['技能', '连接器', '子代理']);
+        expect(pitches[0].desc.zh).toContain('领域知识');
+        expect(pitches[1].desc.zh).toContain('已在用的工具');
+        expect(pitches[2].desc.zh).toContain('专项任务');
+    });
+
+    it('hides pitches once anything is installed in the workspace', () => {
+        const empty = { skills: [], connectors: [], subagents: [] };
+        expect(hasInstalledCapabilities(empty)).toBe(false);
+        expect(hasInstalledCapabilities(null)).toBe(false);
+        const installed = {
+            skills: [{ ...item({}), installed: true }],
+            connectors: [],
+            subagents: [],
+        };
+        expect(hasInstalledCapabilities(installed)).toBe(true);
     });
 });

@@ -1,7 +1,16 @@
 import { ConfirmDialog, EmptyState, ErrorState, SkeletonLines, useAutoRetry } from '@fusion/web-ui';
 import { useMemo, useState } from 'react';
 import { type CapabilityItem, type CapabilityType, type CapabilityUsageRecord, api } from '../api';
-import { CAPABILITY_TABS, capabilityItems, capabilityTypeFromRoute, filterCapabilities } from '../capabilities';
+import {
+    CAPABILITY_TABS,
+    capabilityItems,
+    capabilityPitches,
+    capabilityTypeFromRoute,
+    dismissPitches,
+    filterCapabilities,
+    hasInstalledCapabilities,
+    pitchesDismissed,
+} from '../capabilities';
 import { useT } from '../i18n';
 
 const ACTIVE_KEY = 'cowork.activeWorkspace';
@@ -32,6 +41,10 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
 
     const catalog = useAutoRetry(() => api.capabilities(workspaceId), [workspaceId]);
     const spaces = useAutoRetry(() => api.workspaces(), []);
+    // issue #244 R1: 首访 pitch 卡 — 安装任意能力后永久消失 (localStorage 持久)
+    const [pitchesGone, setPitchesGone] = useState(pitchesDismissed);
+    const showPitches = !pitchesGone && !hasInstalledCapabilities(catalog.data);
+    const pitches = capabilityPitches();
 
     const items = useMemo(
         () => filterCapabilities(capabilityItems(catalog.data, tab), query),
@@ -53,6 +66,10 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
         setMessage('');
         try {
             await fn();
+            if (key.startsWith('install:')) {
+                dismissPitches();
+                setPitchesGone(true);
+            }
             setMessage(done);
             reload();
         } catch (e) {
@@ -204,6 +221,28 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
                     ))}
                 </select>
             </div>
+
+            {showPitches ? (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3" data-testid="capability-pitches">
+                    {pitches.map((p) => (
+                        <button
+                            key={p.key}
+                            type="button"
+                            className="rounded-xl border border-border bg-bg-elevated p-4 text-left shadow-sm transition-colors hover:border-accent/60 dark:shadow-zinc-900/5"
+                            onClick={() => {
+                                setTab(p.key);
+                                setQuery('');
+                                window.location.hash = `#/capabilities/${p.key}`;
+                            }}
+                        >
+                            <div className="text-sm font-medium text-text-primary">
+                                {p.icon} {t(p.title.zh, p.title.en)}
+                            </div>
+                            <div className="pt-1 text-xs text-text-secondary">{t(p.desc.zh, p.desc.en)}</div>
+                        </button>
+                    ))}
+                </div>
+            ) : null}
 
             <div className="flex flex-wrap items-center gap-2 border-b border-border pb-2">
                 {CAPABILITY_TABS.map((entry) => {

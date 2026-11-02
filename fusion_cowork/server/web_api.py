@@ -282,7 +282,15 @@ async def _fetch_artifact_card_with_status(
     except Exception as exc:
         logger.warning("[artifacts] card fetch %s failed: %s", artifact_id, exc)
         return None, None
-    payload = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else data
+    payload: Any = data
+    if isinstance(data, dict):
+        # issue #243: 上游信封三形 — {data:{…}} (网关风格) / {artifact:{…}} (引擎实测)
+        # / 平铺。首见 {artifact:{…}} 使卡片字段全空, 深链预填只剩空名。
+        for key in ("data", "artifact"):
+            wrapped = data.get(key)
+            if isinstance(wrapped, dict):
+                payload = wrapped
+                break
     if not isinstance(payload, dict):
         return None, 200
     card_id = str(payload.get("id") or artifact_id)
