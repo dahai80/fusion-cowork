@@ -379,6 +379,17 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 
 测试: `tests/test_issue_189_node_executor.py` (33 例 + 1 例 live-AS 跳过: 波次并发墙钟/重叠/峰值、env 解析、配置往返、UDS 成功/partial/失败/transcript 容错、HTTP 完成/失败/超时/覆盖降级、混合 DAG 端到端、agent 失败语义、跨 agent 节点断点续跑)。文档: `docs/node-executors.md`。
 
+### FCS-1 Composer 合规 (v0.5.58, issue #231)
+
+cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 共享 FCS-1 `Composer` (fusion-web-shell#96/#98, 规范 `fusion-composer-standard-1101`): 五区结构、固定 ⬆ 发送、常驻提示行、无散落工具栏按钮。
+
+- **vendor 重同步** — `web/vendor/@fusion/ui` 与 `web-sdk` 字节级同步到上游 v0.1.4; 新增 vendored `@fusion/design-tokens` 包 (上游 web-ui 现依赖它, 以 `file:` 接线)。共享 `Composer`/`ChatThread` 随同步引入。
+- **任务 composer** — ① 上下文条: 工作目录 chip + 派生/产物注入一次性 chip ② 可移除附件 chip (`📎`; 附件名进入计划上下文行) ③ 自动增高 textarea ④ 工具行: 左侧 `📎`→`＠`, 右侧 `⚙` 参数弹层 (可搜索模型选择 + 能力开关 — 旧散落 `<select multiple>` 移除), 固定标签 pill 发送 `生成计划` ⑤ 提示行。`＠` 引用面板提供**目录 / 任务 / 产物**三类引用 (插入 `@目录:` / `@任务:` / `@产物:` token)。
+- **运行 composer** — 同样五区; `＠` 提供本 run 步骤产出的产物引用。
+- **审批禁用态 (§6)** — run 暂停等待审批时运行 composer 置 `disabled`, 上下文条显示 `⏸ 等待审批` 徽标; 内联审批卡 (#225) 仍是唯一处置 UI — 不另造替代 composer。
+- 接线逻辑位于纯函数 (`web/src/composer.ts`: `buildReferenceItems` / `buildContextChips` / `composerApprovalVariant` / `insertRefToken`), 无需 DOM 即可单测。
+- 测试: `web/tests/composer231.test.tsx` (9 例: 三类引用 + token、chip 清除、审批禁用变体、cowork 接线下的五区、固定 pill 标签跨状态)。CI web job 现执行 `bun run test` (原仅 lint/typecheck/build); bun 套件 86 例全绿。
+
 ### 运行时间线产物卡片 (v0.5.57, issue #233)
 
 消费 fusion-artifacts-engine v0.6.0 卡片深链契约 (上游 #77/#78/#80): 会话 payload 保持引擎 ~30 token 轻量 `ref_text`; 卡片按渲染重新拉取, 版本 bump 保持新鲜。

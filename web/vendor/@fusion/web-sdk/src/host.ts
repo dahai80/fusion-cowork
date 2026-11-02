@@ -51,7 +51,62 @@ export function createHostBridge(
     iframeWindow: Window | null,
     options: HostBridgeOptions
 ): HostBridgeHandle {
-    const origin = options.origin ?? window.location.origin;
+    // Target origin for host->module postMessage. Default: the IFRAME's own
+    // origin when it is cross-origin with the host (FUSION_DEV_MODULES dev
+    // entries, e.g. :11590 inside :11430) — defaulting to the host document's
+    // origin made the browser silently drop every push (theme/lang/http
+    // requests) into a cross-origin frame. Same-origin deployments keep the
+    // host-origin default; an explicit option still wins.
+    let origin = options.origin ?? window.location.origin;
+    if (!options.origin && iframeWindow) {
+        const usable = (o: string) => /^https?:\/\//.test(o);
+        try {
+            const frameOrigin = new URL(iframeWindow.location.href).origin;
+            // "null" is what about:blank (the pre-load placeholder) reports —
+            // postMessage rejects it outright ("Invalid target origin 'null'"),
+            // so only accept a real http(s) origin.
+            if (usable(frameOrigin)) origin = frameOrigin;
+        } catch {
+            // cross-origin access to location throws in some states; the
+            // src attribute is still readable — fall back to parsing it
+            try {
+                const src = (
+                    iframeWindow as Window & { frameElement?: HTMLIFrameElement }
+                ).frameElement?.getAttribute('src');
+                const srcOrigin = src ? new URL(src, window.location.origin).origin : '';
+                if (usable(srcOrigin)) origin = srcOrigin;
+            } catch {
+                /* keep host-origin default */
+            }
+        }
+    }
+    // The bridge is created while the iframe still shows the about:blank
+    // placeholder, so a one-time origin snapshot usually resolves to the HOST
+    // origin — and every push into a cross-origin module frame is then
+    // silently dropped by the browser. Resolve the target origin PER SEND
+    // from the iframe's current state instead; fall back to the snapshot
+    // while the frame is between navigations.
+    const targetOrigin = (): string => {
+        if (options.origin) return options.origin;
+        if (currentIframeWindow) {
+            try {
+                const o = new URL(currentIframeWindow.location.href).origin;
+                if (/^https?:\/\//.test(o)) return o;
+            } catch {
+                /* cross-origin frame: location href is not readable */
+            }
+            try {
+                const src = (
+                    currentIframeWindow as Window & { frameElement?: HTMLIFrameElement }
+                ).frameElement?.getAttribute('src');
+                const o = src ? new URL(src, window.location.origin).origin : '';
+                if (/^https?:\/\//.test(o)) return o;
+            } catch {
+                /* keep snapshot */
+            }
+        }
+        return origin;
+    };
     const disposers: Array<() => void> = [];
     let currentIframeWindow = iframeWindow;
 
@@ -82,7 +137,7 @@ export function createHostBridge(
             pendingPings.add(resolver);
             currentIframeWindow.postMessage(
                 { type: 'request', id, method: 'ping', payload: null },
-                origin
+                targetOrigin()
             );
             setTimeout(() => {
                 // Drop the dead closure so long-lived tabs don't leak (review #8).
@@ -200,12 +255,12 @@ export function createHostBridge(
 
     function respond(msg: HostResponse): void {
         if (!currentIframeWindow) return;
-        currentIframeWindow.postMessage(msg, origin);
+        currentIframeWindow.postMessage(msg, targetOrigin());
     }
 
     function notify(event: HostEvent): void {
         if (!currentIframeWindow) return;
-        currentIframeWindow.postMessage(event, origin);
+        currentIframeWindow.postMessage(event, targetOrigin());
     }
 
     window.addEventListener('message', onMessage);

@@ -1,0 +1,58 @@
+/* @fusion/design-tokens CSS custom properties (G5).
+   Generated values mirror src/tokens.ts — test enforces the pairing.
+   Dark is the default theme; html.light switches to the light palette.
+   No hardcoded hex outside this file (S1). */
+:root {
+    --fs-bg: #0b0e14;
+    --fs-bg-elevated: #131722;
+    --fs-bg-muted: #1a2030;
+    --fs-border: #2a3244;
+    --fs-text-primary: #e6e9f0;
+    --fs-text-secondary: #a8b0c2;
+    --fs-text-muted: #6b7488;
+    --fs-success: #34c778;
+    --fs-running: #3b82f6;
+    --fs-warning: #eab308;
+    --fs-error: #ef4444;
+    --fs-offline: #6b7488;
+    --fs-brand: #4f7cff;
+    --fs-bg-sidebar: #131722;
+    --fs-brand-hover: #6b93ff;
+    /* Layout tokens (issue #85) — system font stacks, no bundling (D2). */
+    --fs-font-serif: ui-serif, Georgia, "Songti SC", "Noto Serif SC", serif;
+    --fs-font-sans: Inter, ui-sans-serif, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    /* Interaction layer (issue #56) — theme-independent. */
+    --fs-z-base: 0;
+    --fs-z-dropdown: 50;
+    --fs-z-overlay: 60;
+    --fs-z-toast: 70;
+    --fs-radius-sm: 0.25rem;
+    --fs-radius-md: 0.5rem;
+    --fs-radius-card: 0.5rem;
+    --fs-radius-lg: 0.75rem;
+    --fs-radius-input: 1rem;
+    --fs-radius-full: 9999px;
+    color-scheme: dark;
+}
+
+html.light {
+    --fs-bg: #f5f6f8;
+    --fs-bg-elevated: #ffffff;
+    --fs-bg-muted: #eceef2;
+    --fs-border: #d4d9e2;
+    --fs-text-primary: #1a2030;
+    --fs-text-secondary: #4a5468;
+    --fs-text-muted: #8a92a4;
+    --fs-success: #16a34a;
+    --fs-running: #2563eb;
+    --fs-warning: #ca8a04;
+    --fs-error: #dc2626;
+    --fs-offline: #8a92a4;
+    --fs-brand: #2f5fe8;
+    --fs-bg-sidebar: #eceef2;
+    --fs-brand-hover: #264ec4;
+    --fs-font-serif: ui-serif, Georgia, "Songti SC", "Noto Serif SC", serif;
+    --fs-font-sans: Inter, ui-sans-serif, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --fs-radius-input: 1rem;
+    color-scheme: light;
+}

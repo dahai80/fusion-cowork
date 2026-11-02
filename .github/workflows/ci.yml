@@ -96,6 +96,9 @@ jobs:
       - name: Lint (web/)
         working-directory: web
         run: bun run lint
+      - name: Test (web/)
+        working-directory: web
+        run: bun run test
       - name: Typecheck (web/)
         working-directory: web
         run: bun run typecheck

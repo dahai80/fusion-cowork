@@ -1,10 +1,20 @@
 import { useAutoRetry } from '@fusion/web-ui';
-import { EmptyState, ErrorState, SkeletonLines, StatusBadge } from '@fusion/web-ui';
+import {
+    Composer,
+    type ComposerActionItem,
+    type ComposerAttachment,
+    type ComposerChip,
+    EmptyState,
+    ErrorState,
+    SkeletonLines,
+    StatusBadge,
+} from '@fusion/web-ui';
 import type { StatusKind } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
 import { type RunListItem, type WorkspaceInfo, api, statusKind } from '../api';
+import { buildContextChips, buildReferenceItems, insertRefToken } from '../composer';
 import { useT } from '../i18n';
-import { preferredModel } from '../modelPref';
+import { preferredModel, setPreferredModel } from '../modelPref';
 import { sdk } from '../sdk';
 
 // issue #223: workspace-first + task-first Cowork home.
@@ -239,6 +249,14 @@ function TaskHome({ activeId, onSwitch }: { activeId: string; onSwitch: () => vo
     const [caps, setCaps] = useState<string[]>([]);
     // issue #226: 派生新任务 — run 视图预填 (任务 + 上次结果上下文), 一次性消费
     const [deriveFrom, setDeriveFrom] = useState('');
+    // issue #231 (FCS-1): 五区 composer — 附件 chips + 模型/能力进 ⚙ 参数弹层
+    const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+    const [model, setModel] = useState(preferredModel());
+    const modelsRes = useAutoRetry(() => api.models(), []);
+    const artifactsRes = useAutoRetry(
+        () => (activeId ? api.spaceArtifacts(activeId) : Promise.resolve([])),
+        [activeId]
+    );
     // issue #233: 产物模块深链 ?artifact_ref=<id> — 轻量 ref 注入 composer, 一次性消费
     const [artifactRefName, setArtifactRefName] = useState('');
 
@@ -289,9 +307,60 @@ function TaskHome({ activeId, onSwitch }: { activeId: string; onSwitch: () => vo
     const runList = runs.data?.runs ?? [];
 
     function promptWithContext(): string {
-        if (caps.length === 0) return prompt;
-        return `${prompt}\n\n(可用能力: ${caps.join(', ')})`;
+        const extras: string[] = [];
+        if (caps.length > 0) extras.push(`(可用能力: ${caps.join(', ')})`);
+        if (attachments.length > 0) {
+            const names = attachments.map((a) => a.label).join(', ');
+            extras.push(`(附件: ${names})`);
+            console.log('[home] composer attachments in task context:', names);
+        }
+        return extras.length > 0 ? `${prompt}\n\n${extras.join('\n')}` : prompt;
     }
+
+    // issue #231 (FCS-1 §3): ＠ 引用面板 — 目录/任务/产物三类引用插入 prompt
+    function insertRef(token: string) {
+        setPrompt((p) => insertRefToken(p, token));
+    }
+
+    function toggleCap(name: string) {
+        setCaps((prev) => (prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]));
+    }
+
+    const referenceItems: ComposerActionItem[] = buildReferenceItems(
+        [
+            ...(ws.data?.workspaces ?? []).map((w) => ({ kind: 'directory' as const, id: w.id, name: w.name })),
+            ...runList.slice(0, 8).map((r) => ({
+                kind: 'task' as const,
+                id: r.run_id,
+                name: r.workflow_name || r.run_id.slice(0, 8),
+            })),
+            ...(artifactsRes.data ?? [])
+                .slice(0, 8)
+                .map((a) => ({ kind: 'artifact' as const, id: a.id, name: a.name })),
+        ],
+        insertRef
+    );
+
+    const modelOptions = (modelsRes.data?.models ?? []).map((m) => ({
+        value: m.id,
+        label: m.id,
+        hint: m.id,
+        curated: true,
+    }));
+    if (model && !modelOptions.some((o) => o.value === model)) {
+        modelOptions.unshift({ value: model, label: model, hint: model, curated: true });
+    }
+
+    // FCS-1 ① 上下文条: 工作目录 + 派生/产物一次性 chip (点击清除)
+    const contextChips: ComposerChip[] = buildContextChips({
+        dirLabel: space?.name ?? activeId,
+        onSwitchDir: onSwitch,
+        deriveFrom,
+        deriveLabel: t('派生自', 'Derived from'),
+        onClearDerive: () => setDeriveFrom(''),
+        artifactRefName,
+        onClearArtifact: () => setArtifactRefName(''),
+    });
 
     async function generatePreview() {
         if (!prompt.trim() || busy) return;
@@ -397,75 +466,53 @@ function TaskHome({ activeId, onSwitch }: { activeId: string; onSwitch: () => vo
             <div className="pb-2 pt-4 text-center text-lg font-medium text-text-primary">
                 {t('今天想让 Cowork 做什么？', 'What should Cowork do today?')}
             </div>
-            <div className="rounded-xl border border-border bg-bg-elevated p-3">
-                {deriveFrom ? (
-                    <div className="mb-2 flex items-center justify-between rounded-md border border-accent/40 bg-accent/5 px-2 py-1 text-[11px] text-text-secondary">
-                        <span>
-                            ✚ {t('派生自运行', 'Derived from run')}{' '}
-                            <span className="font-mono">{deriveFrom.slice(0, 16)}</span>
-                            {t('— 补充你的新要求后生成', '— add your new requirements and generate')}
-                        </span>
-                        <button
-                            type="button"
-                            className="text-text-muted hover:text-text-primary"
-                            onClick={() => setDeriveFrom('')}
-                        >
-                            ✕
-                        </button>
-                    </div>
-                ) : null}
-                {artifactRefName ? (
-                    <div className="mb-2 flex items-center justify-between rounded-md border border-emerald-500/40 bg-emerald-500/5 px-2 py-1 text-[11px] text-text-secondary">
-                        <span>
-                            ▦ {t('已注入产物引用', 'Artifact reference injected')}{' '}
-                            <span className="font-mono">{artifactRefName}</span>
-                            {t('— 补充你的要求后生成', '— add your requirements and generate')}
-                        </span>
-                        <button
-                            type="button"
-                            className="text-text-muted hover:text-text-primary"
-                            onClick={() => setArtifactRefName('')}
-                        >
-                            ✕
-                        </button>
-                    </div>
-                ) : null}
-                <textarea
-                    className="min-h-24 w-full resize-y rounded-lg border border-border bg-bg p-3 text-sm text-text-primary"
-                    placeholder={t(
-                        '描述任务，如 "把 10 月对账跑一遍，异常项整理成报告"',
-                        'Describe a task, e.g. "run the October reconciliation and report anomalies"'
-                    )}
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                />
-                <div className="flex flex-wrap items-center gap-2 pt-2">
-                    {skillNames.length > 0 ? (
-                        <select
-                            multiple
-                            aria-label={t('能力', 'Capabilities')}
-                            className="max-h-16 rounded-md border border-border bg-bg px-2 py-1 text-xs text-text-primary"
-                            value={caps}
-                            onChange={(e) => setCaps(Array.from(e.target.selectedOptions).map((o) => o.value))}
-                        >
-                            {skillNames.map((n) => (
-                                <option key={n} value={n}>
-                                    ⚙ {n}
-                                </option>
-                            ))}
-                        </select>
-                    ) : null}
-                    <div className="flex-1" />
-                    <button
-                        type="button"
-                        disabled={!prompt.trim() || busy !== ''}
-                        className="rounded-md border border-border bg-bg px-3 py-1.5 text-sm text-text-primary hover:bg-bg-muted disabled:opacity-50"
-                        onClick={() => void generatePreview()}
-                    >
-                        {busy === 'preview' ? t('生成中…', 'Planning…') : t('⚙ 生成计划', '⚙ Plan')}
-                    </button>
-                </div>
-            </div>
+            <Composer
+                value={prompt}
+                onChange={setPrompt}
+                onSubmit={() => void generatePreview()}
+                busy={busy !== ''}
+                placeholder={t(
+                    '描述任务，如 "把 10 月对账跑一遍，异常项整理成报告"，/ 命令，@ 引用',
+                    'Describe a task, e.g. "run the October reconciliation and report anomalies", / commands, @ references'
+                )}
+                ariaLabel={t('任务输入框', 'Task composer')}
+                hint={t('Enter 生成计划 · Shift+Enter 换行', 'Enter to plan · Shift+Enter new line')}
+                stopHint={t('· 生成中', '· generating')}
+                sendVariant="pill"
+                sendLabel={t('生成计划', 'Plan')}
+                contextChips={contextChips}
+                attachments={attachments}
+                onRemoveAttachment={(key) => setAttachments((prev) => prev.filter((a) => a.key !== key))}
+                attach={{
+                    onFiles: (files) => {
+                        setAttachments((prev) => [
+                            ...prev,
+                            ...files.map((f, i) => ({ key: `${f.name}-${Date.now()}-${i}`, label: f.name })),
+                        ]);
+                    },
+                }}
+                references={{ items: referenceItems, emptyLabel: t('暂无可引用项', 'No references yet') }}
+                params={{
+                    model: {
+                        value: model,
+                        onChange: (v) => {
+                            setModel(v);
+                            setPreferredModel(v);
+                        },
+                        options: modelOptions,
+                        fallbackLabel: t('默认模型', 'Default model'),
+                    },
+                    actions: {
+                        title: t('能力', 'Capabilities'),
+                        items: skillNames.map((n) => ({
+                            key: n,
+                            label: `${caps.includes(n) ? '✓' : '○'} ⚙ ${n}`,
+                            onClick: () => toggleCap(n),
+                        })),
+                        emptyLabel: t('暂无可用能力', 'No capabilities'),
+                    },
+                }}
+            />
 
             {error ? <div className="pt-2 text-xs text-error">{error}</div> : null}
 

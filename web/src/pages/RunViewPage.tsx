@@ -1,5 +1,13 @@
 import { useAutoRetry } from '@fusion/web-ui';
-import { EmptyState, ErrorState, SkeletonLines, StatusBadge } from '@fusion/web-ui';
+import {
+    Composer,
+    type ComposerActionItem,
+    type ComposerChip,
+    EmptyState,
+    ErrorState,
+    SkeletonLines,
+    StatusBadge,
+} from '@fusion/web-ui';
 import type { StatusKind } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
 import {
@@ -11,6 +19,13 @@ import {
     api,
     statusKind,
 } from '../api';
+import {
+    type RefSource,
+    buildContextChips,
+    buildReferenceItems,
+    composerApprovalVariant,
+    insertRefToken,
+} from '../composer';
 import { useT } from '../i18n';
 import { capabilitiesInUse, computeWaves, parseParamsDraft, stepArtifactRefs, stepCapability } from '../runview';
 import { sdk, streamSse } from '../sdk';
@@ -145,6 +160,32 @@ export function RunViewPage({ runId }: { runId: string }) {
     const waveNodeIds = new Set(waves.flatMap((w) => w.nodes.map((n) => n.id)));
     const inlineApprovals = hitlApprovals.filter((a) => a.node_id && waveNodeIds.has(a.node_id));
     const floatingApprovals = hitlApprovals.filter((a) => !a.node_id || !waveNodeIds.has(a.node_id));
+
+    // issue #231 (FCS-1 §6): 审批等待变体 — 上下文条徽标 + composer 禁用, 不另造替代 UI
+    const approvalVariant = composerApprovalVariant(!!record.hitl_pending);
+    const runContextChips: ComposerChip[] = buildContextChips({
+        waitingApproval: approvalVariant.waitingApproval,
+        waitingLabel: t('等待审批', 'Awaiting approval'),
+    });
+    // issue #231: ＠ 引用面板 — 本 run 步骤产出的 artifact 引用
+    function insertRunRef(token: string) {
+        setInstruction((p) => insertRefToken(p, token));
+    }
+    const runReferenceItems: ComposerActionItem[] = buildReferenceItems(
+        (() => {
+            const seen = new Set<string>();
+            const sources: RefSource[] = [];
+            for (const s of record.steps ?? []) {
+                for (const r of stepArtifactRefs(s)) {
+                    if (seen.has(r.artifact_id)) continue;
+                    seen.add(r.artifact_id);
+                    sources.push({ kind: 'artifact', id: r.artifact_id, name: r.name || r.artifact_id });
+                }
+            }
+            return sources;
+        })(),
+        insertRunRef
+    );
 
     async function steer(fn: () => Promise<unknown>, failMsg: string) {
         try {
@@ -512,29 +553,37 @@ export function RunViewPage({ runId }: { runId: string }) {
                 ) : null}
             </div>
 
-            {/* M5: 底部打断 composer */}
+            {/* M5: 底部打断 composer — issue #231: FCS-1 五区标准;
+                §6 审批等待变体: record.hitl_pending 时禁用 + 上下文条 "等待审批" 徽标 */}
             {steerable ? (
-                <div className="rounded-lg border border-border bg-bg-elevated p-2">
-                    <div className="flex items-end gap-2">
-                        <textarea
-                            className="min-h-11 flex-1 resize-y rounded-md border border-border bg-bg p-2 text-sm text-text-primary"
-                            placeholder={t(
-                                '追加指令，如「跳过差旅类目」— 在下一节点边界并入',
-                                'Add an instruction, e.g. "skip travel" — lands at the next node boundary'
-                            )}
-                            value={instruction}
-                            onChange={(e) => setInstruction(e.target.value)}
-                        />
-                        <button
-                            type="button"
-                            disabled={!instruction.trim() || sending}
-                            className="rounded-md bg-brand px-3 py-2 text-sm text-white disabled:opacity-50"
-                            onClick={() => void sendInstruction()}
-                        >
-                            {sending ? t('发送中…', 'Sending…') : t('发送指令', 'Send')}
-                        </button>
-                    </div>
-                </div>
+                <Composer
+                    value={instruction}
+                    onChange={setInstruction}
+                    onSubmit={() => void sendInstruction()}
+                    busy={sending}
+                    disabled={approvalVariant.disabled}
+                    placeholder={
+                        record.hitl_pending
+                            ? t('等待审批处理后再输入指令', 'Composing resumes after the approval is resolved')
+                            : t(
+                                  '追加指令，如「跳过差旅类目」— 在下一节点边界并入',
+                                  'Add an instruction, e.g. "skip travel" — lands at the next node boundary'
+                              )
+                    }
+                    ariaLabel={t('运行指令输入框', 'Run instruction composer')}
+                    hint={
+                        record.hitl_pending
+                            ? t('等待审批 — 处理后恢复输入', 'Awaiting approval — composing resumes after resolution')
+                            : t('Enter 发送 · Shift+Enter 换行', 'Enter to send · Shift+Enter new line')
+                    }
+                    sendLabel={t('发送指令', 'Send instruction')}
+                    stopLabel={t('停止', 'Stop')}
+                    contextChips={runContextChips}
+                    references={{
+                        items: runReferenceItems,
+                        emptyLabel: t('暂无产物可引用', 'No artifacts to reference'),
+                    }}
+                />
             ) : null}
         </div>
     );
