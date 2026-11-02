@@ -239,6 +239,8 @@ function TaskHome({ activeId, onSwitch }: { activeId: string; onSwitch: () => vo
     const [caps, setCaps] = useState<string[]>([]);
     // issue #226: 派生新任务 — run 视图预填 (任务 + 上次结果上下文), 一次性消费
     const [deriveFrom, setDeriveFrom] = useState('');
+    // issue #233: 产物模块深链 ?artifact_ref=<id> — 轻量 ref 注入 composer, 一次性消费
+    const [artifactRefName, setArtifactRefName] = useState('');
 
     useEffect(() => {
         try {
@@ -255,6 +257,31 @@ function TaskHome({ activeId, onSwitch }: { activeId: string; onSwitch: () => vo
         } catch {
             // 坏数据忽略 — 不带预填进入
         }
+    }, []);
+
+    useEffect(() => {
+        // issue #233: /shell/fusion-cowork/?artifact_ref=<id> (hash 前的 search 参数)。
+        // 消费后立刻从 URL 抹除 — 刷新不重复注入; 引擎不可达时降级为最小 ref 文本。
+        let refId = '';
+        try {
+            refId = new URLSearchParams(window.location.search).get('artifact_ref') || '';
+            if (refId) {
+                window.history.replaceState(null, '', window.location.pathname + window.location.hash);
+            }
+        } catch {
+            refId = '';
+        }
+        if (!refId) return;
+        api.artifactCard(refId).then(
+            (r) => {
+                setArtifactRefName(r.artifact.name || refId);
+                setPrompt(`基于产物「${r.artifact.name || refId}」继续任务：\n${r.artifact.ref_text}\n\n新的要求：`);
+            },
+            () => {
+                setArtifactRefName(refId);
+                setPrompt(`基于产物 ${refId} 继续任务：\n[Artifact: | ID: ${refId} | ]\n\n新的要求：`);
+            }
+        );
     }, []);
 
     const space = (ws.data?.workspaces ?? []).find((w) => w.id === activeId);
@@ -382,6 +409,22 @@ function TaskHome({ activeId, onSwitch }: { activeId: string; onSwitch: () => vo
                             type="button"
                             className="text-text-muted hover:text-text-primary"
                             onClick={() => setDeriveFrom('')}
+                        >
+                            ✕
+                        </button>
+                    </div>
+                ) : null}
+                {artifactRefName ? (
+                    <div className="mb-2 flex items-center justify-between rounded-md border border-emerald-500/40 bg-emerald-500/5 px-2 py-1 text-[11px] text-text-secondary">
+                        <span>
+                            ▦ {t('已注入产物引用', 'Artifact reference injected')}{' '}
+                            <span className="font-mono">{artifactRefName}</span>
+                            {t('— 补充你的要求后生成', '— add your requirements and generate')}
+                        </span>
+                        <button
+                            type="button"
+                            className="text-text-muted hover:text-text-primary"
+                            onClick={() => setArtifactRefName('')}
                         >
                             ✕
                         </button>

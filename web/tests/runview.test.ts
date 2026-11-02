@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'bun:test';
-import { capabilitiesInUse, computeWaves, parseParamsDraft, stepCapability } from '../src/runview';
+import {
+    capabilitiesInUse,
+    computeWaves,
+    findArtifactRefs,
+    parseParamsDraft,
+    stepArtifactRefs,
+    stepCapability,
+} from '../src/runview';
 
 // issue #224: unified run view pure helpers — wave grouping (M4 parallel
 // branches) + capability annotation (M10) + capabilities-in-use rail.
@@ -170,5 +177,47 @@ describe('parseParamsDraft', () => {
         expect(parseParamsDraft('[1, 2]')).toEqual({ ok: false, error: 'not_object' });
         expect(parseParamsDraft('42')).toEqual({ ok: false, error: 'not_object' });
         expect(parseParamsDraft('null')).toEqual({ ok: false, error: 'not_object' });
+    });
+});
+
+// issue #233: artifact 轻量引用提取 (引擎 ref_text 格式)
+describe('findArtifactRefs', () => {
+    it('extracts refs in order', () => {
+        const text = 'x [Artifact: Q3 Report | ID: art_1 | Version: v2 | Type: report | Size: 4096] y';
+        expect(findArtifactRefs(text)).toEqual([{ artifact_id: 'art_1', name: 'Q3 Report' }]);
+    });
+
+    it('dedupes and preserves order', () => {
+        const text =
+            '[Artifact: B | ID: b_1 | v1] [Artifact: A | ID: a_1 | v1] [Artifact: B2 | ID: b_1 | v2]';
+        expect(findArtifactRefs(text)).toEqual([
+            { artifact_id: 'b_1', name: 'B' },
+            { artifact_id: 'a_1', name: 'A' },
+        ]);
+    });
+
+    it('returns empty for non-string / no refs', () => {
+        expect(findArtifactRefs(undefined)).toEqual([]);
+        expect(findArtifactRefs(42)).toEqual([]);
+        expect(findArtifactRefs('plain text')).toEqual([]);
+        expect(findArtifactRefs('[Artifact: no-id-here]')).toEqual([]);
+    });
+});
+
+describe('stepArtifactRefs', () => {
+    it('collects from summary and output string values, deduped', () => {
+        const step = {
+            summary: 'done [Artifact: Report | ID: r_1 | Version: v3]',
+            output_data: { text: 'see [Artifact: Report | ID: r_1 | v3]', extra: 7 },
+        };
+        expect(stepArtifactRefs(step)).toEqual([{ artifact_id: 'r_1', name: 'Report' }]);
+    });
+
+    it('scans nested non-string output values', () => {
+        const step = {
+            summary: '',
+            output_data: { payload: { note: '[Artifact: Chart | ID: c_9 | v1]' } },
+        };
+        expect(stepArtifactRefs(step)).toEqual([{ artifact_id: 'c_9', name: 'Chart' }]);
     });
 });

@@ -2,9 +2,17 @@ import { useAutoRetry } from '@fusion/web-ui';
 import { EmptyState, ErrorState, SkeletonLines, StatusBadge } from '@fusion/web-ui';
 import type { StatusKind } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
-import { type GuardApproval, type RunRecord, type RunStep, type SpaceArtifact, api, statusKind } from '../api';
+import {
+    type ArtifactCardData,
+    type GuardApproval,
+    type RunRecord,
+    type RunStep,
+    type SpaceArtifact,
+    api,
+    statusKind,
+} from '../api';
 import { useT } from '../i18n';
-import { capabilitiesInUse, computeWaves, parseParamsDraft, stepCapability } from '../runview';
+import { capabilitiesInUse, computeWaves, parseParamsDraft, stepArtifactRefs, stepCapability } from '../runview';
 import { sdk, streamSse } from '../sdk';
 import { HitlCountdown, RunArtifactPane, StepDrawer } from './RunsPage';
 
@@ -645,8 +653,60 @@ function InlineApprovalCard({
     );
 }
 
+// issue #233: artifact 卡片 — 渲染时重新拉取 (版本 bump 保持新鲜),
+// 引擎不可用时降级为纯文本引用 (不阻塞时间线); 点击跨 iframe 深链到产物详情
+function ArtifactCard({ artifactId, fallbackName }: { artifactId: string; fallbackName: string }) {
+    const t = useT();
+    const [card, setCard] = useState<ArtifactCardData | null>(null);
+    const [failed, setFailed] = useState(false);
+    useEffect(() => {
+        let alive = true;
+        api.artifactCard(artifactId).then(
+            (r) => {
+                if (alive) setCard(r.artifact);
+            },
+            () => {
+                if (alive) setFailed(true);
+            }
+        );
+        return () => {
+            alive = false;
+        };
+    }, [artifactId]);
+    if (failed) {
+        return (
+            <div className="rounded border border-dashed border-border px-2 py-1 text-[10px] text-text-muted">
+                ▦ {t('产物', 'Artifact')} {fallbackName || artifactId} · {t('卡片不可用', 'card unavailable')}
+            </div>
+        );
+    }
+    if (!card) {
+        return <div className="h-9 animate-pulse rounded border border-border bg-bg-muted" />;
+    }
+    return (
+        <button
+            type="button"
+            className="flex w-full flex-col gap-0.5 rounded border border-border bg-bg px-2 py-1.5 text-left hover:bg-bg-muted"
+            onClick={() => window.open(card.deep_link, '_blank')}
+        >
+            <div className="flex items-center gap-1.5">
+                <span className="text-[10px]">{card.is_starred ? '★' : '▦'}</span>
+                <span className="truncate text-[11px] font-medium text-text-primary">{card.name || artifactId}</span>
+                {card.type ? (
+                    <span className="shrink-0 rounded-sm border border-border px-1 text-[9px] text-text-secondary">
+                        {card.type}
+                    </span>
+                ) : null}
+                <span className="shrink-0 font-mono text-[9px] text-text-muted">v{card.current_version}</span>
+            </div>
+            {card.summary ? <div className="truncate text-[10px] text-text-muted">{card.summary}</div> : null}
+        </button>
+    );
+}
+
 // 步骤卡: 状态/耗时 + M10 能力标注 + 展开 input/output (复用 RunsPage StepDrawer)
 // issue #226: 终态 run 可从本步骤重跑 (新 run 链回原 run)
+// issue #233: 步骤输出含 artifact 引用时渲染卡片 (payload 保持轻量 ref)
 function StepCard({
     step,
     expanded,
@@ -663,6 +723,7 @@ function StepCard({
     const t = useT();
     const cap = stepCapability(step);
     const denied = step.status === 'denied';
+    const arefs = stepArtifactRefs(step);
     return (
         <div
             className={`rounded-md border bg-bg-elevated ${denied ? 'border-dashed border-warning' : 'border-border'}`}
@@ -696,6 +757,13 @@ function StepCard({
                 ) : null}
             </button>
             {expanded ? <StepDrawer step={step} /> : null}
+            {arefs.length > 0 ? (
+                <div className="space-y-1 border-t border-border px-2 py-1.5">
+                    {arefs.map((r) => (
+                        <ArtifactCard key={r.artifact_id} artifactId={r.artifact_id} fallbackName={r.name} />
+                    ))}
+                </div>
+            ) : null}
             {canResume ? (
                 <div className="border-t border-border px-2 py-1.5">
                     <button

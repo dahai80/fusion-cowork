@@ -435,6 +435,15 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
 
+### Artifact Cards in the Run Timeline (v0.5.57, issue #233)
+
+Consumes the fusion-artifacts-engine v0.6.0 card deep-link contract (upstream #77/#78/#80): conversation payloads keep the lightweight ~30-token `ref_text`; cards are fetched per-render so version bumps stay fresh.
+
+- **Artifact cards in step output** — step summaries/output strings matching the engine reference format (`[Artifact: <name> | ID: <id> | Version: v<n> | …]`) render a card in the run timeline (`ArtifactCard` in `web/src/pages/RunViewPage.tsx`): name, type badge, current version, summary, star state. Click deep-links cross-iframe to the Artifacts detail view (`/shell/fusion-artifacts/#/a/<id>`). Extraction is a pure helper (`findArtifactRefs`/`stepArtifactRefs` in `web/src/runview.ts`, order-preserving, deduped) so payloads never inflate.
+- **Card proxy route** — `GET /api/artifacts/refs/{artifact_id}` fetches the card from fusion-artifacts-engine (`FUSION_ARTIFACTS_URL`, default `http://127.0.0.1:11451`; optional `FUSION_ARTIFACTS_API_KEY` Bearer), normalizes the contract fields (name/type/kind/current_version/summary/source_module/is_starred) and rebuilds the canonical `ref_text`. Upstream down → 502, invalid id → 404; the frontend degrades to a plain-text reference chip and the timeline never blocks.
+- **"Continue conversation with artifact"** — the Artifacts module links to `/shell/fusion-cowork/?artifact_ref=<id>`; the home composer consumes the query param once (stripped from the URL immediately — refresh does not re-inject), fetches the card, and prefills the task with the lightweight `ref_text` plus a dismissible `▦ artifact reference injected` note. If the engine is unreachable, the prefill degrades to the minimal `[Artifact: | ID: <id> | ]` reference — the task context still carries the artifact id.
+- Tests: `tests/test_issue_233_artifact_cards.py` (10 cases: ref extraction order/dedupe/roundtrip, card fetch with flat + `data` envelopes, Bearer auth + contract path, non-200/invalid-id/unreachable → None, route 200/502/404) + 5 `findArtifactRefs`/`stepArtifactRefs` bun cases; regression-proven (10 fail on pre-patch code).
+
 ### Resume / Derive from History (v0.5.56, issue #226)
 
 - **Terminal runs reopen read-only** with two history actions (UC-5): the run view already renders the full timeline + artifacts for terminal states; steering controls hide and **resume-from-step / derive-new-task** appear instead.

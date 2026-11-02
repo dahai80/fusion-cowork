@@ -146,3 +146,45 @@ export function parseParamsDraft(text: string): ParamsDraftResult {
     }
     return { ok: true, params: parsed as Record<string, unknown> };
 }
+
+// issue #233: artifact 轻量引用提取 — 引擎 ref_text 格式
+// [Artifact: <name> | ID: <id> | Version: v<n> | Type: <type> | Size: <bytes> | Summary: …]
+const ARTIFACT_REF_RE = /\[Artifact:\s*([^|\]]+?)\s*\|\s*ID:\s*([A-Za-z0-9_-]+)[^\]]*\]/g;
+
+export interface ArtifactRef {
+    artifact_id: string;
+    name: string;
+}
+
+export function findArtifactRefs(text: unknown): ArtifactRef[] {
+    if (typeof text !== 'string' || !text) return [];
+    const seen = new Set<string>();
+    const refs: ArtifactRef[] = [];
+    for (const m of text.matchAll(ARTIFACT_REF_RE)) {
+        const id = m[2];
+        if (seen.has(id)) continue;
+        seen.add(id);
+        refs.push({ artifact_id: id, name: m[1].trim() });
+    }
+    return refs;
+}
+
+// issue #233: 步骤产物引用 — summary 优先, 其次输出里的字符串值 (输出保持轻量, 不做全文展开)
+export function stepArtifactRefs(step: { summary?: string; output_data?: Record<string, unknown> }): ArtifactRef[] {
+    const out: ArtifactRef[] = [];
+    const seen = new Set<string>();
+    for (const ref of findArtifactRefs(step.summary ?? '')) {
+        seen.add(ref.artifact_id);
+        out.push(ref);
+    }
+    if (step.output_data) {
+        for (const v of Object.values(step.output_data)) {
+            for (const ref of findArtifactRefs(typeof v === 'string' ? v : JSON.stringify(v))) {
+                if (seen.has(ref.artifact_id)) continue;
+                seen.add(ref.artifact_id);
+                out.push(ref);
+            }
+        }
+    }
+    return out;
+}
