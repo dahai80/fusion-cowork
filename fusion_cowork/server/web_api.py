@@ -1512,6 +1512,50 @@ def create_web_app(
             )
         return {"workspaces": out, "available": True}
 
+    # ── issue #251: 系统工作目录枚举 — 新建目录名必须来自真实目录选择, 不收手输;
+    # ?path= 相对浏览支持子目录层级 (弹窗逐级下钻), 越界路径 400 ──
+    @app.get("/api/workspaces/system-dirs")
+    async def workspaces_system_dirs(path: str = ""):
+        root = Path(os.environ.get("FUSION_COWORK_WORKSPACE_ROOT") or Path.home()).expanduser()
+        if not root.is_dir():
+            # 根不存在 → 诚实告知不可用, 前端选择器收起并提示
+            logger.warning(f"system-dirs 根目录不存在: {root}")
+            return {"root": str(root), "root_name": root.name, "relative": "", "directories": [], "available": False}
+        rel = (path or "").strip().strip("/")
+        current = root
+        if rel and rel != ".":
+            resolved_root = root.resolve()
+            candidate = (root / rel).resolve()
+            try:
+                candidate.relative_to(resolved_root)
+            except ValueError:
+                raise HTTPException(
+                    status_code=400, detail={"code": "bad_path", "message": f"路径越界: {path}"}
+                ) from None
+            if not candidate.is_dir():
+                raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"目录不存在: {path}"})
+            current = candidate
+            rel = candidate.relative_to(resolved_root).as_posix()
+        try:
+            entries = sorted(
+                (e for e in current.iterdir() if e.is_dir() and not e.name.startswith(".")),
+                key=lambda e: e.name.lower(),
+            )
+        except OSError as e:
+            logger.error(f"system-dirs 枚举失败 root={root} rel={rel}: {e}")
+            raise HTTPException(
+                status_code=502, detail={"code": "upstream_error", "message": f"目录枚举失败: {e}"}
+            ) from e
+        child_rel = (rel + "/") if rel else ""
+        directories = [{"name": e.name, "path": str(e), "relative": child_rel + e.name} for e in entries[:200]]
+        return {
+            "root": str(root),
+            "root_name": root.name,
+            "relative": rel,
+            "directories": directories,
+            "available": True,
+        }
+
     @app.get("/api/runs/{run_id}")
     async def runs_get(run_id: str):
         record = runs.get(run_id)

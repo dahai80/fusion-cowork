@@ -26,6 +26,7 @@ import { buildContextChips, buildReferenceItems, insertRefToken } from '../compo
 import { useT } from '../i18n';
 import { preferredModel, setPreferredModel } from '../modelPref';
 import { sdk } from '../sdk';
+import { breadcrumbSegments, dirBasename, selectableSystemDirs } from '../systemdirs';
 
 // issue #223: workspace-first + task-first Cowork home.
 // 态零 (no active workspace): directory picker — recent/shared Space cards +
@@ -81,18 +82,22 @@ function WorkspacePicker({ onEnter }: { onEnter: (id: string) => void }) {
     const t = useT();
     const lang = sdk.i18n.lang();
     const retry = useAutoRetry(() => api.workspaces(), []);
-    const [name, setName] = useState('');
+    // issue #251: 新建目录名只能从系统工作目录选 (弹窗逐级下钻, 可选子目录) — 不收手输
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const [browsePath, setBrowsePath] = useState('');
+    const [picked, setPicked] = useState<{ name: string; relative: string } | null>(null);
+    const dirs = useAutoRetry(() => api.systemDirectories(browsePath), [browsePath, pickerOpen]);
     const [description, setDescription] = useState('');
     const [invite, setInvite] = useState('');
     const [creating, setCreating] = useState(false);
     const [createError, setCreateError] = useState('');
 
     async function createWorkspace() {
-        if (!name.trim() || creating) return;
+        if (!picked || creating) return;
         setCreating(true);
         setCreateError('');
         try {
-            const sp = await api.createSpace({ name: name.trim(), description: description.trim() });
+            const sp = await api.createSpace({ name: picked.name, description: description.trim() });
             const ids = invite
                 .split(/[,，\s]+/)
                 .map((s) => s.trim())
@@ -124,6 +129,13 @@ function WorkspacePicker({ onEnter }: { onEnter: (id: string) => void }) {
         .slice(0, 4);
     const recentIds = new Set(recent.map((w) => w.id));
     const shared = workspaces.filter((w) => !recentIds.has(w.id));
+    // issue #251: 已有同名工作区 → 该目录不可选 (重名无意义)
+    const usedNames = new Set(workspaces.map((w) => w.name));
+    const dirOptions = dirs.data?.directories ?? [];
+    const selectable = selectableSystemDirs(dirOptions, usedNames);
+    const crumbs = breadcrumbSegments(dirs.data?.relative ?? '');
+    const currentName = dirBasename(dirs.data?.relative ?? '', dirs.data?.root_name ?? '');
+    const currentUsed = usedNames.has(currentName);
 
     function card(w: WorkspaceInfo) {
         return (
@@ -192,15 +204,175 @@ function WorkspacePicker({ onEnter }: { onEnter: (id: string) => void }) {
                             {t('＋ 新建工作目录（可邀请成员）', '＋ New working directory (invite members)')}
                         </div>
                         <div className="flex flex-col gap-2">
-                            <input
-                                className="rounded-md border border-border bg-bg px-2 py-1.5 text-sm text-text-primary"
-                                placeholder={t(
-                                    '目录名称，如 "Q3 财务对账"',
-                                    'Directory name, e.g. "Q3 reconciliation"'
-                                )}
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                            />
+                            {dirs.error ? (
+                                <div className="text-xs text-error">
+                                    {t('系统工作目录加载失败', 'Failed to load system directories')} —{' '}
+                                    {dirs.error.message}
+                                </div>
+                            ) : null}
+                            {dirs.data && dirs.data.available === false ? (
+                                <div className="text-xs text-text-secondary">
+                                    {t(
+                                        `系统工作目录根不存在: ${dirs.data.root} — 设置 FUSION_COWORK_WORKSPACE_ROOT 后重试`,
+                                        `System directory root missing: ${dirs.data.root} — set FUSION_COWORK_WORKSPACE_ROOT and retry`
+                                    )}
+                                </div>
+                            ) : null}
+                            {picked ? (
+                                <div className="flex items-center justify-between rounded-md border border-border bg-bg px-2 py-1.5 text-sm text-text-primary">
+                                    <span className="truncate">
+                                        📁 {picked.name}
+                                        {picked.relative ? (
+                                            <span className="text-[10px] text-text-muted"> /{picked.relative}</span>
+                                        ) : null}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        className="text-xs text-text-secondary hover:text-text-primary"
+                                        onClick={() => setPicked(null)}
+                                    >
+                                        {t('清除', 'Clear')}
+                                    </button>
+                                </div>
+                            ) : (
+                                <button
+                                    type="button"
+                                    className="rounded-md border border-border bg-bg px-2 py-1.5 text-left text-sm text-text-secondary hover:border-accent/60"
+                                    onClick={() => {
+                                        setBrowsePath('');
+                                        setPickerOpen(true);
+                                    }}
+                                >
+                                    {t('选择系统工作目录…', 'Select a system working directory…')}
+                                </button>
+                            )}
+                            {pickerOpen ? (
+                                <div
+                                    role="presentation"
+                                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+                                    onClick={(e) => {
+                                        if (e.target === e.currentTarget) setPickerOpen(false);
+                                    }}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Escape') setPickerOpen(false);
+                                    }}
+                                >
+                                    <div
+                                        role="dialog"
+                                        aria-modal="true"
+                                        aria-label={t('选择系统工作目录', 'Select a system working directory')}
+                                        className="flex max-h-[70vh] w-full max-w-md flex-col gap-3 rounded-xl border border-border bg-bg-elevated p-4 shadow-md dark:shadow-zinc-900/5"
+                                    >
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-sm font-medium text-text-primary">
+                                                {t('选择系统工作目录', 'Select a system working directory')}
+                                            </div>
+                                            <button
+                                                type="button"
+                                                className="text-text-secondary hover:text-text-primary"
+                                                aria-label={t('关闭', 'Close')}
+                                                onClick={() => setPickerOpen(false)}
+                                            >
+                                                ×
+                                            </button>
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-1 text-xs text-text-secondary">
+                                            <button
+                                                type="button"
+                                                className="hover:text-text-primary"
+                                                onClick={() => setBrowsePath('')}
+                                            >
+                                                📁 {dirs.data?.root_name ?? t('根', 'root')}
+                                            </button>
+                                            {crumbs.map((seg, i) => (
+                                                <span key={`${seg}:${i}`} className="flex items-center gap-1">
+                                                    <span>/</span>
+                                                    <button
+                                                        type="button"
+                                                        className="hover:text-text-primary"
+                                                        onClick={() => setBrowsePath(crumbs.slice(0, i + 1).join('/'))}
+                                                    >
+                                                        {seg}
+                                                    </button>
+                                                </span>
+                                            ))}
+                                        </div>
+                                        {dirs.error ? (
+                                            <div className="text-xs text-error">
+                                                {t('目录加载失败', 'Failed to load directories')} — {dirs.error.message}
+                                            </div>
+                                        ) : null}
+                                        {dirs.data && dirs.data.available === false ? (
+                                            <div className="text-xs text-text-secondary">
+                                                {t(
+                                                    `系统工作目录根不存在: ${dirs.data.root} — 设置 FUSION_COWORK_WORKSPACE_ROOT 后重试`,
+                                                    `System directory root missing: ${dirs.data.root} — set FUSION_COWORK_WORKSPACE_ROOT and retry`
+                                                )}
+                                            </div>
+                                        ) : null}
+                                        <div className="flex-1 overflow-y-auto">
+                                            {dirs.loading && !dirs.data ? (
+                                                <div className="py-4 text-center text-xs text-text-muted">
+                                                    {t('加载中…', 'Loading…')}
+                                                </div>
+                                            ) : (
+                                                <div className="flex flex-col gap-1">
+                                                    {selectable.length === 0 ? (
+                                                        <div className="py-4 text-center text-xs text-text-muted">
+                                                            {t(
+                                                                '没有子目录了 — 可直接选择当前目录',
+                                                                'No subdirectories — pick the current directory'
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        selectable.map((d) => (
+                                                            <button
+                                                                type="button"
+                                                                key={d.relative}
+                                                                className="rounded-md px-2 py-1.5 text-left text-sm text-text-primary hover:bg-bg-muted"
+                                                                onClick={() => setBrowsePath(d.relative)}
+                                                            >
+                                                                📁 {d.name}
+                                                            </button>
+                                                        ))
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center justify-between">
+                                            <button
+                                                type="button"
+                                                className="rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:text-text-primary disabled:opacity-40"
+                                                disabled={!crumbs.length}
+                                                onClick={() => setBrowsePath(crumbs.slice(0, -1).join('/'))}
+                                            >
+                                                {t('返回上级', 'Up one level')}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="rounded-md bg-brand px-3 py-1.5 text-xs text-white disabled:opacity-50"
+                                                disabled={!dirs.data?.available || currentUsed || dirs.loading}
+                                                title={
+                                                    currentUsed
+                                                        ? t('已存在同名工作区', 'A workspace with this name exists')
+                                                        : undefined
+                                                }
+                                                onClick={() => {
+                                                    setPicked({
+                                                        name: currentName,
+                                                        relative: dirs.data?.relative ?? '',
+                                                    });
+                                                    setPickerOpen(false);
+                                                }}
+                                            >
+                                                {currentUsed
+                                                    ? t('当前目录已被使用', 'Current directory already in use')
+                                                    : t('选择当前目录', 'Pick current directory')}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : null}
                             <input
                                 className="rounded-md border border-border bg-bg px-2 py-1.5 text-sm text-text-primary"
                                 placeholder={t('描述（可选）', 'Description (optional)')}
@@ -219,7 +391,7 @@ function WorkspacePicker({ onEnter }: { onEnter: (id: string) => void }) {
                             {createError ? <div className="text-xs text-error">{createError}</div> : null}
                             <button
                                 type="button"
-                                disabled={!name.trim() || creating}
+                                disabled={!picked || creating}
                                 className="self-start rounded-md bg-brand px-3 py-1.5 text-sm text-white disabled:opacity-50"
                                 onClick={() => void createWorkspace()}
                             >
