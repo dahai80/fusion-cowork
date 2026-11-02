@@ -1,0 +1,23 @@
+{
+    "name": "@fusion/design-tokens",
+    "version": "0.1.4",
+    "description": "Single-source design tokens (palette/spacing/radius/type, dark+light) for fusion web UIs",
+    "license": "Apache-2.0",
+    "type": "module",
+    "main": "src/index.ts",
+    "types": "src/index.ts",
+    "exports": {
+        ".": "./src/index.ts",
+        "./preset": "./src/preset.ts",
+        "./tokens.css": "./src/tokens.css",
+        "./tokens": "./src/tokens.ts"
+    },
+    "scripts": {
+        "typecheck": "tsc --noEmit",
+        "build": "bun run typecheck"
+    },
+    "devDependencies": {
+        "tailwindcss": "^3.4.14",
+        "typescript": "^5.6.3"
+    }
+}

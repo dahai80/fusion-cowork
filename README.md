@@ -435,6 +435,17 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
 
+### FCS-1 Composer Conformance (v0.5.58, issue #231)
+
+Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` from `@fusion/web-ui` (fusion-web-shell#96/#98, spec `fusion-composer-standard-1101`): five zones, fixed ⬆ send, persistent hint row, no loose toolbar buttons.
+
+- **Vendor re-sync** — `web/vendor/@fusion/ui` and `web-sdk` re-synced byte-identical to upstream v0.1.4; new vendored `@fusion/design-tokens` package (upstream web-ui now depends on it, `file:` wired). The shared `Composer`/`ChatThread` arrive with the sync.
+- **Task composer** — ① context bar: working-directory chip + one-shot derive/artifact-injection chips ② removable attachment chips (`📎`; attachment names ride into the plan context line) ③ auto-grow textarea ④ tool row: `📎`→`＠` left, `⚙` params right (model picker with search + capability toggles — the old loose `<select multiple>` is gone), fixed-label pill send `生成计划` ⑤ hint row. `＠` reference palette offers **directory / task / artifact** references (inserts `@目录:` / `@任务:` / `@产物:` tokens).
+- **Run composer** — same five zones; `＠` offers artifacts produced by the run's own steps.
+- **Approval disabled state (§6)** — while a run pauses awaiting approval the run composer is `disabled` with a `⏸ 等待审批` badge in the context bar; the inline approval cards (#225) remain the only resolution UI — no custom replacement composer.
+- Wiring lives in pure helpers (`web/src/composer.ts`: `buildReferenceItems` / `buildContextChips` / `composerApprovalVariant` / `insertRefToken`) so behavior is unit-tested without a DOM.
+- Tests: `web/tests/composer231.test.tsx` (9 cases: reference kinds + tokens, chip clearing, approval variant disabled state, five zones with cowork wiring, fixed pill label across states). CI web job now runs `bun run test` (was lint/typecheck/build only); suite 86 bun tests green.
+
 ### Artifact Cards in the Run Timeline (v0.5.57, issue #233)
 
 Consumes the fusion-artifacts-engine v0.6.0 card deep-link contract (upstream #77/#78/#80): conversation payloads keep the lightweight ~30-token `ref_text`; cards are fetched per-render so version bumps stay fresh.

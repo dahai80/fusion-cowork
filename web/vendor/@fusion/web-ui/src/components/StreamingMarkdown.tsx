@@ -38,7 +38,7 @@ export function StreamingMarkdown({ text, className = '' }: { text: string; clas
                         const el = boxRef.current;
                         if (el) el.scrollTop = el.scrollHeight;
                     }}
-                    className="absolute bottom-2 right-2 rounded-md border border-border bg-bg-elevated px-3 py-1.5 text-xs shadow-overlay"
+                    className="fs-btn fs-btn-secondary fs-elev-1 absolute bottom-2 right-2 text-xs"
                 >
                     回到底部
                 </button>

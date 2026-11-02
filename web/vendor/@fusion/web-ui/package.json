@@ -1,6 +1,6 @@
 {
     "name": "@fusion/web-ui",
-    "version": "0.1.0",
+    "version": "0.1.4",
     "description": "Design tokens, Tailwind preset and shared components for fusion web modules",
     "license": "Apache-2.0",
     "type": "module",
@@ -11,6 +11,9 @@
         "./preset": "./src/preset.ts",
         "./tokens.css": "./src/tokens.css",
         "./format": "./src/format.ts"
+    },
+    "dependencies": {
+        "@fusion/design-tokens": "file:../design-tokens"
     },
     "scripts": {
         "typecheck": "tsc --noEmit",

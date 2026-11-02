@@ -197,8 +197,21 @@ function standaloneSdk(log: BridgeDeps['log']): FusionShellSdk {
 }
 
 export function createShellSdk(options?: ShellSdkOptions): FusionShellSdk {
+    // Origin default: the HOST's origin, not this frame's. In a cross-origin
+    // dev-embedded iframe (FUSION_DEV_MODULES), window.location.origin is the
+    // module's own origin (e.g. :11590) while the host posts from :11430 —
+    // defaulting to self dropped every host message ("disallowed origin") and
+    // sent our replies to the wrong targetOrigin. The host origin is not
+    // readable cross-origin, so embedded modules use "*" for postMessage and
+    // authenticate inbound messages strictly by ev.source === window.parent
+    // (a parent can only be the real embedding frame). Same-origin deployments
+    // keep the exact-origin check via the explicit option.
+    const embedded = typeof window !== 'undefined' && window.parent !== window;
+    const origin =
+        options?.origin ??
+        (embedded ? '*' : typeof window !== 'undefined' ? window.location.origin : '');
     const opts: Required<ShellSdkOptions> = {
-        origin: options?.origin ?? (typeof window !== 'undefined' ? window.location.origin : ''),
+        origin,
         timeoutMs: options?.timeoutMs ?? DEFAULT_TIMEOUT,
         retries: options?.retries ?? DEFAULT_RETRIES,
     };
@@ -245,13 +258,19 @@ export function createShellSdk(options?: ShellSdkOptions): FusionShellSdk {
         new Set([(payload) => visListeners.forEach((fn) => fn(payload as boolean))])
     );
 
+    // Inbound gate: with the default '*' (cross-origin embedded dev), the
+    // origin check is meaningless — trust the MESSAGE SOURCE instead. Only
+    // the real embedding frame (window.parent) may drive the bridge; an
+    // unrelated page posting into us fails the source check. With an
+    // explicit origin (same-origin prod), keep the exact-origin check.
+    const inboundAllowed = (ev: MessageEvent): boolean => {
+        if (opts.origin === '*') return ev.source === window.parent;
+        return ev.origin === opts.origin && ev.source === window.parent;
+    };
+
     window.addEventListener('message', (ev: MessageEvent) => {
-        if (ev.origin !== opts.origin) {
+        if (!inboundAllowed(ev)) {
             log('warn', '[fusion-sdk] dropped message from disallowed origin:', ev.origin);
-            return;
-        }
-        if (ev.source !== window.parent) {
-            log('warn', '[fusion-sdk] dropped message from non-parent source');
             return;
         }
         bridge.handleMessage(ev.data as BridgeMessage);
@@ -262,7 +281,7 @@ export function createShellSdk(options?: ShellSdkOptions): FusionShellSdk {
     let lang: 'zh' | 'en' = document.documentElement.lang.startsWith('en') ? 'en' : 'zh';
     const langListeners = new Set<(l: 'zh' | 'en') => void>();
     window.addEventListener('message', (ev: MessageEvent) => {
-        if (ev.origin !== opts.origin || ev.source !== window.parent) return;
+        if (!inboundAllowed(ev)) return;
         const msg = ev.data as BridgeMessage;
         if (msg?.type !== 'request' || (msg as { method?: string }).method !== 'ping') return;
         window.parent.postMessage(
@@ -271,7 +290,7 @@ export function createShellSdk(options?: ShellSdkOptions): FusionShellSdk {
         );
     });
     window.addEventListener('message', (ev: MessageEvent) => {
-        if (ev.origin !== opts.origin || ev.source !== window.parent) return;
+        if (!inboundAllowed(ev)) return;
         const msg = ev.data as BridgeMessage;
         if (msg?.type !== 'event' || (msg as { event?: string }).event !== 'lang') return;
         lang = (msg as { payload?: string }).payload === 'en' ? 'en' : 'zh';

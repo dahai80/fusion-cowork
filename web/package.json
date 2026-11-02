@@ -12,6 +12,7 @@
         "preview": "vite preview --port 11464"
     },
     "dependencies": {
+        "@fusion/design-tokens": "file:vendor/@fusion/design-tokens",
         "@fusion/web-sdk": "file:vendor/@fusion/web-sdk",
         "@fusion/web-ui": "file:vendor/@fusion/web-ui",
         "@xyflow/react": "^12.3.5",

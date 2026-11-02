@@ -188,8 +188,7 @@ describe('findArtifactRefs', () => {
     });
 
     it('dedupes and preserves order', () => {
-        const text =
-            '[Artifact: B | ID: b_1 | v1] [Artifact: A | ID: a_1 | v1] [Artifact: B2 | ID: b_1 | v2]';
+        const text = '[Artifact: B | ID: b_1 | v1] [Artifact: A | ID: a_1 | v1] [Artifact: B2 | ID: b_1 | v2]';
         expect(findArtifactRefs(text)).toEqual([
             { artifact_id: 'b_1', name: 'B' },
             { artifact_id: 'a_1', name: 'A' },
