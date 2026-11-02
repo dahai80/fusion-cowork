@@ -1,6 +1,7 @@
 import { useAutoRetry } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
 import { BrowserPanel } from './BrowserPanel';
+import { CommandPalette } from './CommandPalette';
 import { NotificationBell } from './NotificationBell';
 import { api } from './api';
 import { useT } from './i18n';
@@ -8,6 +9,7 @@ import { onPreferredModelChange, preferredModel, setPreferredModel } from './mod
 import { AdminPage } from './pages/AdminPage';
 import { ApprovalsPage } from './pages/ApprovalsPage';
 import { CanvasPage } from './pages/CanvasPage';
+import { CapabilitiesPage } from './pages/CapabilitiesPage';
 import { ClusterPage } from './pages/ClusterPage';
 import { DelegatePage } from './pages/DelegatePage';
 import { ExtensionsPage } from './pages/ExtensionsPage';
@@ -49,6 +51,7 @@ type Route =
     | 'admin'
     | 'skills'
     | 'extensions'
+    | 'capabilities'
     | 'm';
 
 const ROUTES: Route[] = [
@@ -69,6 +72,7 @@ const ROUTES: Route[] = [
     'admin',
     'skills',
     'extensions',
+    'capabilities',
 ];
 
 function parseHash(): { route: Route; arg: string } {
@@ -90,6 +94,7 @@ function parseHash(): { route: Route; arg: string } {
     if (head === 'admin') return { route: 'admin', arg };
     if (head === 'skills') return { route: 'skills', arg };
     if (head === 'extensions') return { route: 'extensions', arg };
+    if (head === 'capabilities') return { route: 'capabilities', arg };
     if (head === 'm') return { route: 'm', arg };
     return { route: 'home', arg };
 }
@@ -130,6 +135,8 @@ function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
             return t('技能', 'Skills');
         case 'extensions':
             return t('扩展', 'Extensions');
+        case 'capabilities':
+            return t('能力市场', 'Capabilities');
         case 'm':
             return t('移动端', 'Mobile');
     }
@@ -239,6 +246,8 @@ export function App() {
                     <SkillsPage />
                 ) : route === 'extensions' ? (
                     <ExtensionsPage />
+                ) : route === 'capabilities' ? (
+                    <CapabilitiesPage arg={arg} />
                 ) : route === 'm' ? (
                     <MobilePage />
                 ) : route === 'templates' ? (
@@ -248,6 +257,7 @@ export function App() {
                 )}
             </main>
             <BrowserPanel />
+            <CommandPalette />
         </div>
     );
 }

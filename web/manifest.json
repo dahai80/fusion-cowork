@@ -77,6 +77,11 @@
             "route": "/extensions",
             "title": "扩展",
             "title_en": "Extensions"
+        },
+        {
+            "route": "/capabilities",
+            "title": "能力市场",
+            "title_en": "Capabilities"
         }
     ],
     "searchProviders": [

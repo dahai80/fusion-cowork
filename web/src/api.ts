@@ -387,6 +387,10 @@ async function del<T>(path: string): Promise<T> {
     return (await sdk.http.delete<T>(path)).data;
 }
 
+async function patch<T>(path: string, body?: unknown): Promise<T> {
+    return (await sdk.http.request<T>(path, { method: 'PATCH', body })).data;
+}
+
 // issue #156: 管理台密钥只在浏览器本地 (localStorage), 随请求走 x-admin-key。
 // sdk.http 不接受自定义头, 管理台单独走同源 fetch (嵌入式 shell 不承载管理台)。
 const ADMIN_KEY_STORAGE = 'fusion-cowork-admin-key';
@@ -535,6 +539,89 @@ export interface RagKbList {
     page: number;
     page_size: number;
     error?: string;
+}
+
+// issue #228: capability marketplace — workspace pool of skills/connectors/subagents.
+export type CapabilityType = 'skill' | 'connector' | 'subagent';
+
+export interface CapabilityScope {
+    id: string;
+    sensitive: boolean;
+}
+
+export interface CapabilityUsageStats {
+    count: number;
+    last_used_at: number | null;
+}
+
+export interface CapabilityAuditEntry {
+    run_id: string;
+    workflow: string;
+    node: string;
+    detail: string;
+    verdict: string;
+    actor: string;
+    ts: number;
+}
+
+export interface CapabilityItem {
+    id: string;
+    type: CapabilityType;
+    name: string;
+    title: string;
+    title_en?: string;
+    description: string;
+    description_en?: string;
+    source: string;
+    installed: boolean;
+    enabled: boolean;
+    installed_at?: number | null;
+    usage: CapabilityUsageStats;
+    audit_count: number;
+    granted_scopes: string[];
+    connected: boolean;
+    requires_approval: boolean;
+    sensitive_scopes: string[];
+    scopes: CapabilityScope[];
+    auth?: { kind: string; configured: boolean };
+    detail_route?: string;
+    spawn_policy?: { mode?: string; requires_approval?: boolean; timeout_s?: number };
+    detail?: Record<string, unknown>;
+    [key: string]: unknown;
+}
+
+export interface CapabilitySource {
+    name: string;
+    available: boolean;
+    error?: string;
+}
+
+export interface CapabilityCatalog {
+    workspace_id: string;
+    skills: CapabilityItem[];
+    connectors: CapabilityItem[];
+    subagents: CapabilityItem[];
+    sources: CapabilitySource[];
+    count: number;
+}
+
+export interface CapabilityUsageRecord {
+    workspace_id: string;
+    id: string;
+    usage: CapabilityUsageStats;
+    audit: CapabilityAuditEntry[];
+}
+
+export interface CapabilityMutation {
+    workspace_id: string;
+    capability: CapabilityItem;
+}
+
+export interface SearchItem {
+    title: string;
+    route: string;
+    kind: string;
+    capability_id?: string;
 }
 
 export interface RagDocument {
@@ -810,6 +897,60 @@ export const api = {
     },
     removeExtensionSkill: (name: string) =>
         del<{ deleted: boolean; capability_removed: boolean }>(`/api/extensions/skills/${encodeURIComponent(name)}`),
+    // issue #228: capability marketplace
+    capabilities: (workspaceId = '', q = '', type = '') => {
+        const params = new URLSearchParams();
+        if (workspaceId) params.set('workspace_id', workspaceId);
+        if (q) params.set('q', q);
+        if (type) params.set('type', type);
+        const qs = params.toString();
+        return get<CapabilityCatalog>(`/api/capabilities${qs ? `?${qs}` : ''}`);
+    },
+    installCapability: (type: CapabilityType, id: string, workspaceId = '') =>
+        post<{ installed: boolean } & CapabilityMutation>(
+            `/api/capabilities/${type}/${encodeURIComponent(id)}/install`,
+            { workspace_id: workspaceId }
+        ),
+    uninstallCapability: (type: CapabilityType, id: string, workspaceId = '') =>
+        del<{ uninstalled: boolean; workspace_id: string; id: string }>(
+            `/api/capabilities/${type}/${encodeURIComponent(id)}?workspace_id=${encodeURIComponent(workspaceId)}`
+        ),
+    setCapabilityEnabled: (type: CapabilityType, id: string, enabled: boolean, workspaceId = '') =>
+        patch<CapabilityMutation>(`/api/capabilities/${type}/${encodeURIComponent(id)}/enabled`, {
+            workspace_id: workspaceId,
+            enabled,
+        }),
+    grantCapabilityScopes: (id: string, scopes: string[], approve = false, workspaceId = '') =>
+        post<{ sensitive_approved: string[] } & CapabilityMutation>(
+            `/api/capabilities/connectors/${encodeURIComponent(id)}/scopes`,
+            { workspace_id: workspaceId, scopes, approve }
+        ),
+    startConnectorOAuth: (id: string, workspaceId = '') =>
+        post<{ authorize_url: string; state: string; expires_in: number }>(
+            `/api/capabilities/connectors/${encodeURIComponent(id)}/oauth/start`,
+            { workspace_id: workspaceId }
+        ),
+    revokeConnector: (id: string, workspaceId = '') =>
+        post<{ revoked: boolean; workspace_id: string; id: string }>(
+            `/api/capabilities/connectors/${encodeURIComponent(id)}/revoke`,
+            { workspace_id: workspaceId }
+        ),
+    capabilityUsage: (type: CapabilityType, id: string, workspaceId = '') =>
+        get<CapabilityUsageRecord>(
+            `/api/capabilities/${type}/${encodeURIComponent(id)}/usage?workspace_id=${encodeURIComponent(workspaceId)}`
+        ),
+    subagentDefinition: (id: string, workspaceId = '') =>
+        get<{ kind: string; definition: Record<string, unknown> }>(
+            `/api/capabilities/subagents/${encodeURIComponent(id)}/definition?workspace_id=${encodeURIComponent(
+                workspaceId
+            )}`
+        ),
+    spawnSubagent: (id: string, input: string, workspaceId = '', approve = false) =>
+        post<{ kind: string; run_id?: string; route?: string; result?: unknown; spawn_policy?: unknown }>(
+            `/api/capabilities/subagents/${encodeURIComponent(id)}/spawn`,
+            { workspace_id: workspaceId, input, approve }
+        ),
+    search: (q: string) => get<{ items: SearchItem[] }>(`/api/search?q=${encodeURIComponent(q)}`),
     ragHealth: () => get<RagHealth>('/api/extensions/rag/health'),
     ragKbs: (q: string, page: number, pageSize: number) =>
         get<RagKbList>(`/api/extensions/rag/kb?q=${encodeURIComponent(q)}&page=${page}&page_size=${pageSize}`),

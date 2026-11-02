@@ -536,6 +536,13 @@ class WorkflowEngine:
         self._budget_tracker = budget_tracker
         # R-1: _executions 上限, 终态后超出则淘汰最旧 (旧版只增不删, 长跑引擎内存泄漏)
         self._max_executions = 100
+        # issue #228: exec_id -> 工作区 id — 能力闸门按工作区能力池判定 (未设置 = 空, 零行为变化)
+        self._run_workspace: Dict[str, str] = {}
+
+    def set_run_workspace(self, execution_id: str, workspace_id: str) -> None:
+        if execution_id:
+            self._run_workspace[execution_id] = str(workspace_id or "")
+            logger.debug(f"[{execution_id}] 运行工作区: {self._run_workspace[execution_id] or '-'}")
 
     def on_progress(self, callback: callable) -> None:
         """注册进度回调。"""
@@ -905,6 +912,7 @@ class WorkflowEngine:
             del self._cancel_flags[exec_id]
             self._pause_events.pop(exec_id, None)
             self._directives.pop(exec_id, None)
+            self._run_workspace.pop(exec_id, None)
 
         return execution
 
@@ -974,7 +982,15 @@ class WorkflowEngine:
             async with state.hitl_lock:
                 # issue #138: 写审批上下文 (workflow/node_id) 供高风险拒绝的审批卡展示
                 # issue #181: 附带 execution_id, HITL confirm 路由凭它唤醒暂停中的 run
-                token = set_approval_context({"workflow": workflow.name, "node_id": node_id, "execution_id": exec_id})
+                token = set_approval_context(
+                    {
+                        "workflow": workflow.name,
+                        "node_id": node_id,
+                        "execution_id": exec_id,
+                        # issue #228: 能力闸门据此按工作区能力池判定
+                        "workspace_id": self._run_workspace.get(exec_id, ""),
+                    }
+                )
                 try:
                     allowed = await self._permission_manager.check(node.name, "execute", check_input)
                 finally:
