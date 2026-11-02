@@ -435,6 +435,13 @@ Six issues from the 2026-10-20 5-repo issue-completion acceptance, fixed in one 
 - **#126 (P3) — chat-only model catalog**: `/api/models` defaults to chat-capable models only (`engine_type` not in the non-chat set); `?all=1` returns the raw list; `total` carries the raw count. `_is_chat_model` is shared with `NLWorkflowGenerator._pick_chat_model`.
 - **#127 (P3) — vendor sync + web tests**: vendored `@fusion/web-sdk`/`web-ui` synced byte-identical with upstream (fixes #19/#20 now present); `web/tests/sdk.test.ts` adds the first `bun test` suite covering the #96 runtime-key seam + #20 content-type contract (`bun run test`).
 
+### Resume / Derive from History (v0.5.56, issue #226)
+
+- **Terminal runs reopen read-only** with two history actions (UC-5): the run view already renders the full timeline + artifacts for terminal states; steering controls hide and **resume-from-step / derive-new-task** appear instead.
+- **Resume from step N**: every step card on a terminal run carries `Resume from this step` — `POST /api/runs/{id}/resume-from {node_id}` creates a **new run linked to the original** (`labels.resume_of`, `source: "resume"`), re-validating the workflow definition through `Workflow.from_dict` (400 on invalid DAG). Steps completed before the target are passed as `resume_steps` snapshots (the #191 crash-recovery primitive): their outputs seed downstream inputs and they are skipped; failed/denied steps are **not** snapshotted, so downstream genuinely re-runs. Workspace (`space_id`) and labels carry over; the header shows a `↻ resumed from <run>` chip linking back to the original (audit chain preserved).
+- **Derive new task**: `✚ Derive new task` on a terminal run stores a one-shot prefill (`cowork.derivePrefill`: task name + last outcome + run id) and lands on the home composer with the prompt pre-filled (`在之前任务「…」的基础上继续…`) and a dismissible provenance note — consumed once, never persisted.
+- Tests: `tests/test_issue_226_resume_derive.py` (6 cases: linked run + snapshot replay + step timeline, never-executed node full rerun, unknown node 400, missing node_id 400, non-terminal 409, missing run 404); regression-proven (5 fail on pre-patch code).
+
 ### Inline Approvals in the Run Timeline (v0.5.55, issue #225)
 
 - **Approval cards render at the paused step position** (M7): the HITL card sits inside the wave timeline exactly where the gated node waits — HiTL as a product principle, not a settings toggle. Cards whose `node_id` cannot be located in the DAG fall back to the top of the run view (never lost).

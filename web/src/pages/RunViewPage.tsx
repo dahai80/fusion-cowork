@@ -123,6 +123,12 @@ export function RunViewPage({ runId }: { runId: string }) {
     if (!record) return null;
 
     const steerable = record.status === 'running' || record.status === 'paused';
+    // issue #226: 终态 run 只读 — 重跑/派生动作仅在终态开放
+    const terminal =
+        record.status === 'completed' ||
+        record.status === 'completed_with_denials' ||
+        record.status === 'failed' ||
+        record.status === 'cancelled';
     const totalTokens = (record.steps ?? []).reduce((n, s) => n + (s.tokens?.total_tokens ?? 0), 0);
     const waves = computeWaves(record.workflow_def ?? {});
     const caps = capabilitiesInUse(record.steps ?? []);
@@ -184,6 +190,42 @@ export function RunViewPage({ runId }: { runId: string }) {
             console.error('[cowork-web] run review failed', e);
             sdk.toast.show({ level: 'error', message: t('审查失败', 'Review failed') });
         }
+    }
+
+    // issue #226: 从指定步骤重跑 — 新 run 链回原 run, 跳转新 run 视图
+    async function resumeFromStep(nodeId: string) {
+        try {
+            const r = await api.resumeRunFrom(runId, nodeId);
+            sdk.toast.show({
+                level: 'success',
+                message: t(
+                    `已从该步骤重跑 (${r.snapshot_steps} 步快照续跑)`,
+                    `Resumed (${r.snapshot_steps} steps replayed)`
+                ),
+            });
+            window.location.hash = `#/runs/${r.run_id}`;
+        } catch (e) {
+            console.error('[cowork-web] resume-from failed', e);
+            sdk.toast.show({ level: 'error', message: t('重跑失败', 'Resume failed') });
+        }
+    }
+
+    // issue #226: 派生新任务 — 预填首页 composer (任务 + 上次结果上下文)
+    function deriveNewTask() {
+        if (!record) return;
+        try {
+            localStorage.setItem(
+                'cowork.derivePrefill',
+                JSON.stringify({
+                    task: record.workflow_name || record.workflow_id || '',
+                    outcome: record.result?.summary || '',
+                    run_id: runId,
+                })
+            );
+        } catch {
+            // storage 不可用 — 直接回首页不带预填
+        }
+        window.location.hash = '#/home';
     }
 
     async function sendInstruction() {
@@ -258,6 +300,27 @@ export function RunViewPage({ runId }: { runId: string }) {
                         onClick={() => setDrawerOpen(!drawerOpen)}
                     >
                         📁 {t('工作区', 'Workspace')}
+                    </button>
+                ) : null}
+                {terminal ? (
+                    <button
+                        type="button"
+                        className="rounded-md border border-accent px-2 py-1 text-xs text-accent hover:bg-accent/10"
+                        onClick={deriveNewTask}
+                    >
+                        ✚ {t('派生新任务', 'Derive new task')}
+                    </button>
+                ) : null}
+                {record.labels?.resume_of ? (
+                    <button
+                        type="button"
+                        title={record.labels.resume_of}
+                        className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-text-muted hover:text-text-primary"
+                        onClick={() => {
+                            window.location.hash = `#/runs/${record.labels?.resume_of}`;
+                        }}
+                    >
+                        ↻ {t('重跑自', 'resumed from')} {record.labels.resume_of.slice(0, 12)}
                     </button>
                 ) : null}
             </div>
@@ -374,6 +437,8 @@ export function RunViewPage({ runId }: { runId: string }) {
                                                     step={step}
                                                     expanded={openStep === wn.id}
                                                     onToggle={() => setOpenStep(openStep === wn.id ? '' : wn.id)}
+                                                    canResume={terminal}
+                                                    onResumeFrom={resumeFromStep}
                                                 />
                                             </div>
                                         );
@@ -581,7 +646,20 @@ function InlineApprovalCard({
 }
 
 // 步骤卡: 状态/耗时 + M10 能力标注 + 展开 input/output (复用 RunsPage StepDrawer)
-function StepCard({ step, expanded, onToggle }: { step: RunStep; expanded: boolean; onToggle: () => void }) {
+// issue #226: 终态 run 可从本步骤重跑 (新 run 链回原 run)
+function StepCard({
+    step,
+    expanded,
+    onToggle,
+    canResume,
+    onResumeFrom,
+}: {
+    step: RunStep;
+    expanded: boolean;
+    onToggle: () => void;
+    canResume?: boolean;
+    onResumeFrom: (nodeId: string) => void;
+}) {
     const t = useT();
     const cap = stepCapability(step);
     const denied = step.status === 'denied';
@@ -618,6 +696,17 @@ function StepCard({ step, expanded, onToggle }: { step: RunStep; expanded: boole
                 ) : null}
             </button>
             {expanded ? <StepDrawer step={step} /> : null}
+            {canResume ? (
+                <div className="border-t border-border px-2 py-1.5">
+                    <button
+                        type="button"
+                        className="rounded-md border border-border px-2 py-1 text-[11px] text-text-secondary hover:bg-bg-muted"
+                        onClick={() => onResumeFrom(step.node_id)}
+                    >
+                        ↻ {t('从这里重跑', 'Resume from this step')}
+                    </button>
+                </div>
+            ) : null}
         </div>
     );
 }

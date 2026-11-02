@@ -379,6 +379,13 @@ fusion-cowork space knowledge unbind <space_id> --operator user1
 
 测试: `tests/test_issue_189_node_executor.py` (33 例 + 1 例 live-AS 跳过: 波次并发墙钟/重叠/峰值、env 解析、配置往返、UDS 成功/partial/失败/transcript 容错、HTTP 完成/失败/超时/覆盖降级、混合 DAG 端到端、agent 失败语义、跨 agent 节点断点续跑)。文档: `docs/node-executors.md`。
 
+### 从历史重跑 / 派生 (v0.5.56, issue #226)
+
+- **终态 run 只读重开** + 两个历史动作 (UC-5): run 视图对终态已渲染完整时间线 + 产物; 操控控件隐藏, 出现**从步骤重跑 / 派生新任务**。
+- **从步骤 N 重跑**: 终态 run 的每个步骤卡带 `从这里重跑` — `POST /api/runs/{id}/resume-from {node_id}` 创建**链回原 run 的新 run** (`labels.resume_of`, `source: "resume"`), 工作流定义经 `Workflow.from_dict` 重校验 (非法 DAG 400)。目标之前的已完成步骤作为 `resume_steps` 快照 (#191 崩溃恢复原语) 续跑: 输出作为下游输入, 本身跳过; 失败/被拒步骤**不入快照**, 下游真正重执行。工作区 (`space_id`) 与标签继承; 头部 `↻ 重跑自 <run>` chip 链回原 run (审计链保留)。
+- **派生新任务**: 终态 run 上 `✚ 派生新任务` 存一次性预填 (`cowork.derivePrefill`: 任务名 + 上次结果 + run id), 落到首页 composer 预填 (`在之前任务「…」的基础上继续…`) 并带可关溯源提示 — 消费一次, 不持久。
+- 测试: `tests/test_issue_226_resume_derive.py` (6 例: 链回 run + 快照续跑 + 步骤时间线、未执行节点全量重跑、未知节点 400、缺 node_id 400、非终态 409、run 不存在 404); 回归已证 (补丁前代码 5 例失败)。
+
 ### 运行时间线内联审批 (v0.5.55, issue #225)
 
 - **审批卡渲染在暂停步骤位** (M7): HITL 卡片内嵌在波次时间线里被闸节点等待的位置 — HiTL 是产品原则而非设置开关。`node_id` 在 DAG 中定位不到的卡片回落到 run 视图顶部 (绝不丢失)。

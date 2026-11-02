@@ -1,7 +1,7 @@
 import { useAutoRetry } from '@fusion/web-ui';
 import { EmptyState, ErrorState, SkeletonLines, StatusBadge } from '@fusion/web-ui';
 import type { StatusKind } from '@fusion/web-ui';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { type RunListItem, type WorkspaceInfo, api, statusKind } from '../api';
 import { useT } from '../i18n';
 import { preferredModel } from '../modelPref';
@@ -237,6 +237,25 @@ function TaskHome({ activeId, onSwitch }: { activeId: string; onSwitch: () => vo
     const [busy, setBusy] = useState('');
     const [error, setError] = useState('');
     const [caps, setCaps] = useState<string[]>([]);
+    // issue #226: 派生新任务 — run 视图预填 (任务 + 上次结果上下文), 一次性消费
+    const [deriveFrom, setDeriveFrom] = useState('');
+
+    useEffect(() => {
+        try {
+            const raw = localStorage.getItem('cowork.derivePrefill');
+            if (!raw) return;
+            localStorage.removeItem('cowork.derivePrefill');
+            const d = JSON.parse(raw) as { task?: string; outcome?: string; run_id?: string };
+            const task = (d.task || '').trim();
+            const outcome = (d.outcome || '').trim();
+            setPrompt(
+                task ? `在之前任务「${task}」的基础上继续${outcome ? `（上次结果：${outcome}）` : ''}，新的要求：` : ''
+            );
+            if (d.run_id) setDeriveFrom(d.run_id);
+        } catch {
+            // 坏数据忽略 — 不带预填进入
+        }
+    }, []);
 
     const space = (ws.data?.workspaces ?? []).find((w) => w.id === activeId);
     const pendingCount = (approvals.data?.approvals ?? []).length;
@@ -352,6 +371,22 @@ function TaskHome({ activeId, onSwitch }: { activeId: string; onSwitch: () => vo
                 {t('今天想让 Cowork 做什么？', 'What should Cowork do today?')}
             </div>
             <div className="rounded-xl border border-border bg-bg-elevated p-3">
+                {deriveFrom ? (
+                    <div className="mb-2 flex items-center justify-between rounded-md border border-accent/40 bg-accent/5 px-2 py-1 text-[11px] text-text-secondary">
+                        <span>
+                            ✚ {t('派生自运行', 'Derived from run')}{' '}
+                            <span className="font-mono">{deriveFrom.slice(0, 16)}</span>
+                            {t('— 补充你的新要求后生成', '— add your new requirements and generate')}
+                        </span>
+                        <button
+                            type="button"
+                            className="text-text-muted hover:text-text-primary"
+                            onClick={() => setDeriveFrom('')}
+                        >
+                            ✕
+                        </button>
+                    </div>
+                ) : null}
                 <textarea
                     className="min-h-24 w-full resize-y rounded-lg border border-border bg-bg p-3 text-sm text-text-primary"
                     placeholder={t(

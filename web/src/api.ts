@@ -602,6 +602,12 @@ export const api = {
     cancelRun: (id: string) => post<{ status: string }>(`/api/runs/${encodeURIComponent(id)}/cancel`),
     pauseRun: (id: string) => post<{ status: string }>(`/api/runs/${encodeURIComponent(id)}/pause`),
     resumeRun: (id: string) => post<{ status: string }>(`/api/runs/${encodeURIComponent(id)}/resume`),
+    // issue #226: 终态 run 从指定步骤重跑 — 新 run 链回原 run
+    resumeRunFrom: (id: string, nodeId: string) =>
+        post<{ run_id: string; resumed_from: string; resume_of: string; snapshot_steps: number }>(
+            `/api/runs/${encodeURIComponent(id)}/resume-from`,
+            { node_id: nodeId }
+        ),
     directive: (
         id: string,
         body: {
