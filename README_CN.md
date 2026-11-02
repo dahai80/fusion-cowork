@@ -401,7 +401,8 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - **运行 composer** — 同样五区; `＠` 提供本 run 步骤产出的产物引用。
 - **审批禁用态 (§6)** — run 暂停等待审批时运行 composer 置 `disabled`, 上下文条显示 `⏸ 等待审批` 徽标; 内联审批卡 (#225) 仍是唯一处置 UI — 不另造替代 composer。
 - 接线逻辑位于纯函数 (`web/src/composer.ts`: `buildReferenceItems` / `buildContextChips` / `composerApprovalVariant` / `insertRefToken`), 无需 DOM 即可单测。
-- 测试: `web/tests/composer231.test.tsx` (9 例: 三类引用 + token、chip 清除、审批禁用变体、cowork 接线下的五区、固定 pill 标签跨状态)。CI web job 现执行 `bun run test` (原仅 lint/typecheck/build); bun 套件 86 例全绿。
+- **验收残留收口 (v0.5.62, issue #240)**: run 视图 `＠` 面板补齐三类引用 (工作目录 + 最近任务 + 本 run 步骤产物, 原先仅产物); 新增 feed 契约测试钉住 `runs_get.hitl_pending` → composer 禁用 + `⏸ 等待审批` 徽标, 字段断链即刻可见; live UI 走查在 `:11461` 以构建产物完成 (SPA + 静态资源 + `/api/models` + `/api/workspaces`, 模块 key 鉴权)。
+- 测试: `web/tests/composer231.test.tsx` (9 例: 三类引用 + token、chip 清除、审批禁用变体、cowork 接线下的五区、固定 pill 标签跨状态) + `web/tests/composer240.test.tsx` (暂停 run feed、三类引用面板)。CI web job 现执行 `bun run test` (原仅 lint/typecheck/build); bun 套件 113 例全绿。
 
 ### 运行时间线产物卡片 (v0.5.57, issue #233)
 
