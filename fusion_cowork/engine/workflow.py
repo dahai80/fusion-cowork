@@ -1008,7 +1008,11 @@ class WorkflowEngine:
                     allowed = await self._permission_manager.check(node.name, "execute", check_input)
                 finally:
                     reset_approval_context(token)
-                if not allowed and self._hitl_pause_overrides.get(exec_id, self._hitl_pause) and not node.config.continue_on_error:
+                if (
+                    not allowed
+                    and self._hitl_pause_overrides.get(exec_id, self._hitl_pause)
+                    and not node.config.continue_on_error
+                ):
                     # issue #181: 本地待审批命中本 run → 暂停在节点边界等人工决定
                     allowed = await self._hitl_await(exec_id, node, check_input)
                     # issue #225: 审批编辑参数 — 批准唤醒后并入被闸节点输入 (仅本次执行)
