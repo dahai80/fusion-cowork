@@ -513,6 +513,8 @@ class WorkflowEngine:
             raw = os.environ.get("FUSION_COWORK_HITL_PAUSE", "").strip().lower()
             hitl_pause = raw not in ("0", "false", "off", "no")
         self._hitl_pause = bool(hitl_pause)
+        # issue #260: per-run HITL 闸门覆盖 — 无人值守 run 可逐 run fail-fast, 无需改全局 env
+        self._hitl_pause_overrides: Dict[str, bool] = {}
         # issue #187: 审批等待上限 — 超时自动拒绝, 绝不静默放行
         self._hitl_timeout = _parse_hitl_timeout(os.environ.get("FUSION_COWORK_HITL_TIMEOUT", "1800"))
         # issue #257: 节点级看门狗 — 未显式配 timeout 的节点默认 1800s 上限, 超时结构化失败;
@@ -619,7 +621,7 @@ class WorkflowEngine:
 
         # issue #120: run-scoped 日志头 — grep "[<run_id>]" 重建时间线
         # issue #187: 首行记录 HITL 模式 — headless 可审计, 不静默
-        hitl_mode = "pause" if self._hitl_pause else "headless"
+        hitl_mode = "pause" if self._hitl_pause_overrides.get(exec_id, self._hitl_pause) else "headless"
         logger.info(
             f"[{exec_id}] run start: workflow={workflow.name} nodes={len(workflow.nodes)} "
             f"hitl_mode={hitl_mode} hitl_timeout={self._hitl_timeout:g}s "
@@ -923,6 +925,7 @@ class WorkflowEngine:
             self._pause_events.pop(exec_id, None)
             self._directives.pop(exec_id, None)
             self._run_workspace.pop(exec_id, None)
+            self._hitl_pause_overrides.pop(exec_id, None)
 
         return execution
 
@@ -1005,7 +1008,11 @@ class WorkflowEngine:
                     allowed = await self._permission_manager.check(node.name, "execute", check_input)
                 finally:
                     reset_approval_context(token)
-                if not allowed and self._hitl_pause and not node.config.continue_on_error:
+                if (
+                    not allowed
+                    and self._hitl_pause_overrides.get(exec_id, self._hitl_pause)
+                    and not node.config.continue_on_error
+                ):
                     # issue #181: 本地待审批命中本 run → 暂停在节点边界等人工决定
                     allowed = await self._hitl_await(exec_id, node, check_input)
                     # issue #225: 审批编辑参数 — 批准唤醒后并入被闸节点输入 (仅本次执行)
@@ -1377,6 +1384,10 @@ class WorkflowEngine:
         # issue #181: 该 run 是否正挂在 HITL 审批等待点
         return execution_id in self._hitl_waiting
 
+    def set_run_hitl_pause(self, execution_id: str, enabled: bool) -> None:
+        # issue #260: per-run HITL 覆盖 — True/False 显式覆盖引擎全局闸门语义
+        self._hitl_pause_overrides[execution_id] = bool(enabled)
+
     def hitl_deadline(self, execution_id: str) -> Optional[float]:
         # issue #187: 等待截止时间 (epoch ts), 前端倒计时用; 未等待返回 None
         return self._hitl_deadlines.get(execution_id)
@@ -1415,6 +1426,23 @@ class WorkflowEngine:
         # issue #191: 先置 _hitl_waiting 再发事件 — 事件回调里持久化才能看到 hitl_pending
         self._hitl_waiting.add(exec_id)
         self._hitl_deadlines[exec_id] = time.time() + self._hitl_timeout
+        # issue #260: 闸门入口写 blocked 步骤 — 等待审批期间 run 时间线可见,
+        # 不再 "running + 0 steps" 观感挂死; 节点终态步骤随后正常追加
+        gate_execution = self._executions.get(exec_id)
+        if gate_execution is not None:
+            gate_step = WorkflowStep(
+                node_id=node.id,
+                node_name=node.name,
+                node_display_name=node.config.label or node.display_name,
+                status=NodeStatus.BLOCKED,
+                started_at=time.time(),
+                input_data=check_input,
+                executor="simple",
+            )
+            gate_step.completed_at = time.time()
+            gate_step.execution_time = 0
+            gate_step.summary = "HITL: 等待人工审批"
+            gate_execution.steps.append(gate_step)
         if self._event_emitter:
             from .events import EventType
 

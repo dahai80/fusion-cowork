@@ -115,6 +115,7 @@ class TestRunsCreateForwarding:
             source="",
             labels=None,
             space_id="",  # issue #223: runs_create 透传工作区归属
+            hitl_pause=None,  # issue #260: per-run HITL 覆盖
         ):
             started.append(
                 {

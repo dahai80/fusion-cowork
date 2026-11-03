@@ -542,11 +542,17 @@ class RunRegistry:
         space_id: str = "",
         resume_steps: Optional[List[Dict[str, Any]]] = None,
         ancestor_summary: Optional[List[Dict[str, Any]]] = None,
+        hitl_pause: Optional[bool] = None,
     ) -> Dict[str, Any]:
         from ..engine import Workflow
 
         wf = Workflow.from_dict(workflow_def)
         run_id = f"run_{uuid.uuid4().hex[:12]}"
+        # issue #260: per-run HITL 覆盖必须在 create_task 前落位 — 否则首节点已进闸门判断
+        if hitl_pause is not None:
+            setter = getattr(self._engine, "set_run_hitl_pause", None)
+            if callable(setter):
+                setter(run_id, bool(hitl_pause))
         record: Dict[str, Any] = {
             "run_id": run_id,
             "workflow_id": workflow_id,
@@ -1450,6 +1456,13 @@ def create_web_app(
             space_id = body.get("space_id", "")
             if not isinstance(space_id, str):
                 raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "space_id 须为字符串"})
+            # issue #260: per-run HITL 闸门覆盖 — 无人值守 acceptance run 可 fail-fast
+            # (true/false 显式覆盖; 缺省跟随引擎全局 FUSION_COWORK_HITL_PAUSE)
+            hitl_pause = body.get("hitl_pause")
+            if hitl_pause is not None and not isinstance(hitl_pause, bool):
+                raise HTTPException(
+                    status_code=400, detail={"code": "bad_request", "message": "hitl_pause 须为 boolean"}
+                )
             return runs.start(
                 workflow_def,
                 workflow_id=workflow_id,
@@ -1459,6 +1472,7 @@ def create_web_app(
                 source=source,
                 labels=labels,
                 space_id=space_id,
+                hitl_pause=hitl_pause,
             )
         except ValueError as exc:
             # issue #135 F-2: 坏边形状/含环等工作流定义错误 → 400 可读信息, 不 500
