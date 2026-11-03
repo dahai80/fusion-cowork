@@ -165,6 +165,8 @@ class NodeStatus(Enum):
     FAILED = "failed"
     SKIPPED = "skipped"
     DENIED = "denied"
+    # issue #260: HITL 闸门等待中 — 时间线立即可见, 节点终态步骤随后追加
+    BLOCKED = "blocked"
     CANCELLED = "cancelled"
 
 
