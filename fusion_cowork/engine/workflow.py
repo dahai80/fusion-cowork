@@ -501,6 +501,7 @@ class WorkflowEngine:
         trajectory_recorder=None,
         budget_tracker=None,
         hitl_pause=None,
+        node_timeout_s: float | None = None,
     ):
         self._executions: Dict[str, WorkflowExecution] = {}
         self._cancel_flags: Dict[str, bool] = {}
@@ -514,6 +515,15 @@ class WorkflowEngine:
         self._hitl_pause = bool(hitl_pause)
         # issue #187: 审批等待上限 — 超时自动拒绝, 绝不静默放行
         self._hitl_timeout = _parse_hitl_timeout(os.environ.get("FUSION_COWORK_HITL_TIMEOUT", "1800"))
+        # issue #257: 节点级看门狗 — 未显式配 timeout 的节点默认 1800s 上限, 超时结构化失败;
+        # FUSION_COWORK_NODE_TIMEOUT_S=0 关闭默认看门狗 (恢复旧行为)
+        if node_timeout_s is None:
+            raw = os.environ.get("FUSION_COWORK_NODE_TIMEOUT_S", "").strip()
+            node_timeout_s = float(raw) if raw else 1800.0
+        self._node_timeout_default = max(0.0, float(node_timeout_s))
+        # issue #257: 长节点心跳 — 周期发 PROGRESS 事件, "在跑" 与 "挂死" 可区分
+        raw_hb = os.environ.get("FUSION_COWORK_NODE_HEARTBEAT_S", "").strip()
+        self._node_heartbeat_s = float(raw_hb) if raw_hb else 30.0
         # exec_id -> 等待截止时间 (epoch ts), 前端倒计时用
         self._hitl_deadlines: Dict[str, float] = {}
         # exec_id -> 审批决定 (True=批准 / False=拒绝), resolve_hitl 写入
@@ -1120,7 +1130,10 @@ class WorkflowEngine:
                     data={"input_data": node_input},
                 )
             # A-1: 接线 NodeConfig.timeout/max_retries/retry_delay (原死配置)。
+            # issue #257: 未显式配置的节点吃引擎默认看门狗 (FUSION_COWORK_NODE_TIMEOUT_S, 默认 1800s)
             timeout = float(node.config.timeout or 0.0)
+            if timeout <= 0:
+                timeout = self._node_timeout_default
             max_retries = int(node.config.max_retries or 0)
             retry_delay = float(node.config.retry_delay or 0.0)
             # issue #182: 业务失败 (FAILED 结果而非异常) 默认不重试, 显式 opt-in 后参与重试
@@ -1139,6 +1152,10 @@ class WorkflowEngine:
                     node_id=node_id,
                     attempt=final_attempt,
                 )
+                # issue #257: 心跳任务 — 节点执行期间周期发 PROGRESS, 完成后取消
+                heartbeat_task: asyncio.Task | None = None
+                if self._event_emitter is not None and self._node_heartbeat_s > 0:
+                    heartbeat_task = asyncio.create_task(self._node_heartbeat(exec_id, node_id, node.name))
                 try:
                     if timeout > 0:
                         result = await asyncio.wait_for(executor.execute(node, node_input, ctx), timeout=timeout)
@@ -1170,6 +1187,9 @@ class WorkflowEngine:
                     attempt_errors.append(f"异常: {last_err}")
                     logger.warning(f"节点 '{node.name}' 异常 attempt={attempt + 1}/{max_retries + 1}: {ne}")
                     result = None
+                finally:
+                    if heartbeat_task is not None:
+                        heartbeat_task.cancel()
                 if attempt < max_retries and retry_delay > 0:
                     await asyncio.sleep(retry_delay)
             if result is None:
@@ -1335,6 +1355,23 @@ class WorkflowEngine:
     def is_paused(self, execution_id: str) -> bool:
         evt = self._pause_events.get(execution_id)
         return evt is not None and not evt.is_set()
+
+    async def _node_heartbeat(self, exec_id: str, node_id: str, node_name: str) -> None:
+        # issue #257: 长节点心跳 — 周期 PROGRESS 事件, 区分 "在跑" 与 "挂死"
+        from .events import EventType
+
+        started = time.time()
+        while True:
+            await asyncio.sleep(self._node_heartbeat_s)
+            if self._event_emitter is None:
+                return
+            self._event_emitter.create_event(
+                EventType.PROGRESS,
+                execution_id=exec_id,
+                node_id=node_id,
+                node_name=node_name,
+                data={"heartbeat": True, "elapsed_s": round(time.time() - started, 1)},
+            )
 
     def hitl_pending(self, execution_id: str) -> bool:
         # issue #181: 该 run 是否正挂在 HITL 审批等待点
