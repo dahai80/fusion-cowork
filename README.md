@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.70-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.71-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -459,6 +459,20 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - Wiring lives in pure helpers (`web/src/composer.ts`: `buildReferenceItems` / `buildContextChips` / `composerApprovalVariant` / `insertRefToken`) so behavior is unit-tested without a DOM.
 - **Acceptance residuals closed (v0.5.62, issue #240)**: the run-view `＠` palette now offers all three reference kinds (workspace directories + recent tasks + the run's own artifacts) instead of artifacts only; a feed-contract test pins `runs_get.hitl_pending` → composer disabled + `⏸ 等待审批` badge so a broken feed is visible; the live UI pass ran the built bundle on `:11461` (SPA + assets + `/api/models` + `/api/workspaces` over the module key).
 - Tests: `web/tests/composer231.test.tsx` (9 cases: reference kinds + tokens, chip clearing, approval variant disabled state, five zones with cowork wiring, fixed pill label across states) + `web/tests/composer240.test.tsx` (paused-run feed, three-kind palette). CI web job now runs `bun run test` (was lint/typecheck/build only); suite 113 bun tests green.
+
+### Official Ops Node Library (v0.5.71, issue #262)
+
+Five first-party, generic node families in `fusion_cowork/nodes/ops/` — zero use-case constants, per-flow-instance config, tokens via env only:
+
+- **`agent_exec`** — argv-only external process launch (no shell), timeout kill, cwd/env allowlist, structured signal-crash failure.
+- **`github_api`** — issue/PR/label ops against GitHub REST; `allowed_repos` whitelist refuse-loud; `GITHUB_TOKEN` env as sole credential channel.
+- **`command_evidence`** — allowlist-gated command execution with secret-scrubbed evidence archive (built-in + custom `redact` patterns) and port reconciliation report.
+- **`http_webhook`** — retry on 5xx/network errors only, `${ENV}` header interpolation, outbound HMAC `X-Fusion-Signature: sha256=...` from `sign_secret_env`.
+- **`approval_gate`** — HITL pause node gated via `HIGH_RISK_NODES`; resumable from the web approval card or the signed callback below.
+
+**Signed inbound resume**: `POST /api/hooks/webhook/{run_id}` verifies `X-Fusion-Signature` (HMAC-SHA256 of raw body with `FUSION_COWORK_WEBHOOK_SECRET`; signature-as-auth, exempt from static-key middleware), finds the run's pending approval, resumes with the decision + optional edited params. 503 when secret unset, 401 on bad signature, `{"resumed": false}` when nothing pending.
+
+`HIGH_RISK_NODES` += `approval_gate`, `agent_exec`, `command_evidence`. Docs: `docs/node-library.md` / `_CN`. Tests: `tests/test_issue_262_node_library.py` (28 cases); also fixed a pre-existing `test_web_p1` isolation leak (missing `space_data_dir` seam).
 
 ### HITL Gate Visibility + Per-Run Headless Override (v0.5.70, issue #260)
 
