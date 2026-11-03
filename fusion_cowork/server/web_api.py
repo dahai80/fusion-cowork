@@ -1833,6 +1833,81 @@ def create_web_app(
                 status_code=400, detail={"code": "not_custom", "message": f"仅自定义模板可删除: {template_id}"}
             )
         return {"deleted": template_id}
+    # ── issue #263 仓库 onboarding 向导 ──
+    def _wizard():
+        from . import github_wizard as _gw
+
+        if _gw.WIZARD_FACTORY is not None:
+            return _gw.WIZARD_FACTORY()
+        if not os.environ.get("GITHUB_TOKEN"):
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "token_missing", "message": "GITHUB_TOKEN 未设置 — 向导只走环境变量, 不入库"},
+            )
+        return _gw.GithubWizard()
+
+    @app.get("/api/wizard/repos")
+    async def wizard_repos(org: str):
+        org = (org or "").strip()
+        if not org:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "org 必填"})
+        try:
+            repos = await _wizard().list_repos(org)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"向导列仓失败 org={org}: {e}")
+            raise HTTPException(status_code=502, detail={"code": "github_error", "message": f"GitHub 列仓失败: {e}"}) from e
+        return {"repos": repos, "count": len(repos)}
+
+    @app.post("/api/wizard/preview")
+    async def wizard_preview(body: Dict[str, Any]):
+        org = str(body.get("org") or "").strip()
+        repos = [r for r in (body.get("repos") or []) if str(r).strip()]
+        if not org or not repos:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "org 与 repos 必填"})
+        try:
+            plans = await _wizard().preview(
+                org, repos, codeowners=body.get("codeowners"), protected_checks=body.get("protected_checks")
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"向导预览失败 org={org}: {e}")
+            raise HTTPException(status_code=502, detail={"code": "github_error", "message": f"GitHub 预览失败: {e}"}) from e
+        return {"plans": plans}
+
+    @app.post("/api/wizard/apply")
+    async def wizard_apply(body: Dict[str, Any]):
+        org = str(body.get("org") or "").strip()
+        repos = [r for r in (body.get("repos") or []) if str(r).strip()]
+        if not org or not repos:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "org 与 repos 必填"})
+        try:
+            results = await _wizard().apply(
+                org, repos, codeowners=body.get("codeowners"), protected_checks=body.get("protected_checks")
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"向导应用失败 org={org}: {e}")
+            raise HTTPException(status_code=502, detail={"code": "github_error", "message": f"GitHub 应用失败: {e}"}) from e
+        return {"results": results}
+
+    @app.post("/api/wizard/teardown")
+    async def wizard_teardown(body: Dict[str, Any]):
+        org = str(body.get("org") or "").strip()
+        repos = [r for r in (body.get("repos") or []) if str(r).strip()]
+        if not org or not repos:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "org 与 repos 必填"})
+        try:
+            results = await _wizard().teardown(org, repos)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"向导卸载失败 org={org}: {e}")
+            raise HTTPException(status_code=502, detail={"code": "github_error", "message": f"GitHub 卸载失败: {e}"}) from e
+        return {"results": results}
 
     # ── W6 调度任务 (migration doc §6 P0) ──
     def _make_task_executor(workflow_id: str):

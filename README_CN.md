@@ -676,6 +676,22 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 
 ---
 
+### 画布模板资产 + Schema 表单 + 运行实时状态 (issue #261)
+
+- 画布流程可发布为命名模板 (`POST /api/templates`, 幂等 slug — 同名覆盖)、导入 (`POST /api/templates/import`, 接受裸 workflow 或完整模板)、导出 (`GET /api/templates/{id}/export`, 附件下载)、删除自定义模板 (`DELETE /api/templates/{id}`, 内置拒绝 400)。`create_web_app` 新增 `templates_dir` 接缝。
+- 画布检查器改为 schema 驱动: 按 `params_schema` 渲染类型化表单 (enum 下拉 / 复选 / 数字 / 数组 textarea), 原始 JSON 编辑器保留在 `<details>` 下。
+- 画布内实时运行: 运行后每 2s 轮询 `GET /api/runs/{id}`, 节点边框按状态着色 (running/passed/failed/blocked/denied), 状态条 (圆点 + 状态 + HITL 徽章 + 运行视图链接) 取代页面跳转。
+- 模板页: 导入 JSON 文件、按模板导出/删除。
+- 测试: `tests/test_issue_261_canvas_templates.py` (9 例) + `web/tests/canvas261.test.ts` (bun)。
+
+### 仓库 Onboarding 向导 (issue #263)
+
+- Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
+- Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
+- 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+
+---
+
 ## 🕸️ 统一 Web 模块 (v0.5.5, issue #94; v0.5.6 加固, issue #96/#97/#98)
 
 ### 独立模式鉴权与网关注册 (v0.5.6, issue #96/#97) + P0 页面 (v0.5.7) + P1 委托与会话 (v0.5.8)

@@ -460,6 +460,20 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - **Acceptance residuals closed (v0.5.62, issue #240)**: the run-view `＠` palette now offers all three reference kinds (workspace directories + recent tasks + the run's own artifacts) instead of artifacts only; a feed-contract test pins `runs_get.hitl_pending` → composer disabled + `⏸ 等待审批` badge so a broken feed is visible; the live UI pass ran the built bundle on `:11461` (SPA + assets + `/api/models` + `/api/workspaces` over the module key).
 - Tests: `web/tests/composer231.test.tsx` (9 cases: reference kinds + tokens, chip clearing, approval variant disabled state, five zones with cowork wiring, fixed pill label across states) + `web/tests/composer240.test.tsx` (paused-run feed, three-kind palette). CI web job now runs `bun run test` (was lint/typecheck/build only); suite 113 bun tests green.
 
+### Canvas Template Assets + Schema Inspector + Live Run Status (issue #261)
+
+- Canvas flows can be published as named templates (`POST /api/templates`, idempotent slug — same name overwrites), imported (`POST /api/templates/import`, accepts bare workflow or full template), exported (`GET /api/templates/{id}/export`, `Content-Disposition: attachment`), and custom templates deleted (`DELETE /api/templates/{id}`, builtin → 400). `templates_dir` seam on `create_web_app`.
+- Canvas inspector is now schema-driven: node `params_schema` renders as typed form fields (select from enum / checkbox / number / textarea for arrays) with the raw JSON editor kept under `<details>`.
+- In-canvas live run: running a flow polls `GET /api/runs/{id}` every 2s, colors node borders by status (running/passed/failed/blocked/denied), shows a status strip (dot + state + HITL badge + link to the run view) instead of redirecting away.
+- TemplatesPage: import JSON file, export + delete per template.
+- Tests: `tests/test_issue_261_canvas_templates.py` (9 cases) + `web/tests/canvas261.test.ts` (bun).
+
+### Repo Onboarding Wizard (issue #263)
+
+- One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
+- Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
+- Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+
 ### Official Ops Node Library (v0.5.71, issue #262)
 
 Five first-party, generic node families in `fusion_cowork/nodes/ops/` — zero use-case constants, per-flow-instance config, tokens via env only:
