@@ -759,6 +759,36 @@ export const api = {
         const blob = await res.blob();
         return URL.createObjectURL(blob);
     },
+    // issue #263: 仓库 onboarding 向导
+    wizardRepos: (org: string) =>
+        get<{ repos: { name: string; full_name: string; private: boolean; default_branch: string }[]; count: number }>(
+            `/api/wizard/repos?org=${encodeURIComponent(org)}`
+        ),
+    wizardPreview: (body: {
+        org: string;
+        repos: string[];
+        codeowners?: Record<string, string[]>;
+        protected_checks?: string[];
+    }) =>
+        post<{ plans: { repo: string; branch: string; actions: { op: string; target: string; detail: string }[] }[] }>(
+            '/api/wizard/preview',
+            body
+        ),
+    wizardApply: (body: {
+        org: string;
+        repos: string[];
+        codeowners?: Record<string, string[]>;
+        protected_checks?: string[];
+    }) =>
+        post<{ results: { repo: string; branch: string; applied: { op: string; target: string }[] }[] }>(
+            '/api/wizard/apply',
+            body
+        ),
+    wizardTeardown: (body: { org: string; repos: string[] }) =>
+        post<{ results: { repo: string; removed: { op: string; target: string }[]; note?: string }[] }>(
+            '/api/wizard/teardown',
+            body
+        ),
     schedulerTasks: () => get<{ tasks: SchedulerTask[]; count: number }>('/api/scheduler/tasks'),
     createSchedulerTask: (body: {
         name: string;

@@ -25,6 +25,7 @@ import { SkillsPage } from './pages/SkillsPage';
 import { SpacePage } from './pages/SpacePage';
 import { TemplatesPage } from './pages/TemplatesPage';
 import { UsagePage } from './pages/UsagePage';
+import WizardPage from './pages/WizardPage';
 import { WorkflowsPage } from './pages/WorkflowsPage';
 import { embeddedParam, isEmbedded } from './sdk';
 
@@ -52,6 +53,7 @@ type Route =
     | 'skills'
     | 'extensions'
     | 'capabilities'
+    | 'wizard'
     | 'm';
 
 const ROUTES: Route[] = [
@@ -73,6 +75,7 @@ const ROUTES: Route[] = [
     'skills',
     'extensions',
     'capabilities',
+    'wizard',
 ];
 
 function parseHash(): { route: Route; arg: string } {
@@ -96,6 +99,7 @@ function parseHash(): { route: Route; arg: string } {
     if (head === 'skills') return { route: 'skills', arg };
     if (head === 'extensions') return { route: 'extensions', arg };
     if (head === 'capabilities') return { route: 'capabilities', arg };
+    if (head === 'wizard') return { route: 'wizard', arg };
     if (head === 'm') return { route: 'm', arg };
     return { route: 'home', arg };
 }
@@ -136,6 +140,8 @@ function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
             return t('技能', 'Skills');
         case 'extensions':
             return t('扩展', 'Extensions');
+        case 'wizard':
+            return t('Onboarding 向导', 'Onboarding Wizard');
         case 'capabilities':
             return t('能力市场', 'Capabilities');
         case 'm':
@@ -253,6 +259,8 @@ export function App() {
                     <MobilePage />
                 ) : route === 'templates' ? (
                     <TemplatesPage />
+                ) : route === 'wizard' ? (
+                    <WizardPage />
                 ) : (
                     <SchedulePage />
                 )}

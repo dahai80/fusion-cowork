@@ -82,6 +82,11 @@
             "route": "/capabilities",
             "title": "能力市场",
             "title_en": "Capabilities"
+        },
+        {
+            "route": "/wizard",
+            "title": "Onboarding 向导",
+            "title_en": "Onboarding Wizard"
         }
     ],
     "searchProviders": [
