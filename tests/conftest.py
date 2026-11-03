@@ -25,3 +25,13 @@ def _isolate_config_center():
         os.rmdir(tmp)
     except OSError:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _isolate_permission_rules(monkeypatch, tmp_path):
+    # issue #266: 权限规则持久化在 ~/.fusion-cowork/permissions.json — create_web_app
+    # 启动 load() 会读真机规则 (如本机已批准 shell_exec scope=*), 任何依赖权限
+    # 拒绝语义的测试都会被真机状态污染。套件级指向临时文件。
+    from fusion_cowork.engine import permission_manager as _pm_mod
+
+    monkeypatch.setattr(_pm_mod, "_PERMISSIONS_FILE", str(tmp_path / "permissions.json"))
