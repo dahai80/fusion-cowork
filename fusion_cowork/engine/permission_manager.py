@@ -308,27 +308,7 @@ class PermissionManager:
         client = get_guard_client()
         if client is None:
             # issue #124: 本地拒绝入待审批队列 — Web GUI 可 confirm, 不再永久拒绝
-            import uuid
-
-            action_id = f"local_{uuid.uuid4().hex[:8]}"
-            with self._lock:
-                self._pending_local_approvals[action_id] = tool_name
-            ctx = _approval_context.get({})
-
-            self._pending_local_details[action_id] = {
-                "tool_name": tool_name,
-                "params": _sanitize_approval_params(params),
-                "ts": time.time(),
-                "workflow": str(ctx.get("workflow", "")),
-                "node_id": str(ctx.get("node_id", "")),
-                # issue #181: HITL — confirm 路由凭 execution_id 唤醒暂停中的 run
-                "execution_id": str(ctx.get("execution_id", "")),
-                # issue #142: 编辑型待审批附 diff 分块 + 重建用原文
-                "diff_blocks": _build_diff_blocks(params),
-                "raw_edit": _build_raw_edit(params),
-            }
-            logger.info(f"高风险节点无显式批准, 拒绝: {tool_name} (action_id={action_id} 已入本地待审批队列)")
-            self._notify_pending(tool_name, action_id, source="local", params=params)
+            self._register_local_pending(tool_name, params)
             return False
 
         content, content_type = node_to_guard_content(tool_name, params)
@@ -357,6 +337,32 @@ class PermissionManager:
         )
         return await self._apply_verdict(tool_name, verdict)
 
+    def _register_local_pending(self, tool_name: str, params: Dict[str, Any] = None) -> str:
+        # issue #124/#257: 高风险拒绝统一入本地待审批队列 — Web GUI 可 confirm,
+        # HITL confirm 路由凭 execution_id 唤醒暂停中的 run
+        import uuid
+
+        action_id = f"local_{uuid.uuid4().hex[:8]}"
+        with self._lock:
+            self._pending_local_approvals[action_id] = tool_name
+        ctx = _approval_context.get({})
+
+        self._pending_local_details[action_id] = {
+            "tool_name": tool_name,
+            "params": _sanitize_approval_params(params),
+            "ts": time.time(),
+            "workflow": str(ctx.get("workflow", "")),
+            "node_id": str(ctx.get("node_id", "")),
+            # issue #181: HITL — confirm 路由凭 execution_id 唤醒暂停中的 run
+            "execution_id": str(ctx.get("execution_id", "")),
+            # issue #142: 编辑型待审批附 diff 分块 + 重建用原文
+            "diff_blocks": _build_diff_blocks(params),
+            "raw_edit": _build_raw_edit(params),
+        }
+        logger.info(f"高风险节点拒绝入待审批队列: {tool_name} (action_id={action_id})")
+        self._notify_pending(tool_name, action_id, source="local", params=params)
+        return action_id
+
     async def _apply_verdict(self, tool_name: str, verdict) -> bool:
         if verdict is None:
             return self._guard_fail_closed(tool_name)
@@ -376,6 +382,8 @@ class PermissionManager:
 
         if action == "block" or risk == "l4":
             logger.info(f"guard 拒绝 (block/l4): {tool_name} risk={risk} reason={verdict.reason}")
+            # issue #257: guard 拒绝同样入待审批队列 — 审批收件箱可见, 人工批准可恢复
+            self._register_local_pending(tool_name, None)
             return False
         if action == "allow" or risk in ("l1", "l2"):
             logger.info(f"guard 放行: {tool_name} action={action} risk={risk}")
@@ -389,6 +397,7 @@ class PermissionManager:
             return False
         # preview / redact → 保守拒绝 (seatbelt 超出本期)
         logger.info(f"guard 保守拒绝 (preview/redact): {tool_name} action={action}")
+        self._register_local_pending(tool_name, None)
         return False
 
     def _guard_fail_closed(self, tool_name: str) -> bool:
@@ -410,6 +419,7 @@ class PermissionManager:
                     logger.info(f"guard 不可达, 缓存规则放行: {tool_name}")
                     return True
         logger.warning(f"guard 不可达且无匹配缓存, 高风险 fail-closed 拒绝: {tool_name}")
+        self._register_local_pending(tool_name, None)
         return False
 
     def _notify_pending(self, tool_name: str, action_id: str, source: str, params: Any = None) -> None:

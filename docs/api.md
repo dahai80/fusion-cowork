@@ -1,120 +1,81 @@
-# Fusion-Cowork API Reference
+# Cowork Web API Contract (v0.5.69)
 
-## Engine
+`fusion-cowork web serve` (:11461, default) REST surface. Auth: `Authorization: Bearer <key>` or `x-api-key: <key>`; the key is `FUSION_COWORK_WEB_API_KEY` (static) or the gateway-issued `fm-` module key. Unauthenticated requests get `401 {"error":{"code":"unauthorized"}}`; unknown paths get FastAPI's plain `404 {"detail":"Not Found"}` — this document is the published contract, do not probe.
 
-### `Workflow`
-```python
-from fusion_cowork import Workflow
+Convention: JSON bodies; errors are `{"detail": {"code": "...", "message": "..."}}` (except FastAPI's own 404/422).
 
-wf = Workflow(name="my_workflow", description="Automate desktop")
-wf.add_node(my_node)
-wf.connect("node1", "node2")
-wf.to_json()
-```
+## Runs & workflows
 
-### `WorkflowEngine`
-```python
-engine = WorkflowEngine()
-execution = await engine.execute(wf)
-print(execution.status, execution.total_time)
-```
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/api/runs` | body: `workflow` (def) or `workflow_id`, optional `name/inputs/labels/source/memory/model`. Returns `{run_id, status}` |
+| GET | `/api/runs` | list; `?status=&execution_id=&limit=` |
+| GET | `/api/runs/{run_id}` | run record incl. `steps`, `hitl_pending`, `hitl_deadline` |
+| POST | `/api/runs/{run_id}/pause` / `resume` / `cancel` | `409` when not pausable |
+| POST | `/api/runs/{run_id}/directive` | `set_params` / `insert_node` / `skip_remaining` / `inject` |
+| POST | `/api/runs/{run_id}/review` | delivery review `pending_review→approved/rejected` |
+| GET | `/api/runs/{run_id}/events` | SSE snapshot + broadcast |
+| GET | `/api/runs/{run_id}/artifacts` | derived from step outputs |
+| POST | `/api/runs/{run_id}/resume-from` | body `{step_id}` → new linked run with snapshot |
+| GET | `/api/runs/{run_id}/steps` | step list with tokens/duration |
 
-### `EnhancedScheduler` (V0.2)
-```python
-from fusion_cowork import EnhancedScheduler
+## Permissions / approvals
 
-scheduler = EnhancedScheduler(task_scheduler)
-stats = scheduler.get_stats(days=7)
-calendar = scheduler.get_calendar_data(2026, 7)
-```
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/permissions/pending` | merged approval inbox: local denials (incl. guard block/l4/fail-closed, issue #257) + guard L3; each entry has `action_id`, `tool_name`, `params`, `workflow`, `node_id`, `execution_id`, `diff_blocks`, `raw_edit` |
+| POST | `/api/permissions/pending/{action_id}/confirm` | body `{approved: bool, once?: bool, scope?, accepted_blocks?, edited_params?}`; wakes the paused run by `execution_id` |
+| GET | `/api/permissions/rules` / POST `/api/permissions/rules` | rule matrix CRUD |
 
-### `WorkflowOptimizer` (V0.2)
-```python
-from fusion_cowork import WorkflowOptimizer
+## Nodes / templates / scheduler
 
-optimizer = WorkflowOptimizer()
-analysis = optimizer.analyze_workflow(history)
-print(analysis.score, analysis.bottleneck_nodes)
-```
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/nodes` | registered node types + params schema |
+| GET/POST/DELETE | `/api/templates` `/api/templates/{id}` | templates CRUD |
+| POST | `/api/templates/{id}/run` | run a template |
+| GET/POST/PUT/DELETE | `/api/scheduler/tasks` (+ `/{id}`) | cron tasks |
 
-## Nodes
+## Skills (markdown packs)
 
-### macOS System
-- `DesktopCleanNode` — organize desktop
-- `DownloadOrganizerNode` — archive downloads
-- `DiskCleanerNode` — clean caches
-- `ScreenCaptureNode` — screenshot (V0.2)
-- `ClipboardNode` — clipboard read/write (V0.2)
-- `NotificationNode` — macOS notifications (V0.2)
-- `AppLifecycleNode` — app launch/quit (V0.2)
-- `OCRNode` — text recognition (V0.2)
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/skills` | list; items carry `editable` |
+| GET | `/api/skills/{name}/source` | raw markdown (builtin: `editable:false`, empty source) |
+| PUT | `/api/skills` | body `{markdown}` → validate + save to user dir, hot reload |
+| DELETE | `/api/skills/{name}` | user packs only; builtin → `400 builtin` |
+| POST | `/api/skills/{name}/run` | body `{params}` |
 
-### AI Processing
-- `AIClassifyNode` — semantic file classification
-- `AISummarizeNode` — document summarization
-- `AIGenerateNameNode` — intelligent file naming
+Note: Extensions → 技能 tab (`/api/extensions/skills*`) is the separate JSON SkillRegistry pack system, not this one.
 
-### Tools
-- `ShellExecNode` — shell commands
-- `PythonREPLNode` — Python execution
-- `WebSearchNode` — DuckDuckGo search
-- `FetchURLNode` — fetch web pages
-- `ApplyEditNode` — find/replace edits
+## Workspaces / spaces
 
-### Browser (V0.1)
-- `BrowserOpenNode` — open URL in browser
-- `BrowserExtractNode` — extract page content
-- `BrowserAutomateNode` — click/fill/screenshot
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/workspaces` | workspace list |
+| GET | `/api/workspaces/system-dirs` | `?path=<relative>` subdirectory browse (containment-checked; escape `400 bad_path`, missing/file `404 not_found`) |
+| GET/POST/DELETE | `/api/space/spaces*` | spaces + messages + artifacts under `/api/space/*` |
+| GET/PUT | `/api/space/spaces/{id}/instructions` | space instructions |
+| GET | `/api/space/notifications` | notification feed |
 
-## Orchestrator (V0.3)
-```python
-from fusion_cowork import AgentOrchestrator, Agent, AgentRole
+## Observability / admin
 
-orc = AgentOrchestrator()
-orc.register_agent(Agent("agent1", "Planner", AgentRole.PLANNER))
-plan = await orc.create_plan("analysis", "Analyze files")
-orc.add_task(plan.plan_id, "agent1", "Plan execution", {"input": "data"})
-result = await orc.execute_plan(plan.plan_id)
-```
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/sessions?source=engine|space|scheduler` | unified sessions |
+| GET | `/api/usage` | token/call usage |
+| GET | `/api/search?q=` | aggregated search (manifest searchProviders) |
+| GET | `/api/notifications/approvals` + `/api/notifications/runs` | manifest notification sources |
+| GET | `/api/models` | chat models; `?all=1` raw list |
+| GET | `/api/mobile/overview` + POST | `/api/deliver` |
+| POST | `/api/admin/*` (`x-admin-key`) | OTLP audit export, push test, admin usage |
 
-## Server
+## Engine knobs (env)
 
-### MCP Server (V0.2)
-```python
-from fusion_cowork import MCPServer
-
-server = MCPServer(port=11438)
-await server.start()  # 15 tools exposed
-tools = server.get_tools_list()
-```
-
-### CrossDeviceSync (V0.3)
-```python
-from fusion_cowork import CrossDeviceSync
-
-sync = CrossDeviceSync(port=11437)
-await sync.start()
-await sync.sync_workflow(workflow_data)
-```
-
-## Report Generator (V0.2)
-```python
-from fusion_cowork import ReportGenerator
-
-gen = ReportGenerator()
-report = gen.generate_workflow_report(execution, format="html")
-gen.save_report(report, "~/Desktop/reports")
-```
-
-## CLI Reference
-```bash
-fusion-cowork template list/run/show
-fusion-cowork ai generate/status
-fusion-cowork workflow run/list
-fusion-cowork schedule list/add/remove
-fusion-cowork system info/clean
-fusion-cowork browser start/open/extract
-fusion-cowork mcp start               # V0.2
-fusion-cowork report generate          # V0.2
-fusion-cowork orchestrator run         # V0.3
-```
+| Env | Default | Meaning |
+|---|---|---|
+| `FUSION_COWORK_HITL_PAUSE` | on | absent/other → pause on pending approval; `0/false/off/no` → headless deny-fast |
+| `FUSION_COWORK_HITL_TIMEOUT` | 1800 | approval wait bound (`s/m/h` suffix); timeout auto-denies |
+| `FUSION_COWORK_NODE_TIMEOUT_S` | 1800 | per-node watchdog default (nodes may override via `config.timeout`; `0` disables) |
+| `FUSION_COWORK_NODE_HEARTBEAT_S` | 30 | PROGRESS heartbeat interval during long nodes |
+| `FUSION_COWORK_WORKSPACE_ROOT` | home | root for system-dir browsing |
