@@ -25,6 +25,7 @@ _NODE_MODULES = (
     "fusion_cowork.nodes.ecosystem.memory_node",
     "fusion_cowork.nodes.ecosystem.studio_node",
     "fusion_cowork.nodes.ecosystem.mcp_client_node",
+    "fusion_cowork.nodes.ops.ops_nodes",
 )
 
 

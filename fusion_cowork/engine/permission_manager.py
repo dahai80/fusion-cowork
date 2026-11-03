@@ -160,6 +160,13 @@ HIGH_RISK_NODES = frozenset(
         # issue #206: http_request 任意目标请求面 (可带鉴权头/模板注入请求体),
         # 须显式放行; 同 mcp_client 支持 url: 前缀 scope
         "http_request",
+        # issue #262: approval_gate 人工决策闸门 — 天生必须审批 (暂停等人工决定),
+        # 与 http_webhook 签名回调配合实现 "外部系统审批 → 回调续跑"
+        "approval_gate",
+        # issue #262: agent_exec 外部 agent/CLI 进程执行面 (任意命令), 须显式放行
+        "agent_exec",
+        # issue #262: command_evidence 白名单命令执行 + 证据归档, 须显式放行
+        "command_evidence",
     }
 )
 
