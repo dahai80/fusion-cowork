@@ -128,7 +128,10 @@ def client(monkeypatch, tmp_path):
         store_root=tmp_path / "workflows",
         space_data_dir=tmp_path / "spaces",
     )
-    return TestClient(app), app
+    # 上下文管理进入 = portal 跨请求常驻; 裸 TestClient 每请求一个事件循环,
+    # run 后台任务会随请求结束被取消 (issue #257 看门狗 wait_for 让节点必然 yield 后暴露)
+    with TestClient(app) as tc:
+        yield tc, app
 
 
 def _headers():
