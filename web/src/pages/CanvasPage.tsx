@@ -12,8 +12,9 @@ import {
     useEdgesState,
     useNodesState,
 } from '@xyflow/react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { type CanvasEdgeDef, type CanvasNodeDef, type NodeInfo, api } from '../api';
+import { fieldKind, isTrueish, runStatusByNode, schemaFields, toneColor } from '../canvas';
 import { useT } from '../i18n';
 import { sdk } from '../sdk';
 
@@ -28,14 +29,18 @@ interface FlowNodeData extends Record<string, unknown> {
     params: Record<string, unknown>;
     readonly: boolean;
     selectedForEdit: boolean;
+    runStatus?: string;
 }
 
 function CoworkNode({ data, selected }: NodeProps<Node<FlowNodeData>>) {
+    // issue #261: run 进行中按节点终态着色 (blocked=闸门等待, failed=红, passed=绿)
+    const runBorder = data.runStatus ? toneColor(data.runStatus) : '';
     return (
         <div
             className={`min-w-36 rounded-lg border bg-bg-elevated px-3 py-2 ${
                 data.selectedForEdit || selected ? 'border-brand' : 'border-border'
             }`}
+            style={runBorder ? { borderColor: runBorder, borderWidth: 2 } : undefined}
         >
             <Handle type="target" position={Position.Top} />
             <div className="text-xs font-medium text-text-primary">{data.label}</div>
@@ -74,6 +79,7 @@ function nodeDefToFlow(def: CanvasNodeDef, selectedForEdit: boolean): Node<FlowN
             params: def.config?.params ?? {},
             readonly: false,
             selectedForEdit,
+            runStatus: undefined,
         },
     } as Node<FlowNodeData>;
 }
@@ -96,6 +102,47 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
     const [memoryEnabled, setMemoryEnabled] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [loadPending, setLoadPending] = useState(!!workflowId);
+    // issue #261: 画布内实时运行 — run 提交后轮询状态, 节点按终态着色, 闸门等待出横幅
+    const [runId, setRunId] = useState('');
+    const [runState, setRunState] = useState('');
+    const [hitlPending, setHitlPending] = useState(false);
+    const [publishedId, setPublishedId] = useState('');
+    const [publishing, setPublishing] = useState(false);
+    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    const applyRunSnapshot = useCallback(
+        (rec: { status: string; steps: { node_id: string; status: string }[]; hitl_pending?: boolean }) => {
+            setRunState(rec.status);
+            setHitlPending(!!rec.hitl_pending);
+            const byNode = runStatusByNode(rec.steps);
+            setNodes((ns) => ns.map((n) => ({ ...n, data: { ...n.data, runStatus: byNode[n.id] } })));
+        },
+        [setNodes]
+    );
+
+    useEffect(() => {
+        if (!runId) return;
+        const active = runState === 'running' || runState === 'pending';
+        if (!active) {
+            if (pollRef.current) {
+                clearInterval(pollRef.current);
+                pollRef.current = null;
+            }
+            return;
+        }
+        if (pollRef.current) return;
+        pollRef.current = setInterval(() => {
+            api.run(runId)
+                .then((rec) => applyRunSnapshot(rec))
+                .catch((e: Error) => console.error('[cowork-web] canvas run poll failed', e));
+        }, 2000);
+        return () => {
+            if (pollRef.current) {
+                clearInterval(pollRef.current);
+                pollRef.current = null;
+            }
+        };
+    }, [applyRunSnapshot, runId, runState]);
 
     const nodesRetry = useAutoRetry(
         useCallback(() => api.nodes(), []),
@@ -157,6 +204,7 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                     params: {},
                     readonly: false,
                     selectedForEdit: false,
+                    runStatus: undefined,
                 },
             },
         ]);
@@ -270,13 +318,64 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                 memory: memoryEnabled,
             });
             console.info(`[cowork-web] run started: ${res.run_id}`);
+            // issue #261: 不再跳转 — 留在画布轮询, 节点实时着色; 运行视图入口见横幅
+            setRunId(res.run_id);
+            setRunState('running');
             sdk.toast.show({ level: 'success', message: t('已提交运行', 'Run submitted') });
-            window.location.hash = '#/runs';
         } catch (e) {
             console.error('[cowork-web] run failed', e);
             sdk.toast.show({ level: 'error', message: t('运行提交失败', 'Failed to submit run') });
         } finally {
             setRunning(false);
+        }
+    }
+
+    // issue #261: 画布流程发布为命名模板 (custom)
+    async function publish() {
+        if (isReadonly || publishing) return;
+        if (!name.trim()) {
+            sdk.toast.show({ level: 'warning', message: t('请填写工作流名称', 'Workflow name required') });
+            return;
+        }
+        setPublishing(true);
+        const nodeDefs: CanvasNodeDef[] = nodes.map((n) => ({
+            id: n.id,
+            name: n.data.nodeType,
+            category: n.data.category,
+            position: n.position,
+            config: { label: n.data.label, params: n.data.params },
+        }));
+        const edgeDefs: CanvasEdgeDef[] = edges.map((e) => ({ source_id: e.source, target_id: e.target }));
+        try {
+            const res = await api.publishTemplate({
+                name: name.trim(),
+                description: '',
+                category: 'custom',
+                workflow: { name: name.trim(), nodes: nodeDefs, edges: edgeDefs },
+            });
+            setPublishedId(res.id);
+            sdk.toast.show({ level: 'success', message: t(`已发布模板: ${res.id}`, `Template published: ${res.id}`) });
+        } catch (e) {
+            console.error('[cowork-web] publish failed', e);
+            sdk.toast.show({ level: 'error', message: t('发布失败', 'Publish failed') });
+        } finally {
+            setPublishing(false);
+        }
+    }
+
+    // issue #261: 导出已发布模板 JSON (先发布再导出)
+    async function exportPublished() {
+        if (!publishedId) return;
+        try {
+            const url = await api.templateExport(publishedId);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${publishedId}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error('[cowork-web] export failed', e);
+            sdk.toast.show({ level: 'error', message: t('导出失败', 'Export failed') });
         }
     }
 
@@ -295,6 +394,7 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                       | undefined
               )?.properties
             : undefined;
+    const fields = schemaFields(schemaProps);
 
     return (
         <div className="flex h-full min-h-0 flex-col">
@@ -347,8 +447,40 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                     >
                         {running ? t('提交中…', 'Submitting…') : t('运行', 'Run')}
                     </button>
+                    <button
+                        type="button"
+                        className="rounded-md border border-border px-3 py-1 text-sm text-text-primary hover:bg-bg-muted disabled:opacity-50"
+                        disabled={isReadonly || publishing}
+                        onClick={() => void publish()}
+                    >
+                        {publishing ? t('发布中…', 'Publishing…') : t('发布模板', 'Publish template')}
+                    </button>
+                    <button
+                        type="button"
+                        className="rounded-md border border-border px-3 py-1 text-sm text-text-primary hover:bg-bg-muted disabled:opacity-50"
+                        disabled={!publishedId}
+                        title={publishedId ? publishedId : t('先发布模板后可导出', 'Publish a template first')}
+                        onClick={() => void exportPublished()}
+                    >
+                        {t('导出', 'Export')}
+                    </button>
                 </div>
             </div>
+            {runId ? (
+                <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-xs">
+                    <span
+                        className="h-2 w-2 rounded-full"
+                        style={{ background: toneColor(runState === 'running' ? 'running' : runState) }}
+                    />
+                    <span className="text-text-secondary">
+                        {t(`运行 ${runId}`, `Run ${runId}`)} · {runState}
+                        {hitlPending ? ` · ${t('等待审批', 'awaiting approval')}` : ''}
+                    </span>
+                    <a className="ml-auto text-brand hover:underline" href={`#/runs/${runId}`}>
+                        {t('打开运行视图', 'Open run view')}
+                    </a>
+                </div>
+            ) : null}
             <div className="flex min-h-0 flex-1">
                 {!isReadonly ? (
                     <aside className="w-44 shrink-0 overflow-y-auto border-r border-border p-2">
@@ -403,39 +535,126 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                             {sel.data.nodeType} · {sel.data.category}
                         </div>
                         <div className="mt-3 space-y-2">
-                            {Object.entries(sel.data.params).map(([k, v]) => (
-                                <div key={k} className="flex items-center gap-1">
-                                    <input
-                                        className="min-w-0 flex-1 rounded-md border border-border bg-bg px-2 py-1 font-mono text-xs text-text-primary"
-                                        value={String(v)}
-                                        onChange={(e) => updateSelectedParam(k, e.target.value)}
-                                    />
-                                    <button
-                                        type="button"
-                                        className="rounded px-1 text-xs text-error hover:bg-error/10"
-                                        aria-label={`remove ${k}`}
-                                        onClick={() => removeParam(k)}
-                                    >
-                                        ×
-                                    </button>
-                                </div>
-                            ))}
-                            <ParamAdder onAdd={addParam} />
-                        </div>
-                        {schemaProps ? (
-                            <div className="mt-3 border-t border-border pt-2">
-                                <div className="pb-1 text-xs font-medium text-text-secondary">
-                                    {t('可用参数 (schema)', 'Schema params')}
-                                </div>
-                                {Object.entries(schemaProps).map(([k, p]) => (
-                                    <div key={k} className="text-[10px] text-text-muted">
-                                        <span className="font-mono text-text-secondary">{k}</span>
-                                        {p.type ? ` · ${p.type}` : ''}
-                                        {p.description ? ` — ${p.description}` : ''}
+                            {fields.length > 0
+                                ? fields.map((f) => {
+                                      const raw = sel.data.params[f.key];
+                                      const kind = fieldKind(f.prop);
+                                      return (
+                                          <div key={f.key} className="space-y-0.5">
+                                              <div className="flex items-center gap-1 text-[10px] text-text-secondary">
+                                                  <span className="font-mono">{f.key}</span>
+                                                  {f.required ? <span className="text-error">*</span> : null}
+                                                  {f.prop.description ? (
+                                                      <span
+                                                          className="truncate text-text-muted"
+                                                          title={f.prop.description}
+                                                      >
+                                                          — {f.prop.description}
+                                                      </span>
+                                                  ) : null}
+                                              </div>
+                                              {kind === 'checkbox' ? (
+                                                  <input
+                                                      type="checkbox"
+                                                      checked={isTrueish(raw)}
+                                                      disabled={isReadonly}
+                                                      onChange={(e) =>
+                                                          updateSelectedParam(
+                                                              f.key,
+                                                              e.target.checked ? 'true' : 'false'
+                                                          )
+                                                      }
+                                                  />
+                                              ) : kind === 'select' ? (
+                                                  <select
+                                                      className="w-full rounded-md border border-border bg-bg px-2 py-1 text-xs text-text-primary"
+                                                      value={String(raw ?? '')}
+                                                      disabled={isReadonly}
+                                                      onChange={(e) => updateSelectedParam(f.key, e.target.value)}
+                                                  >
+                                                      <option value="">—</option>
+                                                      {(f.prop.enum ?? []).map((opt) => (
+                                                          <option key={String(opt)} value={String(opt)}>
+                                                              {String(opt)}
+                                                          </option>
+                                                      ))}
+                                                  </select>
+                                              ) : kind === 'textarea' ? (
+                                                  <textarea
+                                                      className="min-h-16 w-full rounded-md border border-border bg-bg px-2 py-1 font-mono text-xs text-text-primary"
+                                                      value={
+                                                          typeof raw === 'string'
+                                                              ? raw
+                                                              : raw == null
+                                                                ? ''
+                                                                : JSON.stringify(raw)
+                                                      }
+                                                      placeholder='["a","b"]'
+                                                      disabled={isReadonly}
+                                                      onChange={(e) => updateSelectedParam(f.key, e.target.value)}
+                                                  />
+                                              ) : (
+                                                  <input
+                                                      className="w-full rounded-md border border-border bg-bg px-2 py-1 font-mono text-xs text-text-primary"
+                                                      type={kind === 'number' ? 'number' : 'text'}
+                                                      value={raw == null ? '' : String(raw)}
+                                                      disabled={isReadonly}
+                                                      onChange={(e) => updateSelectedParam(f.key, e.target.value)}
+                                                  />
+                                              )}
+                                          </div>
+                                      );
+                                  })
+                                : Object.entries(sel.data.params).map(([k, v]) => (
+                                      <div key={k} className="flex items-center gap-1">
+                                          <input
+                                              className="min-w-0 flex-1 rounded-md border border-border bg-bg px-2 py-1 font-mono text-xs text-text-primary"
+                                              value={String(v)}
+                                              onChange={(e) => updateSelectedParam(k, e.target.value)}
+                                          />
+                                          <button
+                                              type="button"
+                                              className="rounded px-1 text-xs text-error hover:bg-error/10"
+                                              aria-label={`remove ${k}`}
+                                              onClick={() => removeParam(k)}
+                                          >
+                                              ×
+                                          </button>
+                                      </div>
+                                  ))}
+                            {fields.length > 0 ? (
+                                <details className="pt-1">
+                                    <summary className="cursor-pointer text-[10px] text-text-secondary">
+                                        {t('额外参数 / JSON 形式', 'Extra / raw params')}
+                                    </summary>
+                                    <div className="mt-1 space-y-1">
+                                        {Object.entries(sel.data.params)
+                                            .filter(([k]) => !fields.some((f) => f.key === k))
+                                            .map(([k, v]) => (
+                                                <div key={k} className="flex items-center gap-1">
+                                                    <input
+                                                        className="min-w-0 flex-1 rounded-md border border-border bg-bg px-2 py-1 font-mono text-xs text-text-primary"
+                                                        value={String(v)}
+                                                        disabled={isReadonly}
+                                                        onChange={(e) => updateSelectedParam(k, e.target.value)}
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        className="rounded px-1 text-xs text-error hover:bg-error/10"
+                                                        aria-label={`remove ${k}`}
+                                                        onClick={() => removeParam(k)}
+                                                    >
+                                                        ×
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        <ParamAdder onAdd={addParam} />
                                     </div>
-                                ))}
-                            </div>
-                        ) : null}
+                                </details>
+                            ) : (
+                                <ParamAdder onAdd={addParam} />
+                            )}
+                        </div>
                     </aside>
                 ) : null}
             </div>

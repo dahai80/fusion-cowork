@@ -746,6 +746,19 @@ export const api = {
     templates: (category = '') =>
         get<{ templates: TemplateInfo[]; count: number }>(`/api/templates?category=${encodeURIComponent(category)}`),
     template: (id: string) => get<TemplateInfo>(`/api/templates/${encodeURIComponent(id)}`),
+    // issue #261: 模板资产 — 发布/导入/删除/导出
+    publishTemplate: (body: { name: string; description?: string; category?: string; workflow: unknown }) =>
+        post<{ id: string; name: string }>('/api/templates', body),
+    importTemplate: (body: unknown) => post<{ id: string; name: string }>('/api/templates/import', body),
+    deleteTemplate: (id: string) => sdk.http.delete(`/api/templates/${encodeURIComponent(id)}`),
+    templateExport: async (id: string): Promise<string> => {
+        const res = await fetch(`${apiBase()}/api/templates/${encodeURIComponent(id)}/export`, {
+            headers: await authHeaders(),
+        });
+        if (!res.ok) throw new Error(`export failed: ${res.status}`);
+        const blob = await res.blob();
+        return URL.createObjectURL(blob);
+    },
     schedulerTasks: () => get<{ tasks: SchedulerTask[]; count: number }>('/api/scheduler/tasks'),
     createSchedulerTask: (body: {
         name: string;
