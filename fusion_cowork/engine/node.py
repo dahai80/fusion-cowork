@@ -317,6 +317,13 @@ class BaseNode(ABC):
     @classmethod
     def from_dict(cls, data: dict) -> BaseNode:
         """从字典反序列化节点。"""
+        cfg = data.get("config") or {}
+        # issue #266: 模板/API 格式节点 params 在顶层 — 之前只读 config.params,
+        # 反序列化后 params 丢失, HITL 批准恢复后节点以空参数重跑 ("未指定命令")
+        if "params" in cfg:
+            params = cfg["params"]
+        else:
+            params = data.get("params", {})
         config = NodeConfig(
             label=data.get("config", {}).get("label", ""),
             description=data.get("config", {}).get("description", ""),
@@ -331,7 +338,7 @@ class BaseNode(ABC):
             model=data.get("config", {}).get("model", ""),
             max_turns=int(data.get("config", {}).get("max_turns", 0) or 0),
             budget_tokens=int(data.get("config", {}).get("budget_tokens", 0) or 0),
-            params=data.get("config", {}).get("params", {}),
+            params=params or {},
         )
         return cls(node_id=data.get("id", ""), config=config)
 
