@@ -79,6 +79,7 @@ def _build_client(tmp_path, session_store, generator):
             store_root=tmp_path / "workflows",
             nl_generator=generator,
             session_store=session_store,
+            space_data_dir=tmp_path / "space",
         )
         return TestClient(app)
     finally:

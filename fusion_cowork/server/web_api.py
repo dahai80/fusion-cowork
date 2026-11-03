@@ -8,6 +8,8 @@ fusion-cowork web/ UI 包的后端 HTTP 面:
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -1347,6 +1349,9 @@ def create_web_app(
     @app.middleware("http")
     async def _auth_middleware(request: Request, call_next):
         if request.url.path in ("/health",) or request.url.path.startswith("/ws/"):
+            return await call_next(request)
+        # issue #262: webhook 回调以 HMAC 签名鉴权 (路由内 compare_digest 校验), 不吃静态 key
+        if request.url.path.startswith("/api/hooks/"):
             return await call_next(request)
         # #146: 未配置密钥 = 放行 (对齐 cli.py/README "unset = allow" 契约) —
         # 旧行为无条件 401 导致 shell 登录弹回循环。
@@ -3150,6 +3155,49 @@ def create_web_app(
         await space_store.update_space(space_id, config=existing)
         logger.info(f"web API space instructions 已更新: {space_id} ({len(existing['instructions'])} 字符)")
         return {"space_id": space_id, "instructions": existing["instructions"]}
+
+    # ── issue #262: 签名 webhook 回调 — 外部系统审批后续跑等待中的审批闸门 run ──
+    @app.post("/api/hooks/webhook/{run_id}")
+    async def hooks_webhook(run_id: str, request: Request):
+        secret = os.environ.get("FUSION_COWORK_WEBHOOK_SECRET", "").strip()
+        if not secret:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "unavailable", "message": "FUSION_COWORK_WEBHOOK_SECRET 未配置, webhook 回调不可用"},
+            )
+        raw = await request.body()
+        provided = request.headers.get("X-Fusion-Signature", "")
+        expected = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+        if not provided or not hmac.compare_digest(provided, expected):
+            logger.warning(f"webhook 回调签名校验失败: run={run_id}")
+            raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "HMAC 签名无效"})
+        try:
+            payload = json.loads(raw.decode("utf-8") or "{}")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}) from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON 对象"})
+        if permission_manager is None:
+            raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"})
+        finder = getattr(permission_manager, "find_pending_by_execution", None)
+        pending = finder(run_id) if callable(finder) else None
+        if not pending:
+            return {"run_id": run_id, "resumed": False, "reason": "该 run 无待审批项 (已处理或不在等待)"}
+        approved = bool(payload.get("approved"))
+        action_id = pending.get("action_id", "")
+        edited = payload.get("params")
+        edited = edited if isinstance(edited, dict) and edited else None
+        releaser = getattr(permission_manager, "release_pending_once", None)
+        released = releaser(action_id) if callable(releaser) else False
+        resolver = getattr(engine, "resolve_hitl", None)
+        resumed = False
+        if released and callable(resolver):
+            try:
+                resumed = bool(resolver(run_id, approved, once=True, params=edited))
+            except TypeError:
+                resumed = bool(resolver(run_id, approved, once=True))
+        logger.info(f"webhook 回调续跑: run={run_id} approved={approved} resumed={resumed}")
+        return {"run_id": run_id, "resumed": resumed, "approved": approved}
 
     # ── W19 guard L3 审批队列 (migration doc §6 P3; #124 起 guard+本地 CONFIRM 合并) ──
     @app.get("/api/permissions/pending")
