@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.69-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.70-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -459,6 +459,13 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - Wiring lives in pure helpers (`web/src/composer.ts`: `buildReferenceItems` / `buildContextChips` / `composerApprovalVariant` / `insertRefToken`) so behavior is unit-tested without a DOM.
 - **Acceptance residuals closed (v0.5.62, issue #240)**: the run-view `＠` palette now offers all three reference kinds (workspace directories + recent tasks + the run's own artifacts) instead of artifacts only; a feed-contract test pins `runs_get.hitl_pending` → composer disabled + `⏸ 等待审批` badge so a broken feed is visible; the live UI pass ran the built bundle on `:11461` (SPA + assets + `/api/models` + `/api/workspaces` over the module key).
 - Tests: `web/tests/composer231.test.tsx` (9 cases: reference kinds + tokens, chip clearing, approval variant disabled state, five zones with cowork wiring, fixed pill label across states) + `web/tests/composer240.test.tsx` (paused-run feed, three-kind palette). CI web job now runs `bun run test` (was lint/typecheck/build only); suite 113 bun tests green.
+
+### HITL Gate Visibility + Per-Run Headless Override (v0.5.70, issue #260)
+
+- **Gate wait now visible** — when a node parks at the HITL approval gate the timeline immediately shows a `blocked` marker step (`NodeStatus.BLOCKED`, "HITL: 等待人工审批") instead of `running` with 0 steps, which read as a hang (a real run parked 1891s ≈ the 1800s gate timeout before failing silently).
+- **Per-run HITL override** — `WorkflowEngine.set_run_hitl_pause(execution_id, enabled)` lets a single run run headless (deny-fast at gate) or pause-on-pending regardless of the global `FUSION_COWORK_HITL_PAUSE`; cleared when the run ends. `POST /api/runs` accepts an optional `hitl_pause` boolean (400 on non-boolean), applied before the run task starts so the first node's gate check honors it.
+- New `NodeStatus` values: `BLOCKED` (gate wait), `DENIED`, `CANCELLED` (terminal states now explicit).
+- Tests: `tests/test_issue_260_hitl_visibility.py` (5 cases: blocked step + pending + override cleanup, per-run headless deny-fast, per-run pause on headless engine, API forward + 400).
 
 ### Guard-Deny Approval Inbox + Per-Node Watchdog & Heartbeat (v0.5.69, issue #257)
 
