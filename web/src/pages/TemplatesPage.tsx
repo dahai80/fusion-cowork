@@ -20,6 +20,62 @@ export function TemplatesPage() {
 
     const templates = retry.data?.templates ?? [];
     const categories = Array.from(new Set(templates.map((x) => x.category ?? ''))).filter(Boolean);
+    const [importing, setImporting] = useState(false);
+
+    // issue #261: 导入模板 JSON 文件 → POST /api/templates/import → 刷新列表
+    async function onImportFile(file: File) {
+        if (importing) return;
+        setImporting(true);
+        try {
+            const body = JSON.parse(await file.text());
+            const res = await api.importTemplate(body);
+            sdk.toast.show({
+                level: 'success',
+                message: t(`已导入模板: ${res.name}`, `Template imported: ${res.name}`),
+            });
+            retry.manualRetry();
+        } catch (e) {
+            console.error('[cowork-web] template import failed', e);
+            sdk.toast.show({
+                level: 'error',
+                message: t(
+                    '导入失败 — 须为含 workflow.nodes 的 JSON',
+                    'Import failed — JSON with workflow.nodes required'
+                ),
+            });
+        } finally {
+            setImporting(false);
+        }
+    }
+
+    // issue #261: 导出模板 JSON (浏览器下载)
+    async function exportTemplate(tpl: TemplateInfo) {
+        try {
+            const url = await api.templateExport(tpl.id);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${tpl.id}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error('[cowork-web] template export failed', e);
+            sdk.toast.show({ level: 'error', message: t('导出失败', 'Export failed') });
+        }
+    }
+
+    async function removeTemplate(tpl: TemplateInfo) {
+        try {
+            await api.deleteTemplate(tpl.id);
+            sdk.toast.show({ level: 'success', message: t('已删除', 'Deleted') });
+            retry.manualRetry();
+        } catch (e) {
+            console.error('[cowork-web] template delete failed', e);
+            sdk.toast.show({
+                level: 'error',
+                message: t('删除失败 — 仅自定义模板可删除', 'Delete failed — custom templates only'),
+            });
+        }
+    }
 
     function openInCanvas(tpl: TemplateInfo) {
         if (creating) return;
@@ -59,6 +115,20 @@ export function TemplatesPage() {
                     ))}
                 </select>
                 <div className="text-xs text-text-muted">{templates.length}</div>
+                <label className="ml-auto cursor-pointer rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted">
+                    {importing ? t('导入中…', 'Importing…') : t('导入模板', 'Import JSON')}
+                    <input
+                        type="file"
+                        accept=".json,application/json"
+                        className="hidden"
+                        disabled={importing}
+                        onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) void onImportFile(f);
+                            e.target.value = '';
+                        }}
+                    />
+                </label>
             </div>
             {templates.length === 0 ? (
                 <EmptyState title={t('该分类暂无模板', 'No templates in this category')} />
@@ -89,7 +159,21 @@ export function TemplatesPage() {
                                     ))}
                                 </div>
                             ) : null}
-                            <div className="mt-auto flex justify-end pt-2">
+                            <div className="mt-auto flex justify-end gap-1 pt-2">
+                                <button
+                                    type="button"
+                                    className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
+                                    onClick={() => void exportTemplate(tpl)}
+                                >
+                                    {t('导出', 'Export')}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="rounded-md border border-border px-2 py-1 text-xs text-error hover:bg-error/10"
+                                    onClick={() => void removeTemplate(tpl)}
+                                >
+                                    {t('删除', 'Delete')}
+                                </button>
                                 <button
                                     type="button"
                                     className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted disabled:opacity-50"

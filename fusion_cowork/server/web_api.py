@@ -1155,6 +1155,7 @@ def create_web_app(
     studio_base_url: Optional[str] = None,
     studio_api_key: Optional[str] = None,
     capabilities_transport: Any = None,
+    templates_dir: Optional[Path] = None,
 ):
     try:
         from fastapi import FastAPI, HTTPException, Request, WebSocket
@@ -1733,21 +1734,105 @@ def create_web_app(
         return {"artifact": card}
 
     # ── W5 模板目录 (migration doc §6 P0) ──
-    @app.get("/api/templates")
-    async def templates_list(category: str = ""):
+    # issue #261: 模板发布/导入/导出 — 画布流程 ↔ 模板资产 (custom_dir 可注入隔离)
+    def _tpl_manager():
         from ..templates import TemplateManager
 
-        items = TemplateManager().list_templates(category=category or "")
+        return TemplateManager(custom_dir=str(templates_dir) if templates_dir else "")
+
+    def _tpl_slug(name: str) -> str:
+        import uuid as _uuid
+
+        s = re.sub(r"[^a-z0-9_-]+", "-", str(name).strip().lower()).strip("-")
+        return s[:48] or f"custom_{_uuid.uuid4().hex[:8]}"
+
+    @app.get("/api/templates")
+    async def templates_list(category: str = ""):
+        items = _tpl_manager().list_templates(category=category or "")
         return {"templates": items, "count": len(items)}
 
     @app.get("/api/templates/{template_id}")
     async def templates_get(template_id: str):
-        from ..templates import TemplateManager
-
-        tpl = TemplateManager().get_template(template_id)
+        tpl = _tpl_manager().get_template(template_id)
         if not tpl:
             raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"})
         return tpl
+
+    @app.post("/api/templates")
+    async def templates_publish(request: Request):
+        # issue #261: 画布流程发布为命名模板 (custom, 幂等 slug — 同名覆盖)
+        try:
+            body = await request.json()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}) from e
+        name = str(body.get("name") or "").strip()
+        wf = body.get("workflow")
+        if not name or not isinstance(wf, dict) or not (wf.get("nodes") or wf.get("workflow", {}).get("nodes")):
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "name 与 workflow.nodes 必填"}
+            )
+        wf = wf.get("workflow") if isinstance(wf.get("workflow"), dict) else wf
+        tpl_id = _tpl_slug(name)
+        tpl = {
+            "id": tpl_id,
+            "name": name,
+            "description": str(body.get("description") or ""),
+            "category": _tpl_slug(str(body.get("category") or "custom")),
+            "workflow": wf,
+        }
+        if not _tpl_manager().save_custom_template(tpl):
+            raise HTTPException(status_code=500, detail={"code": "save_failed", "message": "模板保存失败"})
+        logger.info(f"模板已发布: {tpl_id} ({name})")
+        return {"id": tpl_id, "name": name}
+
+    @app.post("/api/templates/import")
+    async def templates_import(request: Request):
+        # issue #261: 导入模板 JSON (整模板或裸 workflow 定义); 同 id 覆盖
+        try:
+            body = await request.json()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}) from e
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON 对象"})
+        wf = body.get("workflow") if isinstance(body.get("workflow"), dict) else body
+        if not isinstance(wf, dict) or not wf.get("nodes"):
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "workflow.nodes 必填"})
+        name = str(body.get("name") or wf.get("name") or "").strip() or "imported-template"
+        tpl_id = _tpl_slug(str(body.get("id") or name))
+        tpl = {
+            "id": tpl_id,
+            "name": name,
+            "description": str(body.get("description") or ""),
+            "category": _tpl_slug(str(body.get("category") or "custom")),
+            "workflow": wf,
+        }
+        if not _tpl_manager().save_custom_template(tpl):
+            raise HTTPException(status_code=500, detail={"code": "save_failed", "message": "模板保存失败"})
+        logger.info(f"模板已导入: {tpl_id} ({name})")
+        return {"id": tpl_id, "name": name}
+
+    @app.get("/api/templates/{template_id}/export")
+    async def templates_export(template_id: str):
+        # issue #261: 导出模板原始 JSON (Content-Disposition 附件)
+        tpl = _tpl_manager().get_template(template_id)
+        if not tpl:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"})
+        import json as _json
+
+        return Response(
+            content=_json.dumps(tpl, ensure_ascii=False, indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{template_id}.json"'},
+        )
+
+    @app.delete("/api/templates/{template_id}")
+    async def templates_delete(template_id: str):
+        # issue #261: 删除自定义模板 — 内置模板拒绝
+        if not _tpl_manager().delete_custom_template(template_id):
+            raise HTTPException(
+                status_code=400, detail={"code": "not_custom", "message": f"仅自定义模板可删除: {template_id}"}
+            )
+        return {"deleted": template_id}
 
     # ── W6 调度任务 (migration doc §6 P0) ──
     def _make_task_executor(workflow_id: str):
