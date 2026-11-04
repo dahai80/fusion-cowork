@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.74-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.75-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -473,6 +473,13 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
 - Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
 - Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+### Governance Workflow Template Pack (v0.5.75, issue #283)
+
+- **Governance templates** — two builtin workflow templates per the multi-repo automation setup guide: `governance_issue_lifecycle` (🚦 one run per issue: label `state:proposal` → G1 proposal gate → issue comment → agent-studio approval task carrying `run_id` → G4 acceptance gate → `state:accepted` → G5 release gate → `state:rollout`) and `governance_batch_audit` (📋 `issue_list(labels=[state:approved])` → batch audit gate → issue comment). Approvals resume via the platform inbox or the signed webhook.
+- **Engine run_id injection** — `WorkflowEngine` exposes the run id to every node via `node_input.setdefault("run_id", exec_id)`; upstream edge data still wins. Approval-task payloads can carry it so external decisions (agent-studio GUI) route back through `POST /api/hooks/webhook/{run_id}`.
+- **github_api `issue_list` op** — `GET /repos/{repo}/issues?labels=...` for governance batch fan-out intake (same repo whitelist + `GITHUB_TOKEN` env-only auth).
+- Tests: `tests/test_issue_283_governance_templates.py` (8 cases: injection + upstream precedence, label query path, both templates convert to executable workflows); `test_issue_209_runs_inputs.py` E2E assertions updated for the injected `run_id`.
+
 ### Voice Panel + Webhook Routing + CI Timeout (v0.5.74)
 
 - **Voice panel (#278)** — `#/voice`: browser mic → 16k mono int16 PCM over the fusion-speech `/stream/audio` WS ingress, live transcript from `speech.asr` final/partial events, TTS PCM reply playback, text-to-speech via the `speak` control frame. Backend `GET /api/speech/config` (URL/token from `FUSION_SPEECH_WS_URL`/`FUSION_SPEECH_PORT`/`FUSION_SPEECH_INGRESS_TOKEN`) + `GET /api/speech/health` proxy. The headless daemon gets a client UI in cowork, daemon untouched.
