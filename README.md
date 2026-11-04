@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.72-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.73-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -473,6 +473,18 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
 - Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
 - Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+### Web Capability Completion (v0.5.73)
+
+- Audit of CLI-only capabilities landed six of them on the web, end to end (backend route + web UI + manifest entry):
+- **Permission rules** — `GET/POST /api/permissions/rules`, `DELETE /api/permissions/rules/{tool}`, `PUT /api/permissions/level`; `#/permissions` page with level switcher (confirm/manual/auto/plan/bypass) + rule add/remove table.
+- **Benchmark** — `POST /api/benchmark/run` (sync `wait` mode + background task with 409 guard), `GET /api/benchmark/status`; `#/benchmark` page with per-run results table and polling.
+- **System** — `GET /api/system/info`, `POST /api/system/clean` (dry-run default); `#/system` page: version/python/platform/node-count/disk grid + desktop/download cleanup with preview-first warning.
+- **Team console** — `#/team` page over the existing `/api/team/*`: pool start/stop, roster with inbox/remove, register, send message.
+- **Session ops** — `POST /api/sessions/{id}/fork` + `POST /api/sessions/cleanup` wired as actions on the Sessions page.
+- **DB backup** — `POST /api/admin/db/backup` (BackupManager `pg_dump` in executor; DSN from body or `DATABASE_URL`/`FUSION_PG_DSN`) wired as an Admin page button.
+- Dev-only CLI surfaces (lsp/schema/worktree/research/remote) intentionally remain CLI.
+- Tests: `tests/test_web_capability_completion.py` (12 cases).
+
 
 ### Official Ops Node Library (v0.5.71, issue #262)
 

@@ -689,6 +689,18 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### Web 能力补全 (v0.5.73)
+
+- 审计 CLI-only 能力, 六项端到端落地 web (后端路由 + 页面 + manifest 注册):
+- **权限规则** — `GET/POST /api/permissions/rules`、`DELETE /api/permissions/rules/{tool}`、`PUT /api/permissions/level`; `#/permissions` 页: 级别切换 (confirm/manual/auto/plan/bypass) + 规则增删表。
+- **基准测试** — `POST /api/benchmark/run` (同步 `wait` 模式 + 后台任务带 409 防重入)、`GET /api/benchmark/status`; `#/benchmark` 页: 结果表 + 轮询。
+- **系统** — `GET /api/system/info`、`POST /api/system/clean` (默认 dry-run); `#/system` 页: 版本/Python/平台/节点数/磁盘信息 + 桌面/下载清理 (预览优先)。
+- **团队控制台** — `#/team` 页复用现有 `/api/team/*`: 消费池启停、花名册 (收件箱/移除)、登记、发消息。
+- **会话操作** — `POST /api/sessions/{id}/fork` + `POST /api/sessions/cleanup` 接入会话页操作区。
+- **数据库备份** — `POST /api/admin/db/backup` (BackupManager `pg_dump` 走 executor; DSN 取 body 或 `DATABASE_URL`/`FUSION_PG_DSN`) 接入管理台按钮。
+- 开发者专属 CLI 面 (lsp/schema/worktree/research/remote) 保留 CLI 不落地 web。
+- 测试: `tests/test_web_capability_completion.py` (12 例)。
+
 
 ---
 
