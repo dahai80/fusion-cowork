@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.73-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.74-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -473,6 +473,13 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
 - Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
 - Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+### Voice Panel + Webhook Routing + CI Timeout (v0.5.74)
+
+- **Voice panel (#278)** — `#/voice`: browser mic → 16k mono int16 PCM over the fusion-speech `/stream/audio` WS ingress, live transcript from `speech.asr` final/partial events, TTS PCM reply playback, text-to-speech via the `speak` control frame. Backend `GET /api/speech/config` (URL/token from `FUSION_SPEECH_WS_URL`/`FUSION_SPEECH_PORT`/`FUSION_SPEECH_INGRESS_TOKEN`) + `GET /api/speech/health` proxy. The headless daemon gets a client UI in cowork, daemon untouched.
+- **Webhook decision routing (#279)** — `POST /api/hooks/webhook/{run_id}` falls back to `params.run_id` / top-level `run_id` from the signed decision body when the path id has no pending approval (static webhook registrations carry a placeholder). Contract tests pin all four routing shapes.
+- **CI test timeout (#274)** — `pytest-timeout` added to `[test]` extra, `--timeout=600 --timeout-method=thread` on all CI pytest legs; a hang now fails with the test named (macos/3.11 leg passed 3m3s on the first run with flags; local macOS+3.11 repro was clean).
+- Tests: `tests/test_issue_278_speech_panel.py` (4), `tests/test_issue_279_webhook_routing.py` (4).
+
 ### Web Capability Completion (v0.5.73)
 
 - Audit of CLI-only capabilities landed six of them on the web, end to end (backend route + web UI + manifest entry):
