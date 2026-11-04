@@ -39,9 +39,9 @@ jobs:
       - run: pip install fusion-harness
       - run: pip install -e ".[test,cloud,web,office]"
       - name: Test (SQLite backend, default marks)
-        run: python -m pytest tests/ -q --tb=short -m "not slow and not chaos and not postgres"
+        run: python -m pytest tests/ -q --tb=short --timeout=600 --timeout-method=thread -m "not slow and not chaos and not postgres"
       - name: Coverage
-        run: python -m pytest tests/ -q -m "not slow and not chaos and not postgres" --cov=fusion_cowork --cov-report=term-missing --cov-fail-under=50
+        run: python -m pytest tests/ -q --timeout=600 --timeout-method=thread -m "not slow and not chaos and not postgres" --cov=fusion_cowork --cov-report=term-missing --cov-fail-under=50
 
   test-postgres:
     runs-on: ubuntu-latest
@@ -70,7 +70,7 @@ jobs:
       - run: pip install fusion-harness
       - run: pip install -e ".[test,cloud,web,office]"
       - name: Test (Postgres backend integration)
-        run: python -m pytest tests/ -q --tb=short -m "postgres"
+        run: python -m pytest tests/ -q --tb=short --timeout=600 --timeout-method=thread -m "postgres"
 
   test-slow:
     runs-on: ubuntu-latest
@@ -83,7 +83,7 @@ jobs:
       - run: pip install fusion-harness
       - run: pip install -e ".[test,cloud,web,office]"
       - name: Slow + chaos tests
-        run: python -m pytest tests/ -q --tb=short -m "slow or chaos"
+        run: python -m pytest tests/ -q --tb=short --timeout=600 --timeout-method=thread -m "slow or chaos"
 
   web:
     runs-on: ubuntu-latest
