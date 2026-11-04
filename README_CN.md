@@ -689,6 +689,13 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### 语音面板 + Webhook 路由 + CI 超时 (v0.5.74)
+
+- **语音面板 (#278)** — `#/voice`: 浏览器麦克风 → 16k mono int16 PCM 推送到 fusion-speech `/stream/audio` WS ingress; `speech.asr` final/partial 实时转写; TTS PCM 回包自动播放; `speak` 控制帧文本朗读。后端 `GET /api/speech/config` (URL/token 取 `FUSION_SPEECH_WS_URL`/`FUSION_SPEECH_PORT`/`FUSION_SPEECH_INGRESS_TOKEN`) + `GET /api/speech/health` 代理。无头守护进程的客户端 UI 落在 cowork, 守护进程不动。
+- **Webhook 决策路由 (#279)** — `POST /api/hooks/webhook/{run_id}` 在路径 run_id 无待审批时回退取签名 body 里的 `params.run_id` / 顶层 `run_id` (静态 webhook 注册带占位符)。契约测试钉住四种路由形态。
+- **CI 测试超时 (#274)** — `[test]` extra 加 `pytest-timeout`, CI 四条 pytest 腿全部加 `--timeout=600 --timeout-method=thread`; 挂死变成点名失败 (macos/3.11 腿带旗标首跑 3m3s 通过; 本地 macOS+3.11 复现干净)。
+- 测试: `tests/test_issue_278_speech_panel.py` (4 例), `tests/test_issue_279_webhook_routing.py` (4 例)。
+
 ### Web 能力补全 (v0.5.73)
 
 - 审计 CLI-only 能力, 六项端到端落地 web (后端路由 + 页面 + manifest 注册):
