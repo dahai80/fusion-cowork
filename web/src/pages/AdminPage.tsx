@@ -1,6 +1,6 @@
 import { EmptyState, ErrorState, SkeletonLines } from '@fusion/web-ui';
 import { useCallback, useEffect, useState } from 'react';
-import { type AdminMember, type AdminUsage, adminApi, adminKey, saveAdminKey } from '../api';
+import { type AdminMember, type AdminUsage, adminApi, adminKey, api, saveAdminKey } from '../api';
 import { useT } from '../i18n';
 import { sdk } from '../sdk';
 
@@ -16,6 +16,7 @@ export function AdminPage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [busy, setBusy] = useState('');
+    const [note, setNote] = useState('');
 
     const load = useCallback(async () => {
         if (!adminKey()) {
@@ -46,6 +47,19 @@ export function AdminPage() {
     function applyKey() {
         saveAdminKey(keyInput.trim());
         void load();
+    }
+
+    async function backupDb() {
+        setBusy('dbbackup');
+        setError('');
+        try {
+            const resp = await api.dbBackup({});
+            setNote(t(`备份完成: ${resp.path}`, `Backup complete: ${resp.path}`));
+        } catch (e) {
+            setError(e instanceof Error ? e.message : String(e));
+        } finally {
+            setBusy('');
+        }
     }
 
     async function exportAudit() {
@@ -179,7 +193,16 @@ export function AdminPage() {
                 >
                     {t('推送测试', 'Push test')}
                 </button>
+                <button
+                    type="button"
+                    className="rounded-md border border-border px-3 py-1 text-xs text-text-secondary hover:bg-bg-muted"
+                    disabled={busy !== ''}
+                    onClick={() => void backupDb()}
+                >
+                    {busy === 'dbbackup' ? t('备份中…', 'Backing up…') : t('数据库备份', 'DB backup')}
+                </button>
             </div>
+            {note && <div className="pt-2 text-xs text-text-muted">{note}</div>}
         </div>
     );
 }

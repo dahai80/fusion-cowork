@@ -8,6 +8,7 @@ import { useT } from './i18n';
 import { onPreferredModelChange, preferredModel, setPreferredModel } from './modelPref';
 import { AdminPage } from './pages/AdminPage';
 import { ApprovalsPage } from './pages/ApprovalsPage';
+import BenchmarkPage from './pages/BenchmarkPage';
 import { CanvasPage } from './pages/CanvasPage';
 import { CapabilitiesPage } from './pages/CapabilitiesPage';
 import { ClusterPage } from './pages/ClusterPage';
@@ -16,6 +17,7 @@ import { ExtensionsPage } from './pages/ExtensionsPage';
 import { HomePage } from './pages/HomePage';
 import { MobilePage } from './pages/MobilePage';
 import { NodesPage } from './pages/NodesPage';
+import PermissionsRulesPage from './pages/PermissionsRulesPage';
 import { PluginsPage } from './pages/PluginsPage';
 import { RunViewPage } from './pages/RunViewPage';
 import { RunsPage } from './pages/RunsPage';
@@ -23,6 +25,8 @@ import { SchedulePage } from './pages/SchedulePage';
 import { SessionsPage } from './pages/SessionsPage';
 import { SkillsPage } from './pages/SkillsPage';
 import { SpacePage } from './pages/SpacePage';
+import SystemPage from './pages/SystemPage';
+import TeamPage from './pages/TeamPage';
 import { TemplatesPage } from './pages/TemplatesPage';
 import { UsagePage } from './pages/UsagePage';
 import WizardPage from './pages/WizardPage';
@@ -54,6 +58,10 @@ type Route =
     | 'extensions'
     | 'capabilities'
     | 'wizard'
+    | 'permissions'
+    | 'benchmark'
+    | 'system'
+    | 'team'
     | 'm';
 
 const ROUTES: Route[] = [
@@ -76,6 +84,10 @@ const ROUTES: Route[] = [
     'extensions',
     'capabilities',
     'wizard',
+    'permissions',
+    'benchmark',
+    'system',
+    'team',
 ];
 
 function parseHash(): { route: Route; arg: string } {
@@ -100,6 +112,10 @@ function parseHash(): { route: Route; arg: string } {
     if (head === 'extensions') return { route: 'extensions', arg };
     if (head === 'capabilities') return { route: 'capabilities', arg };
     if (head === 'wizard') return { route: 'wizard', arg };
+    if (head === 'permissions') return { route: 'permissions', arg };
+    if (head === 'benchmark') return { route: 'benchmark', arg };
+    if (head === 'system') return { route: 'system', arg };
+    if (head === 'team') return { route: 'team', arg };
     if (head === 'm') return { route: 'm', arg };
     return { route: 'home', arg };
 }
@@ -142,6 +158,14 @@ function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
             return t('扩展', 'Extensions');
         case 'wizard':
             return t('Onboarding 向导', 'Onboarding Wizard');
+        case 'permissions':
+            return t('权限规则', 'Permissions');
+        case 'benchmark':
+            return t('基准测试', 'Benchmark');
+        case 'system':
+            return t('系统', 'System');
+        case 'team':
+            return t('团队', 'Team');
         case 'capabilities':
             return t('能力市场', 'Capabilities');
         case 'm':
@@ -261,6 +285,14 @@ export function App() {
                     <TemplatesPage />
                 ) : route === 'wizard' ? (
                     <WizardPage />
+                ) : route === 'permissions' ? (
+                    <PermissionsRulesPage />
+                ) : route === 'benchmark' ? (
+                    <BenchmarkPage />
+                ) : route === 'system' ? (
+                    <SystemPage />
+                ) : route === 'team' ? (
+                    <TeamPage />
                 ) : (
                     <SchedulePage />
                 )}
