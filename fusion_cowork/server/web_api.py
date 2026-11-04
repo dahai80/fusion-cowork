@@ -3382,6 +3382,29 @@ def create_web_app(
         logger.info(f"webhook 回调续跑: run={run_id} approved={approved} resumed={resumed}")
         return {"run_id": run_id, "resumed": resumed, "approved": approved}
 
+    # ── issue #278: voice panel — fusion-speech WS ingress config + health proxy ──
+    @app.get("/api/speech/config")
+    async def speech_config():
+        port = os.environ.get("FUSION_SPEECH_PORT", "11465")
+        url = os.environ.get("FUSION_SPEECH_WS_URL", f"ws://127.0.0.1:{port}/stream/audio")
+        token = os.environ.get("FUSION_SPEECH_INGRESS_TOKEN", "")
+        return {"url": url, "token": token, "ingress_enabled": True}
+
+    @app.get("/api/speech/health")
+    async def speech_health():
+        import httpx
+
+        port = os.environ.get("FUSION_SPEECH_PORT", "11465")
+        base = os.environ.get("FUSION_SPEECH_URL", f"http://127.0.0.1:{port}")
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                resp = await client.get(f"{base}/health")
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as e:
+            logger.warning(f"speech daemon health probe failed: {e}")
+            return {"status": "down", "error": str(e)}
+
     # ── Web capability completion: permission rules / benchmark / system / sessions / db ops ──
     @app.get("/api/permissions/rules")
     async def permissions_rules():

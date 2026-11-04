@@ -29,6 +29,7 @@ import SystemPage from './pages/SystemPage';
 import TeamPage from './pages/TeamPage';
 import { TemplatesPage } from './pages/TemplatesPage';
 import { UsagePage } from './pages/UsagePage';
+import VoicePage from './pages/VoicePage';
 import WizardPage from './pages/WizardPage';
 import { WorkflowsPage } from './pages/WorkflowsPage';
 import { embeddedParam, isEmbedded } from './sdk';
@@ -62,6 +63,7 @@ type Route =
     | 'benchmark'
     | 'system'
     | 'team'
+    | 'voice'
     | 'm';
 
 const ROUTES: Route[] = [
@@ -88,6 +90,7 @@ const ROUTES: Route[] = [
     'benchmark',
     'system',
     'team',
+    'voice',
 ];
 
 function parseHash(): { route: Route; arg: string } {
@@ -116,6 +119,7 @@ function parseHash(): { route: Route; arg: string } {
     if (head === 'benchmark') return { route: 'benchmark', arg };
     if (head === 'system') return { route: 'system', arg };
     if (head === 'team') return { route: 'team', arg };
+    if (head === 'voice') return { route: 'voice', arg };
     if (head === 'm') return { route: 'm', arg };
     return { route: 'home', arg };
 }
@@ -166,6 +170,8 @@ function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
             return t('系统', 'System');
         case 'team':
             return t('团队', 'Team');
+        case 'voice':
+            return t('语音', 'Voice');
         case 'capabilities':
             return t('能力市场', 'Capabilities');
         case 'm':
@@ -293,6 +299,8 @@ export function App() {
                     <SystemPage />
                 ) : route === 'team' ? (
                     <TeamPage />
+                ) : route === 'voice' ? (
+                    <VoicePage />
                 ) : (
                     <SchedulePage />
                 )}

@@ -842,6 +842,11 @@ export const api = {
         post<{ session_id: string }>(`/api/sessions/${encodeURIComponent(id)}/fork`, { from_step: fromStep }),
     cleanupSessions: (days: number) => post<{ removed: number; days: number }>('/api/sessions/cleanup', { days }),
     dbBackup: (body: { dsn?: string; dest?: string }) => post<{ path: string }>('/api/admin/db/backup', body),
+    speechConfig: () => get<{ url: string; token: string; ingress_enabled: boolean }>('/api/speech/config'),
+    speechHealth: () =>
+        get<{ status: string; version?: string; stt_model?: string; tts_model?: string; error?: string }>(
+            '/api/speech/health'
+        ),
     schedulerTasks: () => get<{ tasks: SchedulerTask[]; count: number }>('/api/scheduler/tasks'),
     createSchedulerTask: (body: {
         name: string;
