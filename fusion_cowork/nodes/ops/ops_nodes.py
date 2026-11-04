@@ -183,7 +183,14 @@ class GitHubNode(BaseNode):
             "properties": {
                 "op": {
                     "type": "string",
-                    "enum": ["issue_create", "issue_comment", "issue_set_labels", "pr_get", "list_labels"],
+                    "enum": [
+                        "issue_create",
+                        "issue_comment",
+                        "issue_set_labels",
+                        "issue_list",
+                        "pr_get",
+                        "list_labels",
+                    ],
                     "description": "操作",
                 },
                 "repo": {"type": "string", "description": "org/repo"},
@@ -216,7 +223,7 @@ class GitHubNode(BaseNode):
         labels = [str(x) for x in (params.get("labels") or [])]
         timeout = float(params.get("timeout") or 30)
 
-        if op not in ("issue_create", "issue_comment", "issue_set_labels", "pr_get", "list_labels"):
+        if op not in ("issue_create", "issue_comment", "issue_set_labels", "issue_list", "pr_get", "list_labels"):
             return NodeResult(status=NodeStatus.FAILED, error=f"未知操作: {op}")
         if repo not in allowed:
             logger.warning(f"github_api 拒绝: {repo} 不在白名单 {allowed}")
@@ -243,8 +250,11 @@ class GitHubNode(BaseNode):
             if not issue_number:
                 return NodeResult(status=NodeStatus.FAILED, error="pr_get 缺少 issue_number")
             method, path = "GET", f"/repos/{repo}/pulls/{issue_number}"
-        elif op == "list_labels":
-            method, path = "GET", f"/repos/{repo}/labels"
+        elif op == "issue_list":
+            # issue #283: list issues by label (governance batch fan-out intake)
+            labels = ",".join(labels) if labels else ""
+            query = f"?labels={labels}" if labels else ""
+            method, path = "GET", f"/repos/{repo}/issues{query}"
 
         logger.info(f"github_api {op} {repo}#{issue_number or '-'}")
         try:

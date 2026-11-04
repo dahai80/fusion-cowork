@@ -987,6 +987,10 @@ class WorkflowEngine:
         if node_id in passed_data:
             node_input.update(passed_data[node_id])
 
+        # issue #283: expose the run id to nodes — approval-task payloads carry
+        # run_id so external decisions (agent-studio GUI) route back via webhook.
+        node_input.setdefault("run_id", exec_id)
+
         # Permission check — issue #189: 同 run 内 HITL 闸门串行, 避免多节点共用
         # _hitl_decisions[exec_id] 时审批决定互相串台
         if self._permission_manager:

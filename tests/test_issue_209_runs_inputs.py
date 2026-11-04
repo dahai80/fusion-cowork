@@ -152,7 +152,8 @@ class TestInputInjectionEndToEnd:
         status = await _wait_terminal(registry, run_id)
         assert status == "success"
         record = registry.get(run_id)
-        assert record["steps"][0]["input_data"] == payload
+        # issue #283: engine injects run_id into node inputs (upstream data wins)
+        assert record["steps"][0]["input_data"] == {**payload, "run_id": run_id}
         assert record["steps"][0]["node_name"] == ECHO_NODE
 
     async def test_no_message_input_first_node_empty(self, pm_no_guard):
@@ -163,4 +164,5 @@ class TestInputInjectionEndToEnd:
         status = await _wait_terminal(registry, started["run_id"])
         assert status == "success"
         record = registry.get(started["run_id"])
-        assert record["steps"][0]["input_data"] == {}
+        # issue #283: run_id injected even with no message_input
+        assert record["steps"][0]["input_data"] == {"run_id": started["run_id"]}
