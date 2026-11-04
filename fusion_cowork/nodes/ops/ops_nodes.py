@@ -183,7 +183,14 @@ class GitHubNode(BaseNode):
             "properties": {
                 "op": {
                     "type": "string",
-                    "enum": ["issue_create", "issue_comment", "issue_set_labels", "issue_list", "pr_get", "list_labels"],
+                    "enum": [
+                        "issue_create",
+                        "issue_comment",
+                        "issue_set_labels",
+                        "issue_list",
+                        "pr_get",
+                        "list_labels",
+                    ],
                     "description": "操作",
                 },
                 "repo": {"type": "string", "description": "org/repo"},
