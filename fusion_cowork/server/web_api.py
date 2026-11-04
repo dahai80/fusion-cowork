@@ -3351,6 +3351,20 @@ def create_web_app(
         finder = getattr(permission_manager, "find_pending_by_execution", None)
         pending = finder(run_id) if callable(finder) else None
         if not pending:
+            # issue #279: the sender may register ONE static webhook URL with a
+            # placeholder run id — fall back to the run id carried in the decision
+            # body (params.run_id or top-level run_id) and route by that.
+            body_params = payload.get("params")
+            body_run = ""
+            if isinstance(body_params, dict):
+                body_run = str(body_params.get("run_id") or "")
+            body_run = body_run or str(payload.get("run_id") or "")
+            if body_run and body_run != run_id:
+                pending = finder(body_run) if callable(finder) else None
+                if pending:
+                    logger.info(f"webhook run id resolved from body: path={run_id} body={body_run}")
+                    run_id = body_run
+        if not pending:
             return {"run_id": run_id, "resumed": False, "reason": "该 run 无待审批项 (已处理或不在等待)"}
         approved = bool(payload.get("approved"))
         action_id = pending.get("action_id", "")
