@@ -471,6 +471,185 @@ BUILTIN_TEMPLATES = [
             "edges": [],
         },
     },
+    # issue #283: governance G1-G5 gate pipeline (multi-repo automation setup guide)
+    {
+        "id": "governance_issue_lifecycle",
+        "name": "治理-议题生命周期 (G1-G4-G5 闸门)",
+        "description": "每议题一次运行: 提案打标 -> G1 提案闸门 -> 实施记录 -> 同步 agent-studio 审批任务 (带 run_id) -> G4 验收闸门 -> accepted 打标 -> G5 发布闸门 -> rollout 打标。审批经平台收件箱或签名 webhook 自动续跑。见 architecture/multi-repo-automation-setup-guide-1104.md",
+        "category": "治理",
+        "tags": ["治理", "闸门", "审批", "G-gate", "多仓库"],
+        "icon": "🚦",
+        "difficulty": "进阶",
+        "estimated_time": "人工决定",
+        "workflow": {
+            "name": "治理-议题生命周期",
+            "description": "G1-G5 gate pipeline for one issue",
+            "nodes": [
+                {
+                    "id": "n1",
+                    "name": "github_api",
+                    "config": {
+                        "params": {
+                            "op": "issue_set_labels",
+                            "repo": "org/repo",
+                            "allowed_repos": ["org/repo"],
+                            "issue_number": 1,
+                            "labels": ["state:proposal"],
+                        }
+                    },
+                },
+                {
+                    "id": "n2",
+                    "name": "approval_gate",
+                    "config": {
+                        "params": {
+                            "prompt": "G1 提案闸门: 批准后开始实施",
+                            "details": "确认议题方案与标签状态机 (state:proposal -> approved)",
+                        }
+                    },
+                },
+                {
+                    "id": "n3",
+                    "name": "github_api",
+                    "config": {
+                        "params": {
+                            "op": "issue_comment",
+                            "repo": "org/repo",
+                            "allowed_repos": ["org/repo"],
+                            "issue_number": 1,
+                            "body": "G1 approved — implementation started (branch/PR tracked)",
+                        }
+                    },
+                },
+                {
+                    "id": "n4",
+                    "name": "http_request",
+                    "config": {
+                        "params": {
+                            "method": "POST",
+                            "url": "http://127.0.0.1:11442/v1/agent-platform/approvals",
+                            "body": {
+                                "run_id": "${run_id}",
+                                "gate": "G4",
+                                "kind": "acceptance",
+                            },
+                            "timeout": 10,
+                        }
+                    },
+                },
+                {
+                    "id": "n5",
+                    "name": "approval_gate",
+                    "config": {
+                        "params": {
+                            "prompt": "G4 验收闸门: 批准后标记 accepted",
+                            "details": "agent-studio 审批任务已同步; 决定经 webhook 自动续跑本 run",
+                        }
+                    },
+                },
+                {
+                    "id": "n6",
+                    "name": "github_api",
+                    "config": {
+                        "params": {
+                            "op": "issue_set_labels",
+                            "repo": "org/repo",
+                            "allowed_repos": ["org/repo"],
+                            "issue_number": 1,
+                            "labels": ["state:accepted"],
+                        }
+                    },
+                },
+                {
+                    "id": "n7",
+                    "name": "approval_gate",
+                    "config": {
+                        "params": {
+                            "prompt": "G5 发布闸门: 批准后进入 rollout",
+                            "details": "最终发布确认",
+                        }
+                    },
+                },
+                {
+                    "id": "n8",
+                    "name": "github_api",
+                    "config": {
+                        "params": {
+                            "op": "issue_set_labels",
+                            "repo": "org/repo",
+                            "allowed_repos": ["org/repo"],
+                            "issue_number": 1,
+                            "labels": ["state:rollout"],
+                        }
+                    },
+                },
+            ],
+            "edges": [
+                {"source_id": "n1", "target_id": "n2"},
+                {"source_id": "n2", "target_id": "n3"},
+                {"source_id": "n3", "target_id": "n4"},
+                {"source_id": "n4", "target_id": "n5"},
+                {"source_id": "n5", "target_id": "n6"},
+                {"source_id": "n6", "target_id": "n7"},
+                {"source_id": "n7", "target_id": "n8"},
+            ],
+        },
+    },
+    {
+        "id": "governance_batch_audit",
+        "name": "治理-批次审计 (state:approved 巡检)",
+        "description": "按 state:approved 标签列出试点仓库议题 -> G 闸门人工复核 -> 审计结论回写议题评论。逐议题派生生命周期 run 需编排层支持, 见 architecture/multi-repo-automation-setup-guide-1104.md",
+        "category": "治理",
+        "tags": ["治理", "审计", "批次", "G-gate"],
+        "icon": "📋",
+        "difficulty": "进阶",
+        "estimated_time": "人工决定",
+        "workflow": {
+            "name": "治理-批次审计",
+            "description": "Batch audit over state:approved issues",
+            "nodes": [
+                {
+                    "id": "n1",
+                    "name": "github_api",
+                    "config": {
+                        "params": {
+                            "op": "issue_list",
+                            "repo": "org/repo",
+                            "allowed_repos": ["org/repo"],
+                            "labels": ["state:approved"],
+                        }
+                    },
+                },
+                {
+                    "id": "n2",
+                    "name": "approval_gate",
+                    "config": {
+                        "params": {
+                            "prompt": "批次审计闸门: 复核 state:approved 议题清单",
+                            "details": "确认入验收批次的议题范围",
+                        }
+                    },
+                },
+                {
+                    "id": "n3",
+                    "name": "github_api",
+                    "config": {
+                        "params": {
+                            "op": "issue_comment",
+                            "repo": "org/repo",
+                            "allowed_repos": ["org/repo"],
+                            "issue_number": 1,
+                            "body": "Batch audit approved — issue accepted into acceptance batch",
+                        }
+                    },
+                },
+            ],
+            "edges": [
+                {"source_id": "n1", "target_id": "n2"},
+                {"source_id": "n2", "target_id": "n3"},
+            ],
+        },
+    },
 ]
 
 
