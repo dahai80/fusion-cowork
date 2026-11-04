@@ -18,7 +18,35 @@ export function SessionsPage() {
     const t = useT();
     const lang = sdk.i18n.lang();
     const [source, setSource] = useState<'' | SessionSource>('');
+    const [note, setNote] = useState('');
     const retry = useAutoRetry(() => api.sessions('', source), [source]);
+
+    // Web capability completion: fork session / cleanup expired sessions
+    async function forkSession() {
+        const sid = prompt(t('会话 ID', 'Session ID'));
+        if (!sid) return;
+        const stepRaw = prompt(t('起始步骤 (留空从头)', 'From step (blank = start)'), '');
+        try {
+            const resp = await api.forkSession(sid.trim(), stepRaw ? Number(stepRaw) : undefined);
+            setNote(t(`已派生会话 ${resp.session_id}`, `Forked session ${resp.session_id}`));
+            retry.manualRetry();
+        } catch (e) {
+            setNote(e instanceof Error ? e.message : String(e));
+        }
+    }
+
+    async function cleanupSessions() {
+        const daysRaw = prompt(t('过期天数', 'Expire days'), '30');
+        if (daysRaw === null) return;
+        const days = Number(daysRaw) || 30;
+        try {
+            const resp = await api.cleanupSessions(days);
+            setNote(t(`已清理 ${resp.removed} 个过期会话`, `Removed ${resp.removed} expired sessions`));
+            retry.manualRetry();
+        } catch (e) {
+            setNote(e instanceof Error ? e.message : String(e));
+        }
+    }
 
     if (retry.loading && !retry.data) return <SkeletonLines rows={5} />;
     if (retry.error) return <ErrorState message={retry.error.message} onRetry={retry.manualRetry} />;
@@ -94,6 +122,24 @@ export function SessionsPage() {
                     ))}
                 </div>
             )}
+
+            <div className="flex items-center gap-2 pt-3">
+                <button
+                    type="button"
+                    className="rounded-md border border-border px-3 py-1 text-xs text-text-secondary hover:bg-bg-muted"
+                    onClick={() => void forkSession()}
+                >
+                    {t('派生会话', 'Fork session')}
+                </button>
+                <button
+                    type="button"
+                    className="rounded-md border border-border px-3 py-1 text-xs text-text-secondary hover:bg-bg-muted"
+                    onClick={() => void cleanupSessions()}
+                >
+                    {t('清理过期会话', 'Cleanup expired')}
+                </button>
+                {note && <span className="text-xs text-text-muted">{note}</span>}
+            </div>
         </div>
     );
 }

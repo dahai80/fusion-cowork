@@ -789,6 +789,59 @@ export const api = {
             '/api/wizard/teardown',
             body
         ),
+    // Web capability completion: permission rules / benchmark / system / team / sessions / db
+    permissionRules: () =>
+        get<{ level: string; rules: { tool_name: string; allowed: boolean; scope: string }[] }>(
+            '/api/permissions/rules'
+        ),
+    addPermissionRule: (body: { tool_name: string; allowed: boolean; scope?: string }) =>
+        post<{ tool_name: string; allowed: boolean; scope: string }>('/api/permissions/rules', body),
+    deletePermissionRules: (toolName: string) =>
+        sdk.http.delete(`/api/permissions/rules/${encodeURIComponent(toolName)}`),
+    setPermissionLevel: (level: string) => put<{ level: string }>('/api/permissions/level', { level }),
+    benchmarkRun: (body: {
+        specs: { node: string; params?: Record<string, unknown> }[];
+        repeats?: number;
+        wait?: boolean;
+    }) => post<{ started: boolean; finished?: boolean }>('/api/benchmark/run', body),
+    benchmarkStatus: () =>
+        get<{
+            running: boolean;
+            results: { node_name: string; status: string; latency_ms: number; error: string }[];
+            summary: Record<string, unknown>;
+            error: string;
+        }>('/api/benchmark/status'),
+    systemInfo: () =>
+        get<{
+            version: string;
+            python: string;
+            platform: string;
+            node_count: number;
+            disk_free_gb: number | null;
+            disk_total_gb: number | null;
+            pid: number;
+        }>('/api/system/info'),
+    systemClean: (dryRun: boolean) =>
+        post<{ dry_run: boolean; outputs: Record<string, string> }>('/api/system/clean', { dry_run: dryRun }),
+    teamStatus: () => get<{ running: boolean; queued?: number }>('/api/team/status'),
+    teamRoster: () => get<{ agents: Record<string, unknown>[]; count: number; db: string }>('/api/team/roster'),
+    teamRegister: (body: { agent_id: string; workflow_id?: string; name?: string; team?: string; enabled?: boolean }) =>
+        post<Record<string, unknown>>('/api/team/roster', body),
+    teamRemove: (agentId: string) => sdk.http.delete(`/api/team/roster/${encodeURIComponent(agentId)}`),
+    teamSend: (body: { sender: string; recipient: string; body: string; kind?: string; team?: string }) =>
+        post<Record<string, unknown>>('/api/team/send', body),
+    teamInbox: (agentId: string, unread = 1) =>
+        get<{ agent_id: string; messages: Record<string, unknown>[]; count: number }>(
+            `/api/team/inbox?agent_id=${encodeURIComponent(agentId)}&unread=${unread}`
+        ),
+    teamPool: (start: boolean) =>
+        start
+            ? post<{ running: boolean }>('/api/team/pool/start', {})
+            : post<{ running: boolean }>('/api/team/pool/stop', {}),
+    forkSession: (id: string, fromStep = 0) =>
+        post<{ session_id: string }>(`/api/sessions/${encodeURIComponent(id)}/fork`, { from_step: fromStep }),
+    cleanupSessions: (days: number) => post<{ removed: number; days: number }>('/api/sessions/cleanup', { days }),
+    dbBackup: (body: { dsn?: string; dest?: string }) => post<{ path: string }>('/api/admin/db/backup', body),
     schedulerTasks: () => get<{ tasks: SchedulerTask[]; count: number }>('/api/scheduler/tasks'),
     createSchedulerTask: (body: {
         name: string;

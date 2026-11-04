@@ -3368,6 +3368,217 @@ def create_web_app(
         logger.info(f"webhook 回调续跑: run={run_id} approved={approved} resumed={resumed}")
         return {"run_id": run_id, "resumed": resumed, "approved": approved}
 
+    # ── Web capability completion: permission rules / benchmark / system / sessions / db ops ──
+    @app.get("/api/permissions/rules")
+    async def permissions_rules():
+        if permission_manager is None:
+            raise HTTPException(
+                status_code=503, detail={"code": "unavailable", "message": "Permission manager unavailable"}
+            )
+        snapshot = permission_manager.to_dict()
+        return {"level": snapshot.get("level", ""), "rules": snapshot.get("rules", [])}
+
+    @app.post("/api/permissions/rules", status_code=201)
+    async def permissions_rules_create(body: Dict[str, Any]):
+        if permission_manager is None:
+            raise HTTPException(
+                status_code=503, detail={"code": "unavailable", "message": "Permission manager unavailable"}
+            )
+        tool_name = str(body.get("tool_name") or "").strip()
+        if not tool_name:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "tool_name is required"})
+        allowed = bool(body.get("allowed", True))
+        scope = str(body.get("scope") or "*")
+        if allowed:
+            permission_manager.approve(tool_name, scope=scope)
+        else:
+            permission_manager.deny(tool_name, scope=scope)
+        permission_manager.save()
+        logger.info(f"Permission rule set: {tool_name} allowed={allowed} scope={scope}")
+        return {"tool_name": tool_name, "allowed": allowed, "scope": scope}
+
+    @app.delete("/api/permissions/rules/{tool_name}")
+    async def permissions_rules_delete(tool_name: str):
+        if permission_manager is None:
+            raise HTTPException(
+                status_code=503, detail={"code": "unavailable", "message": "Permission manager unavailable"}
+            )
+        removed = permission_manager.reset(tool_name)
+        permission_manager.save()
+        logger.info(f"Permission rules cleared: {tool_name} ({removed})")
+        return {"tool_name": tool_name, "removed": removed}
+
+    @app.put("/api/permissions/level")
+    async def permissions_level_set(body: Dict[str, Any]):
+        if permission_manager is None:
+            raise HTTPException(
+                status_code=503, detail={"code": "unavailable", "message": "Permission manager unavailable"}
+            )
+        from ..engine.permission import PermissionLevel
+
+        raw = str(body.get("level") or "").strip().lower()
+        try:
+            permission_manager.level = PermissionLevel(raw)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "bad_request",
+                    "message": f"Unknown permission level: {raw} (valid: {[lv.value for lv in PermissionLevel]})",
+                },
+            ) from e
+        logger.info(f"Permission level switched: {raw}")
+        return {"level": raw}
+
+    _bench_state: Dict[str, Any] = {"running": False, "results": [], "summary": {}, "error": ""}
+
+    @app.post("/api/benchmark/run")
+    async def benchmark_run(body: Dict[str, Any]):
+        from ..benchmark import BenchmarkRunner
+        from ..engine.node import NodeRegistry
+        from ..nodes import import_all_nodes
+
+        import_all_nodes()
+        specs = body.get("specs")
+        if not isinstance(specs, list) or not specs:
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "specs is required (list of node+params)"}
+            )
+        for spec in specs:
+            node_name = str((spec or {}).get("node") or "").strip()
+            if not node_name or NodeRegistry.get(node_name) is None:
+                raise HTTPException(
+                    status_code=400, detail={"code": "bad_request", "message": f"Unknown node: {node_name}"}
+                )
+        repeats = max(1, min(int(body.get("repeats") or 3), 10))
+        if _bench_state.get("running"):
+            raise HTTPException(status_code=409, detail={"code": "busy", "message": "Benchmark already running"})
+
+        async def _run() -> None:
+            _bench_state.update({"running": True, "results": [], "summary": {}, "error": ""})
+            try:
+                runner = BenchmarkRunner(repeats=repeats)
+                res = await runner.run_nodes([{"node": s["node"], "params": s.get("params") or {}} for s in specs])
+                _bench_state.update(
+                    {"results": [r.to_dict() for r in res], "summary": runner.summary() or {"total": len(res)}}
+                )
+                logger.info(f"Benchmark done: {len(specs)} specs x {repeats} repeats")
+            except Exception as e:
+                _bench_state["error"] = str(e)
+                logger.error(f"Benchmark failed: {e}")
+            finally:
+                _bench_state["running"] = False
+
+        if body.get("wait"):
+            await _run()
+            return {"started": True, "finished": True, "specs": len(specs), "repeats": repeats}
+        asyncio.create_task(_run())
+        return {"started": True, "specs": len(specs), "repeats": repeats}
+
+    @app.get("/api/benchmark/status")
+    async def benchmark_status():
+        return {
+            "running": _bench_state.get("running", False),
+            "results": _bench_state.get("results", []),
+            "summary": _bench_state.get("summary", {}),
+            "error": _bench_state.get("error", ""),
+        }
+
+    @app.get("/api/system/info")
+    async def system_info():
+        import platform as _platform
+        import shutil as _shutil
+        import sys as _sys
+
+        from .. import __version__
+        from ..engine.node import NodeRegistry
+        from ..nodes import import_all_nodes
+
+        import_all_nodes()
+        home = Path.home()
+        try:
+            disk = _shutil.disk_usage(home)
+            disk_free_gb = round(disk.free / 1024**3, 1)
+            disk_total_gb = round(disk.total / 1024**3, 1)
+        except OSError:
+            disk_free_gb = disk_total_gb = None
+        return {
+            "version": __version__,
+            "python": _sys.version.split()[0],
+            "platform": _platform.platform(),
+            "node_count": len(NodeRegistry.list()),
+            "disk_free_gb": disk_free_gb,
+            "disk_total_gb": disk_total_gb,
+            "pid": os.getpid(),
+        }
+
+    @app.post("/api/system/clean")
+    async def system_clean(body: Dict[str, Any]):
+        from ..nodes import import_all_nodes
+        from ..nodes.macos import DesktopCleanNode, DownloadOrganizerNode
+
+        import_all_nodes()
+        dry_run = bool(body.get("dry_run", True))
+        from ..engine.node import NodeConfig
+
+        outputs = {}
+        for label, cls, extra in [
+            ("desktop", DesktopCleanNode, {"organize_by_type": True, "skip_hidden": True}),
+            ("downloads", DownloadOrganizerNode, {}),
+        ]:
+            params = {**extra, "dry_run": dry_run}
+            node = cls(config=NodeConfig(params=params))
+            result = await node.execute({})
+            outputs[label] = getattr(result, "summary", str(result))
+        logger.info(f"System clean (dry_run={dry_run}) done: {list(outputs)}")
+        return {"dry_run": dry_run, "outputs": outputs}
+
+    @app.post("/api/sessions/{session_id}/fork")
+    async def session_fork(session_id: str, body: Dict[str, Any]):
+        if session_store is None:
+            raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "Session store unavailable"})
+        from_step = int(body.get("from_step") or 0)
+        forked = session_store.fork(session_id, from_step=from_step)
+        if not forked:
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"Session not found: {session_id}"}
+            )
+        logger.info(f"Session forked: {session_id} from_step={from_step}")
+        return {"session_id": getattr(forked, "id", "")}
+
+    @app.post("/api/sessions/cleanup")
+    async def session_cleanup(body: Dict[str, Any]):
+        if session_store is None:
+            raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "Session store unavailable"})
+        days = int(body.get("days") or 30)
+        removed = session_store.cleanup_expired(expire_days=days)
+        logger.info(f"Expired sessions cleaned: {removed} (days={days})")
+        return {"removed": removed, "days": days}
+
+    @app.post("/api/admin/db/backup")
+    async def admin_db_backup(body: Dict[str, Any]):
+        from ..db.backup import BackupManager
+
+        dsn = str(body.get("dsn") or os.environ.get("DATABASE_URL", "") or os.environ.get("FUSION_PG_DSN", ""))
+        if not dsn:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "bad_request", "message": "DSN not configured (body.dsn or DATABASE_URL)"},
+            )
+        dest = str(body.get("dest") or "")
+        manager = BackupManager(dsn)
+        if not dest:
+            from datetime import datetime
+
+            dest = f"fusion-cowork-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.sql.gz"
+        try:
+            path = await asyncio.get_event_loop().run_in_executor(None, lambda: manager.backup(dest))
+        except Exception as e:
+            logger.error(f"DB backup failed: {e}")
+            raise HTTPException(status_code=500, detail={"code": "backup_failed", "message": str(e)}) from e
+        logger.info(f"DB backup done: {path}")
+        return {"path": str(path)}
+
     # ── W19 guard L3 审批队列 (migration doc §6 P3; #124 起 guard+本地 CONFIRM 合并) ──
     @app.get("/api/permissions/pending")
     async def permissions_pending():
