@@ -689,6 +689,13 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### 治理工作流模板包 (v0.5.75, issue #283)
+
+- **治理模板** — 两个内置工作流模板 (对应多仓库自动化搭建指南): `governance_issue_lifecycle` (🚦 每议题一次运行: 打标 `state:proposal` → G1 提案闸门 → 议题评论 → 携带 run_id 的 agent-studio 审批任务 → G4 验收闸门 → `state:accepted` → G5 发布闸门 → `state:rollout`) 与 `governance_batch_audit` (📋 `issue_list(labels=[state:approved])` → 批次审计闸门 → 议题评论)。审批经平台收件箱或签名 webhook 自动续跑。
+- **引擎 run_id 注入** — `WorkflowEngine` 通过 `node_input.setdefault("run_id", exec_id)` 让每个节点都能看到 run id; 上游边数据仍然优先。审批任务载荷可携带它, 外部决策 (agent-studio GUI) 经 `POST /api/hooks/webhook/{run_id}` 路由回来。
+- **github_api `issue_list` 操作** — `GET /repos/{repo}/issues?labels=...`, 治理批次扇出取数 (同样走仓库白名单 + `GITHUB_TOKEN` 仅环境变量鉴权)。
+- 测试: `tests/test_issue_283_governance_templates.py` (8 例: 注入 + 上游优先、标签查询路径、两模板均可转换为可执行工作流); `test_issue_209_runs_inputs.py` E2E 断言已按注入后的 `run_id` 更新。
+
 ### 语音面板 + Webhook 路由 + CI 超时 (v0.5.74)
 
 - **语音面板 (#278)** — `#/voice`: 浏览器麦克风 → 16k mono int16 PCM 推送到 fusion-speech `/stream/audio` WS ingress; `speech.asr` final/partial 实时转写; TTS PCM 回包自动播放; `speak` 控制帧文本朗读。后端 `GET /api/speech/config` (URL/token 取 `FUSION_SPEECH_WS_URL`/`FUSION_SPEECH_PORT`/`FUSION_SPEECH_INGRESS_TOKEN`) + `GET /api/speech/health` 代理。无头守护进程的客户端 UI 落在 cowork, 守护进程不动。
