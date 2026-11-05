@@ -746,6 +746,9 @@ export const api = {
     templates: (category = '') =>
         get<{ templates: TemplateInfo[]; count: number }>(`/api/templates?category=${encodeURIComponent(category)}`),
     template: (id: string) => get<TemplateInfo>(`/api/templates/${encodeURIComponent(id)}`),
+    // issue #294: 一键启动模板 — params 按 schema 表单收集, 服务端替换 ${param.X} 后起 run
+    launchTemplate: (id: string, params: Record<string, unknown>) =>
+        post<{ run_id: string; status: string }>(`/api/templates/${encodeURIComponent(id)}/launch`, { params }),
     // issue #261: 模板资产 — 发布/导入/删除/导出
     publishTemplate: (body: { name: string; description?: string; category?: string; workflow: unknown }) =>
         post<{ id: string; name: string }>('/api/templates', body),

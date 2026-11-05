@@ -139,9 +139,11 @@ class TestGovernanceTemplates:
     def test_lifecycle_payload_carries_run_id_template(self):
         # issue #293: run context nested under payload — agent-studio persists only
         # body["payload"] as task params, top-level run_id gets dropped
+        # issue #294: G1/G5 sync nodes added — all three gates carry nested payloads
         tpl = next(t for t in BUILTIN_TEMPLATES if t["id"] == "governance_issue_lifecycle")
-        http_nodes = [n for n in tpl["workflow"]["nodes"] if n["name"] == "http_request"]
-        payload = http_nodes[0]["config"]["params"]["body"]["payload"]
-        assert payload["run_id"] == "${run_id}"
-        assert payload["gate"] == "G4"
-        assert payload["kind"] == "acceptance"
+        by_id = {n["id"]: n for n in tpl["workflow"]["nodes"]}
+        for nid, gate, kind in (("n1b", "G1", "proposal"), ("n4", "G4", "acceptance"), ("n6b", "G5", "rollout")):
+            payload = by_id[nid]["config"]["params"]["body"]["payload"]
+            assert payload["run_id"] == "${run_id}"
+            assert payload["gate"] == gate
+            assert payload["kind"] == kind

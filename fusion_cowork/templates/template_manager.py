@@ -476,7 +476,7 @@ BUILTIN_TEMPLATES = [
     {
         "id": "governance_issue_lifecycle",
         "name": "治理-议题生命周期 (G1-G4-G5 闸门)",
-        "description": "每议题一次运行: 提案打标 -> G1 提案闸门 -> 实施记录 -> 同步 agent-studio 审批任务 (带 run_id) -> G4 验收闸门 -> accepted 打标 -> G5 发布闸门 -> rollout 打标。审批经平台收件箱或签名 webhook 自动续跑。见 architecture/multi-repo-automation-setup-guide-1104.md",
+        "description": "每议题一次运行: 提案打标 -> 同步 G1 决策任务 -> G1 提案闸门 -> 实施记录 -> 同步 G4 验收任务 (带 run_id) -> G4 验收闸门 -> accepted 打标 -> 同步 G5 发布任务 -> G5 发布闸门 -> rollout 打标。G1/G4/G5 均自动同步 agent-studio 审批任务, 决策经平台收件箱或签名 webhook 自动续跑。见 architecture/multi-repo-automation-setup-guide-1104.md",
         "category": "治理",
         "tags": ["治理", "闸门", "审批", "G-gate", "多仓库"],
         "icon": "🚦",
@@ -510,6 +510,29 @@ BUILTIN_TEMPLATES = [
                             "allowed_repos": ["${param.repo}"],
                             "issue_number": "${param.issue_number}",
                             "labels": ["state:proposal"],
+                        }
+                    },
+                },
+                {
+                    # issue #294: G1 决策同步 agent-studio — 平台收件箱可见, webhook 续跑本 run
+                    "id": "n1b",
+                    "name": "http_request",
+                    "config": {
+                        "params": {
+                            "method": "POST",
+                            "url": "${param.approvals_url}",
+                            "headers": {"x-api-key": "${env.FUSION_AGENT_STUDIO_API_KEY}"},
+                            "body": {
+                                "title": "G1 proposal ${param.repo}#${param.issue_number}",
+                                "requester": "cowork-agent",
+                                "assigned_to": "owner",
+                                "payload": {
+                                    "run_id": "${run_id}",
+                                    "gate": "G1",
+                                    "kind": "proposal",
+                                },
+                            },
+                            "timeout": 10,
                         }
                     },
                 },
@@ -588,6 +611,29 @@ BUILTIN_TEMPLATES = [
                     },
                 },
                 {
+                    # issue #294: G5 决策同步 agent-studio (发布闸门前, 平台侧可审批)
+                    "id": "n6b",
+                    "name": "http_request",
+                    "config": {
+                        "params": {
+                            "method": "POST",
+                            "url": "${param.approvals_url}",
+                            "headers": {"x-api-key": "${env.FUSION_AGENT_STUDIO_API_KEY}"},
+                            "body": {
+                                "title": "G5 rollout ${param.repo}#${param.issue_number}",
+                                "requester": "cowork-agent",
+                                "assigned_to": "owner",
+                                "payload": {
+                                    "run_id": "${run_id}",
+                                    "gate": "G5",
+                                    "kind": "rollout",
+                                },
+                            },
+                            "timeout": 10,
+                        }
+                    },
+                },
+                {
                     "id": "n7",
                     "name": "approval_gate",
                     "config": {
@@ -612,12 +658,14 @@ BUILTIN_TEMPLATES = [
                 },
             ],
             "edges": [
-                {"source_id": "n1", "target_id": "n2"},
+                {"source_id": "n1", "target_id": "n1b"},
+                {"source_id": "n1b", "target_id": "n2"},
                 {"source_id": "n2", "target_id": "n3"},
                 {"source_id": "n3", "target_id": "n4"},
                 {"source_id": "n4", "target_id": "n5"},
                 {"source_id": "n5", "target_id": "n6"},
-                {"source_id": "n6", "target_id": "n7"},
+                {"source_id": "n6", "target_id": "n6b"},
+                {"source_id": "n6b", "target_id": "n7"},
                 {"source_id": "n7", "target_id": "n8"},
             ],
         },
@@ -631,12 +679,18 @@ BUILTIN_TEMPLATES = [
         "icon": "📋",
         "difficulty": "进阶",
         "estimated_time": "人工决定",
-        # issue #287: 模板级参数 (批次审计只需要仓库)
+        # issue #287: 模板级参数 (批次审计: 仓库 + 巡检标签); issue #294: labels 可从 GUI 表单传入
         "params": {
             "type": "object",
             "properties": {
                 "repo": {"type": "string", "description": "目标仓库 (owner/name)", "default": "org/repo"},
                 "issue_number": {"type": "integer", "description": "议题编号", "default": 1},
+                "labels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "巡检标签 (issue_list 过滤用)",
+                    "default": ["state:approved"],
+                },
             },
             "required": ["repo"],
         },
@@ -652,7 +706,8 @@ BUILTIN_TEMPLATES = [
                             "op": "issue_list",
                             "repo": "${param.repo}",
                             "allowed_repos": ["${param.repo}"],
-                            "labels": ["state:approved"],
+                            # issue #294: labels 走模板参数 (整串占位符保留数组类型)
+                            "labels": "${param.labels}",
                         }
                     },
                 },

@@ -22,6 +22,82 @@ export function TemplatesPage() {
     const categories = Array.from(new Set(templates.map((x) => x.category ?? ''))).filter(Boolean);
     const [importing, setImporting] = useState(false);
 
+    // issue #294: 一键启动 — params 表单按模板 schema 生成, 服务端替换 ${param.X} 后起 run
+    const [launchTpl, setLaunchTpl] = useState<TemplateInfo | null>(null);
+    const [launchProps, setLaunchProps] = useState<
+        Record<string, { type: string; description?: string; default?: unknown }>
+    >({});
+    const [launchRequired, setLaunchRequired] = useState<string[]>([]);
+    const [launchValues, setLaunchValues] = useState<Record<string, string>>({});
+    const [launching, setLaunching] = useState(false);
+
+    async function openLaunch(tpl: TemplateInfo) {
+        if (launching) return;
+        setLaunchTpl(tpl);
+        setLaunchValues({});
+        try {
+            const detail = (await api.template(tpl.id)) as unknown as {
+                params?: {
+                    properties?: Record<string, { type: string; description?: string; default?: unknown }>;
+                    required?: string[];
+                };
+            };
+            const props = detail.params?.properties ?? {};
+            setLaunchProps(props);
+            setLaunchRequired(detail.params?.required ?? []);
+            const init: Record<string, string> = {};
+            for (const [k, spec] of Object.entries(props)) {
+                if (spec.default !== undefined) {
+                    init[k] = Array.isArray(spec.default) ? (spec.default as string[]).join(',') : String(spec.default);
+                }
+            }
+            setLaunchValues(init);
+        } catch (e) {
+            console.error('[cowork-web] template detail failed', e);
+            setLaunchTpl(null);
+            sdk.toast.show({ level: 'error', message: t('模板详情获取失败', 'Failed to load template') });
+        }
+    }
+
+    async function submitLaunch() {
+        if (!launchTpl || launching) return;
+        const params: Record<string, unknown> = {};
+        for (const [k, spec] of Object.entries(launchProps)) {
+            const raw = (launchValues[k] ?? '').trim();
+            if (spec.type === 'integer' || spec.type === 'number') {
+                if (raw !== '') params[k] = Number(raw);
+            } else if (spec.type === 'array') {
+                params[k] =
+                    raw === ''
+                        ? []
+                        : raw
+                              .split(',')
+                              .map((s) => s.trim())
+                              .filter(Boolean);
+            } else if (raw !== '') {
+                params[k] = raw;
+            }
+        }
+        setLaunching(true);
+        try {
+            const res = await api.launchTemplate(launchTpl.id, params);
+            sdk.toast.show({
+                level: 'success',
+                message: t(`已启动: ${res.run_id}`, `Launched: ${res.run_id}`),
+            });
+            setLaunchTpl(null);
+            window.location.hash = `#/runs/${res.run_id}`;
+        } catch (e) {
+            console.error('[cowork-web] template launch failed', e);
+            sdk.toast.show({
+                level: 'error',
+                message: t('启动失败 — 检查必填参数', 'Launch failed — check required params'),
+            });
+        } finally {
+            setLaunching(false);
+        }
+    }
+
     // issue #261: 导入模板 JSON 文件 → POST /api/templates/import → 刷新列表
     async function onImportFile(file: File) {
         if (importing) return;
@@ -159,7 +235,56 @@ export function TemplatesPage() {
                                     ))}
                                 </div>
                             ) : null}
+                            {launchTpl?.id === tpl.id ? (
+                                <div className="mt-2 space-y-2 rounded-md border border-border bg-bg p-2">
+                                    {Object.entries(launchProps).map(([key, spec]) => (
+                                        <label key={key} className="block text-xs text-text-secondary">
+                                            <span>
+                                                {key}
+                                                {launchRequired.includes(key) ? ' *' : ''}
+                                                {spec.description ? ` — ${spec.description}` : ''}
+                                            </span>
+                                            <input
+                                                className="mt-0.5 w-full rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
+                                                value={launchValues[key] ?? ''}
+                                                placeholder={
+                                                    spec.type === 'array'
+                                                        ? t('逗号分隔', 'comma-separated')
+                                                        : String(spec.type)
+                                                }
+                                                onChange={(e) =>
+                                                    setLaunchValues((v) => ({ ...v, [key]: e.target.value }))
+                                                }
+                                            />
+                                        </label>
+                                    ))}
+                                    <div className="flex justify-end gap-1">
+                                        <button
+                                            type="button"
+                                            className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
+                                            onClick={() => setLaunchTpl(null)}
+                                        >
+                                            {t('取消', 'Cancel')}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted disabled:opacity-50"
+                                            disabled={launching}
+                                            onClick={() => void submitLaunch()}
+                                        >
+                                            {launching ? t('启动中…', 'Launching…') : t('启动运行', 'Launch run')}
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : null}
                             <div className="mt-auto flex justify-end gap-1 pt-2">
+                                <button
+                                    type="button"
+                                    className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
+                                    onClick={() => void openLaunch(tpl)}
+                                >
+                                    {t('启动', 'Launch')}
+                                </button>
                                 <button
                                     type="button"
                                     className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
