@@ -689,6 +689,12 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### 治理模板修复 + 身份配额计量 (v0.5.76, issues #287/#288)
+
+- **治理模板修复 (#287)** — `http_request` 新增 `${env.VAR}` 模板前缀 (鉴权头从环境注入, 绝不硬编码; 未解析的凭证头直接丢弃, 不把模板字面量当密钥发出)。治理模板参数化: 真实参数 schema (`repo`/`issue_number`/`approvals_url`) + `${param.X}` 占位符在模板装配期替换 (`template_to_workflow(param_values=...)`, 未传值时套用 schema 默认)。CLI `template run` 现在调用 `import_all_nodes()` (生态节点不再报未知节点类型) 并支持 `--vars '{"repo": "..."}'`。确认语义: `POST /api/permissions/pending/{id}/confirm` 带 `{"once": true}` 且无显式 `approved` 时默认按批准一次处理 (此前会静默走拒绝路径把暂停的 run 判死); 显式 `approved=false` 的一次性拒绝不变。`${run_id}` 替换已由 #285 引擎注入修复 (探针验证)。
+- **身份 JWT 透传配额计量 (#288)** — 新增 `fusion_cowork/auth/identity_propagation.py`: 按请求捕获调用方 fusion-identity JWT (`X-Fusion-Identity-Token` 头或 JWT 形状的 `Authorization` bearer; 入站模块 `fm-` key 不会误配) 存入 contextvar。`FusionMLXClient` 在出站 LLM 调用上携带 `Authorization: Bearer <identity-jwt>` (chat/stream/fusion-core 路径), 网关计量层按调用方 `sub` 记每日 token 配额; 后台 run 经 `RunRegistry.start(identity_token=...)` 把 token 带进引擎任务上下文。网关 `429 {"detail": "daily token quota exceeded", "quota": {...}}` 映射为双语友好提示且不重试; 普通 429 重试语义不变。token 不落盘。模块 LLM base URL 指向网关计量端点仍由环境变量驱动 (`FUSION_MLX_URL`/`FUSION_MLX_HOST`+`PORT`)。
+- 测试: `tests/test_issue_287_governance_followups.py` (14 例), `tests/test_issue_288_identity_quota.py` (10 例)。
+
 ### 治理工作流模板包 (v0.5.75, issue #283)
 
 - **治理模板** — 两个内置工作流模板 (对应多仓库自动化搭建指南): `governance_issue_lifecycle` (🚦 每议题一次运行: 打标 `state:proposal` → G1 提案闸门 → 议题评论 → 携带 run_id 的 agent-studio 审批任务 → G4 验收闸门 → `state:accepted` → G5 发布闸门 → `state:rollout`) 与 `governance_batch_audit` (📋 `issue_list(labels=[state:approved])` → 批次审计闸门 → 议题评论)。审批经平台收件箱或签名 webhook 自动续跑。
