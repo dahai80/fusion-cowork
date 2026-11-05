@@ -65,9 +65,7 @@ class TestEngineBatch:
                     if not exec_id:
                         continue
                     pm.release_pending_once(action_id)
-                    eng.resolve_hitl(
-                        exec_id, True, once=True, batch=items, attribution={"decided_by": "webhook"}
-                    )
+                    eng.resolve_hitl(exec_id, True, once=True, batch=items, attribution={"decided_by": "webhook"})
 
         task = asyncio.create_task(resolver())
         try:
@@ -123,7 +121,9 @@ class TestWebhookItems:
         from fusion_cowork.server import web_api
 
         monkeypatch.setenv("FUSION_COWORK_WEBHOOK_SECRET", "s309")
-        app = web_api.create_web_app(dist_dir=tmp_path / "nd", store_root=tmp_path / "wf", space_data_dir=tmp_path / "sp")
+        app = web_api.create_web_app(
+            dist_dir=tmp_path / "nd", store_root=tmp_path / "wf", space_data_dir=tmp_path / "sp"
+        )
         pm = app.state.permission_manager
         pm._pending_local_approvals[f"act_{run_id}"] = "approval_gate"
         pm._pending_local_details[f"act_{run_id}"] = {
@@ -136,10 +136,17 @@ class TestWebhookItems:
     def test_items_echo_and_flag_computation(self, monkeypatch, tmp_path):
         tc = self._app_with_pending(monkeypatch, tmp_path, "run_309_webhook")
         with tc:
-            r = self._post(tc, "run_309_webhook", {"approved": False, "items": [
-                {"task_issue": 101, "approved": True},
-                {"task_issue": 102, "approved": False, "reason": "no evidence"},
-            ]})
+            r = self._post(
+                tc,
+                "run_309_webhook",
+                {
+                    "approved": False,
+                    "items": [
+                        {"task_issue": 101, "approved": True},
+                        {"task_issue": 102, "approved": False, "reason": "no evidence"},
+                    ],
+                },
+            )
             assert r.status_code == 200
             data = r.json()
             assert data["items"] == 2
@@ -149,25 +156,42 @@ class TestWebhookItems:
     def test_zero_approved_items_flag_false(self, monkeypatch, tmp_path):
         tc = self._app_with_pending(monkeypatch, tmp_path, "run_309_webhook2")
         with tc:
-            r = self._post(tc, "run_309_webhook2", {"approved": True, "items": [
-                {"task_issue": 101, "approved": False},
-                {"task_issue": 102, "approved": False},
-            ]})
+            r = self._post(
+                tc,
+                "run_309_webhook2",
+                {
+                    "approved": True,
+                    "items": [
+                        {"task_issue": 101, "approved": False},
+                        {"task_issue": 102, "approved": False},
+                    ],
+                },
+            )
             assert r.json()["approved"] is False
 
     def test_non_dict_items_ignored(self, monkeypatch, tmp_path):
         tc = self._app_with_pending(monkeypatch, tmp_path, "run_309_webhook3")
         with tc:
-            r = self._post(tc, "run_309_webhook3", {"approved": True, "items": ["nope", {"task_issue": 9, "approved": True}]})
+            r = self._post(
+                tc, "run_309_webhook3", {"approved": True, "items": ["nope", {"task_issue": 9, "approved": True}]}
+            )
             assert r.json()["items"] == 1
 
     def test_rejected_items_state_write_without_token_skips(self, monkeypatch, tmp_path):
         # no GITHUB_TOKEN -> write path skipped cleanly, verdict still processed
         tc = self._app_with_pending(monkeypatch, tmp_path, "run_309_webhook4")
         with tc:
-            r = self._post(tc, "run_309_webhook4", {"approved": True, "repo": "org/x", "items": [
-                {"task_issue": 101, "approved": True},
-                {"task_issue": 102, "approved": False, "reason": "r"},
-            ]})
+            r = self._post(
+                tc,
+                "run_309_webhook4",
+                {
+                    "approved": True,
+                    "repo": "org/x",
+                    "items": [
+                        {"task_issue": 101, "approved": True},
+                        {"task_issue": 102, "approved": False, "reason": "r"},
+                    ],
+                },
+            )
             assert r.status_code == 200
             assert r.json()["approved"] is True
