@@ -26,12 +26,19 @@ function stubDocument(): ToggleRecorder {
 
 function stubStorage(get: (key: string) => string | null): { set: string[] } {
     const state = { set: [] as string[] };
-    (globalThis as { localStorage?: unknown }).localStorage = {
-        getItem: (key: string) => get(key),
-        setItem: (key: string, value: string) => {
-            if (key === 'fusion.shell.theme') state.set.push(value);
+    // issue #300: happy-dom (render smoke test registration) installs a real
+    // localStorage as a readonly property — plain assignment throws. Use
+    // defineProperty (configurable) so the stub works in both bare and DOM runs.
+    Object.defineProperty(globalThis, 'localStorage', {
+        value: {
+            getItem: (key: string) => get(key),
+            setItem: (key: string, value: string) => {
+                if (key === 'fusion.shell.theme') state.set.push(value);
+            },
         },
-    };
+        configurable: true,
+        writable: true,
+    });
     return state;
 }
 
@@ -98,11 +105,15 @@ describe('initialTheme (issue #176)', () => {
     });
 
     it('defaults to dark when storage throws and no matchMedia', () => {
-        (globalThis as { localStorage?: unknown }).localStorage = {
-            getItem: () => {
-                throw new Error('private mode');
+        Object.defineProperty(globalThis, 'localStorage', {
+            value: {
+                getItem: () => {
+                    throw new Error('private mode');
+                },
             },
-        };
+            configurable: true,
+            writable: true,
+        });
         expect(initialTheme()).toBe('dark');
     });
 });

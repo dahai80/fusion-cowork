@@ -14,12 +14,6 @@ export function TemplatesPage() {
     const [category, setCategory] = useState('');
     const [creating, setCreating] = useState('');
     const retry = useAutoRetry(() => api.templates(category), [category]);
-
-    if (retry.loading && !retry.data) return <SkeletonLines rows={6} />;
-    if (retry.error) return <ErrorState message={retry.error.message} onRetry={retry.manualRetry} />;
-
-    const templates = retry.data?.templates ?? [];
-    const categories = Array.from(new Set(templates.map((x) => x.category ?? ''))).filter(Boolean);
     const [importing, setImporting] = useState(false);
 
     // issue #294: 一键启动 — params 表单按模板 schema 生成, 服务端替换 ${param.X} 后起 run
@@ -30,6 +24,15 @@ export function TemplatesPage() {
     const [launchRequired, setLaunchRequired] = useState<string[]>([]);
     const [launchValues, setLaunchValues] = useState<Record<string, string>>({});
     const [launching, setLaunching] = useState(false);
+
+    // issue #300: all hooks above the early returns — hooks declared after a
+    // conditional return throw "Rendered more hooks than during the previous
+    // render" (#310) when the first render takes the early-exit branch
+    if (retry.loading && !retry.data) return <SkeletonLines rows={6} />;
+    if (retry.error) return <ErrorState message={retry.error.message} onRetry={retry.manualRetry} />;
+
+    const templates = retry.data?.templates ?? [];
+    const categories = Array.from(new Set(templates.map((x) => x.category ?? ''))).filter(Boolean);
 
     async function openLaunch(tpl: TemplateInfo) {
         if (launching) return;
