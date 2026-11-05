@@ -45,6 +45,7 @@ def _node(tmp_path, claude_bin, timeout=30, max_tokens=200000):
 
 def _capture_client(monkeypatch, requests):
     monkeypatch.setenv("GITHUB_TOKEN", "t308")
+
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append((request.method, request.url.path))
         return httpx.Response(200, json={})
@@ -56,7 +57,10 @@ def _capture_client(monkeypatch, requests):
 
 
 _OK_RESULT = json.dumps(
-    {"result": "done, opened PR https://github.com/org/repo/pull/42 closes #9", "usage": {"input_tokens": 100, "output_tokens": 200}}
+    {
+        "result": "done, opened PR https://github.com/org/repo/pull/42 closes #9",
+        "usage": {"input_tokens": 100, "output_tokens": 200},
+    }
 )
 
 
