@@ -534,6 +534,8 @@ class WorkflowEngine:
         self._hitl_once_grants: Set[str] = set()
         # issue #225: exec_id -> 审批时编辑的参数覆盖 — 批准唤醒后并入被闸节点输入
         self._hitl_param_overrides: Dict[str, Dict[str, Any]] = {}
+        # issue #303: exec_id -> 决定来源 {approval_id, decided_by, decided_at} — 唤醒后落到 blocked 步骤
+        self._hitl_attributions: Dict[str, Dict[str, Any]] = {}
         # 正挂在 HITL 等待点的 run 集合 (与 W8 手动暂停区分)
         self._hitl_waiting: Set[str] = set()
         # W8/B1: 运行改向指令队列 — 节点边界应用 (set_params/skip_remaining/insert_node)
@@ -936,6 +938,7 @@ class WorkflowEngine:
                 logger.warning(f"[{exec_id}] run 终态清理 HITL 残留状态 (waiting/deadline)")
             self._hitl_waiting.discard(exec_id)
             self._hitl_deadlines.pop(exec_id, None)
+            self._hitl_attributions.pop(exec_id, None)
             if hitl_residue:
                 discard = getattr(self._permission_manager, "discard_pending_by_execution", None)
                 if callable(discard):
@@ -1413,8 +1416,15 @@ class WorkflowEngine:
         return self._hitl_deadlines.get(execution_id)
 
     def resolve_hitl(
-        self, execution_id: str, approved: bool, once: bool = False, params: Optional[Dict[str, Any]] = None
+        self,
+        execution_id: str,
+        approved: bool,
+        once: bool = False,
+        params: Optional[Dict[str, Any]] = None,
+        attribution: Optional[Dict[str, Any]] = None,
     ) -> bool:
+        # issue #303: attribution — 决定来源 {approval_id, decided_by, decided_at},
+        # 随唤醒落到被闸节点的 blocked 步骤上, 时间线可回答 "谁批准的"
         # issue #181: 审批路由回调 — 记录决定并唤醒暂停中的 run; cancel 共用同一事件
         # issue #187: once=True 一次性批准 — 不落规则, 唤醒后跳过权限复查直接放行本节点
         # issue #225: params — 审批卡 "编辑参数" 后的覆盖, 批准时并入被闸节点输入
@@ -1426,6 +1436,8 @@ class WorkflowEngine:
             self._hitl_once_grants.add(execution_id)
         if approved and isinstance(params, dict) and params:
             self._hitl_param_overrides[execution_id] = dict(params)
+        if isinstance(attribution, dict) and attribution:
+            self._hitl_attributions[execution_id] = dict(attribution)
         self._hitl_deadlines.pop(execution_id, None)
         evt.set()
         logger.info(
@@ -1515,6 +1527,19 @@ class WorkflowEngine:
                 )
             return False
         approved = self._hitl_decisions.pop(exec_id, None)
+        # issue #303: 决定来源落到闸门 blocked 步骤 — 时间线/步骤抽屉可回答 "谁批准的"
+        attribution = self._hitl_attributions.pop(exec_id, None)
+        if attribution:
+            for s in reversed(gate_execution.steps if gate_execution else []):
+                if s.node_id == node.id and s.status == NodeStatus.BLOCKED:
+                    s.output_data = {**(s.output_data or {}), "hitl_attribution": dict(attribution)}
+                    who = str(attribution.get("decided_by") or "unknown")
+                    aid = str(attribution.get("approval_id") or "")
+                    s.summary = f"HITL: {'批准' if approved else '拒绝'} — by {who}" + (
+                        f" (approval {aid})" if aid else ""
+                    )
+                    logger.info(f"[{exec_id}] HITL 决定来源已记录: node={node.id} by={who} approval={aid}")
+                    break
         if self._cancel_flags.get(exec_id):
             logger.info(f"[{exec_id}] HITL: 等待中被取消")
             return False

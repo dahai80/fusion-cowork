@@ -106,7 +106,8 @@ def client(monkeypatch, tmp_path):
     calls: list[dict] = []
 
     class _EngineStub:
-        def resolve_hitl(self, execution_id, approved, once=False, params=None):
+        # issue #303: engine contract grew attribution (and #309 batch) kwargs
+        def resolve_hitl(self, execution_id, approved, once=False, params=None, attribution=None, batch=None):
             calls.append({"exec": execution_id, "approved": approved, "once": once, "params": params})
             return True
 
