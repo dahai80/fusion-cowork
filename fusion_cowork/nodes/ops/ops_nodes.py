@@ -725,9 +725,7 @@ class ClaudeDispatchNode(BaseNode):
             async with self._api_client(base_url, token, 15.0) as client:
                 r1 = await client.post(f"/repos/{repo}/issues/{issue_number}/labels", json={"labels": [ready_label]})
                 if dispatched_label:
-                    await client.request(
-                        "DELETE", f"/repos/{repo}/issues/{issue_number}/labels/{dispatched_label}"
-                    )
+                    await client.request("DELETE", f"/repos/{repo}/issues/{issue_number}/labels/{dispatched_label}")
             ok = r1.status_code < 300
             if ok:
                 logger.warning(f"claude_dispatch 回退: {repo}#{issue_number} 标签恢复 {ready_label}")
