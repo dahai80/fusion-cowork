@@ -122,6 +122,55 @@ def _check_shell_command(command: str) -> Optional[str]:
     return None
 
 
+# issue #319: shell operators change semantics when shlex.split'd (shell=False) —
+# "echo a > f && cat f" becomes literal argv, silently faking success. Detect and
+# fail loud so the caller either simplifies the command or opts into shell=True.
+_SHELL_METACHARS = frozenset("|&;<>()$\n`")
+
+
+def _check_shell_metachars(command: str) -> Optional[str]:
+    for ch in _SHELL_METACHARS:
+        if ch in command:
+            return (
+                f"command contains shell operator '{ch}' but shell=false — "
+                "it would be passed as a literal argument, not executed; "
+                "simplify the command or set shell=true"
+            )
+    return None
+
+
+# issue #319: FUSION_COWORK_WORKSPACE_ROOT confinement — when set, shell_exec
+# workdir defaults to the workspace root and any workdir must resolve inside it.
+def _confine_workdir(workdir: str) -> tuple[Optional[str], Optional[str]]:
+    root_raw = os.environ.get("FUSION_COWORK_WORKSPACE_ROOT", "")
+    if not root_raw:
+        return workdir, None
+    try:
+        root = Path(root_raw).expanduser().resolve()
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        return None, f"workspace root unavailable: {root_raw} ({e})"
+    wd = Path(workdir).expanduser() if workdir else root
+    if not wd.is_absolute():
+        wd = root / wd
+    try:
+        wd = wd.resolve(strict=False)
+    except OSError as e:
+        return None, f"workdir resolve failed: {workdir} ({e})"
+    if wd != root:
+        try:
+            wd.relative_to(root)
+        except ValueError:
+            return None, f"workdir escapes workspace root: {workdir} (root: {root})"
+    # 子目录允许自动创建 — 已确保在 root 围栏内
+    if not wd.exists():
+        try:
+            wd.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            return None, f"workdir create failed: {wd} ({e})"
+    return str(wd), None
+
+
 # E-11: SSRF 防御 — 拒私有/环回/链路本地/云元数据地址
 _SSRF_BANNED_HOSTS = frozenset(
     {
@@ -342,9 +391,31 @@ class ShellExecNode(BaseNode):
             )
 
         timeout = params.get("timeout", 30)
-        workdir = params.get("workdir", "")
+        # issue #319: LLM 生成的工作流常用 working_directory 命名 — 收编为 workdir 别名
+        workdir = params.get("workdir") or params.get("working_directory", "")
         capture = params.get("capture_output", True)
         use_shell = params.get("shell", False)
+
+        # issue #319: workspace root 围栏 — 默认落到 root, 越界直接拒 (fail-closed)
+        workdir, confine_error = _confine_workdir(workdir)
+        if confine_error:
+            logger.error(f"ShellExec workdir 越出 workspace root: {confine_error}")
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=confine_error,
+                summary="workspace root 围栏拦截",
+            )
+
+        # issue #319: shell 元字符在 shell=False 下变字面 argv — 静默假成功, 提前响亮拒绝
+        if not use_shell:
+            meta_error = _check_shell_metachars(command)
+            if meta_error:
+                logger.warning(f"ShellExec 元字符拒绝 (shell=false): {command[:80]}")
+                return NodeResult(
+                    status=NodeStatus.FAILED,
+                    error=meta_error,
+                    summary="shell 元字符拒绝",
+                )
 
         from ...security import get_scoped_folder_manager
 
