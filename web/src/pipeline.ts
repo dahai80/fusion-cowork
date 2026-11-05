@@ -151,3 +151,10 @@ export function stageLinks(output: Record<string, unknown> | null | undefined): 
     }
     return links;
 }
+
+// issue #318: runs whose workflow is the product_lifecycle delivery pipeline get
+// the purpose-built pipeline visualization — match by template name (bilingual)
+export function isPipelineRun(workflowName: string): boolean {
+    const n = workflowName ?? '';
+    return n.includes('产品生命周期') || n.includes('product_lifecycle') || n.includes('交付-产品');
+}

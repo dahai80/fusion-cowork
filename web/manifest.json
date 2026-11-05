@@ -112,6 +112,16 @@
       "route": "/voice",
       "title": "语音面板",
       "title_en": "Voice"
+    },
+    {
+      "route": "/governance",
+      "title": "治理",
+      "title_en": "Governance"
+    },
+    {
+      "route": "/pipeline",
+      "title": "交付管线",
+      "title_en": "Pipeline"
     }
   ],
   "searchProviders": [

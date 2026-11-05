@@ -28,6 +28,7 @@ import {
     insertRefToken,
 } from '../composer';
 import { useT } from '../i18n';
+import { isPipelineRun } from '../pipeline';
 import { runHistoryActions } from '../runstatus';
 import { capabilitiesInUse, computeWaves, parseParamsDraft, stepArtifactRefs, stepCapability } from '../runview';
 import { sdk, streamSse } from '../sdk';
@@ -367,6 +368,17 @@ export function RunViewPage({ runId }: { runId: string }) {
                         onClick={() => setDrawerOpen(!drawerOpen)}
                     >
                         📁 {t('工作区', 'Workspace')}
+                    </button>
+                ) : null}
+                {isPipelineRun(record.workflow_name) ? (
+                    <button
+                        type="button"
+                        className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
+                        onClick={() => {
+                            window.location.hash = `#/pipeline/${runId}`;
+                        }}
+                    >
+                        ⇶ {t('管线视图', 'Pipeline view')}
                     </button>
                 ) : null}
                 {historyActions.deriveNewTask ? (

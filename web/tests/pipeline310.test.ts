@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { PIPELINE_LOOPS, PIPELINE_STAGES, stageLinks, stageStateOf } from '../src/pipeline';
+import { PIPELINE_LOOPS, PIPELINE_STAGES, isPipelineRun, stageLinks, stageStateOf } from '../src/pipeline';
 
 // issue #310: pipeline dashboard topology data + state binding helpers.
 
@@ -45,5 +45,15 @@ describe('stageLinks', () => {
     });
     test('empty on null', () => {
         expect(stageLinks(null)).toEqual([]);
+    });
+});
+
+// issue #318: pipeline runs discoverable — matcher drives nav picker + run-row links
+describe('isPipelineRun', () => {
+    it('matches bilingual template names', () => {
+        expect(isPipelineRun('交付-产品生命周期 (A/B/C 三闸门)')).toBe(true);
+        expect(isPipelineRun('product_lifecycle')).toBe(true);
+        expect(isPipelineRun('governance_issue_lifecycle')).toBe(false);
+        expect(isPipelineRun('')).toBe(false);
     });
 });
