@@ -764,6 +764,201 @@ BUILTIN_TEMPLATES = [
             ],
         },
     },
+    # issue #307: product_lifecycle — full delivery pipeline orchestration.
+    # Zero-LLM orchestration: LLM seats run as studio_run nodes; deterministic
+    # stages (scaffold / issue creation / PR evidence gate / labels) are plain
+    # nodes. Exactly 3 human gates (A PRD / B arch / C acceptance, batch
+    # verdicts per #309).
+    {
+        "id": "product_lifecycle",
+        "name": "交付-产品生命周期 (A/B/C 三闸门)",
+        "description": "全交付管线: BA 出 PRD -> 闸门 A -> 架构 -> 闸门 B -> 脚手架 ai-<slug> -> 建任务 issue (state:ready) -> claude_dispatch 派发 coder 会话 (PR-only 契约, 预算上限) -> 关联 PR 机器验收 -> Env/Mock 代理 -> 闸门 C 人工验收 (支持逐项 batch 决定) -> accepted 打标 + 证据归档。LLM 座位经 studio_run 调 agent-studio graph。",
+        "category": "交付",
+        "tags": ["交付", "管线", "闸门", "脚手架", "派发"],
+        "icon": "🏭",
+        "difficulty": "进阶",
+        "estimated_time": "人工决定",
+        "params": {
+            "type": "object",
+            "properties": {
+                "slug": {"type": "string", "description": "仓库 slug, 生成 ai-<slug>", "default": "demo"},
+                "repo": {"type": "string", "description": "任务 issue 所在仓库 (owner/name)", "default": "org/repo"},
+                "task_title": {"type": "string", "description": "任务 issue 标题", "default": "Implement v0.1 scope"},
+                "task_prompt": {
+                    "type": "string",
+                    "description": "claude_dispatch 任务指令",
+                    "default": "Implement the assigned task per PRD/architecture docs; deliver via PR with self-test evidence.",
+                },
+                "ba_graph_id": {"type": "string", "description": "agent-studio BA 代理 graph ID"},
+                "arch_graph_id": {"type": "string", "description": "agent-studio 架构代理 graph ID"},
+                "env_graph_id": {"type": "string", "description": "agent-studio Env/Mock 代理 graph ID"},
+                "dispatch_timeout": {"type": "number", "description": "派发墙钟上限 (秒)", "default": 1800},
+                "dispatch_max_tokens": {"type": "number", "description": "派发 token 上限", "default": 200000},
+            },
+            "required": ["slug", "repo", "task_title", "ba_graph_id", "arch_graph_id", "env_graph_id"],
+        },
+        "workflow": {
+            "name": "交付-产品生命周期",
+            "description": "PRD gate A -> arch gate B -> scaffold -> dispatch -> PR evidence -> env/mock -> gate C -> accepted",
+            "nodes": [
+                {
+                    "id": "n1",
+                    "name": "studio_run",
+                    "config": {
+                        "params": {
+                            "graph_id": "${param.ba_graph_id}",
+                            "input": "Write the PRD for product ${param.slug}. Output the PRD document content.",
+                            "mode": "sync",
+                        }
+                    },
+                },
+                {
+                    "id": "n2",
+                    "name": "approval_gate",
+                    "config": {
+                        "params": {
+                            "prompt": "闸门 A: PRD 评审",
+                            "details": "批准 PRD 后进入架构设计; 拒绝则 BA 代理按评审意见修订",
+                        }
+                    },
+                },
+                {
+                    "id": "n3",
+                    "name": "studio_run",
+                    "config": {
+                        "params": {
+                            "graph_id": "${param.arch_graph_id}",
+                            "input": "Write the architecture/plan for product ${param.slug} per the approved PRD.",
+                            "mode": "sync",
+                        }
+                    },
+                },
+                {
+                    "id": "n4",
+                    "name": "approval_gate",
+                    "config": {
+                        "params": {
+                            "prompt": "闸门 B: 架构评审",
+                            "details": "批准架构后脚手架 + 派发; 拒绝则架构代理按评审意见修订",
+                        }
+                    },
+                },
+                {
+                    "id": "n5",
+                    "name": "repo_scaffold",
+                    "config": {"params": {"slug": "${param.slug}"}},
+                },
+                {
+                    "id": "n6",
+                    "name": "github_api",
+                    "config": {
+                        "params": {
+                            "op": "issue_create",
+                            "repo": "${param.repo}",
+                            "allowed_repos": ["${param.repo}"],
+                            "title": "${param.task_title}",
+                            "body": "Task for ${param.slug}. Scaffold: ${result.repo_path}. Deliver via PR; self-test evidence required.",
+                            "labels": ["state:ready"],
+                        }
+                    },
+                },
+                {
+                    "id": "n7",
+                    "name": "claude_dispatch",
+                    "config": {
+                        "params": {
+                            "repo": "${param.repo}",
+                            "allowed_repos": ["${param.repo}"],
+                            "issue_number": "${result.number}",
+                            "prompt": "${param.task_prompt}",
+                            "context_links": ["${result.repo_path}/CLAUDE.md"],
+                            "cwd": "${result.repo_path}",
+                            "timeout": "${param.dispatch_timeout}",
+                            "max_tokens": "${param.dispatch_max_tokens}",
+                        }
+                    },
+                },
+                {
+                    "id": "n8",
+                    "name": "github_api",
+                    "config": {
+                        "params": {
+                            "op": "linked_pr",
+                            "repo": "${param.repo}",
+                            "allowed_repos": ["${param.repo}"],
+                            "issue_number": "${result.number}",
+                            "require": True,
+                        }
+                    },
+                },
+                {
+                    "id": "n9",
+                    "name": "studio_run",
+                    "config": {
+                        "params": {
+                            "graph_id": "${param.env_graph_id}",
+                            "input": "Prepare the env/mock pack for product ${param.slug} per the PRD.",
+                            "mode": "sync",
+                        }
+                    },
+                },
+                {
+                    "id": "n10",
+                    "name": "approval_gate",
+                    "config": {
+                        "params": {
+                            "prompt": "闸门 C: 人工验收",
+                            "details": "支持逐项 batch 决定 (items[]); 全拒 = 任务回退, 混合 = 带逐项结论继续",
+                        }
+                    },
+                },
+                {
+                    "id": "n11",
+                    "name": "github_api",
+                    "config": {
+                        "params": {
+                            "op": "issue_set_labels",
+                            "repo": "${param.repo}",
+                            "allowed_repos": ["${param.repo}"],
+                            "issue_number": "${result.number}",
+                            "labels": ["state:accepted"],
+                        }
+                    },
+                },
+                {
+                    "id": "n12",
+                    "name": "github_api",
+                    "config": {
+                        "params": {
+                            "op": "issue_comment",
+                            "repo": "${param.repo}",
+                            "allowed_repos": ["${param.repo}"],
+                            "issue_number": "${result.number}",
+                            "body": "Gate C accepted — PR ${result.pr_url} evidence archived (run ${run_id})",
+                        }
+                    },
+                },
+            ],
+            "edges": [
+                {"source_id": "n1", "target_id": "n2"},
+                {"source_id": "n2", "target_id": "n3"},
+                {"source_id": "n3", "target_id": "n4"},
+                {"source_id": "n4", "target_id": "n5"},
+                {"source_id": "n5", "target_id": "n6"},
+                {"source_id": "n6", "target_id": "n7"},
+                {"source_id": "n5", "target_id": "n7"},
+                {"source_id": "n7", "target_id": "n8"},
+                {"source_id": "n6", "target_id": "n8"},
+                {"source_id": "n8", "target_id": "n9"},
+                {"source_id": "n9", "target_id": "n10"},
+                {"source_id": "n10", "target_id": "n11"},
+                {"source_id": "n6", "target_id": "n11"},
+                {"source_id": "n11", "target_id": "n12"},
+                {"source_id": "n6", "target_id": "n12"},
+                {"source_id": "n8", "target_id": "n12"},
+            ],
+        },
+    },
 ]
 
 

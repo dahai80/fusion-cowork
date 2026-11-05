@@ -865,3 +865,117 @@ class ClaudeDispatchNode(BaseNode):
             data={"pr_url": pr_url, "pr_number": pr_number, "total_tokens": total},
             summary=f"{repo}#{issue_number} -> {pr_url} (tokens {total})",
         )
+
+
+@register_node
+class RepoScaffoldNode(BaseNode):
+    """issue #307: repo_scaffold — 确定性脚手架, 从架构文档约定生成新业务仓库骨架。
+
+    产出 ~/fusion/business/ai-<slug>/: pyproject.toml / CLAUDE.md / README.md +
+    README_CN.md / .python-version, git init, 端口登记提示文件。目录已存在即失败
+    (不覆盖既有仓库)。
+    """
+
+    name = "repo_scaffold"
+    display_name = "仓库脚手架"
+    category = NodeCategory.TOOL
+    description = "确定性生成 ai-<slug> 业务仓库骨架 (pyproject/CLAUDE.md/双语 README/.python-version) + git init"
+    icon = "🏗️"
+    default_label = "仓库脚手架"
+
+    inputs = [{"key": "slug", "label": "仓库 slug", "type": "string"}]
+    outputs = [
+        {"key": "repo_path", "label": "仓库路径", "type": "string"},
+        {"key": "created_files", "label": "创建文件清单", "type": "list[string]"},
+    ]
+
+    def get_params_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "slug": {"type": "string", "description": "仓库 slug (^[a-z0-9][a-z0-9-]*$), 生成 ai-<slug>"},
+                "base_dir": {
+                    "type": "string",
+                    "default": "~/fusion/business",
+                    "description": "业务仓库根目录 (目录须已存在)",
+                },
+                "display_name": {"type": "string", "description": "README 标题用显示名"},
+            },
+            "required": ["slug"],
+        }
+
+    async def execute(self, inputs: Dict[str, Any]) -> NodeResult:
+        params = coerce_params(self.config.params, self.get_params_schema())
+        slug = str(inputs.get("slug") or params.get("slug") or "").strip()
+        base_dir = str(params.get("base_dir") or "~/fusion/business")
+        display_name = str(params.get("display_name") or "")
+
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
+            return NodeResult(status=NodeStatus.FAILED, error=f"slug 须匹配 ^[a-z0-9][a-z0-9-]*$: {slug!r}")
+        base = Path(base_dir).expanduser()
+        if not base.is_dir():
+            return NodeResult(status=NodeStatus.FAILED, error=f"base_dir 不存在: {base}")
+        repo_path = base / f"ai-{slug}"
+        if repo_path.exists():
+            return NodeResult(status=NodeStatus.FAILED, error=f"目标目录已存在, 不覆盖: {repo_path}")
+
+        pkg = f"fusion_ai_{slug.replace('-', '_')}"
+        title = display_name or f"ai-{slug}"
+        files: Dict[str, str] = {
+            "pyproject.toml": (
+                f'[build-system]\nrequires = ["setuptools>=68"]\nbuild-backend = "setuptools.build_meta"\n\n'
+                f'[project]\nname = "{pkg}"\nversion = "0.1.0"\nrequires-python = ">=3.12"\n\n'
+                f'[tool.setuptools.packages.find]\nwhere = ["src"]\n'
+            ),
+            "CLAUDE.md": (
+                f"# {title}\n\n"
+                f"Scaffolded by fusion-cowork repo_scaffold. Fill in project guidance:\n"
+                f"build/test commands, architecture notes, conventions.\n\n"
+                f"- Python >= 3.12, shared root venv at ~/fusion/.venv\n"
+                f"- Code comments and log messages in English\n"
+                f"- 4-space indentation, no docstrings, always include logging\n"
+            ),
+            "README.md": f"# {title}\n\nScaffolded by fusion-cowork repo_scaffold.\n",
+            "README_CN.md": f"# {title}\n\n由 fusion-cowork repo_scaffold 脚手架生成。\n",
+            ".python-version": "3.12\n",
+            "port_registry_entry.json": json.dumps(
+                {
+                    "service": f"ai-{slug}",
+                    "requested_port": None,
+                    "note": "register the real port in ~/fusion/architecture/port-registry.yaml before first serve",
+                },
+                indent=4,
+            ),
+            f"src/{pkg}/__init__.py": '__version__ = "0.1.0"\n',
+        }
+        created: List[str] = []
+        try:
+            for rel, content in files.items():
+                p = repo_path / rel
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(content, encoding="utf-8")
+                created.append(rel)
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                "init",
+                "-q",
+                str(repo_path),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, err = await asyncio.wait_for(proc.communicate(), timeout=30)
+            if proc.returncode != 0:
+                logger.warning(
+                    f"repo_scaffold git init 退出码 {proc.returncode}: {err.decode('utf-8', 'replace')[:200]}"
+                )
+        except OSError as e:
+            return NodeResult(status=NodeStatus.FAILED, error=f"脚手架写入失败: {e}")
+        except TimeoutError:
+            return NodeResult(status=NodeStatus.FAILED, error="git init 超时 (30s)")
+
+        logger.info(f"repo_scaffold ok: {repo_path} ({len(created)} files)")
+        return NodeResult(
+            status=NodeStatus.SUCCESS,
+            data={"repo_path": str(repo_path), "created_files": created},
+            summary=f"脚手架完成: {repo_path}",
+        )
