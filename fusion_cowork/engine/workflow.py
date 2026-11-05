@@ -536,6 +536,8 @@ class WorkflowEngine:
         self._hitl_param_overrides: Dict[str, Dict[str, Any]] = {}
         # issue #303: exec_id -> 决定来源 {approval_id, decided_by, decided_at} — 唤醒后落到 blocked 步骤
         self._hitl_attributions: Dict[str, Dict[str, Any]] = {}
+        # issue #309: exec_id -> 逐项决定 items[] — 唤醒后作为 batch_verdict 并入被闸节点输入
+        self._hitl_batch_verdicts: Dict[str, List[Dict[str, Any]]] = {}
         # 正挂在 HITL 等待点的 run 集合 (与 W8 手动暂停区分)
         self._hitl_waiting: Set[str] = set()
         # W8/B1: 运行改向指令队列 — 节点边界应用 (set_params/skip_remaining/insert_node)
@@ -939,6 +941,7 @@ class WorkflowEngine:
             self._hitl_waiting.discard(exec_id)
             self._hitl_deadlines.pop(exec_id, None)
             self._hitl_attributions.pop(exec_id, None)
+            self._hitl_batch_verdicts.pop(exec_id, None)
             if hitl_residue:
                 discard = getattr(self._permission_manager, "discard_pending_by_execution", None)
                 if callable(discard):
@@ -1044,6 +1047,13 @@ class WorkflowEngine:
                         node_input.update(override)
                         check_input.update(override)
                         logger.info(f"[{exec_id}] HITL: 审批编辑参数已并入节点输入: {sorted(override)}")
+                    # issue #309: 逐项决定 — batch_verdict 并入被闸节点输入 (部分完成可见)
+                    batch = self._hitl_batch_verdicts.pop(exec_id, None)
+                    if allowed and batch:
+                        node_input["batch_verdict"] = batch
+                        check_input["batch_verdict"] = batch
+                        rejected = sum(1 for item in batch if not item.get("approved"))
+                        logger.info(f"[{exec_id}] HITL: 逐项决定并入节点输入: {len(batch)} 项, 拒绝 {rejected} 项")
             if not allowed:
                 logger.warning(f"节点 '{node.name}' 被权限系统拒绝执行")
                 step = WorkflowStep(
@@ -1422,9 +1432,13 @@ class WorkflowEngine:
         once: bool = False,
         params: Optional[Dict[str, Any]] = None,
         attribution: Optional[Dict[str, Any]] = None,
+        batch: Optional[List[Dict[str, Any]]] = None,
     ) -> bool:
         # issue #303: attribution — 决定来源 {approval_id, decided_by, decided_at},
         # 随唤醒落到被闸节点的 blocked 步骤上, 时间线可回答 "谁批准的"
+        # issue #309: batch — 逐项决定 items[] ({task_issue, approved, reason?});
+        # 全批 = approved 语义不变, 混合 = run 继续 + batch_verdict 并入被闸节点输入,
+        # 由下游节点/状态写承接 (部分完成可见)
         # issue #181: 审批路由回调 — 记录决定并唤醒暂停中的 run; cancel 共用同一事件
         # issue #187: once=True 一次性批准 — 不落规则, 唤醒后跳过权限复查直接放行本节点
         # issue #225: params — 审批卡 "编辑参数" 后的覆盖, 批准时并入被闸节点输入
@@ -1438,6 +1452,8 @@ class WorkflowEngine:
             self._hitl_param_overrides[execution_id] = dict(params)
         if isinstance(attribution, dict) and attribution:
             self._hitl_attributions[execution_id] = dict(attribution)
+        if isinstance(batch, list) and batch:
+            self._hitl_batch_verdicts[execution_id] = [dict(x) for x in batch if isinstance(x, dict)]
         self._hitl_deadlines.pop(execution_id, None)
         evt.set()
         logger.info(

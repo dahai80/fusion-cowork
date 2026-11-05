@@ -3405,6 +3405,37 @@ def create_web_app(
         return {"space_id": space_id, "instructions": existing["instructions"]}
 
     # ── issue #262: 签名 webhook 回调 — 外部系统审批后续跑等待中的审批闸门 run ──
+
+    async def _apply_rejected_item_states(repo: str, rejected: List[Dict[str, Any]], findings: str) -> None:
+        # issue #309: 逐项拒绝回写 GitHub — state:blocked 标签 + 原因评论 (best-effort,
+        # 任何失败只 WARN 不影响续跑); 复用 GITHUB_TOKEN 环境变量, 与 github_api 节点同源
+        token = os.environ.get("GITHUB_TOKEN", "").strip()
+        if not token:
+            logger.warning("batch 拒绝项状态回写跳过: GITHUB_TOKEN 未配置")
+            return
+        import httpx
+
+        base_url = os.environ.get("FUSION_GITHUB_API", "https://api.github.com").rstrip("/")
+        async with httpx.AsyncClient(
+            base_url=base_url,
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            timeout=15,
+        ) as client:
+            for item in rejected:
+                issue_number = item.get("task_issue")
+                reason = str(item.get("reason") or "被验收闸门拒绝")
+                body_text = f"G4 验收拒绝: {reason}" + (f"\n\n审查意见:\n{findings}" if findings else "")
+                try:
+                    await client.request(
+                        "PUT", f"/repos/{repo}/issues/{issue_number}/labels", json={"labels": ["state:blocked"]}
+                    )
+                    await client.request(
+                        "POST", f"/repos/{repo}/issues/{issue_number}/comments", json={"body": body_text}
+                    )
+                    logger.info(f"batch 拒绝项已回写: {repo}#{issue_number} state:blocked")
+                except Exception as e:
+                    logger.warning(f"batch 拒绝项回写失败 (忽略): {repo}#{issue_number}: {e}")
+
     @app.post("/api/hooks/webhook/{run_id}")
     async def hooks_webhook(run_id: str, request: Request):
         secret = os.environ.get("FUSION_COWORK_WEBHOOK_SECRET", "").strip()
@@ -3449,6 +3480,36 @@ def create_web_app(
         action_id = pending.get("action_id", "")
         edited = payload.get("params")
         edited = edited if isinstance(edited, dict) and edited else None
+        # issue #309: 逐项决定 items[] — 全批/混合都续跑 (部分完成可追踪), 全拒按拒绝;
+        # 拒绝项回写 GitHub state:blocked (best-effort, payload.repo 提供时)
+        batch: List[Dict[str, Any]] = []
+        raw_items = payload.get("items")
+        if isinstance(raw_items, list):
+            batch = [dict(x) for x in raw_items if isinstance(x, dict) and "task_issue" in x]
+        if batch:
+            any_approved = any(bool(x.get("approved")) for x in batch)
+            record = runs.get(run_id) or {}
+            verdicts = list(record.get("batch_verdicts") or [])
+            verdicts.append(
+                {
+                    "approval_id": str(payload.get("approval_id") or action_id),
+                    "decided_by": str(payload.get("decided_by") or "webhook"),
+                    "decided_at": str(payload.get("decided_at") or ""),
+                    "items": batch,
+                }
+            )
+            record["batch_verdicts"] = verdicts
+            approved = any_approved
+            rejected = [x for x in batch if not x.get("approved")]
+            logger.info(
+                f"webhook 逐项决定: run={run_id} items={len(batch)} approved={len(batch) - len(rejected)} rejected={len(rejected)}"
+            )
+            if rejected and str(payload.get("repo") or ""):
+                await _apply_rejected_item_states(
+                    str(payload.get("repo")),
+                    rejected,
+                    str(payload.get("findings") or ""),
+                )
         # issue #303: 决定来源随 webhook 落到 run 时间线 (谁批准的)
         attribution = {
             "approval_id": str(payload.get("approval_id") or action_id),
@@ -3461,14 +3522,24 @@ def create_web_app(
         resumed = False
         if released and callable(resolver):
             try:
-                resumed = bool(resolver(run_id, approved, once=True, params=edited, attribution=attribution))
+                resumed = bool(
+                    resolver(run_id, approved, once=True, params=edited, attribution=attribution, batch=batch or None)
+                )
             except TypeError:
                 try:
-                    resumed = bool(resolver(run_id, approved, once=True, params=edited))
+                    resumed = bool(resolver(run_id, approved, once=True, params=edited, attribution=attribution))
                 except TypeError:
-                    resumed = bool(resolver(run_id, approved, once=True))
+                    try:
+                        resumed = bool(resolver(run_id, approved, once=True, params=edited))
+                    except TypeError:
+                        resumed = bool(resolver(run_id, approved, once=True))
         logger.info(f"webhook 回调续跑: run={run_id} approved={approved} resumed={resumed}")
-        return {"run_id": run_id, "resumed": resumed, "approved": approved}
+        return {
+            "run_id": run_id,
+            "resumed": resumed,
+            "approved": approved,
+            **({"items": len(batch)} if batch else {}),
+        }
 
     # ── issue #278: voice panel — fusion-speech WS ingress config + health proxy ──
     @app.get("/api/speech/config")
