@@ -926,6 +926,19 @@ class WorkflowEngine:
             self._directives.pop(exec_id, None)
             self._run_workspace.pop(exec_id, None)
             self._hitl_pause_overrides.pop(exec_id, None)
+            # issue #300: run 到终态时兜底清理 HITL 残留 — _hitl_waiting/_hitl_deadlines
+            # 正常在 _hitl_await 唤醒/超时路径清掉, 但任何旁路 (取消/异常/竞态) 漏清
+            # 都会让 GET /api/runs/{id} 在终态 run 上永远返回 hitl_pending=true。
+            # 同步清掉权限队列里该 run 的滞留待审批项 (decision 已到达时它们是垃圾)。
+            if exec_id in self._hitl_waiting or exec_id in self._hitl_deadlines:
+                logger.warning(f"[{exec_id}] run 终态清理 HITL 残留状态 (waiting/deadline)")
+            self._hitl_waiting.discard(exec_id)
+            self._hitl_deadlines.pop(exec_id, None)
+            discard = getattr(self._permission_manager, "discard_pending_by_execution", None)
+            if callable(discard):
+                removed = discard(exec_id)
+                if removed:
+                    logger.warning(f"[{exec_id}] run 终态清理滞留待审批项: {removed}")
 
         return execution
 
