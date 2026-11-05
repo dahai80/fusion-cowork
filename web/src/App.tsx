@@ -19,6 +19,7 @@ import { HomePage } from './pages/HomePage';
 import { MobilePage } from './pages/MobilePage';
 import { NodesPage } from './pages/NodesPage';
 import PermissionsRulesPage from './pages/PermissionsRulesPage';
+import { PipelinePage } from './pages/PipelinePage';
 import { PluginsPage } from './pages/PluginsPage';
 import { RunViewPage } from './pages/RunViewPage';
 import { RunsPage } from './pages/RunsPage';
@@ -66,6 +67,7 @@ type Route =
     | 'team'
     | 'voice'
     | 'governance'
+    | 'pipeline'
     | 'm';
 
 const ROUTES: Route[] = [
@@ -124,6 +126,7 @@ function parseHash(): { route: Route; arg: string } {
     if (head === 'team') return { route: 'team', arg };
     if (head === 'voice') return { route: 'voice', arg };
     if (head === 'governance') return { route: 'governance', arg };
+    if (head === 'pipeline') return { route: 'pipeline', arg };
     if (head === 'm') return { route: 'm', arg };
     return { route: 'home', arg };
 }
@@ -178,6 +181,8 @@ function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
             return t('语音', 'Voice');
         case 'governance':
             return t('治理', 'Governance');
+        case 'pipeline':
+            return t('交付管线', 'Pipeline');
         case 'capabilities':
             return t('能力市场', 'Capabilities');
         case 'm':
@@ -309,6 +314,8 @@ export function App() {
                     <VoicePage />
                 ) : route === 'governance' ? (
                     <GovernancePage />
+                ) : route === 'pipeline' ? (
+                    <PipelinePage runId={arg} />
                 ) : (
                     <SchedulePage />
                 )}
