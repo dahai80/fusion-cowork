@@ -43,12 +43,15 @@ def _sync_node(tpl, node_id):
 
 class TestG1G5SyncNodes:
     def test_lifecycle_has_10_nodes_linear(self):
+        # issue #306: n4a (linked_pr evidence gate) joins — 11 nodes
         tpl = _lifecycle_tpl()
         nodes = tpl["workflow"]["nodes"]
-        assert len(nodes) == 10
+        assert len(nodes) == 11
         edges = {e["source_id"]: e["target_id"] for e in tpl["workflow"]["edges"]}
         assert edges["n1"] == "n1b"
         assert edges["n1b"] == "n2"
+        assert edges["n3"] == "n4a"
+        assert edges["n4a"] == "n4"
         assert edges["n6"] == "n6b"
         assert edges["n6b"] == "n7"
 

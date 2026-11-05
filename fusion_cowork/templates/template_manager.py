@@ -476,7 +476,7 @@ BUILTIN_TEMPLATES = [
     {
         "id": "governance_issue_lifecycle",
         "name": "治理-议题生命周期 (G1-G4-G5 闸门)",
-        "description": "每议题一次运行: 提案打标 -> 同步 G1 决策任务 -> G1 提案闸门 -> 实施记录 -> 同步 G4 验收任务 (带 run_id) -> G4 验收闸门 -> accepted 打标 -> 同步 G5 发布任务 -> G5 发布闸门 -> rollout 打标。G1/G4/G5 均自动同步 agent-studio 审批任务, 决策经平台收件箱或签名 webhook 自动续跑。见 architecture/multi-repo-automation-setup-guide-1104.md",
+        "description": "每议题一次运行: 提案打标 -> 同步 G1 决策任务 -> G1 提案闸门 -> 实施记录 -> 关联 PR 检查 (零 LLM 证据闸门, 无 PR 阻塞: 先提 PR 再进验收, 重跑复查) -> 同步 G4 验收任务 (带 run_id + PR/CI 证据) -> G4 验收闸门 -> accepted 打标 -> 同步 G5 发布任务 -> G5 发布闸门 -> rollout 打标。G1/G4/G5 均自动同步 agent-studio 审批任务, 决策经平台收件箱或签名 webhook 自动续跑。见 architecture/multi-repo-automation-setup-guide-1104.md",
         "category": "治理",
         "tags": ["治理", "闸门", "审批", "G-gate", "多仓库"],
         "icon": "🚦",
@@ -560,6 +560,22 @@ BUILTIN_TEMPLATES = [
                     },
                 },
                 {
+                    # issue #306: G4 前置证据闸门 — 纯 REST 读 (零 LLM)。issue 无关联 PR 时
+                    # 节点失败阻塞 (错误 "先提 PR 再进验收"), PR 出现后从本步骤重跑即复查;
+                    # PR 链接 + CI 状态经 ${result.*} 进入 n4 同步 payload, 审批卡可见。
+                    "id": "n4a",
+                    "name": "github_api",
+                    "config": {
+                        "params": {
+                            "op": "linked_pr",
+                            "repo": "${param.repo}",
+                            "allowed_repos": ["${param.repo}"],
+                            "issue_number": "${param.issue_number}",
+                            "require": True,
+                        }
+                    },
+                },
+                {
                     "id": "n4",
                     "name": "http_request",
                     "config": {
@@ -581,6 +597,12 @@ BUILTIN_TEMPLATES = [
                                     "run_id": "${run_id}",
                                     "gate": "G4",
                                     "kind": "acceptance",
+                                    # issue #306: 证据 — n4a 的 linked_pr 结果 (edge 默认端口
+                                    # 并入 inputs, ${result.*} 从上游输出取值)
+                                    "evidence": {
+                                        "pr_url": "${result.pr_url}",
+                                        "ci_status": "${result.ci_status}",
+                                    },
                                 },
                             },
                             "timeout": 10,
@@ -661,7 +683,8 @@ BUILTIN_TEMPLATES = [
                 {"source_id": "n1", "target_id": "n1b"},
                 {"source_id": "n1b", "target_id": "n2"},
                 {"source_id": "n2", "target_id": "n3"},
-                {"source_id": "n3", "target_id": "n4"},
+                {"source_id": "n3", "target_id": "n4a"},
+                {"source_id": "n4a", "target_id": "n4"},
                 {"source_id": "n4", "target_id": "n5"},
                 {"source_id": "n5", "target_id": "n6"},
                 {"source_id": "n6", "target_id": "n6b"},
