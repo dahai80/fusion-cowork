@@ -259,30 +259,18 @@ class PermissionManager:
         # issue #228: 工作区能力闸门 — async (tool, params, workspace_id) -> (verdict, reason);
         # 未注入 = 零行为变化。verdict: allow / deny / approval (approval 走既有 HITL 待审批)
         self.capability_gate = None
-        # issue #301: 模板同步目标放行规则 (deterministic seed, load/reset 后重播)
-        self._seed_trusted_sync_rules()
 
-    def _seed_trusted_sync_rules(self) -> None:
-        # issue #301: seed allow rules for deterministic template sync targets —
-        # a fresh deployment running the governance template should face only
-        # the G1/G4/G5 gate decisions, not a permission confirm per http_request
-        # sync node. Narrow scope: http_request + url: prefix on exact trusted
-        # targets; persisted deny rules always win (A-6); guard evaluates only
-        # what falls through to the high-risk gate.
-        urls = trusted_sync_urls()
-        if not urls:
-            return
-        seeded = 0
-        with self._lock:
-            existing = {(r.tool_name, r.scope, r.allowed) for r in self.rules}
-            for url_prefix in urls:
-                scope = f"url:{url_prefix}"
-                if ("http_request", scope, True) in existing:
-                    continue
-                self.rules.append(Permission(tool_name="http_request", allowed=True, scope=scope))
-                seeded += 1
-        if seeded:
-            logger.info(f"trusted sync allow rules seeded: {seeded} (FUSION_COWORK_TRUSTED_SYNC_URLS)")
+    def _is_trusted_sync_target(self, tool_name: str, params: Dict[str, Any] = None) -> bool:
+        # issue #301: deterministic template sync targets skip the per-node
+        # confirm — checked directly (NOT seeded as rule objects) so persisted
+        # rule listings/roundtrips stay pristine. Deny rules already won above;
+        # approval_gate and every non-matching URL still gate.
+        if tool_name != "http_request" or not params:
+            return False
+        target = str(params.get("url", "")).rstrip("/")
+        if not target:
+            return False
+        return any(target.startswith(prefix) for prefix in trusted_sync_urls())
 
     async def check(self, tool_name: str, action: str = "", params: Dict[str, Any] = None) -> bool:
         # A-6: deny 规则须先于 Hook 批准判定 — 否则 Hook approve 可覆盖显式 deny (绕过)。
@@ -330,6 +318,11 @@ class PermissionManager:
         for rule in rules_snapshot:
             if rule.matches(tool_name, params) and rule.allowed:
                 return True
+
+        # issue #301: 可信同步目标 (模板确定性同步) — 规则之后、高风险闸门之前放行
+        if self._is_trusted_sync_target(tool_name, params):
+            logger.info(f"trusted sync target allowed: {tool_name} url={params.get('url', '')}")
+            return True
 
         # issue #228: 工作区能力池闸门 — 未安装/已停用 → 拒绝; 敏感 scope 未授权 → 走审批
         if self.capability_gate is not None:
@@ -668,9 +661,6 @@ class PermissionManager:
         with self._lock:
             self.rules = new_rules
         logger.info(f"权限规则已加载: {len(new_rules)} 条 (level={self.level.value})")
-        # issue #301: load() replaces the rule list — re-seed the deterministic
-        # trusted-sync baseline so a restart cannot silently drop it.
-        self._seed_trusted_sync_rules()
 
     def reset(self, tool_name: str = "") -> int:
         with self._lock:
@@ -683,8 +673,6 @@ class PermissionManager:
                 self.rules.clear()
             self._pending_approvals.clear()
             self._pending_local_approvals.clear()
-        # issue #301: reset clears seeded rules too — re-establish the baseline
-        self._seed_trusted_sync_rules()
         logger.info(f"PermissionManager.reset removed={removed} tool_name={tool_name or '*'}")
         return removed
 
