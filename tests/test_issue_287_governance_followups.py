@@ -150,7 +150,13 @@ class TestTemplateParams:
         assert body["title"] == "G4 acceptance dahai80/fusion-cowork#42"
         # issue #293: run context nested under payload — agent-studio persists only
         # body["payload"] as task params (top-level keys dropped, webhook can't route back)
-        assert body["payload"] == {"run_id": "${run_id}", "gate": "G4", "kind": "acceptance"}
+        # issue #306: payload gains evidence {pr_url, ci_status} from the n4a linked_pr gate
+        assert body["payload"] == {
+            "run_id": "${run_id}",
+            "gate": "G4",
+            "kind": "acceptance",
+            "evidence": {"pr_url": "${result.pr_url}", "ci_status": "${result.ci_status}"},
+        }
         assert "run_id" not in body
 
     def test_schema_defaults_applied_without_values(self):

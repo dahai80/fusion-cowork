@@ -190,12 +190,18 @@ class GitHubNode(BaseNode):
                         "issue_list",
                         "pr_get",
                         "list_labels",
+                        "linked_pr",
                     ],
                     "description": "操作",
                 },
                 "repo": {"type": "string", "description": "org/repo"},
                 "allowed_repos": {"type": "array", "items": {"type": "string"}, "description": "仓库白名单"},
                 "issue_number": {"type": "number", "description": "issue/PR 编号"},
+                "require": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "linked_pr 专用: 无关联 PR 时节点失败 (显式阻塞, 重跑即复查)",
+                },
                 "title": {"type": "string"},
                 "body": {"type": "string"},
                 "labels": {"type": "array", "items": {"type": "string"}},
@@ -223,7 +229,15 @@ class GitHubNode(BaseNode):
         labels = [str(x) for x in (params.get("labels") or [])]
         timeout = float(params.get("timeout") or 30)
 
-        if op not in ("issue_create", "issue_comment", "issue_set_labels", "issue_list", "pr_get", "list_labels"):
+        if op not in (
+            "issue_create",
+            "issue_comment",
+            "issue_set_labels",
+            "issue_list",
+            "pr_get",
+            "list_labels",
+            "linked_pr",
+        ):
             return NodeResult(status=NodeStatus.FAILED, error=f"未知操作: {op}")
         if repo not in allowed:
             logger.warning(f"github_api 拒绝: {repo} 不在白名单 {allowed}")
@@ -250,6 +264,13 @@ class GitHubNode(BaseNode):
             if not issue_number:
                 return NodeResult(status=NodeStatus.FAILED, error="pr_get 缺少 issue_number")
             method, path = "GET", f"/repos/{repo}/pulls/{issue_number}"
+        elif op == "linked_pr":
+            # issue #306: 关联 PR 前置检查 — 纯 REST 读 (零 LLM), G4 验收闸门的证据闸门。
+            # timeline 含 cross-referenced 事件, source.issue 带 pull_request 即为关联 PR;
+            # 找到 PR 时尽力取 CI 状态 (失败不阻塞, 置空)。
+            if not issue_number:
+                return NodeResult(status=NodeStatus.FAILED, error="linked_pr 缺少 issue_number")
+            method, path = "GET", f"/repos/{repo}/issues/{issue_number}/timeline"
         elif op == "issue_list":
             # issue #283: list issues by label (governance batch fan-out intake)
             labels = ",".join(labels) if labels else ""
@@ -273,7 +294,57 @@ class GitHubNode(BaseNode):
         result = data if isinstance(data, (dict, list)) else {}
         if isinstance(result, dict):
             result.pop("diff_url", None)
+        if op == "linked_pr":
+            # issue #306: 扫 timeline 事件找 cross-referenced 的关联 PR; require 语义 —
+            # 无 PR 即失败 (显式 "先提 PR 再进验收"), 重跑节点即复查。
+            found_url, found_num = "", 0
+            for evt in result if isinstance(result, list) else []:
+                if not isinstance(evt, dict) or evt.get("event") != "cross-referenced":
+                    continue
+                src_issue = ((evt.get("source") or {}).get("issue")) or {}
+                if src_issue.get("pull_request") or "/pull/" in str(src_issue.get("html_url") or ""):
+                    found_url = str(src_issue.get("html_url") or "")
+                    found_num = int(src_issue.get("number") or 0)
+                    break
+            ci_status = ""
+            if found_num:
+                ci_status = await self._pr_ci_status(base_url, token, timeout, repo, found_num)
+            if bool(params.get("require")) and not found_url:
+                logger.warning(f"github_api linked_pr: {repo}#{issue_number} 无关联 PR (require=true, 阻塞)")
+                return NodeResult(
+                    status=NodeStatus.FAILED,
+                    error="先提 PR 再进验收 (issue 无关联 PR, G4 不得自证)",
+                    data={"found": False, "pr_url": "", "pr_number": 0, "ci_status": ""},
+                    summary="无关联 PR, 阻塞验收",
+                )
+            logger.info(f"github_api linked_pr: {repo}#{issue_number} found={found_num or False} ci={ci_status or '-'}")
+            return NodeResult(
+                status=NodeStatus.SUCCESS,
+                data={
+                    "result": {
+                        "found": bool(found_url),
+                        "pr_url": found_url,
+                        "pr_number": found_num,
+                        "ci_status": ci_status,
+                    }
+                },
+                summary=f"linked_pr {'✓ ' + found_url if found_url else '未关联 PR'}",
+            )
         return NodeResult(status=NodeStatus.SUCCESS, data={"result": result}, summary=f"{op} {repo} ok")
+
+    async def _pr_ci_status(self, base_url: str, token: str, timeout: float, repo: str, pr_number: int) -> str:
+        # issue #306: 尽力取 PR CI 状态 (combined status); 任何失败返回空串不阻塞
+        try:
+            async with self._client(base_url, token, timeout) as client:
+                pr = (await client.request("GET", f"/repos/{repo}/pulls/{pr_number}")).json()
+                sha = str(((pr or {}).get("head") or {}).get("sha") or "")
+                if not sha:
+                    return ""
+                st = (await client.request("GET", f"/repos/{repo}/commits/{sha}/status")).json()
+                return str((st or {}).get("state") or "")
+        except Exception as e:
+            logger.info(f"github_api linked_pr: CI 状态获取失败 (忽略): {e}")
+            return ""
 
 
 @register_node
