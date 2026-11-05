@@ -82,10 +82,51 @@ class TestProductLifecycleTemplate:
         )
         assert wf is not None
         assert wf.nodes["n1"].config.params["graph_id"] == "g-ba"
+        # issue #320: 显式 graph_id 优先 — agent 缺省被清空 (二选一)
+        assert wf.nodes["n1"].config.params["agent_id"] == ""
         assert wf.nodes["n3"].config.params["graph_id"] == "g-arch"
         assert wf.nodes["n5"].config.params["slug"] == "demo"
         assert wf.nodes["n6"].config.params["repo"] == "org/x"
         assert wf.nodes["n6"].config.params["title"] == "Do it"
+
+
+class TestAgentSeats:
+    # issue #320: GUI Builder 部署的是 agent (非 graph) — 模板必须支持 agent 座位
+
+    def test_required_params_trimmed(self):
+        from fusion_cowork.templates.template_manager import TemplateManager
+
+        tpl = TemplateManager().get_template("product_lifecycle")
+        assert tpl["params"]["required"] == ["slug", "repo", "task_title"]
+
+    def test_seat_agent_defaults_out_of_box(self):
+        from fusion_cowork.templates.template_manager import TemplateManager
+
+        wf = TemplateManager().template_to_workflow("product_lifecycle")
+        assert wf is not None
+        assert wf.nodes["n1"].config.params["agent_id"] == "delivery-ba"
+        assert wf.nodes["n1"].config.params["graph_id"] == ""
+        assert wf.nodes["n3"].config.params["agent_id"] == "delivery-architect"
+        assert wf.nodes["n9"].config.params["agent_id"] == "delivery-env-mock"
+        # no residue
+        import json as _json
+
+        for node in wf.nodes.values():
+            assert "${param." not in _json.dumps(node.config.params, ensure_ascii=False)
+
+    def test_explicit_agent_override(self):
+        from fusion_cowork.templates.template_manager import TemplateManager
+
+        wf = TemplateManager().template_to_workflow("product_lifecycle", param_values={"ba_agent_id": "my-ba"})
+        assert wf.nodes["n1"].config.params["agent_id"] == "my-ba"
+        assert wf.nodes["n1"].config.params["graph_id"] == ""
+
+    def test_explicit_graph_blanks_agent_default(self):
+        from fusion_cowork.templates.template_manager import TemplateManager
+
+        wf = TemplateManager().template_to_workflow("product_lifecycle", param_values={"arch_graph_id": "g-9"})
+        assert wf.nodes["n3"].config.params["graph_id"] == "g-9"
+        assert wf.nodes["n3"].config.params["agent_id"] == ""
 
 
 class TestRepoScaffold:
