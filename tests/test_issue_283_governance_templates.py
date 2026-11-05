@@ -137,6 +137,11 @@ class TestGovernanceTemplates:
         assert next(n.name for n in wf.nodes.values()) == "github_api"
 
     def test_lifecycle_payload_carries_run_id_template(self):
+        # issue #293: run context nested under payload — agent-studio persists only
+        # body["payload"] as task params, top-level run_id gets dropped
         tpl = next(t for t in BUILTIN_TEMPLATES if t["id"] == "governance_issue_lifecycle")
         http_nodes = [n for n in tpl["workflow"]["nodes"] if n["name"] == "http_request"]
-        assert http_nodes[0]["config"]["params"]["body"]["run_id"] == "${run_id}"
+        payload = http_nodes[0]["config"]["params"]["body"]["payload"]
+        assert payload["run_id"] == "${run_id}"
+        assert payload["gate"] == "G4"
+        assert payload["kind"] == "acceptance"

@@ -144,11 +144,14 @@ class TestTemplateParams:
         # issue #291: approvals API required fields — requester/assigned_to present
         # and distinct (no self-approval), title carries the parametrized target
         body = n4["body"]
-        assert body["run_id"] == "${run_id}"
         assert body["requester"] == "cowork-agent"
         assert body["assigned_to"] == "owner"
         assert body["requester"] != body["assigned_to"]
         assert body["title"] == "G4 acceptance dahai80/fusion-cowork#42"
+        # issue #293: run context nested under payload — agent-studio persists only
+        # body["payload"] as task params (top-level keys dropped, webhook can't route back)
+        assert body["payload"] == {"run_id": "${run_id}", "gate": "G4", "kind": "acceptance"}
+        assert "run_id" not in body
 
     def test_schema_defaults_applied_without_values(self):
         from fusion_cowork.templates.template_manager import TemplateManager
