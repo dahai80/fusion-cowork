@@ -14,6 +14,7 @@ import { CapabilitiesPage } from './pages/CapabilitiesPage';
 import { ClusterPage } from './pages/ClusterPage';
 import { DelegatePage } from './pages/DelegatePage';
 import { ExtensionsPage } from './pages/ExtensionsPage';
+import { GovernancePage } from './pages/GovernancePage';
 import { HomePage } from './pages/HomePage';
 import { MobilePage } from './pages/MobilePage';
 import { NodesPage } from './pages/NodesPage';
@@ -64,6 +65,7 @@ type Route =
     | 'system'
     | 'team'
     | 'voice'
+    | 'governance'
     | 'm';
 
 const ROUTES: Route[] = [
@@ -91,6 +93,7 @@ const ROUTES: Route[] = [
     'system',
     'team',
     'voice',
+    'governance',
 ];
 
 function parseHash(): { route: Route; arg: string } {
@@ -120,6 +123,7 @@ function parseHash(): { route: Route; arg: string } {
     if (head === 'system') return { route: 'system', arg };
     if (head === 'team') return { route: 'team', arg };
     if (head === 'voice') return { route: 'voice', arg };
+    if (head === 'governance') return { route: 'governance', arg };
     if (head === 'm') return { route: 'm', arg };
     return { route: 'home', arg };
 }
@@ -172,6 +176,8 @@ function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
             return t('团队', 'Team');
         case 'voice':
             return t('语音', 'Voice');
+        case 'governance':
+            return t('治理', 'Governance');
         case 'capabilities':
             return t('能力市场', 'Capabilities');
         case 'm':
@@ -301,6 +307,8 @@ export function App() {
                     <TeamPage />
                 ) : route === 'voice' ? (
                     <VoicePage />
+                ) : route === 'governance' ? (
+                    <GovernancePage />
                 ) : (
                     <SchedulePage />
                 )}
