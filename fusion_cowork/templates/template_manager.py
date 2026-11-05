@@ -772,7 +772,7 @@ BUILTIN_TEMPLATES = [
     {
         "id": "product_lifecycle",
         "name": "交付-产品生命周期 (A/B/C 三闸门)",
-        "description": "全交付管线: BA 出 PRD -> 闸门 A -> 架构 -> 闸门 B -> 脚手架 ai-<slug> -> 建任务 issue (state:ready) -> claude_dispatch 派发 coder 会话 (PR-only 契约, 预算上限) -> 关联 PR 机器验收 -> Env/Mock 代理 -> 闸门 C 人工验收 (支持逐项 batch 决定) -> accepted 打标 + 证据归档。LLM 座位经 studio_run 调 agent-studio graph。",
+        "description": "全交付管线: BA 出 PRD -> 闸门 A -> 架构 -> 闸门 B -> 脚手架 ai-<slug> -> 建任务 issue (state:ready) -> claude_dispatch 派发 coder 会话 (PR-only 契约, 预算上限) -> 关联 PR 机器验收 -> Env/Mock 代理 -> 闸门 C 人工验收 (支持逐项 batch 决定) -> accepted 打标 + 证据归档。LLM 座位经 studio_run 调 agent-studio graph 或 agent (issue #320, 默认 delivery-* seat agents)。",
         "category": "交付",
         "tags": ["交付", "管线", "闸门", "脚手架", "派发"],
         "icon": "🏭",
@@ -789,13 +789,46 @@ BUILTIN_TEMPLATES = [
                     "description": "claude_dispatch 任务指令",
                     "default": "Implement the assigned task per PRD/architecture docs; deliver via PR with self-test evidence.",
                 },
-                "ba_graph_id": {"type": "string", "description": "agent-studio BA 代理 graph ID"},
-                "arch_graph_id": {"type": "string", "description": "agent-studio 架构代理 graph ID"},
-                "env_graph_id": {"type": "string", "description": "agent-studio Env/Mock 代理 graph ID"},
+                "ba_graph_id": {
+                    "type": "string",
+                    "description": "agent-studio BA 代理 graph ID (与 ba_agent_id 二选一)",
+                    "default": "",
+                },
+                "ba_agent_id": {
+                    "type": "string",
+                    "description": "agent-studio BA 代理 agent ID (与 ba_graph_id 二选一; Builder 部署的 seat agent)",
+                    "default": "delivery-ba",
+                },
+                "arch_graph_id": {
+                    "type": "string",
+                    "description": "agent-studio 架构代理 graph ID (与 arch_agent_id 二选一)",
+                    "default": "",
+                },
+                "arch_agent_id": {
+                    "type": "string",
+                    "description": "agent-studio 架构代理 agent ID (与 arch_graph_id 二选一)",
+                    "default": "delivery-architect",
+                },
+                "env_graph_id": {
+                    "type": "string",
+                    "description": "agent-studio Env/Mock 代理 graph ID (与 env_agent_id 二选一)",
+                    "default": "",
+                },
+                "env_agent_id": {
+                    "type": "string",
+                    "description": "agent-studio Env/Mock 代理 agent ID (与 env_graph_id 二选一)",
+                    "default": "delivery-env-mock",
+                },
                 "dispatch_timeout": {"type": "number", "description": "派发墙钟上限 (秒)", "default": 1800},
                 "dispatch_max_tokens": {"type": "number", "description": "派发 token 上限", "default": 200000},
             },
-            "required": ["slug", "repo", "task_title", "ba_graph_id", "arch_graph_id", "env_graph_id"],
+            # issue #320: 座位 ID 二选一 — 装配时显式 graph_id 优先, 清空 agent 缺省 (反之亦然)
+            "seat_pairs": [
+                ["ba_graph_id", "ba_agent_id"],
+                ["arch_graph_id", "arch_agent_id"],
+                ["env_graph_id", "env_agent_id"],
+            ],
+            "required": ["slug", "repo", "task_title"],
         },
         "workflow": {
             "name": "交付-产品生命周期",
@@ -807,6 +840,7 @@ BUILTIN_TEMPLATES = [
                     "config": {
                         "params": {
                             "graph_id": "${param.ba_graph_id}",
+                            "agent_id": "${param.ba_agent_id}",
                             "input": "Write the PRD for product ${param.slug}. Output the PRD document content.",
                             "mode": "sync",
                         }
@@ -828,6 +862,7 @@ BUILTIN_TEMPLATES = [
                     "config": {
                         "params": {
                             "graph_id": "${param.arch_graph_id}",
+                            "agent_id": "${param.arch_agent_id}",
                             "input": "Write the architecture/plan for product ${param.slug} per the approved PRD.",
                             "mode": "sync",
                         }
@@ -897,6 +932,7 @@ BUILTIN_TEMPLATES = [
                     "config": {
                         "params": {
                             "graph_id": "${param.env_graph_id}",
+                            "agent_id": "${param.env_agent_id}",
                             "input": "Prepare the env/mock pack for product ${param.slug} per the PRD.",
                             "mode": "sync",
                         }
@@ -1070,6 +1106,14 @@ class TemplateManager:
             if (spec or {}).get("default") is not None
         }
         effective.update({k: v for k, v in (param_values or {}).items() if v is not None})
+        # issue #320: 座位 ID 二选一 — 显式值优先, 另一侧清空, 避免 studio_run 校验双设冲突
+        for pair in tpl.get("params", {}).get("seat_pairs") or []:
+            if len(pair) == 2 and all(p in effective for p in pair):
+                first, second = pair
+                if str(effective.get(first) or "").strip():
+                    effective[second] = ""
+                elif str(effective.get(second) or "").strip():
+                    effective[first] = ""
         if effective:
             workflow_data = _substitute_params(workflow_data, effective)
         wf = Workflow.from_dict(workflow_data)
