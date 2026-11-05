@@ -29,7 +29,18 @@ class TestProductLifecycleTemplate:
 
     def test_stage_order_edges(self):
         pairs = {(e["source_id"], e["target_id"]) for e in _tpl()["workflow"]["edges"]}
-        for a, b in (("n1", "n2"), ("n3", "n4"), ("n4", "n5"), ("n5", "n6"), ("n6", "n7"), ("n7", "n8"), ("n8", "n9"), ("n9", "n10"), ("n10", "n11"), ("n11", "n12")):
+        for a, b in (
+            ("n1", "n2"),
+            ("n3", "n4"),
+            ("n4", "n5"),
+            ("n5", "n6"),
+            ("n6", "n7"),
+            ("n7", "n8"),
+            ("n8", "n9"),
+            ("n9", "n10"),
+            ("n10", "n11"),
+            ("n11", "n12"),
+        ):
             assert (a, b) in pairs, (a, b)
 
     def test_data_wiring_edges(self):
