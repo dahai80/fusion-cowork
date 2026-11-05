@@ -45,8 +45,8 @@ class TestShellExecExecList:
 
     @pytest.mark.asyncio
     async def test_shell_false_rejects_shell_metachar_as_arg(self):
-        # shell=False: "echo hi; echo PWN" 被 shlex 拆为 ['echo','hi;','echo','PWN']
-        # → echo 打印 "hi; echo PWN", 第二条 echo 不执行 (无 shell 注入)
+        # shell=False: "echo hi; echo PWN" 曾被 shlex 拆为字面 argv (注入安全但静默错义);
+        # issue #319: 元字符在 shell=False 下提前响亮拒绝 — 调用方要么简化命令要么显式 shell=True
         node = NodeRegistry.create(
             "shell_exec",
             config=NodeConfig(
@@ -58,9 +58,9 @@ class TestShellExecExecList:
             ),
         )
         result = await node.execute({})
-        assert result.status == NodeStatus.SUCCESS
-        stdout = result.data.get("stdout", "")
-        assert "hi; echo PWN" in stdout
+        assert result.status == NodeStatus.FAILED
+        assert "shell operator" in (result.error or "")
+        assert "shell=true" in (result.error or "")
 
     @pytest.mark.asyncio
     async def test_shell_true_explicit_runs_shell(self):
