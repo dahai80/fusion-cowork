@@ -689,6 +689,15 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### 治理流水线全自动闭环 (v0.5.77, issues #293/#294)
+
+- **G4 同步体嵌套修复 (#293)** — 生命周期模板的 G4 同步节点把 `run_id`/`gate`/`kind` 嵌套进 `body.payload` (agent-studio 只持久化嵌套 `payload` 对象作任务参数, 顶层键被丢弃, 决策 webhook 无法路由回暂停的 run)。
+- **G1/G5 自动同步 + 模板一键启动 (#294)** — G1 提案与 G5 发布决策现在自动同步 agent-studio (`n1b`/`n6b` http_request 节点, 与 G4 同契约: 嵌套 `payload` 带 `run_id`/`gate`/`kind`, 环境注入 `x-api-key`, requester/assigned_to 不同)。三个闸门全部从平台侧决策续跑 — 完整验收 run 终态 `success`。
+- **`POST /api/templates/{template_id}/launch`** — 模板一键启动: `${param.X}` 经 `template_to_workflow` 替换、校验后直接起 run (`source=template`, `labels.template=<id>`)。模板不存在 404; 工作流定义无效或残留未替换 `${param.*}` (必填参数缺失) 400。模板发布/导入现在持久化 `params` schema。
+- **TemplatesPage 启动入口** — 每张模板卡片增加启动按钮 + 按 schema 生成的参数表单 (字符串 / 整数 / 数字 / 逗号分隔数组); 202 后跳转 `#/runs/<id>`。
+- **governance_batch_audit** — `labels` 参数化 (数组, 默认 `[state:approved]`); 整串占位符替换后保持列表类型。
+- 测试: `tests/test_issue_294_template_launch.py` (10 例) + 更新 #283/#287 模板断言。
+
 ### 治理模板修复 + 身份配额计量 (v0.5.76, issues #287/#288)
 
 - **治理模板修复 (#287)** — `http_request` 新增 `${env.VAR}` 模板前缀 (鉴权头从环境注入, 绝不硬编码; 未解析的凭证头直接丢弃, 不把模板字面量当密钥发出)。治理模板参数化: 真实参数 schema (`repo`/`issue_number`/`approvals_url`) + `${param.X}` 占位符在模板装配期替换 (`template_to_workflow(param_values=...)`, 未传值时套用 schema 默认)。CLI `template run` 现在调用 `import_all_nodes()` (生态节点不再报未知节点类型) 并支持 `--vars '{"repo": "..."}'`。确认语义: `POST /api/permissions/pending/{id}/confirm` 带 `{"once": true}` 且无显式 `approved` 时默认按批准一次处理 (此前会静默走拒绝路径把暂停的 run 判死); 显式 `approved=false` 的一次性拒绝不变。`${run_id}` 替换已由 #285 引擎注入修复 (探针验证)。

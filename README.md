@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.76-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.77-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -473,6 +473,15 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
 - Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
 - Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+### Governance Pipeline Full Automation (v0.5.77, issues #293/#294)
+
+- **G4 sync body nesting (#293)** — the lifecycle template's G4 sync node now nests `run_id`/`gate`/`kind` under `body.payload` (agent-studio persists only the nested `payload` object as task params; top-level keys were dropped, so decision webhooks couldn't route back to the paused run).
+- **G1/G5 auto-sync + one-click template launch (#294)** — G1 proposal and G5 rollout decisions now auto-sync to agent-studio (`n1b`/`n6b` http_request nodes, same contract as G4: nested `payload` with `run_id`/`gate`/`kind`, env-injected `x-api-key`, distinct requester/assigned_to). All three gates resume from platform-side decisions — a full acceptance run ends `success`.
+- **`POST /api/templates/{template_id}/launch`** — one-click template launch: substitutes `${param.X}` via `template_to_workflow`, validates, starts a run (`source=template`, `labels.template=<id>`). 404 unknown template; 400 on invalid workflow or unresolved `${param.*}` residue (missing required params). Template publish/import now persist the `params` schema.
+- **TemplatesPage launch entry** — per-template Launch button + params form generated from the template schema (string / integer / number / comma-split array); navigates to `#/runs/<id>` on 202.
+- **governance_batch_audit** — `labels` parametrized (array, default `[state:approved]`); whole-string placeholder keeps the list type through substitution.
+- Tests: `tests/test_issue_294_template_launch.py` (10 cases) + updated #283/#287 template pins.
+
 ### Governance Follow-ups + Identity Quota Metering (v0.5.76, issues #287/#288)
 
 - **Governance template fixes (#287)** — `http_request` gains a `${env.VAR}` template prefix (auth headers injected from environment, never hardcoded; unresolved credential headers are dropped instead of sent as template literals). Governance templates parameterized: real params schema (`repo`, `issue_number`, `approvals_url`) with `${param.X}` placeholders substituted at template-assembly time by `template_to_workflow(param_values=...)`, schema defaults applied when values are omitted. CLI `template run` now calls `import_all_nodes()` (ecosystem nodes no longer fail with unknown-node-type) and accepts `--vars '{"repo": "..."}'`. Confirm semantics: `POST /api/permissions/pending/{id}/confirm` with `{"once": true}` and no explicit `approved` defaults to approve-once (previously silently denied the paused run); explicit `approved=false` deny-once unchanged. `${run_id}` body substitution was already fixed by the #285 engine injection (probe-verified).
