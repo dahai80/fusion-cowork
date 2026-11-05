@@ -1811,6 +1811,9 @@ def create_web_app(
             "category": _tpl_slug(str(body.get("category") or "custom")),
             "workflow": wf,
         }
+        # issue #294: params schema 随模板持久化 — GUI 启动表单按 schema 生成
+        if isinstance(body.get("params"), dict):
+            tpl["params"] = body["params"]
         if not _tpl_manager().save_custom_template(tpl):
             raise HTTPException(status_code=500, detail={"code": "save_failed", "message": "模板保存失败"})
         logger.info(f"模板已发布: {tpl_id} ({name})")
@@ -1837,6 +1840,9 @@ def create_web_app(
             "category": _tpl_slug(str(body.get("category") or "custom")),
             "workflow": wf,
         }
+        # issue #294: params schema 随模板持久化 — GUI 启动表单按 schema 生成
+        if isinstance(body.get("params"), dict):
+            tpl["params"] = body["params"]
         if not _tpl_manager().save_custom_template(tpl):
             raise HTTPException(status_code=500, detail={"code": "save_failed", "message": "模板保存失败"})
         logger.info(f"模板已导入: {tpl_id} ({name})")
@@ -1864,6 +1870,48 @@ def create_web_app(
                 status_code=400, detail={"code": "not_custom", "message": f"仅自定义模板可删除: {template_id}"}
             )
         return {"deleted": template_id}
+
+    @app.post("/api/templates/{template_id}/launch", status_code=202)
+    async def templates_launch(template_id: str, request: Request):
+        # issue #294: GUI 一键启动模板 — params 表单值经 template_to_workflow 替换后直接起 run
+        tpl = _tpl_manager().get_template(template_id)
+        if not tpl:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"})
+        try:
+            body = await request.json()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}) from e
+        param_values = body.get("params") if isinstance(body.get("params"), dict) else {}
+        wf = _tpl_manager().template_to_workflow(template_id, param_values=param_values)
+        if wf is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"})
+        errors = wf.validate()
+        if errors:
+            raise HTTPException(status_code=400, detail={"code": "invalid_workflow", "message": "; ".join(errors)})
+        wf_dict = wf.to_dict()
+        # 未替换的 ${param.*} 残留 = 必填参数缺失 — 装配即拒绝比 org/repo 字面量上线诚实
+        blob = json.dumps(wf_dict, ensure_ascii=False)
+        if "${param." in blob:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "params_missing", "message": "必填模板参数缺失 (${param.*} 未替换)"},
+            )
+        # issue #288: caller identity JWT → background run LLM calls meter under the user
+        from ..auth.identity_propagation import extract_identity_token
+
+        identity_token = extract_identity_token({k.lower(): v for k, v in request.headers.items()})
+        try:
+            return runs.start(
+                wf_dict,
+                workflow_name=str(tpl.get("name") or template_id),
+                source="template",
+                labels={"template": template_id},
+                identity_token=identity_token,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": f"工作流定义无效: {exc}"}
+            ) from exc
 
     # ── issue #263 仓库 onboarding 向导 ──
     def _wizard():
