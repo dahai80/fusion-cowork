@@ -689,6 +689,20 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### 交付管线完整闭环 (v0.5.78, issues #300/#302/#306/#307/#308/#310/#318/#319/#320)
+
+- **HITL 残留清扫 (#300)** — run 终态时自动释放残留的待审批项 (deny-fast), 完成的运行不再滞留审批队列。
+- **运行时间线归因 + 闸门进度 (#303)** — HITL 决策携带 `decided_by` 归因; 运行视图新增 `GateProgress` 组件 + blocked/terminal 步骤合并。
+- **G4 关联 PR 证据闸门 (#306)** — 验收同步前置关联 PR 检查: 新增 `n4a` `github_api linked_pr` 闸门节点, 向 G4 payload 注入 `evidence {pr_url, ci_status}`。
+- **approval_gate 批量语义 (#309)** — webhook 决策可携带 `items[]` 逐项接受/拒绝: 混合结论带 `batch_verdict` 续跑 (注入闸门节点输入), 全拒 = 拒绝, 结论持久化到 run 记录。
+- **claude_dispatch 节点 (#308)** — 工作流步骤内派发预算受控的 `claude -p` coder 会话: token + 墙钟双预算, PR-only 交付契约 (无 PR → 任务回退 `state:ready`), 仓库白名单, HIGH_RISK 审批闸门。
+- **product_lifecycle 模板 + repo_scaffold 节点 (#307)** — 12 节点全交付管线 (BA → 闸门 A → 架构 → 闸门 B → 脚手架 `ai-<slug>` → 任务 issue `state:ready` → 派发 → 关联 PR 闸门 → Env/Mock → 闸门 C → accepted 打标 → 证据归档); `repo_scaffold` 生成项目骨架并 `git init`。
+- **Agent 座位 (#320)** — 模板参数支持每座位 `agent_id` (Builder 部署的 seat agent, `delivery-*` 缺省) 与 `graph_id` 并存; `seat_pairs` 装配消解保证 StudioRunNode 二选一校验不冲突。
+- **治理中心 + 管线看板 (#302/#310)** — `#/governance` 页 (启动卡片、闸门迷你进度、审计汇总、轨迹下载) 与 `#/pipeline/<run_id>` 10 阶段画布 (S 型布局、反馈环、回放游标、制品抽屉深链)。
+- **管线可发现入口 (#318)** — 侧边栏导航项 + 管线运行选择器 + RunsPage/RunViewPage 的「管线视图」按钮 + manifest `/governance`、`/pipeline` 路由。
+- **shell_exec 诚实执行 + 工作区围栏 (#319)** — `shell=false` 下含 shell 元字符的命令提前响亮拒绝 (此前被 shlex 拆成字面 argv 静默假成功); 收编 `working_directory` 别名; `FUSION_COWORK_WORKSPACE_ROOT` 围栏约束节点工作目录 (默认落 root、越界拒绝、相对路径在 root 内解析)。
+- 测试: `tests/test_issue_300/303/306/309/318/319/320/307/308*.py` (新增 60+ 用例) + `web/tests/governance302/pipeline310/gates303.test.ts`。
+
 ### 治理流水线全自动闭环 (v0.5.77, issues #293/#294)
 
 - **G4 同步体嵌套修复 (#293)** — 生命周期模板的 G4 同步节点把 `run_id`/`gate`/`kind` 嵌套进 `body.payload` (agent-studio 只持久化嵌套 `payload` 对象作任务参数, 顶层键被丢弃, 决策 webhook 无法路由回暂停的 run)。

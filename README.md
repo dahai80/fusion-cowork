@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.77-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.78-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -473,6 +473,20 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
 - Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
 - Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+### Delivery Pipeline Completion (v0.5.78, issues #300/#302/#306/#307/#308/#310/#318/#319/#320)
+
+- **HITL residue sweep (#300)** — run terminal state now releases leftover pending approvals (deny-fast path), so completed runs never linger in approval queues.
+- **Run timeline attribution + gate progress (#303)** — HITL decisions carry `decided_by` attribution; `GateProgress` component + blocked/terminal step merge in the run view.
+- **G4 linked-PR evidence gate (#306)** — the acceptance sync requires a linked PR: new `n4a` `github_api linked_pr` gate node feeds `evidence {pr_url, ci_status}` into the G4 payload.
+- **approval_gate batch semantics (#309)** — webhook decisions may carry `items[]` for per-item accept/reject: mixed verdicts resume with `batch_verdict` injected into the gated node input, zero-approved denies, verdicts persist on the run record.
+- **claude_dispatch node (#308)** — dispatches a budget-capped `claude -p` coder session from a workflow step: token + wall-clock budgets, PR-only delivery contract (no PR → task sent back to `state:ready`), repo allowlist, HIGH_RISK approval gate.
+- **product_lifecycle template + repo_scaffold node (#307)** — 12-node full delivery pipeline (BA → gate A → architecture → gate B → scaffold `ai-<slug>` → task issue `state:ready` → dispatch → linked-PR gate → env/mock → gate C → accepted labels → evidence comment); `repo_scaffold` creates the project skeleton with `git init`.
+- **Agent seats (#320)** — template params accept `agent_id` per seat (Builder-deployed agents, `delivery-*` defaults) alongside `graph_id`; `seat_pairs` resolution keeps StudioRunNode's either-or validation happy.
+- **Governance hub + pipeline dashboard (#302/#310)** — `#/governance` page (launch cards, gate mini-progress, audit summary, trajectory download) and `#/pipeline/<run_id>` 10-stage canvas (S-layout, feedback loops, replay cursor, artifact drawer with deep links).
+- **Discoverable pipeline entry (#318)** — sidebar nav item + run picker for pipeline runs + 管线视图 buttons on RunsPage/RunViewPage + manifest `/governance` and `/pipeline` routes.
+- **shell_exec honesty + confinement (#319)** — shell operators with `shell=false` now fail loud (previously became literal argv and faked success); `working_directory` alias honored; `FUSION_COWORK_WORKSPACE_ROOT` confines the node workdir (default root, escapes rejected, relative paths resolved inside).
+- Tests: `tests/test_issue_300/303/306/309/318/319/320/307/308*.py` (60+ new cases) + `web/tests/governance302/pipeline310/gates303.test.ts`.
+
 ### Governance Pipeline Full Automation (v0.5.77, issues #293/#294)
 
 - **G4 sync body nesting (#293)** — the lifecycle template's G4 sync node now nests `run_id`/`gate`/`kind` under `body.payload` (agent-studio persists only the nested `payload` object as task params; top-level keys were dropped, so decision webhooks couldn't route back to the paused run).
