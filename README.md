@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.75-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.76-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -473,6 +473,12 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
 - Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
 - Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+### Governance Follow-ups + Identity Quota Metering (v0.5.76, issues #287/#288)
+
+- **Governance template fixes (#287)** — `http_request` gains a `${env.VAR}` template prefix (auth headers injected from environment, never hardcoded; unresolved credential headers are dropped instead of sent as template literals). Governance templates parameterized: real params schema (`repo`, `issue_number`, `approvals_url`) with `${param.X}` placeholders substituted at template-assembly time by `template_to_workflow(param_values=...)`, schema defaults applied when values are omitted. CLI `template run` now calls `import_all_nodes()` (ecosystem nodes no longer fail with unknown-node-type) and accepts `--vars '{"repo": "..."}'`. Confirm semantics: `POST /api/permissions/pending/{id}/confirm` with `{"once": true}` and no explicit `approved` defaults to approve-once (previously silently denied the paused run); explicit `approved=false` deny-once unchanged. `${run_id}` body substitution was already fixed by the #285 engine injection (probe-verified).
+- **Identity JWT propagation for quota metering (#288)** — new `fusion_cowork/auth/identity_propagation.py`: the caller's fusion-identity JWT is captured per request (`X-Fusion-Identity-Token` header or JWT-shaped `Authorization` bearer; the inbound module `fm-` key never matches) into a contextvar. `FusionMLXClient` attaches `Authorization: Bearer <identity-jwt>` on outbound LLM calls (chat/stream/fusion-core paths) so the gateway meter keys the per-user daily token quota by the caller's `sub`; background runs carry the token through `RunRegistry.start(identity_token=...)` into the engine task context. Gateway `429 {"detail": "daily token quota exceeded", "quota": {...}}` maps to a bilingual friendly message with no retry; plain 429 retry semantics unchanged. Tokens are never persisted to disk. Module LLM base URL routing to the gateway metering endpoint remains env-driven (`FUSION_MLX_URL`/`FUSION_MLX_HOST`+`PORT`).
+- Tests: `tests/test_issue_287_governance_followups.py` (14 cases), `tests/test_issue_288_identity_quota.py` (10 cases).
+
 ### Governance Workflow Template Pack (v0.5.75, issue #283)
 
 - **Governance templates** — two builtin workflow templates per the multi-repo automation setup guide: `governance_issue_lifecycle` (🚦 one run per issue: label `state:proposal` → G1 proposal gate → issue comment → agent-studio approval task carrying `run_id` → G4 acceptance gate → `state:accepted` → G5 release gate → `state:rollout`) and `governance_batch_audit` (📋 `issue_list(labels=[state:approved])` → batch audit gate → issue comment). Approvals resume via the platform inbox or the signed webhook.
