@@ -171,6 +171,23 @@ HIGH_RISK_NODES = frozenset(
 )
 
 
+# issue #301: deterministic template sync targets that skip the per-node
+# permission confirm on a fresh deployment. Only exact http_request URL
+# prefixes are trusted — never a blanket allow for http_request itself.
+# Operators override via FUSION_COWORK_TRUSTED_SYNC_URLS (comma-separated
+# prefixes; "off" disables seeding entirely).
+DEFAULT_TRUSTED_SYNC_URLS = ("http://127.0.0.1:11442/v1/agent-platform/approvals",)
+
+
+def trusted_sync_urls() -> tuple:
+    raw = os.environ.get("FUSION_COWORK_TRUSTED_SYNC_URLS", "").strip()
+    if not raw:
+        return DEFAULT_TRUSTED_SYNC_URLS
+    if raw.lower() in ("off", "none", "false", "0"):
+        return ()
+    return tuple(u.strip().rstrip("/") for u in raw.split(",") if u.strip())
+
+
 class PermissionLevel(Enum):
     CONFIRM = "confirm"
     MANUAL = "manual"
@@ -243,6 +260,18 @@ class PermissionManager:
         # 未注入 = 零行为变化。verdict: allow / deny / approval (approval 走既有 HITL 待审批)
         self.capability_gate = None
 
+    def _is_trusted_sync_target(self, tool_name: str, params: Dict[str, Any] = None) -> bool:
+        # issue #301: deterministic template sync targets skip the per-node
+        # confirm — checked directly (NOT seeded as rule objects) so persisted
+        # rule listings/roundtrips stay pristine. Deny rules already won above;
+        # approval_gate and every non-matching URL still gate.
+        if tool_name != "http_request" or not params:
+            return False
+        target = str(params.get("url", "")).rstrip("/")
+        if not target:
+            return False
+        return any(target.startswith(prefix) for prefix in trusted_sync_urls())
+
     async def check(self, tool_name: str, action: str = "", params: Dict[str, Any] = None) -> bool:
         # A-6: deny 规则须先于 Hook 批准判定 — 否则 Hook approve 可覆盖显式 deny (绕过)。
         # 先扫 deny: 命中 deny → 即拒, Hook 批准也不再翻盘。
@@ -289,6 +318,11 @@ class PermissionManager:
         for rule in rules_snapshot:
             if rule.matches(tool_name, params) and rule.allowed:
                 return True
+
+        # issue #301: 可信同步目标 (模板确定性同步) — 规则之后、高风险闸门之前放行
+        if self._is_trusted_sync_target(tool_name, params):
+            logger.info(f"trusted sync target allowed: {tool_name} url={params.get('url', '')}")
+            return True
 
         # issue #228: 工作区能力池闸门 — 未安装/已停用 → 拒绝; 敏感 scope 未授权 → 走审批
         if self.capability_gate is not None:
