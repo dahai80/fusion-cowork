@@ -16,6 +16,14 @@ from fusion_cowork.auth.identity import (
     make_verify_jwt_callback,
     reset_identity_client,
 )
+from fusion_cowork.auth.identity_propagation import (
+    extract_identity_token,
+    friendly_quota_error,
+    get_current_identity_token,
+    identity_auth_headers,
+    identity_token_context,
+    set_current_identity_token,
+)
 from fusion_cowork.auth.jwt import JWTVerifier, get_default_verifier
 
 __all__ = [
@@ -30,4 +38,10 @@ __all__ = [
     "get_identity_client",
     "make_verify_jwt_callback",
     "reset_identity_client",
+    "extract_identity_token",
+    "friendly_quota_error",
+    "get_current_identity_token",
+    "identity_auth_headers",
+    "identity_token_context",
+    "set_current_identity_token",
 ]

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -481,6 +482,20 @@ BUILTIN_TEMPLATES = [
         "icon": "🚦",
         "difficulty": "进阶",
         "estimated_time": "人工决定",
+        # issue #287: 模板级参数 — 装配时经 template_to_workflow(param_values=...) 替换
+        "params": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "目标仓库 (owner/name)", "default": "org/repo"},
+                "issue_number": {"type": "integer", "description": "议题编号", "default": 1},
+                "approvals_url": {
+                    "type": "string",
+                    "description": "agent-studio 审批任务同步端点",
+                    "default": "http://127.0.0.1:11442/v1/agent-platform/approvals",
+                },
+            },
+            "required": ["repo", "issue_number"],
+        },
         "workflow": {
             "name": "治理-议题生命周期",
             "description": "G1-G5 gate pipeline for one issue",
@@ -491,9 +506,9 @@ BUILTIN_TEMPLATES = [
                     "config": {
                         "params": {
                             "op": "issue_set_labels",
-                            "repo": "org/repo",
-                            "allowed_repos": ["org/repo"],
-                            "issue_number": 1,
+                            "repo": "${param.repo}",
+                            "allowed_repos": ["${param.repo}"],
+                            "issue_number": "${param.issue_number}",
                             "labels": ["state:proposal"],
                         }
                     },
@@ -514,9 +529,9 @@ BUILTIN_TEMPLATES = [
                     "config": {
                         "params": {
                             "op": "issue_comment",
-                            "repo": "org/repo",
-                            "allowed_repos": ["org/repo"],
-                            "issue_number": 1,
+                            "repo": "${param.repo}",
+                            "allowed_repos": ["${param.repo}"],
+                            "issue_number": "${param.issue_number}",
                             "body": "G1 approved — implementation started (branch/PR tracked)",
                         }
                     },
@@ -527,7 +542,10 @@ BUILTIN_TEMPLATES = [
                     "config": {
                         "params": {
                             "method": "POST",
-                            "url": "http://127.0.0.1:11442/v1/agent-platform/approvals",
+                            "url": "${param.approvals_url}",
+                            # issue #287: 鉴权头从环境注入 (${env.VAR}), 未配置时节点侧
+                            # 丢弃该头 — 模板绝不硬编码密钥
+                            "headers": {"x-api-key": "${env.FUSION_AGENT_STUDIO_API_KEY}"},
                             "body": {
                                 "run_id": "${run_id}",
                                 "gate": "G4",
@@ -553,9 +571,9 @@ BUILTIN_TEMPLATES = [
                     "config": {
                         "params": {
                             "op": "issue_set_labels",
-                            "repo": "org/repo",
-                            "allowed_repos": ["org/repo"],
-                            "issue_number": 1,
+                            "repo": "${param.repo}",
+                            "allowed_repos": ["${param.repo}"],
+                            "issue_number": "${param.issue_number}",
                             "labels": ["state:accepted"],
                         }
                     },
@@ -576,9 +594,9 @@ BUILTIN_TEMPLATES = [
                     "config": {
                         "params": {
                             "op": "issue_set_labels",
-                            "repo": "org/repo",
-                            "allowed_repos": ["org/repo"],
-                            "issue_number": 1,
+                            "repo": "${param.repo}",
+                            "allowed_repos": ["${param.repo}"],
+                            "issue_number": "${param.issue_number}",
                             "labels": ["state:rollout"],
                         }
                     },
@@ -604,6 +622,15 @@ BUILTIN_TEMPLATES = [
         "icon": "📋",
         "difficulty": "进阶",
         "estimated_time": "人工决定",
+        # issue #287: 模板级参数 (批次审计只需要仓库)
+        "params": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "目标仓库 (owner/name)", "default": "org/repo"},
+                "issue_number": {"type": "integer", "description": "议题编号", "default": 1},
+            },
+            "required": ["repo"],
+        },
         "workflow": {
             "name": "治理-批次审计",
             "description": "Batch audit over state:approved issues",
@@ -614,8 +641,8 @@ BUILTIN_TEMPLATES = [
                     "config": {
                         "params": {
                             "op": "issue_list",
-                            "repo": "org/repo",
-                            "allowed_repos": ["org/repo"],
+                            "repo": "${param.repo}",
+                            "allowed_repos": ["${param.repo}"],
                             "labels": ["state:approved"],
                         }
                     },
@@ -636,9 +663,9 @@ BUILTIN_TEMPLATES = [
                     "config": {
                         "params": {
                             "op": "issue_comment",
-                            "repo": "org/repo",
-                            "allowed_repos": ["org/repo"],
-                            "issue_number": 1,
+                            "repo": "${param.repo}",
+                            "allowed_repos": ["${param.repo}"],
+                            "issue_number": "${param.issue_number}",
                             "body": "Batch audit approved — issue accepted into acceptance batch",
                         }
                     },
@@ -651,6 +678,30 @@ BUILTIN_TEMPLATES = [
         },
     },
 ]
+
+
+def _substitute_params(value: Any, params: Dict[str, Any]) -> Any:
+    # issue #287: 递归替换节点配置里的 ${param.X} 占位符 — 未命中的占位符保留字面量
+    # (记 WARNING 可观测), 已知参数缺失时装配即失败比静默 org/repo 上线更诚实。
+    if isinstance(value, str):
+        # 整串占位符 → 保留参数原始类型 (issue_number 42 保持 int, 不变 "42" 字符串)
+        m = re.fullmatch(r"\$\{(param\.[A-Za-z_][A-Za-z0-9_]*)\}", value)
+        if m and m.group(1)[6:] in params:
+            return params[m.group(1)[6:]]
+
+        def _repl(m):
+            key = m.group(1)
+            if key.startswith("param.") and key[6:] in params:
+                val = params[key[6:]]
+                return json.dumps(val, ensure_ascii=False) if isinstance(val, (dict, list)) else str(val)
+            return m.group(0)
+
+        return re.sub(r"\$\{(param\.[A-Za-z_][A-Za-z0-9_]*)\}", _repl, value)
+    if isinstance(value, dict):
+        return {k: _substitute_params(v, params) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_substitute_params(v, params) for v in value]
+    return value
 
 
 class TemplateManager:
@@ -710,11 +761,15 @@ class TemplateManager:
                 return tpl
         return None
 
-    def template_to_workflow(self, template_id: str) -> Optional[Workflow]:
+    def template_to_workflow(
+        self, template_id: str, param_values: Optional[Dict[str, Any]] = None
+    ) -> Optional[Workflow]:
         """将模板加载为可执行的工作流。
 
         Args:
             template_id: 模板 ID
+            param_values: issue #287 模板级参数 — 节点配置里的 ${param.X} 占位符
+                在装配时用这里的值替换 (repo/issue_number/approvals_url 等)
 
         Returns:
             Optional[Workflow]: 工作流实例，如果模板不存在则返回 None
@@ -725,6 +780,16 @@ class TemplateManager:
             return None
 
         workflow_data = tpl.get("workflow", {})
+        # issue #287: 模板参数装配 — schema defaults 先落底, 显式 param_values 覆盖;
+        # 未传值时占位符也不会残留在节点配置里
+        effective = {
+            key: (spec or {}).get("default")
+            for key, spec in (tpl.get("params", {}).get("properties") or {}).items()
+            if (spec or {}).get("default") is not None
+        }
+        effective.update({k: v for k, v in (param_values or {}).items() if v is not None})
+        if effective:
+            workflow_data = _substitute_params(workflow_data, effective)
         wf = Workflow.from_dict(workflow_data)
         wf.id = f"tpl_{template_id}"
         return wf
