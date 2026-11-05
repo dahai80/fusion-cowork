@@ -925,7 +925,7 @@ class RepoScaffoldNode(BaseNode):
             "pyproject.toml": (
                 f'[build-system]\nrequires = ["setuptools>=68"]\nbuild-backend = "setuptools.build_meta"\n\n'
                 f'[project]\nname = "{pkg}"\nversion = "0.1.0"\nrequires-python = ">=3.12"\n\n'
-                f"[tool.setuptools.packages.find]\nwhere = [\"src\"]\n"
+                f'[tool.setuptools.packages.find]\nwhere = ["src"]\n'
             ),
             "CLAUDE.md": (
                 f"# {title}\n\n"
@@ -956,13 +956,18 @@ class RepoScaffoldNode(BaseNode):
                 p.write_text(content, encoding="utf-8")
                 created.append(rel)
             proc = await asyncio.create_subprocess_exec(
-                "git", "init", "-q", str(repo_path),
+                "git",
+                "init",
+                "-q",
+                str(repo_path),
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
             )
             _, err = await asyncio.wait_for(proc.communicate(), timeout=30)
             if proc.returncode != 0:
-                logger.warning(f"repo_scaffold git init 退出码 {proc.returncode}: {err.decode('utf-8', 'replace')[:200]}")
+                logger.warning(
+                    f"repo_scaffold git init 退出码 {proc.returncode}: {err.decode('utf-8', 'replace')[:200]}"
+                )
         except OSError as e:
             return NodeResult(status=NodeStatus.FAILED, error=f"脚手架写入失败: {e}")
         except TimeoutError:
