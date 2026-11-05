@@ -79,3 +79,4 @@ Note: Extensions → 技能 tab (`/api/extensions/skills*`) is the separate JSON
 | `FUSION_COWORK_NODE_TIMEOUT_S` | 1800 | per-node watchdog default (nodes may override via `config.timeout`; `0` disables) |
 | `FUSION_COWORK_NODE_HEARTBEAT_S` | 30 | PROGRESS heartbeat interval during long nodes |
 | `FUSION_COWORK_WORKSPACE_ROOT` | home | root for system-dir browsing |
+| `FUSION_COWORK_TRUSTED_SYNC_URLS` | agent-studio approvals endpoint | issue #301: comma-separated URL prefixes seeded as `http_request` allow rules (deterministic template sync targets — no per-node confirm on fresh deployments); `off/none/false/0` disables; persisted deny rules always win |
