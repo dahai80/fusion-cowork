@@ -2,7 +2,7 @@ import { EmptyState, ErrorState, SkeletonLines, useAutoRetry } from '@fusion/web
 import { useEffect, useRef, useState } from 'react';
 import { type RunRecord, api } from '../api';
 import { useT } from '../i18n';
-import { PIPELINE_LOOPS, PIPELINE_STAGES, stageLinks, stageStateOf } from '../pipeline';
+import { PIPELINE_LOOPS, PIPELINE_STAGES, isPipelineRun, stageLinks, stageStateOf } from '../pipeline';
 
 // issue #310: delivery pipeline dashboard — S-shaped 3-column topology of the
 // product_lifecycle template, node states bound to real run steps, node click
@@ -27,7 +27,55 @@ const STATE_CLASS: Record<string, string> = {
     off: 'border-border bg-bg opacity-60',
 };
 
+// issue #318: no runId — list product_lifecycle runs to pick from (nav entry point)
+function PipelineRunPicker() {
+    const t = useT();
+    const retry = useAutoRetry(() => api.runs(''), []);
+    const runs = (retry.data?.runs ?? []).filter((r) => isPipelineRun(r.workflow_name)).slice(0, 20);
+    return (
+        <div className="mx-auto max-w-3xl space-y-3 p-4">
+            <h1 className="text-lg font-semibold">{t('交付管线', 'Delivery pipeline')}</h1>
+            <p className="text-xs text-text-secondary">
+                {t('选择一次产品生命周期运行查看管线视图', 'Pick a product_lifecycle run to open its pipeline view')}
+            </p>
+            {retry.loading && !retry.data ? <SkeletonLines rows={6} /> : null}
+            {retry.error ? <ErrorState message={retry.error.message} onRetry={retry.manualRetry} /> : null}
+            {!retry.loading && !retry.error && runs.length === 0 ? (
+                <EmptyState
+                    title={t(
+                        '暂无产品生命周期运行 — 从「模板」启动 product_lifecycle 模板',
+                        'No product_lifecycle runs yet — launch the template from Templates'
+                    )}
+                />
+            ) : null}
+            <div className="space-y-2">
+                {runs.map((r) => (
+                    <button
+                        type="button"
+                        key={r.run_id}
+                        className="w-full rounded-xl border border-border p-3 text-left shadow-sm transition hover:bg-bg-muted"
+                        onClick={() => {
+                            window.location.hash = `#/pipeline/${r.run_id}`;
+                        }}
+                    >
+                        <div className="flex items-center justify-between text-sm font-medium">
+                            <span className="font-mono text-xs">{r.run_id}</span>
+                            <span>{r.status}</span>
+                        </div>
+                        <div className="mt-1 text-xs text-text-secondary">{r.workflow_name}</div>
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 export function PipelinePage({ runId }: { runId: string }) {
+    if (!runId) return <PipelineRunPicker />;
+    return <PipelineRunView runId={runId} />;
+}
+
+function PipelineRunView({ runId }: { runId: string }) {
     const t = useT();
     const retry = useAutoRetry(() => api.run(runId), [runId]);
     const [selected, setSelected] = useState<number | null>(null);

@@ -13,6 +13,7 @@ import {
     statusKind,
 } from '../api';
 import { useT } from '../i18n';
+import { isPipelineRun } from '../pipeline';
 import { sdk } from '../sdk';
 
 const POLL_MS = 5000; // spec §6.3: monitoring poll 5s
@@ -180,6 +181,17 @@ export function RunsPage() {
                                         onClick={() => void cancel(r)}
                                     >
                                         {t('停止', 'Stop')}
+                                    </button>
+                                ) : null}
+                                {isPipelineRun(r.workflow_name) ? (
+                                    <button
+                                        type="button"
+                                        className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
+                                        onClick={() => {
+                                            window.location.hash = `#/pipeline/${r.run_id}`;
+                                        }}
+                                    >
+                                        {t('管线视图', 'Pipeline view')}
                                     </button>
                                 ) : null}
                                 <button

@@ -96,6 +96,7 @@ const ROUTES: Route[] = [
     'team',
     'voice',
     'governance',
+    'pipeline',
 ];
 
 function parseHash(): { route: Route; arg: string } {

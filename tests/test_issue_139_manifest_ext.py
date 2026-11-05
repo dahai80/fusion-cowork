@@ -51,6 +51,13 @@ class TestManifestSchema:
             assert p.get("title")
             assert len(pages) <= 32
 
+    def test_governance_pipeline_routes_declared(self):
+        # issue #302/#318: governance hub + delivery pipeline discoverable at shell level
+        m = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        routes = [p["route"] for p in (m.get("pages") or [])]
+        assert "/governance" in routes
+        assert "/pipeline" in routes
+
     def test_search_provider_endpoint(self):
         m = json.loads(MANIFEST.read_text(encoding="utf-8"))
         sps = m.get("searchProviders") or []
