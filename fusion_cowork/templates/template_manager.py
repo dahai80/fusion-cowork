@@ -549,12 +549,16 @@ BUILTIN_TEMPLATES = [
                             "body": {
                                 # issue #291: approvals API 必填字段 — 缺 requester 直接 400;
                                 # requester/assigned_to 必须不同 (平台禁止自审批, 422)
-                                "run_id": "${run_id}",
-                                "gate": "G4",
-                                "kind": "acceptance",
                                 "title": "G4 acceptance ${param.repo}#${param.issue_number}",
                                 "requester": "cowork-agent",
                                 "assigned_to": "owner",
+                                # issue #293: agent-studio 只持久化嵌套 payload 对象作任务参数
+                                # (顶层 run_id/gate/kind 被丢弃, 决策 webhook 路由不回 run)
+                                "payload": {
+                                    "run_id": "${run_id}",
+                                    "gate": "G4",
+                                    "kind": "acceptance",
+                                },
                             },
                             "timeout": 10,
                         }
