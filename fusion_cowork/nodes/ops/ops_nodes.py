@@ -632,9 +632,27 @@ class ApprovalGateNode(BaseNode):
         params = coerce_params(self.config.params, self.get_params_schema())
         prompt = str(params.get("prompt") or "")
         details = str(params.get("details") or "")
-        logger.info(f"approval_gate 通过: {prompt[:80]}")
+        # issue #309: 逐项决定透传 — batch_verdict 由引擎在混合决定唤醒后并入节点输入
+        batch = inputs.get("batch_verdict") or []
+        if batch:
+            rejected = [x for x in batch if not x.get("approved")]
+            logger.info(
+                f"approval_gate 逐项决定: {len(batch)} 项, 接受 {len(batch) - len(rejected)}, 拒绝 {len(rejected)}"
+            )
+            summary = f"人工逐项决定 ({len(batch) - len(rejected)}/{len(batch)} 接受): {prompt[:40]}"
+        else:
+            rejected = []
+            summary = f"人工批准: {prompt[:40]}"
+            logger.info(f"approval_gate 通过: {prompt[:80]}")
         return NodeResult(
             status=NodeStatus.SUCCESS,
-            data={"approved": True, "payload": inputs.get("payload") or {}, "prompt": prompt, "details": details},
-            summary=f"人工批准: {prompt[:40]}",
+            data={
+                "approved": True,
+                "payload": inputs.get("payload") or {},
+                "prompt": prompt,
+                "details": details,
+                "batch_verdict": batch,
+                "rejected_items": rejected,
+            },
+            summary=summary,
         )
