@@ -547,9 +547,14 @@ BUILTIN_TEMPLATES = [
                             # 丢弃该头 — 模板绝不硬编码密钥
                             "headers": {"x-api-key": "${env.FUSION_AGENT_STUDIO_API_KEY}"},
                             "body": {
+                                # issue #291: approvals API 必填字段 — 缺 requester 直接 400;
+                                # requester/assigned_to 必须不同 (平台禁止自审批, 422)
                                 "run_id": "${run_id}",
                                 "gate": "G4",
                                 "kind": "acceptance",
+                                "title": "G4 acceptance ${param.repo}#${param.issue_number}",
+                                "requester": "cowork-agent",
+                                "assigned_to": "owner",
                             },
                             "timeout": 10,
                         }
