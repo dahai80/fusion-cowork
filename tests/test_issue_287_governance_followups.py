@@ -141,6 +141,14 @@ class TestTemplateParams:
         n4 = wf.nodes["n4"].config.params
         assert n4["url"] == "http://127.0.0.1:11442/v1/agent-platform/approvals"
         assert n4["headers"] == {"x-api-key": "${env.FUSION_AGENT_STUDIO_API_KEY}"}
+        # issue #291: approvals API required fields — requester/assigned_to present
+        # and distinct (no self-approval), title carries the parametrized target
+        body = n4["body"]
+        assert body["run_id"] == "${run_id}"
+        assert body["requester"] == "cowork-agent"
+        assert body["assigned_to"] == "owner"
+        assert body["requester"] != body["assigned_to"]
+        assert body["title"] == "G4 acceptance dahai80/fusion-cowork#42"
 
     def test_schema_defaults_applied_without_values(self):
         from fusion_cowork.templates.template_manager import TemplateManager
