@@ -10,6 +10,7 @@ import {
 } from '@fusion/web-ui';
 import type { StatusKind } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
+import { GateProgress, gateProgress } from '../components/GateProgress';
 import {
     type ArtifactCardData,
     type GuardApproval,
@@ -154,6 +155,8 @@ export function RunViewPage({ runId }: { runId: string }) {
     const historyActions = runHistoryActions(record.status);
     const totalTokens = (record.steps ?? []).reduce((n, s) => n + (s.tokens?.total_tokens ?? 0), 0);
     const waves = computeWaves(record.workflow_def ?? {});
+    // issue #303: 闸门进度条 + blocked→终态 同节点步骤合并状态机
+    const gates = gateProgress(record.workflow_def, record.steps ?? []);
     const caps = capabilitiesInUse(record.steps ?? []);
     const correctionLines = (record.steps ?? []).filter((s) => s.user_correction);
     // issue #225: 审批卡内联到被闸节点位置; 无法定位的卡片浮在顶部 (fallback)
@@ -327,6 +330,7 @@ export function RunViewPage({ runId }: { runId: string }) {
                 <span className="font-mono text-sm text-text-primary">{record.run_id}</span>
                 <span className="text-xs text-text-secondary">{record.workflow_name || record.workflow_id}</span>
                 <StatusBadge status={statusKind(record.status) as StatusKind} label={record.status} />
+                <GateProgress gates={gates} />
                 {totalTokens > 0 ? (
                     <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-text-muted">
                         Σ {totalTokens} tok
@@ -475,9 +479,14 @@ export function RunViewPage({ runId }: { runId: string }) {
                                     style={{ gridTemplateColumns: `repeat(${wave.nodes.length}, minmax(0, 1fr))` }}
                                 >
                                     {wave.nodes.map((wn) => {
-                                        const step = (record.steps ?? []).find(
+                                        // issue #303: 同节点 blocked→终态 合并为一行状态机
+                                        // (queued→waiting→passed/failed) — 闸门节点不再出两行
+                                        const nodeSteps = (record.steps ?? []).filter(
                                             (s) => s.node_id === wn.id && !s.user_correction
                                         );
+                                        const blockedStep = nodeSteps.find((s) => s.status === 'blocked');
+                                        const terminalStep = nodeSteps.find((s) => s.status !== 'blocked');
+                                        const step = terminalStep ?? blockedStep;
                                         // issue #225: 审批卡内联在暂停步骤位 (M7 badge)
                                         const approval = record.hitl_pending
                                             ? inlineApprovals.find((a) => a.node_id === wn.id)
@@ -503,10 +512,15 @@ export function RunViewPage({ runId }: { runId: string }) {
                                                 </div>
                                             );
                                         }
+                                        // issue #303: 等待审批且无审批卡可内联 → 等待行 (倒计时 + 去批入口)
+                                        if (step.status === 'blocked' && record.hitl_pending && !approval) {
+                                            return <WaitingGateCard key={wn.id} step={step} deadline={record.hitl_deadline ?? undefined} />;
+                                        }
                                         return (
                                             <div key={wn.id}>
                                                 <StepCard
                                                     step={step}
+                                                    waited={Boolean(blockedStep && terminalStep)}
                                                     expanded={openStep === wn.id}
                                                     onToggle={() => setOpenStep(openStep === wn.id ? '' : wn.id)}
                                                     canResume={historyActions.resumeFromStep}
@@ -776,17 +790,53 @@ function ArtifactCard({ artifactId, fallbackName }: { artifactId: string; fallba
     );
 }
 
+// issue #303: 等待审批行 — 状态机 waiting 态 (倒计时 + 去批入口), 无审批卡时的兜底
+function WaitingGateCard({ step, deadline }: { step: RunStep; deadline?: number }) {
+    const t = useT();
+    const [now, setNow] = useState(Date.now() / 1000);
+    useEffect(() => {
+        const timer = setInterval(() => setNow(Date.now() / 1000), 1000);
+        return () => clearInterval(timer);
+    }, []);
+    const left = deadline ? Math.max(0, Math.round(deadline - now)) : null;
+    const mm = left === null ? '' : `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+    return (
+        <div className="rounded-md border border-dashed border-warning bg-bg-elevated p-2">
+            <div className="flex items-center gap-2">
+                <span className="truncate text-xs text-text-primary">
+                    {step.node_display_name || step.node_name}
+                </span>
+                <span className="rounded border border-warning/40 px-1 text-[9px] text-warning">
+                    {t('等待审批', 'waiting')}
+                </span>
+                {mm ? <span className="ml-auto font-mono text-[10px] text-text-muted">⏳ {mm}</span> : null}
+            </div>
+            <button
+                type="button"
+                className="mt-1 text-[11px] text-accent hover:underline"
+                onClick={() => {
+                    window.location.hash = '#/approvals';
+                }}
+            >
+                {t('去批 ↗', 'Review approvals ↗')}
+            </button>
+        </div>
+    );
+}
+
 // 步骤卡: 状态/耗时 + M10 能力标注 + 展开 input/output (复用 RunsPage StepDrawer)
 // issue #226: 终态 run 可从本步骤重跑 (新 run 链回原 run)
 // issue #233: 步骤输出含 artifact 引用时渲染卡片 (payload 保持轻量 ref)
 function StepCard({
     step,
+    waited,
     expanded,
     onToggle,
     canResume,
     onResumeFrom,
 }: {
     step: RunStep;
+    waited?: boolean;
     expanded: boolean;
     onToggle: () => void;
     canResume?: boolean;
@@ -796,6 +846,9 @@ function StepCard({
     const cap = stepCapability(step);
     const denied = step.status === 'denied';
     const arefs = stepArtifactRefs(step);
+    // issue #303: 决定来源 — webhook/web 审批写入 blocked 步骤 output_data
+    const attribution = (step.output_data as { hitl_attribution?: Record<string, string> } | null)
+        ?.hitl_attribution;
     return (
         <div
             className={`rounded-md border bg-bg-elevated ${denied ? 'border-dashed border-warning' : 'border-border'}`}
@@ -806,6 +859,11 @@ function StepCard({
                         {step.node_display_name || step.node_name}
                     </span>
                     <StatusBadge status={statusKind(step.status) as StatusKind} label={step.status} />
+                    {waited ? (
+                        <span className="rounded border border-border px-1 text-[9px] text-text-muted">
+                            {t('曾等待审批', 'waited for approval')}
+                        </span>
+                    ) : null}
                 </div>
                 {cap ? (
                     <div className="truncate text-[10px] text-text-muted">
@@ -829,6 +887,18 @@ function StepCard({
                 ) : null}
             </button>
             {expanded ? <StepDrawer step={step} /> : null}
+            {attribution ? (
+                <button
+                    type="button"
+                    className="w-full border-t border-border px-2 py-1 text-left text-[10px] text-accent hover:underline"
+                    onClick={() => {
+                        window.location.hash = '#/governance?tab=audit';
+                    }}
+                >
+                    {t('审批台账', 'Approval ledger')} · {attribution.decided_by || 'unknown'}
+                    {attribution.approval_id ? ` · ${attribution.approval_id}` : ''} ↗
+                </button>
+            ) : null}
             {arefs.length > 0 ? (
                 <div className="space-y-1 border-t border-border px-2 py-1.5">
                     {arefs.map((r) => (

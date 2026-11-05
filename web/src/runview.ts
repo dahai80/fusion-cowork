@@ -20,6 +20,22 @@ export interface CapabilityAnnotation {
     detail?: string;
 }
 
+export interface DefNode {
+    id: string;
+    name: string;
+    config?: { label?: string };
+}
+
+// issue #303: workflow_def.nodes arrives in BOTH shapes — dict keyed by node
+// id (Workflow.to_dict, template launches) and list (template JSON). Normalize
+// so wave grouping and the gate header never crash on either.
+export function defNodes(def: { nodes?: unknown } | undefined | null): DefNode[] {
+    const raw = def?.nodes;
+    if (Array.isArray(raw)) return raw as DefNode[];
+    if (raw && typeof raw === 'object') return Object.values(raw as Record<string, DefNode>);
+    return [];
+}
+
 // Anthropic M4/M10: parallel branches render side-by-side — group workflow
 // nodes by topological depth from the DAG (nodes at the same depth run in
 // the same engine wave, v0.5.40 wave scheduler). Unknown/absent edges fall
@@ -28,7 +44,7 @@ export function computeWaves(def: {
     nodes?: { id: string; name: string; config?: { label?: string } }[];
     edges?: { source_id: string; target_id: string }[];
 }): Wave[] {
-    const nodes = def.nodes ?? [];
+    const nodes = defNodes(def);
     if (nodes.length === 0) return [];
     const edges = def.edges ?? [];
     const byId = new Map(nodes.map((n) => [n.id, n]));

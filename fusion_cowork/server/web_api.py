@@ -3449,15 +3449,24 @@ def create_web_app(
         action_id = pending.get("action_id", "")
         edited = payload.get("params")
         edited = edited if isinstance(edited, dict) and edited else None
+        # issue #303: 决定来源随 webhook 落到 run 时间线 (谁批准的)
+        attribution = {
+            "approval_id": str(payload.get("approval_id") or action_id),
+            "decided_by": str(payload.get("decided_by") or "webhook"),
+            "decided_at": str(payload.get("decided_at") or ""),
+        }
         releaser = getattr(permission_manager, "release_pending_once", None)
         released = releaser(action_id) if callable(releaser) else False
         resolver = getattr(engine, "resolve_hitl", None)
         resumed = False
         if released and callable(resolver):
             try:
-                resumed = bool(resolver(run_id, approved, once=True, params=edited))
+                resumed = bool(resolver(run_id, approved, once=True, params=edited, attribution=attribution))
             except TypeError:
-                resumed = bool(resolver(run_id, approved, once=True))
+                try:
+                    resumed = bool(resolver(run_id, approved, once=True, params=edited))
+                except TypeError:
+                    resumed = bool(resolver(run_id, approved, once=True))
         logger.info(f"webhook 回调续跑: run={run_id} approved={approved} resumed={resumed}")
         return {"run_id": run_id, "resumed": resumed, "approved": approved}
 
@@ -3740,8 +3749,14 @@ def create_web_app(
                     # issue #225: 审批卡 "编辑参数" — edited_params 随批准并入被闸节点输入
                     edited = body.get("edited_params")
                     edited = edited if isinstance(edited, dict) and edited else None
+                    # issue #303: web 审批卡决定也记录来源
+                    attribution = {
+                        "approval_id": action_id,
+                        "decided_by": "web",
+                        "decided_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    }
                     try:
-                        resolver(hitl_exec, True, once=True, params=edited)
+                        resolver(hitl_exec, True, once=True, params=edited, attribution=attribution)
                     except TypeError:
                         try:
                             resolver(hitl_exec, True, once=True)
@@ -3755,7 +3770,18 @@ def create_web_app(
                 # 否则卡片出队后 confirm_guard 查不到条目返回 False, run 挂到 HITL 超时自动拒绝
                 resolver = getattr(engine, "resolve_hitl", None)
                 if callable(resolver):
-                    resolver(hitl_exec, False)
+                    try:
+                        resolver(
+                            hitl_exec,
+                            False,
+                            attribution={
+                                "approval_id": action_id,
+                                "decided_by": "web",
+                                "decided_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                            },
+                        )
+                    except TypeError:
+                        resolver(hitl_exec, False)
                 logger.info(f"HITL 一次性拒绝已唤醒 run: {hitl_exec} (action_id={action_id}, 不落规则)")
                 return {"action_id": action_id, "approved": False, "confirmed": True, "once": True}
         confirmed = await permission_manager.confirm_guard(
@@ -3764,7 +3790,18 @@ def create_web_app(
         if confirmed and hitl_exec:
             resolver = getattr(engine, "resolve_hitl", None)
             if callable(resolver):
-                resolver(hitl_exec, approved)
+                try:
+                    resolver(
+                        hitl_exec,
+                        approved,
+                        attribution={
+                            "approval_id": action_id,
+                            "decided_by": "web",
+                            "decided_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        },
+                    )
+                except TypeError:
+                    resolver(hitl_exec, approved)
                 logger.info(f"HITL confirm 已唤醒 run: {hitl_exec} approved={approved}")
         # issue #138: 确认落规则后立即持久化 (重启不丢)
         try:
