@@ -10,6 +10,7 @@
 
 import json
 import logging
+import os
 import re
 from typing import Any, Dict
 
@@ -32,7 +33,8 @@ _MAX_BODY_SNIPPET = 500
 
 def resolve_template(value: Any, context: Dict[str, Any]) -> Any:
     # 递归解析 url/headers/body 中的 ${dotted.path} — 从上游输入 (含首节点注入)
-    # 逐级取值; 未命中保留字面量并记 WARNING (调用方可观测漏配)。
+    # 逐级取值; ${env.VAR} 从进程环境取值 (issue #287: 模板鉴权头不硬编码);
+    # 未命中保留字面量并记 WARNING (调用方可观测漏配)。
     if isinstance(value, str):
         return _TEMPLATE_RE.sub(lambda m: _lookup(m.group(1), context, m.group(0)), value)
     if isinstance(value, dict):
@@ -43,6 +45,13 @@ def resolve_template(value: Any, context: Dict[str, Any]) -> Any:
 
 
 def _lookup(path: str, context: Dict[str, Any], literal: str) -> str:
+    # issue #287: ${env.VAR} 前缀 — 鉴权头等敏感值从环境注入, 不落模板明文
+    if path.startswith("env."):
+        env_val = os.environ.get(path[4:], "")
+        if env_val:
+            return env_val
+        logger.warning(f"http_request: 环境变量未命中, 保留字面量: {literal}")
+        return literal
     node: Any = context
     for part in path.split("."):
         if not isinstance(node, dict) or part not in node:
@@ -109,6 +118,12 @@ class HttpRequestNode(BaseNode):
             return NodeResult(status=NodeStatus.FAILED, error=f"不支持的 HTTP 方法: {method}", summary="参数非法")
 
         headers = resolve_template(headers, inputs)
+        # issue #287: 鉴权头安全 — 解析后仍含 ${...} 的头 (env 未配) 直接丢弃,
+        # 绝不把模板字面量当凭证发出去; body 保留字面量 (向后兼容, 可观测)。
+        dropped = [k for k, v in headers.items() if isinstance(v, str) and "${" in v]
+        for k in dropped:
+            headers.pop(k, None)
+            logger.warning(f"http_request: 鉴权头模板未解析, 已丢弃该头: {k}")
         body = resolve_template(body, inputs)
         if isinstance(body, str):
             try:

@@ -545,6 +545,7 @@ class RunRegistry:
         resume_steps: Optional[List[Dict[str, Any]]] = None,
         ancestor_summary: Optional[List[Dict[str, Any]]] = None,
         hitl_pause: Optional[bool] = None,
+        identity_token: str = "",
     ) -> Dict[str, Any]:
         from ..engine import Workflow
 
@@ -582,7 +583,11 @@ class RunRegistry:
         }
         self._runs[run_id] = record
         self._persist(run_id)
-        task = asyncio.create_task(self._execute(run_id, wf, message_input=message_input, resume_steps=resume_steps))
+        task = asyncio.create_task(
+            self._execute(
+                run_id, wf, message_input=message_input, resume_steps=resume_steps, identity_token=identity_token
+            )
+        )
         self._tasks[run_id] = task
         logger.info(
             f"工作流运行已启动: {run_id} ({record['workflow_name']}) memory={record['memory']} "
@@ -597,8 +602,15 @@ class RunRegistry:
         start_paused: bool = False,
         resume_steps: Optional[List[Dict[str, Any]]] = None,
         message_input: Optional[Dict[str, Any]] = None,
+        identity_token: str = "",
     ) -> None:
         record = self._runs[run_id]
+        # issue #288: background run carries the caller's identity JWT — set the
+        # contextvar for this task so every LLM call below meters under the
+        # caller's `sub` (task context dies with the task, no reset needed).
+        from ..auth.identity_propagation import set_current_identity_token
+
+        set_current_identity_token(identity_token)
         try:
             # issue #157: run 级记忆集成 — 启动召回注入首节点 / 结束轨迹写回。
             # 桥不可用 (未配 key) 或开关关 → 行为与旧版完全一致; 桥失败零冲击 run。
@@ -1235,6 +1247,19 @@ def create_web_app(
     # W22: 跨设备同步引擎接缝 — 注入后 /api/deliver 可投递; 默认 None (503 诚实不可用)
     app.state.cross_sync = cross_sync
 
+    # issue #288: identity JWT capture — the shell forwards the caller's
+    # fusion-identity JWT to modules (sdk.auth.identityToken()); capture it per
+    # request so in-request LLM calls (space chat, NL delegate) carry it as
+    # Authorization: Bearer for gateway quota metering. Background runs capture
+    # separately in RunRegistry.start/_execute.
+    @app.middleware("http")
+    async def _capture_identity_token(request: Request, call_next):
+        from ..auth.identity_propagation import extract_identity_token, identity_token_context
+
+        token = extract_identity_token({k.lower(): v for k, v in request.headers.items()})
+        with identity_token_context(token):
+            return await call_next(request)
+
     # ── issue #228: 能力市场 — 工作区能力池 + 授权闸门 + 用量入账 ──
     from ..capabilities import OAuthFlow, build_catalog, make_capability_gate, record_run_usage
     from ..capabilities.store import CapabilityStore
@@ -1418,7 +1443,7 @@ def create_web_app(
         return {"deleted": True}
 
     @app.post("/api/runs", status_code=202)
-    async def runs_create(body: Dict[str, Any]):
+    async def runs_create(request: Request, body: Dict[str, Any]):
         workflow_def = body.get("workflow") or {}
         workflow_id = body.get("workflow_id", "")
         if not workflow_def and workflow_id:
@@ -1469,6 +1494,11 @@ def create_web_app(
                 raise HTTPException(
                     status_code=400, detail={"code": "bad_request", "message": "hitl_pause 须为 boolean"}
                 )
+            # issue #288: caller identity JWT → background run LLM calls meter
+            # under the user's `sub` at the gateway (never persisted to disk).
+            from ..auth.identity_propagation import extract_identity_token
+
+            identity_token = extract_identity_token({k.lower(): v for k, v in request.headers.items()})
             return runs.start(
                 workflow_def,
                 workflow_id=workflow_id,
@@ -1479,6 +1509,7 @@ def create_web_app(
                 labels=labels,
                 space_id=space_id,
                 hitl_pause=hitl_pause,
+                identity_token=identity_token,
             )
         except ValueError as exc:
             # issue #135 F-2: 坏边形状/含环等工作流定义错误 → 400 可读信息, 不 500
@@ -3629,7 +3660,10 @@ def create_web_app(
     async def permissions_confirm(action_id: str, body: Dict[str, Any]):
         if permission_manager is None:
             raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"})
-        approved = bool(body.get("approved"))
+        # issue #287: confirm 语义 — {"once": true} 不带 approved 按批准一次处理
+        # ("Approve once" 卡片语义), 不再默认落拒绝唤醒 run; 显式 approved=false
+        # 仍走一次性拒绝 (issue #216)。
+        approved = bool(body.get("approved", bool(body.get("once"))))
         # issue #142: 逐块审阅 — accepted_blocks 指定接受的变更块, 重建窄化后的编辑参数
         narrowed = None
         if approved and isinstance(body.get("accepted_blocks"), list):

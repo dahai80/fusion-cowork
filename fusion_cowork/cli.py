@@ -18,7 +18,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List
 
 import click
 
@@ -348,21 +348,43 @@ def show_template(template_id: str):
 @template.command("run")
 @click.argument("template_id")
 @click.option("--dry-run", "-n", is_flag=True, help="预览模式")
-@click.option("--params", "-p", default="", help="覆盖参数 JSON")
+@click.option("--params", "-p", default="", help="覆盖参数 JSON (按节点 id)")
+@click.option("--vars", "-v", "template_vars", default="", help="模板级参数 JSON (替换节点配置里的 ${param.X})")
 @click.option("--resume", "session_id", default="", help="断点续跑: 指定 session_id, 跳过已完成步骤从断点续跑")
-def run_template(template_id: str, dry_run: bool, params: str, session_id: str):
+def run_template(template_id: str, dry_run: bool, params: str, template_vars: str, session_id: str):
     """运行模板。
 
     --resume <session_id>: 从指定会话断点续跑 (跳过已完成节点)。
     """
-    asyncio.run(_async_run_template(template_id, dry_run, params, session_id))
+    asyncio.run(_async_run_template(template_id, dry_run, params, session_id, template_vars))
 
 
-async def _async_run_template(template_id: str, dry_run: bool, params_json: str, resume_session_id: str = ""):
+async def _async_run_template(
+    template_id: str, dry_run: bool, params_json: str, resume_session_id: str = "", template_vars_json: str = ""
+):
     console.print_header(f"🚀 运行模板: {template_id}")
 
+    # issue #287: 节点注册 — CLI 进程不经过 serve 的 import_all_nodes, 治理模板等
+    # 生态节点 (github_api/approval_gate/http_request) 会报未知节点类型
+    from .nodes import import_all_nodes
+
+    import_all_nodes()
+
+    # issue #287: 模板级参数 — ${param.X} 在装配期替换, 不再硬编码 org/repo
+    template_vars: Dict[str, Any] = {}
+    if template_vars_json:
+        try:
+            parsed_vars = json.loads(template_vars_json)
+            if not isinstance(parsed_vars, dict):
+                console.print_error("模板参数 JSON 须为对象")
+                return
+            template_vars = parsed_vars
+        except json.JSONDecodeError as e:
+            console.print_error(f"模板参数 JSON 解析失败: {e}")
+            return
+
     # 加载模板
-    wf = _get_template_mgr().template_to_workflow(template_id)
+    wf = _get_template_mgr().template_to_workflow(template_id, param_values=template_vars)
     if not wf:
         console.print_error(f"模板不存在: {template_id}")
         return

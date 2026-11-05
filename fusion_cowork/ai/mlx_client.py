@@ -17,6 +17,8 @@ from typing import Any, AsyncIterator
 
 import httpx
 
+from ..auth.identity_propagation import friendly_quota_error, identity_auth_headers
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MLX_PORT = 11432
@@ -46,6 +48,15 @@ try:
     logger.info("fusion_core.http_client available, FusionMLXClient 借 with_retry+连接池 (路径B)")
 except ImportError:
     logger.info("fusion_core 不可用, FusionMLXClient 回退手写重试 (path B fallback)")
+
+
+def _safe_json(resp: httpx.Response) -> Any:
+    # issue #288: best-effort body decode for quota-shape detection — 429 bodies
+    # may be JSON or plain text; decode failure must never mask the status.
+    try:
+        return resp.json()
+    except Exception:
+        return resp.text
 
 
 def _client_api_key() -> str:
@@ -184,7 +195,11 @@ class FusionMLXClient:
         last_exc = None
         for attempt in range(self.max_retries + 1):
             try:
-                resp = await self.client.post("/chat/completions", json=payload)
+                # issue #288: per-request identity header — gateway meter keys the
+                # quota by the caller's identity JWT `sub` when present.
+                resp = await self.client.post(
+                    "/chat/completions", json=payload, headers=identity_auth_headers() or None
+                )
                 resp.raise_for_status()
                 data = resp.json()
                 # E-12: choices 缺失/空 → 防御, 旧版 data["choices"][0] 直接 IndexError
@@ -205,6 +220,11 @@ class FusionMLXClient:
                 else:
                     logger.error(f"chat() failed after {attempt + 1} attempts: {e}")
             except httpx.HTTPStatusError as e:
+                # issue #288: quota 429 never retries (daily budget won't recover
+                # in-session) — surface the friendly bilingual message instead.
+                quota_msg = friendly_quota_error(e.response.status_code, _safe_json(e.response))
+                if quota_msg:
+                    raise RuntimeError(quota_msg) from e
                 if e.response.status_code in (429, 502, 503, 504) and attempt < self.max_retries:
                     last_exc = e
                     logger.warning(f"chat() HTTP {e.response.status_code}, retrying in {self.retry_delay}s")
@@ -232,11 +252,18 @@ class FusionMLXClient:
         client = self._core_client()
 
         async def _do_post() -> httpx.Response:
-            return await client.post("/chat/completions", json=payload)
+            # issue #288: per-request identity header — gateway meter keys the
+            # quota by the caller's identity JWT `sub` when present.
+            return await client.post("/chat/completions", json=payload, headers=identity_auth_headers() or None)
 
         try:
             resp = await _with_retry(_do_post, retries=self.max_retries, initial_backoff=self.retry_delay)
         except httpx.HTTPStatusError as e:
+            # issue #288: quota 429 → friendly bilingual message (fusion-core
+            # with_retry already exhausted its own 429 retries at this point).
+            quota_msg = friendly_quota_error(e.response.status_code, _safe_json(e.response))
+            if quota_msg:
+                raise RuntimeError(quota_msg) from e
             if e.response.status_code in (401, 403):
                 logger.error(
                     f"chat() 鉴权失败 HTTP {e.response.status_code}: "
@@ -296,7 +323,9 @@ class FusionMLXClient:
         last_exc = None
         for attempt in range(self.max_retries + 1):
             try:
-                async with self.client.stream("POST", "/chat/completions", json=payload) as resp:
+                async with self.client.stream(
+                    "POST", "/chat/completions", json=payload, headers=identity_auth_headers() or None
+                ) as resp:
                     resp.raise_for_status()
                     async for line in resp.aiter_lines():
                         if line.startswith("data: "):
@@ -320,6 +349,10 @@ class FusionMLXClient:
                 else:
                     logger.error(f"stream_chat() failed after {attempt + 1} attempts: {e}")
             except httpx.HTTPStatusError as e:
+                # issue #288: quota 429 → friendly message, no retry (same as chat()).
+                quota_msg = friendly_quota_error(e.response.status_code, _safe_json(e.response))
+                if quota_msg:
+                    raise RuntimeError(quota_msg) from e
                 if e.response.status_code in (429, 502, 503, 504) and attempt < self.max_retries:
                     last_exc = e
                     logger.warning(f"stream_chat() HTTP {e.response.status_code}, retrying")
