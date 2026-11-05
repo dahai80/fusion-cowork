@@ -10,7 +10,6 @@ import {
 } from '@fusion/web-ui';
 import type { StatusKind } from '@fusion/web-ui';
 import { useEffect, useState } from 'react';
-import { GateProgress, gateProgress } from '../components/GateProgress';
 import {
     type ArtifactCardData,
     type GuardApproval,
@@ -20,6 +19,7 @@ import {
     api,
     statusKind,
 } from '../api';
+import { GateProgress, gateProgress } from '../components/GateProgress';
 import {
     type RefSource,
     buildContextChips,
@@ -514,7 +514,13 @@ export function RunViewPage({ runId }: { runId: string }) {
                                         }
                                         // issue #303: 等待审批且无审批卡可内联 → 等待行 (倒计时 + 去批入口)
                                         if (step.status === 'blocked' && record.hitl_pending && !approval) {
-                                            return <WaitingGateCard key={wn.id} step={step} deadline={record.hitl_deadline ?? undefined} />;
+                                            return (
+                                                <WaitingGateCard
+                                                    key={wn.id}
+                                                    step={step}
+                                                    deadline={record.hitl_deadline ?? undefined}
+                                                />
+                                            );
                                         }
                                         return (
                                             <div key={wn.id}>
@@ -803,9 +809,7 @@ function WaitingGateCard({ step, deadline }: { step: RunStep; deadline?: number 
     return (
         <div className="rounded-md border border-dashed border-warning bg-bg-elevated p-2">
             <div className="flex items-center gap-2">
-                <span className="truncate text-xs text-text-primary">
-                    {step.node_display_name || step.node_name}
-                </span>
+                <span className="truncate text-xs text-text-primary">{step.node_display_name || step.node_name}</span>
                 <span className="rounded border border-warning/40 px-1 text-[9px] text-warning">
                     {t('等待审批', 'waiting')}
                 </span>
@@ -847,8 +851,7 @@ function StepCard({
     const denied = step.status === 'denied';
     const arefs = stepArtifactRefs(step);
     // issue #303: 决定来源 — webhook/web 审批写入 blocked 步骤 output_data
-    const attribution = (step.output_data as { hitl_attribution?: Record<string, string> } | null)
-        ?.hitl_attribution;
+    const attribution = (step.output_data as { hitl_attribution?: Record<string, string> } | null)?.hitl_attribution;
     return (
         <div
             className={`rounded-md border bg-bg-elevated ${denied ? 'border-dashed border-warning' : 'border-border'}`}
