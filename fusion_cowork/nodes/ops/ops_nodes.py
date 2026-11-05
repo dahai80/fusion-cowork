@@ -656,3 +656,214 @@ class ApprovalGateNode(BaseNode):
             },
             summary=summary,
         )
+
+
+@register_node
+class ClaudeDispatchNode(BaseNode):
+    """issue #308: claude_dispatch — 派发短命 coder 会话 (claude -p) 处理单个任务 issue。
+
+    硬性护栏:
+    - HIGH_RISK_NODES 注册 (sandbox 逐次评估)
+    - token + 墙钟预算上限; 超限 -> 任务 issue 回 state:ready + 通知, 绝不静默丢失
+    - 会话崩溃/超时 -> 同回退路径
+    - 产出必须以 PR 交付 (结果无 PR URL = 失败回退, 禁止直推 main)
+    """
+
+    name = "claude_dispatch"
+    display_name = "Coder 派发"
+    category = NodeCategory.TOOL
+    description = "派发 claude -p 短命会话处理任务 issue, 预算上限 + 崩溃/超时回退 state:ready, 产出必须为 PR"
+    icon = "🚀"
+    default_label = "Coder 派发"
+
+    inputs = [{"key": "prompt", "label": "任务指令", "type": "string"}]
+    outputs = [
+        {"key": "pr_url", "label": "PR 链接", "type": "string"},
+        {"key": "pr_number", "label": "PR 编号", "type": "number"},
+        {"key": "total_tokens", "label": "会话 token 用量", "type": "number"},
+    ]
+
+    def get_params_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "org/repo (回退标签操作目标)"},
+                "allowed_repos": {"type": "array", "items": {"type": "string"}, "description": "仓库白名单"},
+                "issue_number": {"type": "number", "description": "任务 issue 编号"},
+                "prompt": {"type": "string", "description": "任务指令 (会话 prompt 主体)"},
+                "context_links": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "PRD/架构等上下文链接, 注入 prompt",
+                },
+                "cwd": {"type": "string", "description": "脚手架仓库工作目录 (须已存在)"},
+                "claude_bin": {"type": "string", "default": "claude", "description": "claude 可执行文件路径"},
+                "timeout": {"type": "number", "default": 1800, "description": "墙钟上限 (秒)"},
+                "max_tokens": {"type": "number", "default": 200000, "description": "token 用量上限"},
+                "ready_label": {"type": "string", "default": "state:ready"},
+                "dispatched_label": {"type": "string", "default": "state:dispatched"},
+            },
+            "required": ["repo", "allowed_repos", "issue_number", "prompt", "cwd"],
+        }
+
+    def _api_client(self, base_url: str, token: str, timeout: float) -> httpx.AsyncClient:
+        # test seam: monkeypatch to inject MockTransport
+        return httpx.AsyncClient(
+            base_url=base_url,
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            timeout=timeout,
+        )
+
+    async def _back_to_ready(self, repo: str, issue_number: int, ready_label: str, dispatched_label: str) -> bool:
+        # best-effort label restore; failure is loud (WARN) and surfaces in node error data
+        token = os.environ.get("GITHUB_TOKEN", "").strip()
+        if not token:
+            logger.warning(f"claude_dispatch 回退失败: GITHUB_TOKEN 未配置, issue #{issue_number} 标签未恢复")
+            return False
+        base_url = os.environ.get("FUSION_GITHUB_API", "https://api.github.com").rstrip("/")
+        try:
+            async with self._api_client(base_url, token, 15.0) as client:
+                r1 = await client.post(f"/repos/{repo}/issues/{issue_number}/labels", json={"labels": [ready_label]})
+                if dispatched_label:
+                    await client.request(
+                        "DELETE", f"/repos/{repo}/issues/{issue_number}/labels/{dispatched_label}"
+                    )
+            ok = r1.status_code < 300
+            if ok:
+                logger.warning(f"claude_dispatch 回退: {repo}#{issue_number} 标签恢复 {ready_label}")
+            else:
+                logger.warning(f"claude_dispatch 回退 HTTP {r1.status_code}: {repo}#{issue_number}")
+            return ok
+        except Exception as e:
+            logger.warning(f"claude_dispatch 回退异常: {repo}#{issue_number} ({e})")
+            return False
+
+    @staticmethod
+    def _extract_pr_url(text: str) -> str:
+        m = re.search(r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+", text or "")
+        return m.group(0) if m else ""
+
+    async def execute(self, inputs: Dict[str, Any]) -> NodeResult:
+        params = coerce_params(self.config.params, self.get_params_schema())
+        repo = str(params.get("repo") or "")
+        allowed = [str(x) for x in (params.get("allowed_repos") or [])]
+        issue_number = int(params.get("issue_number") or 0)
+        prompt = str(inputs.get("prompt") or params.get("prompt") or "")
+        context_links = [str(x) for x in (params.get("context_links") or [])]
+        cwd = str(params.get("cwd") or "")
+        claude_bin = str(params.get("claude_bin") or "claude")
+        timeout = float(params.get("timeout") or 1800)
+        max_tokens = int(params.get("max_tokens") or 200000)
+        ready_label = str(params.get("ready_label") or "state:ready")
+        dispatched_label = str(params.get("dispatched_label") or "state:dispatched")
+
+        if repo not in allowed:
+            logger.warning(f"claude_dispatch 拒绝: {repo} 不在白名单 {allowed}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"仓库 {repo} 不在 allowed_repos 白名单内")
+        if not issue_number or issue_number < 1:
+            return NodeResult(status=NodeStatus.FAILED, error="issue_number 须为正整数")
+        if not prompt:
+            return NodeResult(status=NodeStatus.FAILED, error="prompt 不能为空")
+        if not cwd or not Path(cwd).is_dir():
+            return NodeResult(status=NodeStatus.FAILED, error=f"工作目录不存在: {cwd}")
+
+        full_prompt = prompt
+        full_prompt += f"\n\nTask issue: {repo}#{issue_number}"
+        if context_links:
+            full_prompt += "\n\nContext docs:\n" + "\n".join(f"- {x}" for x in context_links)
+        full_prompt += (
+            "\n\nDelivery contract: open a pull request for your change. "
+            "Never push directly to the default branch. "
+            "Include self-test evidence in the PR description."
+        )
+
+        env = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": os.environ.get("HOME", ""),
+            "LANG": "en_US.UTF-8",
+        }
+        # session needs repo push/PR rights
+        if os.environ.get("GITHUB_TOKEN"):
+            env["GITHUB_TOKEN"] = os.environ["GITHUB_TOKEN"]
+
+        argv = [claude_bin, "-p", full_prompt, "--output-format", "json"]
+        logger.info(
+            f"claude_dispatch start: {repo}#{issue_number} cwd={cwd} timeout={timeout:g}s max_tokens={max_tokens}"
+        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=cwd,
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+        except OSError as e:
+            await self._back_to_ready(repo, issue_number, ready_label, dispatched_label)
+            return NodeResult(status=NodeStatus.FAILED, error=f"claude 进程启动失败: {e}")
+
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+            restored = await self._back_to_ready(repo, issue_number, ready_label, dispatched_label)
+            logger.warning(f"claude_dispatch 超时: {repo}#{issue_number} timeout={timeout:g}s")
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"claude 会话超时 ({timeout:g}s), 任务已回退 ({'state:ready 已恢复' if restored else '标签恢复失败, 需人工检查'})",
+                data={"notification": f"task {repo}#{issue_number} dispatch timeout, sent back to ready", "pr_url": ""},
+            )
+
+        output = stdout.decode("utf-8", "replace")
+        code = proc.returncode
+        if code != 0:
+            restored = await self._back_to_ready(repo, issue_number, ready_label, dispatched_label)
+            logger.warning(f"claude_dispatch 会话失败: {repo}#{issue_number} exit={code}")
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"claude 会话退出码 {code}, 任务已回退 ({'state:ready 已恢复' if restored else '标签恢复失败, 需人工检查'})",
+                data={"notification": f"task {repo}#{issue_number} dispatch crash (exit {code}), sent back to ready"},
+            )
+
+        # claude -p --output-format json: array of messages, final carries result + usage
+        result_text, usage = "", {}
+        for line in reversed(output.splitlines()):
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict) and "result" in obj:
+                result_text = str(obj.get("result") or "")
+                usage = obj.get("usage") if isinstance(obj.get("usage"), dict) else {}
+                break
+
+        total = int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
+        pr_url = self._extract_pr_url(result_text)
+        if total > max_tokens:
+            restored = await self._back_to_ready(repo, issue_number, ready_label, dispatched_label)
+            logger.warning(f"claude_dispatch token 超限: {repo}#{issue_number} {total}>{max_tokens}")
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"token 预算超限 ({total} > {max_tokens}), 任务已回退 ({'state:ready 已恢复' if restored else '标签恢复失败'})",
+                data={"notification": f"task {repo}#{issue_number} token budget exceeded ({total})", "pr_url": pr_url},
+            )
+        if not pr_url:
+            restored = await self._back_to_ready(repo, issue_number, ready_label, dispatched_label)
+            logger.warning(f"claude_dispatch 无 PR 产出: {repo}#{issue_number}")
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"会话未产出 PR (交付契约要求 PR, 禁止直推 main), 任务已回退 ({'state:ready 已恢复' if restored else '标签恢复失败'})",
+                data={"notification": f"task {repo}#{issue_number} no PR delivered, sent back to ready"},
+            )
+
+        pr_number = int(pr_url.rsplit("/", 1)[-1])
+        logger.info(f"claude_dispatch ok: {repo}#{issue_number} -> {pr_url} tokens={total}")
+        return NodeResult(
+            status=NodeStatus.SUCCESS,
+            data={"pr_url": pr_url, "pr_number": pr_number, "total_tokens": total},
+            summary=f"{repo}#{issue_number} -> {pr_url} (tokens {total})",
+        )

@@ -167,6 +167,9 @@ HIGH_RISK_NODES = frozenset(
         "agent_exec",
         # issue #262: command_evidence 白名单命令执行 + 证据归档, 须显式放行
         "command_evidence",
+        # issue #308: claude_dispatch 派发短命 coder 会话 (本地进程 + 仓库写权),
+        # 高危执行面 — 预算上限 + 崩溃/超时回退由节点自管, 放行须显式审批
+        "claude_dispatch",
     }
 )
 
