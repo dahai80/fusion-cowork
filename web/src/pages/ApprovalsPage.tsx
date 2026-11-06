@@ -25,30 +25,27 @@ export function ApprovalsPage() {
         approved: boolean,
         scope?: string,
         acceptedBlocks?: number[],
+        once?: boolean,
         comment?: string
     ) {
         if (busyId) return;
         setBusyId(actionId);
         try {
-            const res = await api.confirmApproval(
-                actionId,
-                approved,
-                scope,
-                acceptedBlocks,
-                undefined,
-                undefined,
-                comment
-            );
+            // #337: once 语义随按钮传递 — 仅本次允许/拒绝都是一次性决定 (不落持久规则),
+            // 只有 "始终允许" 落规则; 否则一次拒绝会永久拉黑工具, 后续 HITL 闸门全被预拒
+            const res = await api.confirmApproval(actionId, approved, scope, acceptedBlocks, once, undefined, comment);
             if (res.confirmed) {
                 sdk.toast.show({
                     level: 'success',
                     message: approved
                         ? acceptedBlocks
                             ? t('已批准 (按所选变更块)', 'Approved (selected blocks)')
-                            : scope && scope !== '*'
-                              ? t('已批准 (仅本次)', 'Approved (once)')
-                              : t('已批准 (始终)', 'Approved (always)')
-                        : t('已拒绝', 'Rejected'),
+                            : once
+                              ? t('已批准 (仅本次, 未落规则)', 'Approved (once, no rule persisted)')
+                              : t('已批准 (始终, 规则已持久化)', 'Approved (always, rule persisted)')
+                        : once
+                          ? t('已拒绝 (仅本次, 未落规则)', 'Rejected (once, no rule persisted)')
+                          : t('已拒绝 (规则已持久化)', 'Rejected (rule persisted)'),
                 });
             } else {
                 sdk.toast.show({
@@ -275,6 +272,7 @@ function ApprovalCard({
         approved: boolean,
         scope?: string,
         acceptedBlocks?: number[],
+        once?: boolean,
         comment?: string
     ) => void;
 }) {
@@ -335,6 +333,7 @@ function ApprovalCard({
                                     false,
                                     undefined,
                                     undefined,
+                                    true,
                                     rejectNote.trim() || undefined
                                 )
                             }
@@ -364,7 +363,9 @@ function ApprovalCard({
                     type="button"
                     className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted disabled:opacity-50"
                     disabled={busy}
-                    onClick={() => onConfirm(approval.action_id, true, scope, partial ? [...accepted] : undefined)}
+                    onClick={() =>
+                        onConfirm(approval.action_id, true, scope, partial ? [...accepted] : undefined, true)
+                    }
                 >
                     {t('仅本次允许', 'Allow once')}
                 </button>
