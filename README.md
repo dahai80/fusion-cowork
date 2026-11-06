@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.82-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.83-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -473,6 +473,10 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
 - Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
 - Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+### Result-Ref Envelope Fallback (v0.5.83, issue #343)
+
+- **`${result.*}` interpolation hardened (#343)** — the shorthand walked only the merged upstream input's top-level keys, but `github_api` outputs the conventional `{"result": {...}}` envelope, so `"issue_number": "${result.number}"` leaked the literal placeholder into `int()` in `claude_dispatch`/`linked_pr` (`invalid literal for int() with base 10`). The shorthand now falls back to walking the `result` envelope subtree (top-level keys keep precedence; explicit `${step.<id>.result.*}` unchanged). Params still holding `result./step./param.` refs after interpolation fail the node with a clear `unresolved interpolation: ${...}` error instead of a confusing coercion crash; input-side data stays lenient and `${run_id}`-style free placeholders are untouched. Tests: `tests/test_issue_343_interpolation_hardening.py` (8 cases).
+
 ### Gate Rule Exemption (v0.5.82, issue #340)
 
 - **Gate decisions exempt from persistent permission rules (#340)** — denying an `approval_gate` card persisted a tool-level deny rule that `check()` matched first, auto-denying every later gate before HITL registration (no card ever again; broke the #328 revision loop on round 2). Gate decisions are workflow decisions: `check()` skips deny AND approve rule matching for gate tools (fresh HITL card every evaluation, legacy poisoned rules inert), `confirm_guard()` is release-only for gate entries. Non-gate tools keep exact rule semantics.
