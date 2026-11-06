@@ -689,6 +689,10 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### 闸门规则豁免 (v0.5.82, issue #340)
+
+- **闸门决定不再落持久权限规则 (#340)** — 拒绝一次 `approval_gate` 卡会落工具级 deny 规则, `check()` 先匹配 deny 规则, 后续所有闸门在 HITL 注册前就被自动拒绝 (永远不再出卡, 修订回路第二轮即挂)。闸门决定是工作流决策: `check()` 对闸门工具跳过 deny 与 approve 规则匹配 (每次评估出新鲜 HITL 卡, 历史毒化规则失效), `confirm_guard()` 对闸门条目只出队不落规则。非闸门工具规则语义不变。
+
 ### 审批一次性语义 (v0.5.81, issue #337)
 
 - **审批页 once 标志修复 (#337)** — `ApprovalsPage.confirm` 硬编码 `once=undefined`, 导致"仅本次允许"落永久放行规则、一次"拒绝"永久拉黑工具 (残留 deny 规则会预拒后续所有同类 HITL 闸门, run 直接失败且无审批卡)。现在 仅本次允许/拒绝 都发 `once=true` (出队 + 唤醒 run, 不落规则), 始终允许不变; toast 明示是否落了规则。运行视图内联卡拒绝同步一次性语义。
