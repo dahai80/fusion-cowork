@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.81-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.82-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -473,6 +473,10 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
 - Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
 - Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+### Gate Rule Exemption (v0.5.82, issue #340)
+
+- **Gate decisions exempt from persistent permission rules (#340)** — denying an `approval_gate` card persisted a tool-level deny rule that `check()` matched first, auto-denying every later gate before HITL registration (no card ever again; broke the #328 revision loop on round 2). Gate decisions are workflow decisions: `check()` skips deny AND approve rule matching for gate tools (fresh HITL card every evaluation, legacy poisoned rules inert), `confirm_guard()` is release-only for gate entries. Non-gate tools keep exact rule semantics.
+
 ### Approval Once Semantics (v0.5.81, issue #337)
 
 - **Approvals page once flag fixed (#337)** — `ApprovalsPage.confirm` hard-coded `once=undefined`, so Allow once persisted a permanent approve rule and one Deny permanently blacklisted the tool (stale deny rules then pre-empted all future HITL gates of that node type — runs failed with no approval card). Allow once and Deny now send `once=true` (entry dequeued + run woken, no rule persisted); Always allow unchanged; toast surfaces whether a rule was persisted. RunView inline-card Deny aligned to one-time semantics.
