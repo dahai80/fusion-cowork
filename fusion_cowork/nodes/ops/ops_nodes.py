@@ -787,6 +787,11 @@ class ClaudeDispatchNode(BaseNode):
         # session needs repo push/PR rights
         if os.environ.get("GITHUB_TOKEN"):
             env["GITHUB_TOKEN"] = os.environ["GITHUB_TOKEN"]
+        # issue #347: claude CLI 认证变量透传 — env 白名单缺 ANTHROPIC_AUTH_TOKEN 时
+        # CLI 未登录直接退出 1 (daemon/launchd 上下文无 Keychain 更是必挂)
+        for _k in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL"):
+            if os.environ.get(_k):
+                env[_k] = os.environ[_k]
 
         argv = [claude_bin, "-p", full_prompt, "--output-format", "json"]
         logger.info(
@@ -821,11 +826,16 @@ class ClaudeDispatchNode(BaseNode):
         code = proc.returncode
         if code != 0:
             restored = await self._back_to_ready(repo, issue_number, ready_label, dispatched_label)
-            logger.warning(f"claude_dispatch 会话失败: {repo}#{issue_number} exit={code}")
+            # issue #347: 会话输出头并入错误 — 崩溃可诊断, 无需本地复现
+            head = output.strip()[:500]
+            logger.warning(f"claude_dispatch 会话失败: {repo}#{issue_number} exit={code} output_head={head[:120]}")
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"claude 会话退出码 {code}, 任务已回退 ({'state:ready 已恢复' if restored else '标签恢复失败, 需人工检查'})",
-                data={"notification": f"task {repo}#{issue_number} dispatch crash (exit {code}), sent back to ready"},
+                error=f"claude 会话退出码 {code}, 任务已回退 ({'state:ready 已恢复' if restored else '标签恢复失败, 需人工检查'}): {head}",
+                data={
+                    "notification": f"task {repo}#{issue_number} dispatch crash (exit {code}), sent back to ready",
+                    "output_head": head,
+                },
             )
 
         # claude -p --output-format json: array of messages, final carries result + usage
