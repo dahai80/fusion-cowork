@@ -866,7 +866,9 @@ BUILTIN_TEMPLATES = [
                         "params": {
                             "graph_id": "${param.arch_graph_id}",
                             "agent_id": "${param.arch_agent_id}",
-                            "input": "Write the architecture/plan for product ${param.slug} based on the approved PRD below.\n\nPRD document:\n${step.n1.result.last_result.report}",
+                            # issue #346: 规范交接 — 下方传入 BA 产物的 artifact id (agent-studio
+                            # run result artifacts[0] 为 id 字符串), 下游座位按 id 取 PRD, 不猜路径
+                            "input": "Write the architecture/plan for product ${param.slug} based on the approved PRD below.\n\nPRD artifact id (canonical reference — read the PRD by this artifact id, never guess file paths):\n${step.n1.result.artifacts.0}\n\nPRD document:\n${step.n1.result.last_result.report}",
                             "mode": "sync",
                         }
                     },
@@ -939,7 +941,8 @@ BUILTIN_TEMPLATES = [
                         "params": {
                             "graph_id": "${param.env_graph_id}",
                             "agent_id": "${param.env_agent_id}",
-                            "input": "Prepare the env/mock pack for product ${param.slug} per the PRD and architecture below.\n\nPRD document:\n${step.n1.result.last_result.report}\n\nArchitecture document:\n${step.n3.result.last_result.report}",
+                            # issue #346: env pack 同样收规范 artifact id 交接 (PRD + 架构)
+                            "input": "Prepare the env/mock pack for product ${param.slug} per the PRD and architecture below.\n\nPRD artifact id (canonical reference):\n${step.n1.result.artifacts.0}\n\nArchitecture artifact id (canonical reference):\n${step.n3.result.artifacts.0}\n\nPRD document:\n${step.n1.result.last_result.report}\n\nArchitecture document:\n${step.n3.result.last_result.report}",
                             "mode": "sync",
                         }
                     },
