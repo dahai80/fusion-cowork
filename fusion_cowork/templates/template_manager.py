@@ -853,6 +853,9 @@ BUILTIN_TEMPLATES = [
                         "params": {
                             "prompt": "闸门 A: PRD 评审",
                             "details": "批准 PRD 后进入架构设计; 拒绝则 BA 代理按评审意见修订",
+                            # issue #328: 拒绝 → 修订回路 — 回到 n1 (BA) 带评审意见重跑
+                            "on_reject": "revise",
+                            "revision_node": "n1",
                         }
                     },
                 },
@@ -875,6 +878,9 @@ BUILTIN_TEMPLATES = [
                         "params": {
                             "prompt": "闸门 B: 架构评审",
                             "details": "批准架构后脚手架 + 派发; 拒绝则架构代理按评审意见修订",
+                            # issue #328: 拒绝 → 修订回路 — 回到 n3 (架构) 带评审意见重跑
+                            "on_reject": "revise",
+                            "revision_node": "n3",
                         }
                     },
                 },

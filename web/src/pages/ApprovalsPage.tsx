@@ -20,11 +20,25 @@ export function ApprovalsPage() {
 
     const approvals = retry.data?.approvals ?? [];
 
-    async function confirm(actionId: string, approved: boolean, scope?: string, acceptedBlocks?: number[]) {
+    async function confirm(
+        actionId: string,
+        approved: boolean,
+        scope?: string,
+        acceptedBlocks?: number[],
+        comment?: string
+    ) {
         if (busyId) return;
         setBusyId(actionId);
         try {
-            const res = await api.confirmApproval(actionId, approved, scope, acceptedBlocks);
+            const res = await api.confirmApproval(
+                actionId,
+                approved,
+                scope,
+                acceptedBlocks,
+                undefined,
+                undefined,
+                comment
+            );
             if (res.confirmed) {
                 sdk.toast.show({
                     level: 'success',
@@ -223,7 +237,13 @@ function ApprovalCard({
 }: {
     approval: GuardApproval;
     busy: boolean;
-    onConfirm: (actionId: string, approved: boolean, scope?: string, acceptedBlocks?: number[]) => void;
+    onConfirm: (
+        actionId: string,
+        approved: boolean,
+        scope?: string,
+        acceptedBlocks?: number[],
+        comment?: string
+    ) => void;
 }) {
     const t = useT();
     const scope = paramScope(approval);
@@ -232,6 +252,9 @@ function ApprovalCard({
     const nonEqual = (approval.diff_blocks ?? []).filter((b) => b.tag !== 'equal').map((b) => b.index);
     const [accepted, setAccepted] = useState<Set<number>>(() => new Set(nonEqual));
     const partial = nonEqual.length > 0 && accepted.size < nonEqual.length;
+    // issue #328: 拒绝附评审意见 — 修订回路重跑时并入产出节点输入
+    const [rejecting, setRejecting] = useState(false);
+    const [rejectNote, setRejectNote] = useState('');
     function toggle(idx: number) {
         setAccepted((prev) => {
             const next = new Set(prev);
@@ -257,12 +280,49 @@ function ApprovalCard({
                     )}
                 </div>
             ) : null}
+            {rejecting ? (
+                <div className="mt-2">
+                    <textarea
+                        className="min-h-12 w-full resize-y rounded-md border border-border bg-bg p-2 font-mono text-[11px] text-text-primary"
+                        value={rejectNote}
+                        placeholder={t(
+                            '评审意见 (修订重跑时带给产出节点)',
+                            'Review comments (passed to the producing node on revision)'
+                        )}
+                        onChange={(e) => setRejectNote(e.target.value)}
+                    />
+                    <div className="mt-1 flex flex-wrap justify-end gap-2">
+                        <button
+                            type="button"
+                            className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-bg-muted"
+                            onClick={() =>
+                                onConfirm(
+                                    approval.action_id,
+                                    false,
+                                    undefined,
+                                    undefined,
+                                    rejectNote.trim() || undefined
+                                )
+                            }
+                        >
+                            {t('确认拒绝', 'Confirm reject')}
+                        </button>
+                        <button
+                            type="button"
+                            className="rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-bg-muted"
+                            onClick={() => setRejecting(false)}
+                        >
+                            {t('取消', 'Cancel')}
+                        </button>
+                    </div>
+                </div>
+            ) : null}
             <div className="mt-3 flex flex-wrap justify-end gap-2">
                 <button
                     type="button"
                     className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-bg-muted disabled:opacity-50"
                     disabled={busy}
-                    onClick={() => onConfirm(approval.action_id, false)}
+                    onClick={() => setRejecting(true)}
                 >
                     {t('拒绝', 'Deny')}
                 </button>

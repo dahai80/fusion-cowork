@@ -610,6 +610,11 @@ class WorkflowEngine:
         self._hitl_attributions: Dict[str, Dict[str, Any]] = {}
         # issue #309: exec_id -> 逐项决定 items[] — 唤醒后作为 batch_verdict 并入被闸节点输入
         self._hitl_batch_verdicts: Dict[str, List[Dict[str, Any]]] = {}
+        # issue #328: 修订回路 — 拒绝评审意见暂存 + 待回退修订请求 + 重跑意见注入 + 次数账本
+        self._hitl_comments: Dict[str, str] = {}
+        self._pending_revisions: Dict[str, Dict[str, Any]] = {}
+        self._revision_comments: Dict[str, Dict[str, str]] = {}
+        self._revision_counts: Dict[str, Dict[str, int]] = {}
         # 正挂在 HITL 等待点的 run 集合 (与 W8 手动暂停区分)
         self._hitl_waiting: Set[str] = set()
         # W8/B1: 运行改向指令队列 — 节点边界应用 (set_params/skip_remaining/insert_node)
@@ -904,6 +909,22 @@ class WorkflowEngine:
                     execution.status = WorkflowStatus.CANCELLED
                     break
                 if control == "fail":
+                    # issue #328: 修订回路 — 拒绝不是终态, 回到产出节点带评审意见重跑
+                    rev = self._pending_revisions.pop(exec_id, None)
+                    gate_id = str((rev or {}).get("gate_node") or "")
+                    if rev is not None and rev.get("target") in workflow.nodes:
+                        target = str(rev["target"])
+                        done.discard(target)
+                        if gate_id:
+                            done.discard(gate_id)
+                            passed_data.pop(gate_id, None)
+                            node_results.pop(gate_id, None)
+                        passed_data.pop(target, None)
+                        node_results.pop(target, None)
+                        self._revision_comments.setdefault(exec_id, {})[target] = str(rev.get("comments") or "")
+                        order_idx = order.index(target) if target in order else order_idx
+                        logger.info(f"[{exec_id}] revise: 回到节点 '{target}' 修订, run 继续")
+                        continue
                     execution.status = WorkflowStatus.FAILED
                     execution.error = control_error
                     break
@@ -1014,6 +1035,11 @@ class WorkflowEngine:
             self._hitl_deadlines.pop(exec_id, None)
             self._hitl_attributions.pop(exec_id, None)
             self._hitl_batch_verdicts.pop(exec_id, None)
+            # issue #328: 修订回路状态兜底清理
+            self._hitl_comments.pop(exec_id, None)
+            self._pending_revisions.pop(exec_id, None)
+            self._revision_comments.pop(exec_id, None)
+            self._revision_counts.pop(exec_id, None)
             if hitl_residue:
                 discard = getattr(self._permission_manager, "discard_pending_by_execution", None)
                 if callable(discard):
@@ -1092,6 +1118,12 @@ class WorkflowEngine:
             node.config.params = _interpolate_step_refs(dict(node.config.params or {}), passed_data, node_input)
             logger.debug(f"[{exec_id}] step 引用解析完成: node={node.name}")
 
+        # issue #328: 修订回路 — 重跑产出节点时评审意见并入输入 (节点读 revision_comments)
+        rev_map = self._revision_comments.get(exec_id)
+        if rev_map and node_id in rev_map:
+            node_input["revision_comments"] = rev_map.pop(node_id)
+            logger.info(f"[{exec_id}] revise: 评审意见并入节点输入: node={node.name}")
+
         # issue #283: expose the run id to nodes — approval-task payloads carry
         # run_id so external decisions (agent-studio GUI) route back via webhook.
         node_input.setdefault("run_id", exec_id)
@@ -1123,7 +1155,7 @@ class WorkflowEngine:
                     and not node.config.continue_on_error
                 ):
                     # issue #181: 本地待审批命中本 run → 暂停在节点边界等人工决定
-                    allowed = await self._hitl_await(exec_id, node, check_input)
+                    allowed = await self._hitl_await(exec_id, workflow, node, check_input)
                     # issue #225: 审批编辑参数 — 批准唤醒后并入被闸节点输入 (仅本次执行)
                     override = self._hitl_param_overrides.pop(exec_id, None)
                     if allowed and override:
@@ -1516,6 +1548,7 @@ class WorkflowEngine:
         params: Optional[Dict[str, Any]] = None,
         attribution: Optional[Dict[str, Any]] = None,
         batch: Optional[List[Dict[str, Any]]] = None,
+        comments: Optional[str] = None,
     ) -> bool:
         # issue #303: attribution — 决定来源 {approval_id, decided_by, decided_at},
         # 随唤醒落到被闸节点的 blocked 步骤上, 时间线可回答 "谁批准的"
@@ -1537,6 +1570,9 @@ class WorkflowEngine:
             self._hitl_attributions[execution_id] = dict(attribution)
         if isinstance(batch, list) and batch:
             self._hitl_batch_verdicts[execution_id] = [dict(x) for x in batch if isinstance(x, dict)]
+        # issue #328: 拒绝评审意见 — 修订回路重跑时并入产出节点输入
+        if not approved and isinstance(comments, str) and comments.strip():
+            self._hitl_comments[execution_id] = comments.strip()
         self._hitl_deadlines.pop(execution_id, None)
         evt.set()
         logger.info(
@@ -1545,7 +1581,47 @@ class WorkflowEngine:
         )
         return True
 
-    async def _hitl_await(self, exec_id: str, node: BaseNode, check_input: Dict[str, Any]) -> bool:
+    def _register_revision(self, exec_id: str, workflow: Workflow, node: BaseNode) -> None:
+        # issue #328: 审批拒绝的修订路由 — on_reject=revise 时登记回退请求:
+        # revision_node 显式指定 > 自动取最近上游非闸门产出节点 (闸门评审的是上游产出) > 无上游取自身;
+        # 超过 max_revisions (默认 3) 按拒绝终态处理, 防无限循环
+        params = node.config.params or {}
+        if str(params.get("on_reject") or "").strip().lower() != "revise":
+            return
+        target = str(params.get("revision_node") or "").strip()
+        if target:
+            if target not in workflow.nodes:
+                logger.warning(f"[{exec_id}] revise: revision_node 不存在, 按拒绝终态处理: {target}")
+                return
+        else:
+            # 自动路由: 有上游产出节点 → 回到最近上游 (评审对象是上游产出, 任意闸门形态均适用);
+            # 无上游 → 自身重跑。存在上游但需自身重跑时, 显式 revision_node 指向自身 id
+            target = ""
+            for edge in workflow.edges:
+                if edge.target_id == node.id:
+                    src = workflow.nodes.get(edge.source_id)
+                    if src is not None and src.name != "approval_gate":
+                        target = edge.source_id
+                        break
+            if not target:
+                target = node.id
+        counts = self._revision_counts.setdefault(exec_id, {})
+        try:
+            max_rev = max(1, int(params.get("max_revisions", 3) or 3))
+        except (TypeError, ValueError):
+            max_rev = 3
+        if counts.get(target, 0) >= max_rev:
+            logger.warning(f"[{exec_id}] revise: 节点 '{target}' 修订次数达上限 ({max_rev}), 按拒绝终态处理")
+            return
+        counts[target] = counts.get(target, 0) + 1
+        comments = self._hitl_comments.pop(exec_id, "")
+        self._pending_revisions[exec_id] = {"target": target, "comments": comments, "gate_node": node.id}
+        logger.info(
+            f"[{exec_id}] revise: 审批拒绝, 将回到节点 '{target}' 修订 "
+            f"(第 {counts[target]}/{max_rev} 次, 评审意见 {len(comments)} 字)"
+        )
+
+    async def _hitl_await(self, exec_id: str, workflow: Workflow, node: BaseNode, check_input: Dict[str, Any]) -> bool:
         # issue #181: 无本地待审批 (如 guard 在线的 L3) → 返回 False 走原 deny-fast, 不悬挂
         finder = getattr(self._permission_manager, "find_pending_by_execution", None)
         if not callable(finder) or not finder(exec_id):
@@ -1643,6 +1719,8 @@ class WorkflowEngine:
             logger.info(f"[{exec_id}] HITL: 等待中被取消")
             return False
         if approved is not True:
+            # issue #328: 拒绝 → 修订回路登记 (on_reject=revise opt-in), 主循环据此回退重跑
+            self._register_revision(exec_id, workflow, node)
             logger.info(f"[{exec_id}] HITL: 节点 '{node.name}' 审批拒绝")
             return False
         # 批准 → 规则已由 confirm 路由持久化, 原地重查权限 (只重跑被闸节点)

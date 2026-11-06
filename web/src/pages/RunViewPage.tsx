@@ -219,11 +219,12 @@ export function RunViewPage({ runId }: { runId: string }) {
         actionId: string,
         approved: boolean,
         once: boolean,
-        editedParams?: Record<string, unknown>
+        editedParams?: Record<string, unknown>,
+        comment?: string
     ) {
         setHitlBusy(actionId);
         try {
-            await api.confirmApproval(actionId, approved, undefined, undefined, once, editedParams);
+            await api.confirmApproval(actionId, approved, undefined, undefined, once, editedParams, comment);
             sdk.toast.show({
                 level: 'success',
                 message: approved
@@ -654,17 +655,30 @@ function InlineApprovalCard({
     approval: GuardApproval;
     deadline?: number;
     busy: boolean;
-    onConfirm: (actionId: string, approved: boolean, once: boolean, editedParams?: Record<string, unknown>) => void;
+    onConfirm: (
+        actionId: string,
+        approved: boolean,
+        once: boolean,
+        editedParams?: Record<string, unknown>,
+        comment?: string
+    ) => void;
 }) {
     const t = useT();
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState('');
     const [draftError, setDraftError] = useState('');
+    // issue #328: 拒绝附评审意见 — 修订回路 (on_reject=revise) 重跑时并入产出节点输入
+    const [rejecting, setRejecting] = useState(false);
+    const [rejectNote, setRejectNote] = useState('');
 
     function startEdit() {
         setDraft(JSON.stringify(approval.params ?? {}, null, 4));
         setDraftError('');
         setEditing(true);
+    }
+
+    function submitReject() {
+        void onConfirm(approval.action_id, false, false, undefined, rejectNote.trim() || undefined);
     }
 
     function submitEdit() {
@@ -719,12 +733,42 @@ function InlineApprovalCard({
                     </div>
                 </div>
             ) : null}
+            {rejecting ? (
+                <div className="mt-2">
+                    <textarea
+                        className="min-h-12 w-full resize-y rounded-md border border-border bg-bg p-2 font-mono text-[11px] text-text-primary"
+                        value={rejectNote}
+                        placeholder={t(
+                            '评审意见 (修订重跑时带给产出节点)',
+                            'Review comments (passed to the producing node on revision)'
+                        )}
+                        onChange={(e) => setRejectNote(e.target.value)}
+                    />
+                    <div className="mt-1 flex items-center gap-2">
+                        <button
+                            type="button"
+                            disabled={busy}
+                            className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-error/10 disabled:opacity-50"
+                            onClick={submitReject}
+                        >
+                            {t('确认拒绝', 'Confirm reject')}
+                        </button>
+                        <button
+                            type="button"
+                            className="rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-bg-muted"
+                            onClick={() => setRejecting(false)}
+                        >
+                            {t('取消', 'Cancel')}
+                        </button>
+                    </div>
+                </div>
+            ) : null}
             <div className="mt-2 flex flex-wrap items-center gap-2">
                 <button
                     type="button"
                     disabled={busy}
                     className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-error/10 disabled:opacity-50"
-                    onClick={() => void onConfirm(approval.action_id, false, false)}
+                    onClick={() => setRejecting(true)}
                 >
                     {t('拒绝', 'Reject')}
                 </button>
