@@ -295,7 +295,15 @@ function ApprovalCard({
                         <button
                             type="button"
                             className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-bg-muted"
-                            onClick={() => onConfirm(approval.action_id, false, undefined, undefined, rejectNote.trim() || undefined)}
+                            onClick={() =>
+                                onConfirm(
+                                    approval.action_id,
+                                    false,
+                                    undefined,
+                                    undefined,
+                                    rejectNote.trim() || undefined
+                                )
+                            }
                         >
                             {t('确认拒绝', 'Confirm reject')}
                         </button>
