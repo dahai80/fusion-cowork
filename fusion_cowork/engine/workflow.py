@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -81,6 +82,77 @@ def _sanitize_params(params: Any) -> str:
     if len(params) > _LOG_MAX_KEYS:
         out["..."] = f"<+{len(params) - _LOG_MAX_KEYS} more>"
     return json.dumps(out, ensure_ascii=False, default=str)
+
+
+_STEP_REF_RE = re.compile(r"\$\{step\.([A-Za-z0-9_\-]+)((?:\.[A-Za-z0-9_\-]+)*)\}")
+_RESULT_REF_RE = re.compile(r"\$\{result\.([A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]+)*)\}")
+
+
+def _walk_ref_path(cur: Any, parts: List[str]) -> Tuple[Any, bool]:
+    # issue #327: 按 a.b.c 路径下钻 — dict 取键, list 取下标, 任一层缺失即未命中
+    for part in parts:
+        if isinstance(cur, dict):
+            if part not in cur:
+                return None, False
+            cur = cur[part]
+        elif isinstance(cur, list):
+            try:
+                cur = cur[int(part)]
+            except (ValueError, IndexError):
+                return None, False
+        else:
+            return None, False
+        if cur is None:
+            return None, False
+    return cur, True
+
+
+def _interpolate_step_refs(value: Any, passed_data: Dict[str, Dict[str, Any]], local_input: Dict[str, Any]) -> Any:
+    """issue #327: 节点启动前解析 ${step.<id>.<path>} / ${result.<path>} 引用。
+
+    - ${step.n1.result.last_result.report} — 显式取指定节点输出 (passed_data)
+    - ${result.repo_path} — 速记: 从本节点已合并的上游输入 (local_input) 取值
+    - 整串命中保留原始类型 (issue_number 数字不变字符串); 嵌入串 str 化
+    - 未命中保留字面量 + WARNING (与模板 _substitute_params 约定一致, 不静默丢)
+    """
+    if isinstance(value, str):
+        m = _STEP_REF_RE.fullmatch(value)
+        if m:
+            found, ok = _walk_ref_path(
+                passed_data.get(m.group(1)), m.group(2).lstrip(".").split(".") if m.group(2) else []
+            )
+            if ok:
+                return found
+            logger.warning(f"step 引用未命中, 保留字面量: {value[:120]}")
+            return value
+        m = _RESULT_REF_RE.fullmatch(value)
+        if m:
+            found, ok = _walk_ref_path(local_input, m.group(1).split("."))
+            if ok:
+                return found
+            logger.warning(f"result 引用未命中, 保留字面量: {value[:120]}")
+            return value
+
+        def _repl(m: re.Match[str]) -> str:
+            if m.re is _STEP_REF_RE:
+                found, ok = _walk_ref_path(
+                    passed_data.get(m.group(1)), m.group(2).lstrip(".").split(".") if m.group(2) else []
+                )
+            else:
+                found, ok = _walk_ref_path(local_input, m.group(1).split("."))
+            if not ok:
+                logger.warning(f"引用未命中, 保留字面量: {m.group(0)[:120]}")
+                return m.group(0)
+            return json.dumps(found, ensure_ascii=False) if isinstance(found, (dict, list)) else str(found)
+
+        out = _STEP_REF_RE.sub(_repl, value)
+        out = _RESULT_REF_RE.sub(_repl, out)
+        return out
+    if isinstance(value, dict):
+        return {k: _interpolate_step_refs(v, passed_data, local_input) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_interpolate_step_refs(v, passed_data, local_input) for v in value]
+    return value
 
 
 def _node_verdict(status: NodeStatus, output: Any) -> str:
@@ -1008,6 +1080,17 @@ class WorkflowEngine:
         # 加上初始输入
         if node_id in passed_data:
             node_input.update(passed_data[node_id])
+
+        # issue #327: 参数/输入里的 ${step.<id>.<path>} / ${result.<path>} 引用在此解析 —
+        # 上游产物 (PRD/架构/脚手架路径) 显式接进下游目标, 模板不再靠人工复制粘贴;
+        # config.params 原地替换 (每次 run 都 from_dict 新建 Workflow, 无跨 run 污染)
+        has_ref = "${step." in json.dumps(node_input, ensure_ascii=False, default=str) or any(
+            "${" in str(v) for v in (node.config.params or {}).values()
+        )
+        if has_ref:
+            node_input = _interpolate_step_refs(node_input, passed_data, node_input)
+            node.config.params = _interpolate_step_refs(dict(node.config.params or {}), passed_data, node_input)
+            logger.debug(f"[{exec_id}] step 引用解析完成: node={node.name}")
 
         # issue #283: expose the run id to nodes — approval-task payloads carry
         # run_id so external decisions (agent-studio GUI) route back via webhook.
