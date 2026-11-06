@@ -738,7 +738,10 @@ function InlineApprovalCard({
                     <textarea
                         className="min-h-12 w-full resize-y rounded-md border border-border bg-bg p-2 font-mono text-[11px] text-text-primary"
                         value={rejectNote}
-                        placeholder={t('评审意见 (修订重跑时带给产出节点)', 'Review comments (passed to the producing node on revision)')}
+                        placeholder={t(
+                            '评审意见 (修订重跑时带给产出节点)',
+                            'Review comments (passed to the producing node on revision)'
+                        )}
                         onChange={(e) => setRejectNote(e.target.value)}
                     />
                     <div className="mt-1 flex items-center gap-2">
