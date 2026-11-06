@@ -689,6 +689,12 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### 修订回路 + 审批证据 (v0.5.79, issues #326/#327/#328)
+
+- **步骤引用插值 (#327)** — 引擎在执行前解析参数/输入里的 `${step.<id>.<路径>}` (任意已执行节点产出) 与 `${result.<路径>}` (节点合并后的上游输入): 整串引用保类型, 嵌入引用转字符串, 未解析保留字面量并告警。支撑 BA→架构的 PRD 交接并修复模板遗留引用。
+- **审批拒绝修订回路 (#328)** — 闸门节点 opt-in `on_reject: "revise"` 后拒绝不再终态失败: run 回退到产出节点 (显式 `revision_node` > 最近上游产出节点 > 自身) 带评审意见重跑 (意见以 `revision_comments` 注入输入); `max_revisions` (默认 3) 封顶; web 拒绝按钮支持填写评审意见。
+- **上游产物证据 (#326)** — 待审批载荷附 `artifacts` 块 (上游产出节点输出快照, 上限 3 节点×3 键×2000 字); ApprovalsPage 与运行视图内联审批卡直接渲染证据并附完整运行深链 — 评审者不用离开审批界面去找产出资材。
+
 ### 交付管线完整闭环 (v0.5.78, issues #300/#302/#306/#307/#308/#310/#318/#319/#320)
 
 - **HITL 残留清扫 (#300)** — run 终态时自动释放残留的待审批项 (deny-fast), 完成的运行不再滞留审批队列。
