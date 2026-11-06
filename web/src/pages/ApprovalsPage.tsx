@@ -108,6 +108,39 @@ function paramScope(a: GuardApproval): string {
     return '*';
 }
 
+// #326: 上游产物证据 — 评审者不用离开审批卡去找产出资材
+function EvidenceBlocks({ approval }: { approval: GuardApproval }) {
+    const t = useT();
+    const artifacts = approval.artifacts ?? [];
+    if (artifacts.length === 0) return null;
+    return (
+        <div className="mt-2 space-y-1.5">
+            <div className="text-[10px] text-text-muted">{t('上游产出', 'Upstream output')}</div>
+            {artifacts.map((ev) => (
+                <div key={ev.node_id} className="rounded-md border border-border bg-bg px-2 py-1.5">
+                    <div className="text-[10px] font-medium text-text-secondary">{ev.node_name || ev.node_id}</div>
+                    {Object.entries(ev.output ?? {}).map(([k, v]) => (
+                        <div key={k} className="mt-1">
+                            <div className="text-[10px] text-text-muted">{k}</div>
+                            <pre className="mt-0.5 max-h-32 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[11px] text-text-primary">
+                                {typeof v === 'string' ? v : JSON.stringify(v)}
+                            </pre>
+                        </div>
+                    ))}
+                </div>
+            ))}
+            {approval.execution_id ? (
+                <a
+                    className="inline-block text-[11px] text-brand hover:underline"
+                    href={`#/runs/${approval.execution_id}`}
+                >
+                    {t('查看完整运行', 'View full run')}
+                </a>
+            ) : null}
+        </div>
+    );
+}
+
 function ParamBlocks({
     approval,
     accepted,
@@ -271,6 +304,7 @@ function ApprovalCard({
                 <span className="ml-auto shrink-0 font-mono text-[10px] text-text-muted">{approval.action_id}</span>
             </div>
             {ctx ? <div className="mt-1 text-[11px] text-text-muted">{ctx}</div> : null}
+            <EvidenceBlocks approval={approval} />
             <ParamBlocks approval={approval} accepted={accepted} onToggle={toggle} />
             {partial ? (
                 <div className="mt-1 text-[11px] text-warning">
@@ -295,7 +329,15 @@ function ApprovalCard({
                         <button
                             type="button"
                             className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-bg-muted"
-                            onClick={() => onConfirm(approval.action_id, false, undefined, undefined, rejectNote.trim() || undefined)}
+                            onClick={() =>
+                                onConfirm(
+                                    approval.action_id,
+                                    false,
+                                    undefined,
+                                    undefined,
+                                    rejectNote.trim() || undefined
+                                )
+                            }
                         >
                             {t('确认拒绝', 'Confirm reject')}
                         </button>

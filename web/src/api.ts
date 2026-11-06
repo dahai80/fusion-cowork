@@ -356,6 +356,12 @@ export interface DiffBlock {
     new_start?: number;
 }
 
+export interface ApprovalEvidence {
+    node_id: string;
+    node_name?: string;
+    output?: Record<string, unknown>;
+}
+
 export interface GuardApproval {
     action_id: string;
     tool_name: string;
@@ -366,6 +372,7 @@ export interface GuardApproval {
     node_id?: string;
     execution_id?: string;
     diff_blocks?: DiffBlock[];
+    artifacts?: ApprovalEvidence[];
 }
 
 export interface ClusterNodeInfo {
