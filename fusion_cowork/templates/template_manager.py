@@ -863,7 +863,7 @@ BUILTIN_TEMPLATES = [
                         "params": {
                             "graph_id": "${param.arch_graph_id}",
                             "agent_id": "${param.arch_agent_id}",
-                            "input": "Write the architecture/plan for product ${param.slug} per the approved PRD.",
+                            "input": "Write the architecture/plan for product ${param.slug} based on the approved PRD below.\n\nPRD document:\n${step.n1.result.last_result.report}",
                             "mode": "sync",
                         }
                     },
@@ -933,7 +933,7 @@ BUILTIN_TEMPLATES = [
                         "params": {
                             "graph_id": "${param.env_graph_id}",
                             "agent_id": "${param.env_agent_id}",
-                            "input": "Prepare the env/mock pack for product ${param.slug} per the PRD.",
+                            "input": "Prepare the env/mock pack for product ${param.slug} per the PRD and architecture below.\n\nPRD document:\n${step.n1.result.last_result.report}\n\nArchitecture document:\n${step.n3.result.last_result.report}",
                             "mode": "sync",
                         }
                     },
