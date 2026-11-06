@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.83-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.84-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -473,6 +473,11 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
 - Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
 - Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+### Claude Auth Env Passthrough (v0.5.84, issues #347/#346)
+
+- **`claude_dispatch` forwards claude auth env vars (#347)** — the stripped subprocess env only carried PATH/HOME/LANG/GITHUB_TOKEN, so hosts authenticating via `ANTHROPIC_AUTH_TOKEN` (and Keychain-less daemon contexts) failed every dispatch with `Not logged in · Please run /login` before any model call. `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_BASE_URL` are now forwarded when present. Non-zero session exits also include the first 500 chars of claude output in the node error + `output_head` data (previously discarded).
+- **Canonical artifact handoff in product_lifecycle (#346)** — architect (n3) and env-pack (n9) seat prompts now interpolate `${step.n1.result.artifacts.0}` / `${step.n3.result.artifacts.0}` (agent-studio run result exposes `artifacts` as id strings), so downstream seats read the PRD/architecture by artifact id instead of guessing unguessable file paths; missing upstream artifacts fail loud via the #343 unresolved-interpolation contract.
+
 ### Result-Ref Envelope Fallback (v0.5.83, issue #343)
 
 - **`${result.*}` interpolation hardened (#343)** — the shorthand walked only the merged upstream input's top-level keys, but `github_api` outputs the conventional `{"result": {...}}` envelope, so `"issue_number": "${result.number}"` leaked the literal placeholder into `int()` in `claude_dispatch`/`linked_pr` (`invalid literal for int() with base 10`). The shorthand now falls back to walking the `result` envelope subtree (top-level keys keep precedence; explicit `${step.<id>.result.*}` unchanged). Params still holding `result./step./param.` refs after interpolation fail the node with a clear `unresolved interpolation: ${...}` error instead of a confusing coercion crash; input-side data stays lenient and `${run_id}`-style free placeholders are untouched. Tests: `tests/test_issue_343_interpolation_hardening.py` (8 cases).
