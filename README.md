@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.79-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.80-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -473,6 +473,10 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
 - Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
 - Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+### Allowlist Interpreter Normalization (v0.5.80, issue #334)
+
+- **command_evidence allowlist semantics pinned (#334)** — allowlist matching tries three argv forms: full argv join, argv0 basename, and basename with trailing version digits stripped, so `.venv/bin/python3.12` matches a `python *` pattern the same way `.venv/bin/python` already did; unrelated binaries still fail loud. Fixes the environment-dependent suite failure on checkouts using pyenv/venv interpreters named `python3.12`.
+
 ### Revision Loop + Approval Evidence (v0.5.79, issues #326/#327/#328)
 
 - **Step-ref interpolation (#327)** — engine resolves `${step.<id>.<path>}` (from any executed node's output) and `${result.<path>}` (from the node's merged upstream input) in params/inputs before execution: whole-string refs preserve type, embedded refs stringify, unresolved keeps the literal with a WARNING. Powers the BA→architecture PRD hand-off and fixes latent template refs.

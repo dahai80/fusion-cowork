@@ -689,6 +689,10 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### 白名单解释器归一 (v0.5.80, issue #334)
+
+- **command_evidence 白名单语义钉死 (#334)** — 白名单匹配三种 argv 形态: argv 全拼、argv0 basename、basename 去版本后缀, `.venv/bin/python3.12` 与 `.venv/bin/python` 一样命中 `python *`; 无关二进制照旧大声拒绝。修复 pyenv/venv 解释器名为 `python3.12` 的环境整套测试挂红的Clean checkout 问题。
+
 ### 修订回路 + 审批证据 (v0.5.79, issues #326/#327/#328)
 
 - **步骤引用插值 (#327)** — 引擎在执行前解析参数/输入里的 `${step.<id>.<路径>}` (任意已执行节点产出) 与 `${result.<路径>}` (节点合并后的上游输入): 整串引用保类型, 嵌入引用转字符串, 未解析保留字面量并告警。支撑 BA→架构的 PRD 交接并修复模板遗留引用。
