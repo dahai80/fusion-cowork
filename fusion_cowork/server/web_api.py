@@ -3792,6 +3792,8 @@ def create_web_app(
         # ("Approve once" 卡片语义), 不再默认落拒绝唤醒 run; 显式 approved=false
         # 仍走一次性拒绝 (issue #216)。
         approved = bool(body.get("approved", bool(body.get("once"))))
+        # issue #328: 拒绝评审意见 — 随决定传给引擎, 修订回路重跑时并入产出节点输入
+        reject_comment = str(body.get("comment") or body.get("comments") or "").strip() or None
         # issue #142: 逐块审阅 — accepted_blocks 指定接受的变更块, 重建窄化后的编辑参数
         narrowed = None
         if approved and isinstance(body.get("accepted_blocks"), list):
@@ -3850,6 +3852,7 @@ def create_web_app(
                                 "decided_by": "web",
                                 "decided_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                             },
+                            comments=reject_comment,
                         )
                     except TypeError:
                         resolver(hitl_exec, False)
@@ -3870,6 +3873,7 @@ def create_web_app(
                             "decided_by": "web",
                             "decided_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                         },
+                        comments=None if approved else reject_comment,
                     )
                 except TypeError:
                     resolver(hitl_exec, approved)

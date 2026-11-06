@@ -964,7 +964,8 @@ export const api = {
         scope?: string,
         acceptedBlocks?: number[],
         once?: boolean,
-        editedParams?: Record<string, unknown>
+        editedParams?: Record<string, unknown>,
+        comment?: string
     ) =>
         post<{
             action_id: string;
@@ -979,6 +980,8 @@ export const api = {
             ...(acceptedBlocks ? { accepted_blocks: acceptedBlocks } : {}),
             ...(once ? { once: true } : {}),
             ...(editedParams ? { edited_params: editedParams } : {}),
+            // issue #328: 拒绝评审意见 — 修订回路重跑时并入产出节点输入
+            ...(comment ? { comment } : {}),
         }),
     spaceInstructions: (spaceId: string) =>
         get<{ space_id: string; instructions: string }>(
