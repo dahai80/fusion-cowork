@@ -689,6 +689,11 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### Claude 认证环境变量透传 (v0.5.84, issues #347/#346)
+
+- **`claude_dispatch` 透传 claude 认证变量 (#347)** — 裁剪后的子进程 env 此前只有 PATH/HOME/LANG/GITHUB_TOKEN, 依赖 `ANTHROPIC_AUTH_TOKEN` 认证的宿主 (以及 Keychain 不可达的 daemon 上下文) 每次派发都在模型调用前以 `Not logged in · Please run /login` 退出 1。现在 `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_BASE_URL` 按存在透传。非零退出时会话输出前 500 字符也并入节点错误与 `output_head` 数据 (此前直接丢弃, 崩溃需本地复现才能诊断)。
+- **product_lifecycle 规范产物交接 (#346)** — 架构 (n3) 与 env-pack (n9) 座位 prompt 现在插入 `${step.n1.result.artifacts.0}` / `${step.n3.result.artifacts.0}` (agent-studio run result 的 artifacts 为 id 字符串列表), 下游座位按 artifact id 读 PRD/架构, 不再靠运气猜文件路径; 上游无产物时按 #343 语义明确 unresolved 报错。
+
 ### 结果引用信封回退 (v0.5.83, issue #343)
 
 - **`${result.*}` 插值加固 (#343)** — 速记此前只取已合并上游输入的顶层键, 而 `github_api` 输出是常规 `{"result": {...}}` 信封, 导致 `"issue_number": "${result.number}"` 把字面量占位符漏进 `claude_dispatch`/`linked_pr` 的 `int()` 二次崩溃 (`invalid literal for int() with base 10`)。现在顶层未命中时回退下钻 `result` 信封子树 (顶层键优先不变; 显式 `${step.<id>.result.*}` 写法不变)。插值后仍残留 `result./step./param.` 引用的节点参数直接报明确的 `unresolved interpolation: ${...}` 错误, 不再进节点后二次崩溃; 输入侧数据保持宽松, `${run_id}` 等自由占位符不受影响。测试: `tests/test_issue_343_interpolation_hardening.py` (8 例)。
