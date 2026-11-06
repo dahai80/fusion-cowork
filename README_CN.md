@@ -689,6 +689,10 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### 审批一次性语义 (v0.5.81, issue #337)
+
+- **审批页 once 标志修复 (#337)** — `ApprovalsPage.confirm` 硬编码 `once=undefined`, 导致"仅本次允许"落永久放行规则、一次"拒绝"永久拉黑工具 (残留 deny 规则会预拒后续所有同类 HITL 闸门, run 直接失败且无审批卡)。现在 仅本次允许/拒绝 都发 `once=true` (出队 + 唤醒 run, 不落规则), 始终允许不变; toast 明示是否落了规则。运行视图内联卡拒绝同步一次性语义。
+
 ### 白名单解释器归一 (v0.5.80, issue #334)
 
 - **command_evidence 白名单语义钉死 (#334)** — 白名单匹配三种 argv 形态: argv 全拼、argv0 basename、basename 去版本后缀, `.venv/bin/python3.12` 与 `.venv/bin/python` 一样命中 `python *`; 无关二进制照旧大声拒绝。修复 pyenv/venv 解释器名为 `python3.12` 的环境整套测试挂红的Clean checkout 问题。
