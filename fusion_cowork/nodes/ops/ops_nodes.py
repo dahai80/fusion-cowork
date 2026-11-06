@@ -373,7 +373,7 @@ class CommandEvidenceNode(BaseNode):
                 "allowlist": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "fnmatch 模式, 匹配 'argv 全拼'",
+                    "description": "fnmatch 模式, 匹配 'argv 全拼' / argv0 basename / basename 去版本后缀 (python3.12 归一为 python)",
                 },
                 "evidence_dir": {"type": "string", "description": "证据归档目录"},
                 "ports": {"type": "array", "items": {"type": "number"}, "description": "对账/探测端口"},
@@ -410,9 +410,13 @@ class CommandEvidenceNode(BaseNode):
             return NodeResult(status=NodeStatus.FAILED, error="command 须为非空字符串数组 (argv, 不经 shell)")
         if not allowlist:
             return NodeResult(status=NodeStatus.FAILED, error="allowlist 为空 — 拒绝执行 (fail-loud, 不放行)")
-        # 白名单匹配两种形态: argv 全拼 (含绝对路径) + argv0 basename 形态, 都不中才拒
-        base_joined = " ".join([Path(command[0]).name] + [str(c) for c in command[1:]])
-        if not any(fnmatch.fnmatch(joined, pat) or fnmatch.fnmatch(base_joined, pat) for pat in allowlist):
+        # 白名单匹配三种形态: argv 全拼 (含绝对路径) + argv0 basename + basename 去版本后缀
+        # (issue #334: venv/pyenv 解释器常为 python3.12/python3 — 与 `python *` 同族, 归一匹配)
+        argv0_base = Path(command[0]).name
+        argv0_family = argv0_base.rstrip(".0123456789")
+        rest_joined = " ".join(str(c) for c in command[1:])
+        candidates = (joined, " ".join([argv0_base, rest_joined]), " ".join([argv0_family, rest_joined]))
+        if not any(fnmatch.fnmatch(cand, pat) for cand in candidates for pat in allowlist):
             logger.warning(f"command_evidence 拒绝白名单外命令: {joined}")
             return NodeResult(
                 status=NodeStatus.FAILED, error=f"命令不在白名单内, 已拒绝: {joined} (allowlist={allowlist})"

@@ -150,6 +150,32 @@ class TestGitHubApi:
 
 class TestCommandEvidence:
     @pytest.mark.asyncio
+    async def test_allowlist_matches_versioned_interpreter(self, tmp_path):
+        # issue #334: venv/pyenv 解释器常为绝对路径 python3.12 — basename 去版本后缀后
+        # 与 `python *` 同族匹配, 不再依赖 PATH 里的解释器拼法
+        fake_py = tmp_path / ".venv" / "bin" / "python3.12"
+        fake_py.parent.mkdir(parents=True)
+        fake_py.write_text("#!/bin/sh\n")
+        fake_py.chmod(0o755)
+        res = await _run_node(
+            "command_evidence",
+            {"command": [str(fake_py), "-c", "pass"], "allowlist": ["python *"], "evidence_dir": str(tmp_path / "ev")},
+        )
+        assert res.status == NodeStatus.SUCCESS
+
+    @pytest.mark.asyncio
+    async def test_allowlist_still_rejects_unrelated_binary(self, tmp_path):
+        fake = tmp_path / "bin" / "curl"
+        fake.parent.mkdir(parents=True)
+        fake.write_text("#!/bin/sh\n")
+        res = await _run_node(
+            "command_evidence",
+            {"command": [str(fake), "-s", "http://x"], "allowlist": ["python *"], "evidence_dir": str(tmp_path / "ev")},
+        )
+        assert res.status == NodeStatus.FAILED
+        assert "白名单" in res.error
+
+    @pytest.mark.asyncio
     async def test_allowlist_match_archives_scrubbed(self, tmp_path):
         ev = tmp_path / "evidence"
         cmd = [sys.executable, "-c", "print('token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234 done')"]
