@@ -678,7 +678,9 @@ function InlineApprovalCard({
     }
 
     function submitReject() {
-        void onConfirm(approval.action_id, false, false, undefined, rejectNote.trim() || undefined);
+        // issue #337: 拒绝是一次性决定 — once=true 出队唤醒 run, 不落永久 deny 规则
+        // (否则一条 deny 规则会预拒后续所有 run 的同类型 HITL 闸门, 卡片都不再出现)
+        void onConfirm(approval.action_id, false, true, undefined, rejectNote.trim() || undefined);
     }
 
     function submitEdit() {
