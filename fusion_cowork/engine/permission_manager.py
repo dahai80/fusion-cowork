@@ -29,6 +29,11 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# issue #340: HITL 闸门工具 — 闸门决定是工作流决策 (喂 on_reject=revise 修订回路),
+# 不是工具级权限授予/拒绝。deny 规则不得预拒闸门 (否则一次拒绝永久杀死后续所有
+# 闸门的 HITL 卡), confirm 对闸门也只出队唤醒 run, 不落任何持久规则。
+HITL_GATE_TOOLS = {"approval_gate"}
+
 _PERMISSIONS_DIR = os.path.expanduser("~/.fusion-cowork")
 
 # issue #138: 引擎侧审批上下文 (workflow/node) — WorkflowEngine 在 check 前写入,
@@ -291,15 +296,18 @@ class PermissionManager:
     async def check(self, tool_name: str, action: str = "", params: Dict[str, Any] = None) -> bool:
         # A-6: deny 规则须先于 Hook 批准判定 — 否则 Hook approve 可覆盖显式 deny (绕过)。
         # 先扫 deny: 命中 deny → 即拒, Hook 批准也不再翻盘。
+        # issue #340: 闸门工具不受 deny 规则预拒 — 闸门决定是工作流决策,
+        # 每次评估都要产生新鲜的 HITL 待审批卡 (历史毒化规则不再拦截)
         denied = False
         ctx = None
         with self._lock:
             rules_snapshot = list(self.rules)
-        for rule in rules_snapshot:
-            if rule.matches(tool_name, params) and not rule.allowed:
-                logger.warning(f"权限拒绝 (deny 规则优先): {tool_name} (scope={rule.scope})")
-                denied = True
-                break
+        if tool_name not in HITL_GATE_TOOLS:
+            for rule in rules_snapshot:
+                if rule.matches(tool_name, params) and not rule.allowed:
+                    logger.warning(f"权限拒绝 (deny 规则优先): {tool_name} (scope={rule.scope})")
+                    denied = True
+                    break
 
         # Hook: PERMISSION_REQUEST — 带外确认入口 (CR-2/3)。A-6: BYPASS 亦不跳过审计 Hook
         # (仍 fire 以记录), 仅最终判定照旧全放行。
@@ -331,9 +339,11 @@ class PermissionManager:
             return True
 
         # CR-16: approve 规则命中→allow (任意 level); deny 已在上一步处理
-        for rule in rules_snapshot:
-            if rule.matches(tool_name, params) and rule.allowed:
-                return True
+        # issue #340: 闸门工具同样不吃 approve 规则 — 持久放行 = 永久跳过人工闸门
+        if tool_name not in HITL_GATE_TOOLS:
+            for rule in rules_snapshot:
+                if rule.matches(tool_name, params) and rule.allowed:
+                    return True
 
         # issue #301: 可信同步目标 (模板确定性同步) — 规则之后、高风险闸门之前放行
         if self._is_trusted_sync_target(tool_name, params):
@@ -515,6 +525,11 @@ class PermissionManager:
             local_tool = self._pending_local_approvals.pop(action_id, None)
         if local_tool:
             self._pending_local_details.pop(action_id, None)
+            # issue #340: 闸门决定不落持久规则 — approve/deny 都只出队,
+            # 每次闸门评估产生新鲜 HITL 卡 (approve 规则同样会盲放后续所有闸门)
+            if local_tool in HITL_GATE_TOOLS:
+                logger.info(f"闸门一次性决定 (不落规则): {local_tool} approved={approved} (action_id={action_id})")
+                return True
             if approved:
                 self.approve(local_tool, scope=scope)
                 logger.info(f"本地 confirm 批准, 加 approve 规则: {local_tool} (scope={scope}, by={approved_by})")
