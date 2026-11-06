@@ -151,11 +151,21 @@ def _walk_ref_path(cur: Any, parts: List[str]) -> Tuple[Any, bool]:
     return cur, True
 
 
+def _resolve_result_ref(local_input: Dict[str, Any], parts: List[str]) -> Tuple[Any, bool]:
+    # issue #343: 上游输出常见 {"result": {...}} 信封 (github_api 等节点) —
+    # 速记先取顶层键, 未命中再下钻 result 信封子树
+    found, ok = _walk_ref_path(local_input, parts)
+    if not ok and isinstance(local_input, dict):
+        found, ok = _walk_ref_path(local_input.get("result"), parts)
+    return found, ok
+
+
 def _interpolate_step_refs(value: Any, passed_data: Dict[str, Dict[str, Any]], local_input: Dict[str, Any]) -> Any:
     """issue #327: 节点启动前解析 ${step.<id>.<path>} / ${result.<path>} 引用。
 
     - ${step.n1.result.last_result.report} — 显式取指定节点输出 (passed_data)
-    - ${result.repo_path} — 速记: 从本节点已合并的上游输入 (local_input) 取值
+    - ${result.repo_path} — 速记: 从本节点已合并的上游输入 (local_input) 取值,
+      未命中时下钻上游 {"result": {...}} 信封子树 (issue #343)
     - 整串命中保留原始类型 (issue_number 数字不变字符串); 嵌入串 str 化
     - 未命中保留字面量 + WARNING (与模板 _substitute_params 约定一致, 不静默丢)
     """
@@ -171,7 +181,7 @@ def _interpolate_step_refs(value: Any, passed_data: Dict[str, Dict[str, Any]], l
             return value
         m = _RESULT_REF_RE.fullmatch(value)
         if m:
-            found, ok = _walk_ref_path(local_input, m.group(1).split("."))
+            found, ok = _resolve_result_ref(local_input, m.group(1).split("."))
             if ok:
                 return found
             logger.warning(f"result 引用未命中, 保留字面量: {value[:120]}")
@@ -183,7 +193,7 @@ def _interpolate_step_refs(value: Any, passed_data: Dict[str, Dict[str, Any]], l
                     passed_data.get(m.group(1)), m.group(2).lstrip(".").split(".") if m.group(2) else []
                 )
             else:
-                found, ok = _walk_ref_path(local_input, m.group(1).split("."))
+                found, ok = _resolve_result_ref(local_input, m.group(1).split("."))
             if not ok:
                 logger.warning(f"引用未命中, 保留字面量: {m.group(0)[:120]}")
                 return m.group(0)
@@ -197,6 +207,24 @@ def _interpolate_step_refs(value: Any, passed_data: Dict[str, Dict[str, Any]], l
     if isinstance(value, list):
         return [_interpolate_step_refs(v, passed_data, local_input) for v in value]
     return value
+
+
+# issue #343: 只扫描引擎可解析的三类引用前缀 — ${run_id} 等自由占位符不受影响
+_UNRESOLVED_REF_RE = re.compile(r"\$\{(?:result|step|param)\.[^}]*\}")
+
+
+def _find_unresolved_refs(value: Any, out: Optional[List[str]] = None) -> List[str]:
+    if out is None:
+        out = []
+    if isinstance(value, str):
+        out.extend(m.group(0) for m in _UNRESOLVED_REF_RE.finditer(value))
+    elif isinstance(value, dict):
+        for v in value.values():
+            _find_unresolved_refs(v, out)
+    elif isinstance(value, list):
+        for v in value:
+            _find_unresolved_refs(v, out)
+    return out
 
 
 def _node_verdict(status: NodeStatus, output: Any) -> str:
@@ -1160,6 +1188,26 @@ class WorkflowEngine:
         if has_ref:
             node_input = _interpolate_step_refs(node_input, passed_data, node_input)
             node.config.params = _interpolate_step_refs(dict(node.config.params or {}), passed_data, node_input)
+            # issue #343: 插值后仍残留 result./step./param. 引用 = 装配期缺参或引用断链 —
+            # 明确报错, 不留字面量进节点 (int()/float() 二次崩溃报错难懂)
+            leftover = _find_unresolved_refs(node.config.params or {})
+            if leftover:
+                msg = f"unresolved interpolation: {', '.join(dict.fromkeys(leftover))}"
+                logger.error(f"[{exec_id}] {msg} node={node.name}")
+                step = WorkflowStep(
+                    node_id=node_id,
+                    node_name=node.name,
+                    node_display_name=node.config.label or node.display_name,
+                    status=NodeStatus.FAILED,
+                    started_at=time.time(),
+                    input_data=node_input,
+                    output_data={"unresolved_refs": sorted(set(leftover))},
+                    executor=executor.name,
+                )
+                step.completed_at = time.time()
+                step.execution_time = 0
+                step.error = msg
+                return [step], "fail", msg
             logger.debug(f"[{exec_id}] step 引用解析完成: node={node.name}")
 
         # issue #328: 修订回路 — 重跑产出节点时评审意见并入输入 (节点读 revision_comments)

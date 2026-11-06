@@ -126,13 +126,15 @@ class TestStepRefInterpolation:
         assert _ConsumeNode.seen[-1]["params"]["issue_number"] == 42
         assert isinstance(_ConsumeNode.seen[-1]["params"]["issue_number"], int)
 
-    async def test_unresolved_ref_kept_literal(self):
+    async def test_unresolved_ref_fails_loud(self):
+        # issue #343: 未命中引用不再留字面量进节点 — 明确 unresolved interpolation 报错
         _ConsumeNode.seen = []
         eng = WorkflowEngine()
         wf = _engine_wf({"goal": "missing ${step.n1.nope.deep}"})
         execution = await eng.execute(wf, execution_id="run-327-miss")
-        assert execution.status.value == "success"
-        assert _ConsumeNode.seen[-1]["params"]["goal"] == "missing ${step.n1.nope.deep}"
+        assert _ConsumeNode.seen == []
+        assert execution.status.value == "failed"
+        assert "unresolved interpolation" in execution.error
 
     async def test_ref_inside_list_param(self):
         _ConsumeNode.seen = []
