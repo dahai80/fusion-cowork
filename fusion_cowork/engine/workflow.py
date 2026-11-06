@@ -27,7 +27,12 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from .executors import NodeExecutionContext, executor_for_node, executor_names
 from .hooks import HookEvent
 from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus
-from .permission_manager import reset_approval_context, set_approval_context
+from .permission_manager import (
+    reset_approval_context,
+    reset_approval_evidence,
+    set_approval_context,
+    set_approval_evidence,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +87,45 @@ def _sanitize_params(params: Any) -> str:
     if len(params) > _LOG_MAX_KEYS:
         out["..."] = f"<+{len(params) - _LOG_MAX_KEYS} more>"
     return json.dumps(out, ensure_ascii=False, default=str)
+
+
+# issue #326: 审批证据快照上限 — 每产出节点 3 键/2000 字, 最多 3 个上游节点
+_EVIDENCE_MAX_NODES = 3
+_EVIDENCE_MAX_KEYS = 3
+_EVIDENCE_MAX_CHARS = 2000
+
+
+def _evidence_cap_value(v: Any) -> Any:
+    # 证据值快照: 标量直传 (长字符串截断), dict/list JSON 截断 — 预览用途, 不承载全量产出
+    if isinstance(v, str):
+        return v[:_EVIDENCE_MAX_CHARS]
+    if isinstance(v, (int, float, bool)) or v is None:
+        return v
+    text = json.dumps(v, ensure_ascii=False, default=str)
+    return text[:_EVIDENCE_MAX_CHARS]
+
+
+def _collect_upstream_evidence(workflow: Workflow, node: BaseNode, passed_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    # issue #326: 被闸节点的直接上游产出快照 — 审批卡展示评审对象 (PRD/架构等)
+    evidence: List[Dict[str, Any]] = []
+    seen: set = set()
+    for edge in workflow.edges:
+        if edge.target_id != node.id or edge.source_id in seen or edge.source_id not in passed_data:
+            continue
+        seen.add(edge.source_id)
+        src = workflow.nodes.get(edge.source_id)
+        out = passed_data[edge.source_id]
+        keys = list(out.items())[:_EVIDENCE_MAX_KEYS] if isinstance(out, dict) else [("output", out)]
+        evidence.append(
+            {
+                "node_id": edge.source_id,
+                "node_name": getattr(src, "display_name", None) or getattr(src, "name", edge.source_id),
+                "output": {str(k): _evidence_cap_value(v) for k, v in keys},
+            }
+        )
+        if len(evidence) >= _EVIDENCE_MAX_NODES:
+            break
+    return evidence
 
 
 _STEP_REF_RE = re.compile(r"\$\{step\.([A-Za-z0-9_\-]+)((?:\.[A-Za-z0-9_\-]+)*)\}")
@@ -1145,10 +1189,13 @@ class WorkflowEngine:
                         "workspace_id": self._run_workspace.get(exec_id, ""),
                     }
                 )
+                # issue #326: 附上游产物证据 — 拒绝入待审批队列时卡片带产出快照
+                etoken = set_approval_evidence(_collect_upstream_evidence(workflow, node, passed_data))
                 try:
                     allowed = await self._permission_manager.check(node.name, "execute", check_input)
                 finally:
                     reset_approval_context(token)
+                    reset_approval_evidence(etoken)
                 if (
                     not allowed
                     and self._hitl_pause_overrides.get(exec_id, self._hitl_pause)

@@ -705,6 +705,26 @@ function InlineApprovalCard({
             <div className="mt-1 font-mono text-[11px] text-text-secondary">
                 {approval.tool_name}({JSON.stringify(approval.params ?? {})})
             </div>
+            {(approval.artifacts ?? []).length > 0 ? (
+                <div className="mt-2 space-y-1.5">
+                    <div className="text-[10px] text-text-muted">{t('上游产出', 'Upstream output')}</div>
+                    {(approval.artifacts ?? []).map((ev) => (
+                        <div key={ev.node_id} className="rounded-md border border-border bg-bg px-2 py-1.5">
+                            <div className="text-[10px] font-medium text-text-secondary">
+                                {ev.node_name || ev.node_id}
+                            </div>
+                            {Object.entries(ev.output ?? {}).map(([k, v]) => (
+                                <div key={k} className="mt-1">
+                                    <div className="text-[10px] text-text-muted">{k}</div>
+                                    <pre className="mt-0.5 max-h-32 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[11px] text-text-primary">
+                                        {typeof v === 'string' ? v : JSON.stringify(v)}
+                                    </pre>
+                                </div>
+                            ))}
+                        </div>
+                    ))}
+                </div>
+            ) : null}
             {editing ? (
                 <div className="mt-2">
                     <textarea

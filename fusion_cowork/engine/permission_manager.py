@@ -44,6 +44,19 @@ def reset_approval_context(token) -> None:
     _approval_context.reset(token)
 
 
+# issue #326: 上游产物证据 (产出节点输出快照) — WorkflowEngine 在 check 前写入,
+# 待审批卡附 artifacts 块, 评审者不用离开审批界面去找产出资材。
+_approval_evidence: ContextVar = ContextVar("fc_approval_evidence")
+
+
+def set_approval_evidence(items: List[Dict[str, Any]]):
+    return _approval_evidence.set(list(items))
+
+
+def reset_approval_evidence(token) -> None:
+    _approval_evidence.reset(token)
+
+
 def _sanitize_approval_params(params: Dict[str, Any] = None) -> Dict[str, Any]:
     # 审批卡参数快照: 仅标量, 字符串 200 字上限, 秘钥类键名脱敏, 20 键上限
     if not isinstance(params, dict):
@@ -402,6 +415,8 @@ class PermissionManager:
             # issue #142: 编辑型待审批附 diff 分块 + 重建用原文
             "diff_blocks": _build_diff_blocks(params),
             "raw_edit": _build_raw_edit(params),
+            # issue #326: 上游产物证据 — 评审卡直接展示产出节点输出
+            "artifacts": list(_approval_evidence.get([])),
         }
         logger.info(f"高风险节点拒绝入待审批队列: {tool_name} (action_id={action_id})")
         self._notify_pending(tool_name, action_id, source="local", params=params)
