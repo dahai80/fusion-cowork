@@ -1,3 +1,19 @@
+---
+doc_id: fusion-cowork/readme/web
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: readme
+title: {zh: "Fusion Cowork Web 画布 UI", en: "Fusion Cowork web canvas UI"}
+audience: engineer
+status: draft
+version: 0.5.85
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - web/README.md
+---
+
 # Fusion Cowork Web
 
 DAG workflow canvas UI package for fusion-cowork — the web edition of the workflow builder (union-web PRD N-6, issue #94).

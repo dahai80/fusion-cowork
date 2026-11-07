@@ -1,3 +1,19 @@
+---
+doc_id: fusion-cowork/guide/node-library-cn
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: guide
+title: {zh: "节点库目录（中文）", en: "Node library catalog (Chinese)"}
+audience: engineer
+status: draft
+version: 0.5.85
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/node-library_CN.md
+---
+
 # 官方节点库 (issue #262)
 
 面向客户流程的五个一方通用节点家族。所有配置均为流程实例级数据 — 节点代码零业务常量。令牌只经环境变量传递，绝不进入流程定义或日志。

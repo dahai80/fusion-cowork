@@ -1,11 +1,31 @@
+---
+doc_id: fusion-cowork/readme-cn
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: readme
+title: {zh: "Fusion-Cowork — 本地优先的零代码桌面自动化平台", en: "Fusion-Cowork — local-first zero-code desktop automation"}
+audience: engineer
+status: draft
+version: 0.5.85
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - README_CN.md
+---
+
 [English](README.md) | [中文](README_CN.md)
 
 ---
 
 <div align="center">
-  <h1>🧹 Fusion-Cowork</h1>
-  <p><strong>macOS 原生、本地优先、零代码桌面智能自动化平台</strong></p>
-  <p><em>让 Mac 自己干活，本地 AI 全自动桌面办公</em></p>
+
+# 🧹 Fusion-Cowork
+
+**macOS 原生、本地优先、零代码桌面智能自动化平台**
+
+*让 Mac 自己干活，本地 AI 全自动桌面办公*
+
 </div>
 
 <p align="center">
@@ -41,13 +61,13 @@
 - ✅ **MLX 硬件加速** — Apple Silicon 原生推理，无需 GPU
 - ✅ **AI 语义理解** — 理解文件内容，不只是文件名
 - ✅ **零代码操作** — 一句话描述需求，自动生成完整流程
-- ✅ **Fusion 全生态互通** — 与 Code / Studio / KB / Hub 无缝联动
+- ✅ **Fusion 全生态互通** — 与 Code / Studio / KB / Hub 直接联动
 
 ---
 
 ## 🚀 快速开始
 
-> **第一次用 fusion-cowork？** 跟着 **[入门指南](docs/guide.md)** 走 —— 场景化实战演练（整理桌面、一句话 AI 生成工作流、批量处理文档、自动化网站、定时任务、Claude Code MCP、团队协作、云端部署），含场景选择决策表和排错决策树。本 README 是完整的命令/节点参考手册；指南是上手坡道。
+> **第一次用 fusion-cowork？** 跟着 **[入门指南](docs/guides/guide.md)** 走 —— 场景化实战演练（整理桌面、一句话 AI 生成工作流、批量处理文档、自动化网站、定时任务、Claude Code MCP、团队协作、云端部署），含场景选择决策表和排错决策树。本 README 是完整的命令/节点参考手册；指南是上手坡道。
 
 ### 安装
 
@@ -1103,7 +1123,7 @@ pytest tests/ --cov=fusion_cowork --cov-report=html
 - [x] AI 批量处理（分类/摘要/重命名）
 - [x] 模板中心（10 个内置模板）
 - [x] 自然语言生成工作流
-- [x] 生态基础打通（fusion-mlx / Fusion-KB）
+- [x] 生态基础对接（fusion-mlx / Fusion-KB）
 - [x] 参数类型强制转换（吸纳自 Squish）
 - [x] Lazy Import 架构（吸纳自 Squish）
 - [x] 工具节点：Shell、Python REPL、Web 搜索、获取网页、文件编辑
@@ -1327,8 +1347,8 @@ Fusion-Cowork 基于以下开源项目的模式构建：
 ---
 
 <p align="center">
-  <strong>Fusion-Cowork — 让 Mac 自己干活，本地 AI 全自动桌面办公</strong>
+  <b>Fusion-Cowork — 让 Mac 自己干活，本地 AI 全自动桌面办公</b>
 </p>
 <p align="center">
-  <sub>Built with ❤️ by Fusion-MLX Team</sub>
+  Built with ❤️ by Fusion-MLX Team
 </p>

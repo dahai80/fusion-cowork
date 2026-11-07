@@ -1,3 +1,19 @@
+---
+doc_id: fusion-cowork/guide/identity
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: guide
+title: {zh: "身份与密钥模型", en: "Identity and key model"}
+audience: engineer
+status: draft
+version: 0.5.85
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/identity.md
+---
+
 # fusion-identity Integration: Production Contract
 
 > Issue #90 — production identity path, env defaults, and the HTTP/UDS contract

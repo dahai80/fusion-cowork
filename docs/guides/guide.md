@@ -1,8 +1,24 @@
+---
+doc_id: fusion-cowork/guide/scenarios
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: guide
+title: {zh: "场景化上手指南", en: "Getting started guide — scenario walkthroughs"}
+audience: engineer
+status: draft
+version: 0.5.85
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/guides/guide.md
+---
+
 # Getting Started Guide — Scenario Walkthroughs
 
 A guided, scenario-based path from zero to productive with fusion-cowork. Each scenario is a complete loop: a real situation → the commands to run → what you'll see → the result → how to verify → how to make it automatic → tweaks.
 
-> Prefer a flat catalog of every command? See the [README](../README.md) (English) or [README_CN](../README_CN.md) (中文) instead. This guide is the on-ramp.
+> Prefer a flat catalog of every command? See the [README](../../README.md) (English) or [README_CN](../../README_CN.md) (中文) instead. This guide is the on-ramp.
 
 ---
 
@@ -359,7 +375,7 @@ pip install -e ".[cloud,web]"      # pyjwt, asyncpg, cryptography, prometheus-cl
 ```bash
 docker-compose up -d postgres      # postgres:16 on :5432
 export FUSION_PG_DSN="postgresql://fusion:fusion@localhost:5432/fusion"
-export FUSION_JWT_SECRET="your-hs256-secret"
+export FUSION_JWT_SECRET="$(openssl rand -hex 32)"
 fusion-cowork serve --container    # binds 0.0.0.0, SIGTERM graceful drain
 ```
 *You'll see:* the server up on 0.0.0.0, health at `/health` (checks DB / disk / upstream MLX), migrations applied (`schema_migrations` table), RLS policies enabled.
@@ -442,8 +458,8 @@ Still stuck?
 
 You've finished a scenario end to end. From here:
 
-- **Full command reference** — every CLI command and env var: [README](../README.md) / [README_CN](../README_CN.md). This guide is the on-ramp; the README is the complete catalog.
-- **API signatures** (Workflow, WorkflowEngine, Orchestrator, MCP, ReportGenerator): [api.md](api.md).
+- **Full command reference** — every CLI command and env var: [README](../../README.md) / [README_CN](../../README_CN.md). This guide is the on-ramp; the README is the complete catalog.
+- **API signatures** (Workflow, WorkflowEngine, Orchestrator, MCP, ReportGenerator): [api.md](../api-reference.md).
 - **All 67 nodes** with params: README → "Node Reference" tables by category.
 - **Write your own node** (Python): subclass `BaseNode`, decorate `@register_node`, drop in `nodes/<category>/`. See existing nodes as templates.
 - **3rd-party node packages** (plugins): sign the manifest (Ed25519), `fusion-cowork plugin install /path/to/plugin`. Sandboxed plugins run out-of-process.

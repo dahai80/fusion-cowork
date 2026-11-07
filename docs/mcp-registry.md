@@ -1,10 +1,26 @@
+---
+doc_id: fusion-cowork/guide/mcp-registry
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: guide
+title: {zh: "MCP 注册表", en: "MCP registry"}
+audience: engineer
+status: draft
+version: 0.5.85
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/mcp-registry.md
+---
+
 # MCP Server Registry & Credential Conventions (Consumed-Server Side)
 
 This document covers how fusion-cowork **consumes** external MCP tool servers from DAGs:
 the approved-server inventory, per-scope approval, credential issuance for consumed
 servers, warn-level registry enforcement, and the correlation-id audit contract.
 For cowork's *own* MCP server (16 built-in tools, stdio/HTTP `:11438`) see
-[api.md](api.md); for the identity/key model see [identity.md](identity.md).
+[api.md](api-reference.md); for the identity/key model see [identity.md](identity.md).
 
 ## 1. Approved-server inventory
 

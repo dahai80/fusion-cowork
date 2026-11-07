@@ -1,3 +1,19 @@
+---
+doc_id: fusion-cowork/guide/capability-marketplace
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: guide
+title: {zh: "能力市场", en: "Capability marketplace"}
+audience: engineer
+status: draft
+version: 0.5.85
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/capability-marketplace.md
+---
+
 # Capability Marketplace (issue #228)
 
 Workspace-scoped pool of skills, connectors and subagents. Installing a
