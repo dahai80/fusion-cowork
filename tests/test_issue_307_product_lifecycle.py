@@ -145,12 +145,16 @@ class TestRepoScaffold:
 
     @pytest.mark.asyncio
     async def test_refuses_existing_dir(self, tmp_path):
-        (tmp_path / "ai-demo").mkdir()
+        # issue #352: 非空目录且未传 overwrite=true 仍拒绝, 但报错带补救提示; 空目录自动复用
+        target = tmp_path / "ai-demo"
+        target.mkdir()
+        (target / "keep.txt").write_text("x")
         node = RepoScaffoldNode()
         node.config.params = {"slug": "demo", "base_dir": str(tmp_path)}
         res = await node.execute({})
         assert res.status.value == "failed"
         assert "已存在" in res.error
+        assert "overwrite=true" in res.error
 
     @pytest.mark.asyncio
     async def test_rejects_bad_slug(self, tmp_path):

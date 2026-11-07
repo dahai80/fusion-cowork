@@ -280,6 +280,22 @@ class GitHubNode(BaseNode):
         logger.info(f"github_api {op} {repo}#{issue_number or '-'}")
         try:
             async with self._client(base_url, token, timeout) as client:
+                # issue #352: issue_create 幂等 — 先查同标题开放 issue, 命中即复用不重建
+                # (管道重跑不再重复建任务 issue; 标题精确相等才算命中)
+                if op == "issue_create":
+                    q = f'repo:{repo} is:issue is:open "{title.replace(chr(34), chr(92) + chr(34))}"'
+                    sresp = await client.request("GET", "/search/issues", params={"q": q})
+                    sresp.raise_for_status()
+                    for item in (sresp.json() or {}).get("items") or []:
+                        if isinstance(item, dict) and str(item.get("title") or "") == title:
+                            logger.info(
+                                f"github_api issue_create 幂等复用: {repo}#{item.get('number')} (同标题开放 issue 已存在)"
+                            )
+                            return NodeResult(
+                                status=NodeStatus.SUCCESS,
+                                data={"result": dict(item), "deduplicated": True},
+                                summary=f"issue 已存在, 复用 #{item.get('number')}: {title[:60]}",
+                            )
                 resp = await client.request(method, path, json=payload)
                 resp.raise_for_status()
                 data = resp.json()
@@ -704,6 +720,14 @@ class ClaudeDispatchNode(BaseNode):
                 "claude_bin": {"type": "string", "default": "claude", "description": "claude 可执行文件路径"},
                 "timeout": {"type": "number", "default": 1800, "description": "墙钟上限 (秒)"},
                 "max_tokens": {"type": "number", "default": 200000, "description": "token 用量上限"},
+                "permission_mode": {
+                    "type": "string",
+                    "default": "bypassPermissions",
+                    "description": (
+                        "claude CLI --permission-mode (headless -p 下需审批的工具默认被自动拒绝, "
+                        "自主派发默认 bypassPermissions; 补偿控制: allowed_repos 白名单 + 固定 cwd + PR 交付契约)"
+                    ),
+                },
                 "ready_label": {"type": "string", "default": "state:ready"},
                 "dispatched_label": {"type": "string", "default": "state:dispatched"},
             },
@@ -756,6 +780,9 @@ class ClaudeDispatchNode(BaseNode):
         claude_bin = str(params.get("claude_bin") or "claude")
         timeout = float(params.get("timeout") or 1800)
         max_tokens = int(params.get("max_tokens") or 200000)
+        # issue #353: headless -p 下需审批工具被自动拒绝 — 自主派发默认 bypassPermissions,
+        # 补偿控制: allowed_repos 白名单 + 固定 cwd + PR-only 交付契约 + 标签状态机回退
+        permission_mode = str(params.get("permission_mode") or "bypassPermissions")
         ready_label = str(params.get("ready_label") or "state:ready")
         dispatched_label = str(params.get("dispatched_label") or "state:dispatched")
 
@@ -793,7 +820,7 @@ class ClaudeDispatchNode(BaseNode):
             if os.environ.get(_k):
                 env[_k] = os.environ[_k]
 
-        argv = [claude_bin, "-p", full_prompt, "--output-format", "json"]
+        argv = [claude_bin, "-p", full_prompt, "--output-format", "json", "--permission-mode", permission_mode]
         logger.info(
             f"claude_dispatch start: {repo}#{issue_number} cwd={cwd} timeout={timeout:g}s max_tokens={max_tokens}"
         )
@@ -914,6 +941,11 @@ class RepoScaffoldNode(BaseNode):
                     "description": "业务仓库根目录 (目录须已存在)",
                 },
                 "display_name": {"type": "string", "description": "README 标题用显示名"},
+                "overwrite": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "目标目录已存在且有内容时复写脚手架文件 (issue #352 重跑幂等; 空目录始终自动复用)",
+                },
             },
             "required": ["slug"],
         }
@@ -923,6 +955,7 @@ class RepoScaffoldNode(BaseNode):
         slug = str(inputs.get("slug") or params.get("slug") or "").strip()
         base_dir = str(params.get("base_dir") or "~/fusion/business")
         display_name = str(params.get("display_name") or "")
+        overwrite = bool(params.get("overwrite") or False)
 
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
             return NodeResult(status=NodeStatus.FAILED, error=f"slug 须匹配 ^[a-z0-9][a-z0-9-]*$: {slug!r}")
@@ -930,8 +963,24 @@ class RepoScaffoldNode(BaseNode):
         if not base.is_dir():
             return NodeResult(status=NodeStatus.FAILED, error=f"base_dir 不存在: {base}")
         repo_path = base / f"ai-{slug}"
+        # issue #352: 重跑幂等 — 空目录自动复用; 有内容时 overwrite=true 复写脚手架文件
+        # (脚手架文件是静态模板, 复写安全; 不动 .git 与既有产出), 否则明确报错给补救提示
+        reused = False
+        existed = repo_path.exists()
         if repo_path.exists():
-            return NodeResult(status=NodeStatus.FAILED, error=f"目标目录已存在, 不覆盖: {repo_path}")
+            if not any(repo_path.iterdir()):
+                reused = True
+                logger.info(f"repo_scaffold 复用空目录: {repo_path}")
+            elif overwrite:
+                logger.warning(f"repo_scaffold overwrite: 复写脚手架文件: {repo_path}")
+            else:
+                return NodeResult(
+                    status=NodeStatus.FAILED,
+                    error=(
+                        f"目标目录已存在: {repo_path} (重跑幂等: 传 overwrite=true 复写脚手架文件, "
+                        "空目录会自动复用, 或手动删除后重试)"
+                    ),
+                )
 
         pkg = f"fusion_ai_{slug.replace('-', '_')}"
         title = display_name or f"ai-{slug}"
@@ -964,32 +1013,35 @@ class RepoScaffoldNode(BaseNode):
         }
         created: List[str] = []
         try:
+            # 复用空目录/复写/全新三种路径都写入脚手架文件 (复用 = 目录可落脚手架, 非跳过)
             for rel, content in files.items():
                 p = repo_path / rel
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(content, encoding="utf-8")
                 created.append(rel)
-            proc = await asyncio.create_subprocess_exec(
-                "git",
-                "init",
-                "-q",
-                str(repo_path),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, err = await asyncio.wait_for(proc.communicate(), timeout=30)
-            if proc.returncode != 0:
-                logger.warning(
-                    f"repo_scaffold git init 退出码 {proc.returncode}: {err.decode('utf-8', 'replace')[:200]}"
+            # 已有 .git 的目录跳过 init (git init 重复执行无害, 但省一次子进程)
+            if not (repo_path / ".git").exists():
+                proc = await asyncio.create_subprocess_exec(
+                    "git",
+                    "init",
+                    "-q",
+                    str(repo_path),
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
                 )
+                _, err = await asyncio.wait_for(proc.communicate(), timeout=30)
+                if proc.returncode != 0:
+                    logger.warning(
+                        f"repo_scaffold git init 退出码 {proc.returncode}: {err.decode('utf-8', 'replace')[:200]}"
+                    )
         except OSError as e:
             return NodeResult(status=NodeStatus.FAILED, error=f"脚手架写入失败: {e}")
         except TimeoutError:
             return NodeResult(status=NodeStatus.FAILED, error="git init 超时 (30s)")
 
-        logger.info(f"repo_scaffold ok: {repo_path} ({len(created)} files)")
+        logger.info(f"repo_scaffold ok: {repo_path} ({len(created)} files, reused={reused})")
         return NodeResult(
             status=NodeStatus.SUCCESS,
-            data={"repo_path": str(repo_path), "created_files": created},
-            summary=f"脚手架完成: {repo_path}",
+            data={"repo_path": str(repo_path), "created_files": created, "reused": reused},
+            summary=f"脚手架完成{' (复用已有目录)' if existed else ''}: {repo_path}",
         )
