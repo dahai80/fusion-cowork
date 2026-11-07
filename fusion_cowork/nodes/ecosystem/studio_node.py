@@ -155,6 +155,13 @@ class StudioRunNode(BaseNode):
                     "type": "string",
                     "description": "幂等键 (重复提交去重, 上游 deduped 标记)",
                 },
+                "max_turns": {
+                    "type": "number",
+                    "description": (
+                        "run 轮次预算 (经 /v1/runs body spec.max_turns 传入; 缺省不传 — 上游按 agent "
+                        "manifest 或 studio 默认 8 轮; 多产物角色建议 16-24, issue #363)"
+                    ),
+                },
             },
             "required": ["input"],
         }
@@ -174,6 +181,7 @@ class StudioRunNode(BaseNode):
         poll_interval = _clamp_poll_interval(float(params.get("poll_interval", _POLL_INTERVAL) or _POLL_INTERVAL))
         title = str(params.get("title", "") or "")
         idempotency_key = str(params.get("idempotency_key", "") or "")
+        max_turns = params.get("max_turns")
 
         if not text:
             return NodeResult(
@@ -214,6 +222,9 @@ class StudioRunNode(BaseNode):
                     payload["title"] = title
                 if idempotency_key:
                     payload["idempotency_key"] = idempotency_key
+                if max_turns:
+                    # issue #363: 显式轮次预算 — studio 默认 8 轮会饿死多产物角色
+                    payload["spec"] = {"max_turns": int(max_turns)}
                 submitted = await _submit_run(client, payload)
                 run_id = str(submitted.get("run_id", "") or "")
                 if not run_id:

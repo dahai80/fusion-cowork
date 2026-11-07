@@ -845,6 +845,13 @@ BUILTIN_TEMPLATES = [
                     "default": 3600,
                 },
                 "dispatch_max_tokens": {"type": "number", "description": "派发 token 上限", "default": 200000},
+                # issue #363: studio_run 座位轮次预算 — studio 默认 8 轮会饿死多产物角色
+                # (env-mock/architect), 经 spec.max_turns 显式传入
+                "seat_max_turns": {
+                    "type": "number",
+                    "description": "studio_run 座位轮次预算 (spec.max_turns; 缺省 24, studio 默认 8 轮会饿死多产物角色)",
+                    "default": 24,
+                },
             },
             # issue #320: 座位 ID 二选一 — 装配时显式 graph_id 优先, 清空 agent 缺省 (反之亦然)
             "seat_pairs": [
@@ -867,6 +874,8 @@ BUILTIN_TEMPLATES = [
                             "agent_id": "${param.ba_agent_id}",
                             "input": "Write the PRD for product ${param.slug}. Output the PRD document content.",
                             "mode": "sync",
+                            # issue #363: 显式轮次预算 — studio 默认 8 轮饿死多产物角色
+                            "max_turns": "${param.seat_max_turns}",
                         }
                     },
                 },
@@ -894,6 +903,7 @@ BUILTIN_TEMPLATES = [
                             # run result artifacts[0] 为 id 字符串), 下游座位按 id 取 PRD, 不猜路径
                             "input": "Write the architecture/plan for product ${param.slug} based on the approved PRD below.\n\nPRD artifact id (canonical reference — read the PRD by this artifact id, never guess file paths):\n${step.n1.result.artifacts.0}\n\nPRD document:\n${step.n1.result.last_result.report}",
                             "mode": "sync",
+                            "max_turns": "${param.seat_max_turns}",
                         }
                     },
                 },
@@ -975,6 +985,7 @@ BUILTIN_TEMPLATES = [
                             # issue #346: env pack 同样收规范 artifact id 交接 (PRD + 架构)
                             "input": "Prepare the env/mock pack for product ${param.slug} per the PRD and architecture below.\n\nPRD artifact id (canonical reference):\n${step.n1.result.artifacts.0}\n\nArchitecture artifact id (canonical reference):\n${step.n3.result.artifacts.0}\n\nPRD document:\n${step.n1.result.last_result.report}\n\nArchitecture document:\n${step.n3.result.last_result.report}",
                             "mode": "sync",
+                            "max_turns": "${param.seat_max_turns}",
                         }
                     },
                 },
