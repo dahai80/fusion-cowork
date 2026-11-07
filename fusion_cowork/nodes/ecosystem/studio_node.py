@@ -83,11 +83,6 @@ async def _get_run_result(client: httpx.AsyncClient, run_id: str) -> Dict[str, A
     return resp.json()
 
 
-async def _cancel_run(client: httpx.AsyncClient, run_id: str) -> None:
-    resp = await client.post(f"/v1/runs/{run_id}/cancel")
-    resp.raise_for_status()
-
-
 def _clamp_poll_interval(value: float) -> float:
     if value < _POLL_INTERVAL_MIN:
         return _POLL_INTERVAL_MIN
@@ -144,8 +139,8 @@ class StudioRunNode(BaseNode):
                 },
                 "timeout": {
                     "type": "number",
-                    "description": "sync 模式等待终态的总超时秒数",
-                    "default": 300.0,
+                    "description": "sync 模式等待终态的总超时秒数 (缺省 900, 可用 FUSION_COWORK_STUDIO_RUN_TIMEOUT 覆盖)",
+                    "default": 900.0,
                 },
                 "poll_interval": {
                     "type": "number",
@@ -173,7 +168,9 @@ class StudioRunNode(BaseNode):
         agent_id = str(inputs.get("agent_id", params.get("agent_id", "")) or "")
         text = str(inputs.get("input", params.get("input", "")) or "")
         mode = str(params.get("mode", "sync") or "sync")
-        timeout = params.get("timeout", 300.0) or 300.0
+        # issue #351: 默认 300s 会取消健康的 4B 座位长生成 — 900s 起步,
+        # 可用 FUSION_COWORK_STUDIO_RUN_TIMEOUT 环境变量全局调整
+        timeout = params.get("timeout") or float(os.environ.get("FUSION_COWORK_STUDIO_RUN_TIMEOUT") or 900.0)
         poll_interval = _clamp_poll_interval(float(params.get("poll_interval", _POLL_INTERVAL) or _POLL_INTERVAL))
         title = str(params.get("title", "") or "")
         idempotency_key = str(params.get("idempotency_key", "") or "")
@@ -284,18 +281,19 @@ class StudioRunNode(BaseNode):
             if status in _TERMINAL_STATUSES:
                 break
             if time.monotonic() >= deadline:
-                logger.warning("StudioRunNode run %s 等待终态超时 (%.0fs), 尽力取消", run_id, timeout)
-                cancel_error = ""
-                try:
-                    await _cancel_run(client, run_id)
-                except Exception as exc:
-                    logger.warning("StudioRunNode run %s 取消失败: %s", run_id, exc)
-                    cancel_error = f" (取消失败: {exc})"
+                # issue #351: 超时不取消 — 取消会丢弃健康 run 已完成的产物 (仅生成时长抖动);
+                # 保留 run 在上游继续执行, 凭 run_id 可查询/回收结果
+                logger.warning(
+                    "StudioRunNode run %s 等待终态超时 (%.0fs), 不取消 (run 保留在上游继续执行)", run_id, timeout
+                )
                 return NodeResult(
                     status=NodeStatus.FAILED,
-                    error=f"等待 run {run_id} 终态超时 ({timeout:.0f}s), 已尽力取消{cancel_error}",
-                    data={"run_id": run_id, "status": status or "unknown", "result": {}},
-                    summary="等待终态超时",
+                    error=(
+                        f"等待 run {run_id} 终态超时 ({timeout:.0f}s), run 已保留在上游继续执行 (未取消), "
+                        "可凭 run_id 在 agent-studio 查询/回收结果"
+                    ),
+                    data={"run_id": run_id, "status": status or "unknown", "result": {}, "detached": True},
+                    summary="等待终态超时 (run 保留, 未取消)",
                 )
             await asyncio.sleep(poll_interval)
         logger.info("StudioRunNode run %s 终态: %s", run_id, status)
