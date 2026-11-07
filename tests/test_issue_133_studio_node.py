@@ -1,7 +1,7 @@
 """StudioRunNode 单元测试 — fusion-agent-studio HTTP 节点 (issue #133)。
 
 测注册 / 别名 / 参数校验 / async 提交 / sync graph execute / sync run 轮询
-终态 / 超时尽力取消 / 可选鉴权头 / env 覆盖 (httpx MockTransport 离线桩,
+终态 / 超时不取消 (detach, #351) / 可选鉴权头 / env 覆盖 (httpx MockTransport 离线桩,
 不连真 agent-studio, 符合离线测试约束)。
 """
 
@@ -40,7 +40,7 @@ def test_params_schema_required_fields():
     schema = node.get_params_schema()
     assert "input" in schema["required"]
     assert schema["properties"]["mode"]["default"] == "sync"
-    assert schema["properties"]["timeout"]["default"] == 300.0
+    assert schema["properties"]["timeout"]["default"] == 900.0
 
 
 def _patch_transport(monkeypatch, handler):
@@ -216,14 +216,15 @@ async def test_sync_agent_failed_terminal_fails(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_sync_timeout_cancels_best_effort(monkeypatch):
+async def test_sync_timeout_detaches_without_cancel(monkeypatch):
+    # issue #351: 超时不取消 — 取消会丢弃健康 run 已完成的产物; run 保留在上游, 凭 run_id 可回收
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1/runs":
             return httpx.Response(200, json={"run_id": "run-9", "status": "pending", "deduped": False})
         if request.url.path == "/v1/runs/run-9":
             return httpx.Response(200, json={"run_id": "run-9", "status": "running"})
-        if request.url.path == "/v1/runs/run-9/cancel":
-            return httpx.Response(200, json={"run_id": "run-9", "status": "canceled"})
+        if request.url.path.endswith("/cancel"):
+            raise AssertionError("cancel must not be called on sync timeout (issue #351 detach semantics)")
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -231,25 +232,29 @@ async def test_sync_timeout_cancels_best_effort(monkeypatch):
     result = await node.execute({})
     assert result.status == NodeStatus.FAILED
     assert "超时" in result.error
+    assert "未取消" in result.error
     assert result.data["run_id"] == "run-9"
+    assert result.data["detached"] is True
 
 
 @pytest.mark.asyncio
-async def test_sync_timeout_cancel_failure_still_fails_visibly(monkeypatch):
+async def test_default_timeout_env_override(monkeypatch):
+    # issue #351: 参数缺省时 FUSION_COWORK_STUDIO_RUN_TIMEOUT 生效 (此处借小值触发超时路径验证)
+    monkeypatch.setenv("FUSION_COWORK_STUDIO_RUN_TIMEOUT", "0.05")
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1/runs":
             return httpx.Response(200, json={"run_id": "run-10", "status": "pending", "deduped": False})
         if request.url.path == "/v1/runs/run-10":
             return httpx.Response(200, json={"run_id": "run-10", "status": "running"})
-        if request.url.path == "/v1/runs/run-10/cancel":
-            return httpx.Response(500, text="boom")
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
-    node = _make_node(agent_id="a3", poll_interval=0.01, timeout=0.05)
+    node = _make_node(agent_id="a3", poll_interval=0.01)
     result = await node.execute({})
     assert result.status == NodeStatus.FAILED
-    assert "取消失败" in result.error
+    assert "超时" in result.error
+    assert result.data["detached"] is True
 
 
 @pytest.mark.asyncio
