@@ -709,6 +709,11 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### 座位预算 + 报告回收 (v0.5.91, issue #373)
+
+- fix: `product_lifecycle` `seat_max_turns` 缺省 24 → 48 — 内容密集座位 (env-mock) 24 轮耗尽且交付物已在磁盘 (live run_e5d4d34da020) (#376)。
+- fix: `studio_run` 报告回收 (默认开启) — sync run 因 "Max iterations" 失败时自动补一轮 report-only 续跑, 从 workspace 状态写出最终报告而非硬失败; 续跑失败原错误原样上抛。上游根因已提 fusion-agent-studio#640。
+
 ### 僵尸 resume + 停滞看门狗 (v0.5.90, issue #372)
 
 - fix: crash 证据 — 崩溃恢复日志点名崩溃时刻执行中的节点 (取自持久化快照), 不再静默 `paused_reason=crash` (#374)。
