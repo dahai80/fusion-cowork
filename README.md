@@ -35,7 +35,7 @@ source_of_truth:
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.91-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.92-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -493,6 +493,11 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
 - Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
 - Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+### Watchdog Floor (v0.5.92, issue #378)
+
+- fix: two-level timeout disagreement — `claude_dispatch` resolved its 3600s deadline but the engine watchdog (#257, default 1800s) still killed the node first; sessions legitimately needing >30min always failed while the detached child kept working (#379).
+- fix: `BaseNode.watchdog_floor()` — nodes with param-driven deadlines declare the deadline they resolved; the engine raises its watchdog to it (never lowers). Dispatch timeout detach now reports `outcome=detached_session_still_running` + pid, and the cancel log shows both timeouts.
+
 ### Seat Budget + Report Recovery (v0.5.91, issue #373)
 
 - fix: `product_lifecycle` `seat_max_turns` default 24 → 48 — content-heavy seats (env-mock) exhausted 24 turns with the deliverable already on disk (live run_e5d4d34da020) (#376).
