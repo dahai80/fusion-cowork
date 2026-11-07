@@ -787,7 +787,25 @@ BUILTIN_TEMPLATES = [
                 "task_prompt": {
                     "type": "string",
                     "description": "claude_dispatch 任务指令",
-                    "default": "Implement the assigned task per PRD/architecture docs; deliver via PR with self-test evidence.",
+                    # issue #362: 交付契约要求 PR 正文带关闭关键词 — linked_pr 机器验收按
+                    # pr_link_strength=closing 判交付, 仅提及 (hygiene PR) 会被阻塞
+                    "default": (
+                        "Implement the assigned task per PRD/architecture docs; deliver via PR with self-test "
+                        "evidence. The PR body must link this issue with a closing keyword (Closes #N)."
+                    ),
+                },
+                # issue #361: 重跑幂等 — 已有脚手架目录默认拒绝, 传 true 复写脚手架文件
+                # (既有产出保留; 空目录始终自动复用)
+                "scaffold_overwrite": {
+                    "type": "boolean",
+                    "description": "重跑时复写已有脚手架目录 (repo_scaffold overwrite=true; 空目录自动复用, 既有产出保留)",
+                    "default": False,
+                },
+                # issue #362: PR 链接强度闸门 — 仅提及 issue 的 PR (hygiene/aside) 阻塞验收
+                "require_closing_link": {
+                    "type": "boolean",
+                    "description": "linked_pr 仅接受关闭关键词关联的 PR (Closes/Fixes/Resolves #N), 仅提及即阻塞",
+                    "default": True,
                 },
                 "ba_graph_id": {
                     "type": "string",
@@ -893,9 +911,10 @@ BUILTIN_TEMPLATES = [
                     },
                 },
                 {
+                    # issue #361: scaffold_overwrite 模板参数透传 — 重跑管线不再被已有工作树硬阻塞
                     "id": "n5",
                     "name": "repo_scaffold",
-                    "config": {"params": {"slug": "${param.slug}"}},
+                    "config": {"params": {"slug": "${param.slug}", "overwrite": "${param.scaffold_overwrite}"}},
                 },
                 {
                     "id": "n6",
@@ -932,6 +951,7 @@ BUILTIN_TEMPLATES = [
                     },
                 },
                 {
+                    # issue #362: 机器验收按关闭关键词判交付 — hygiene/aside PR (仅提及 issue) 阻塞
                     "id": "n8",
                     "name": "github_api",
                     "config": {
@@ -941,6 +961,7 @@ BUILTIN_TEMPLATES = [
                             "allowed_repos": ["${param.repo}"],
                             "issue_number": "${result.number}",
                             "require": True,
+                            "require_closing_link": "${param.require_closing_link}",
                         }
                     },
                 },

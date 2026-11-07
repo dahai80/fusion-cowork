@@ -78,6 +78,8 @@ class TestLinkedPrOp:
             "pr_url": "https://github.com/org/x/pull/42",
             "pr_number": 42,
             "ci_status": "success",
+            # issue #362: 链接强度 — PR body 无关闭关键词时 mention
+            "pr_link_strength": "mention",
         }
 
     def test_no_pr_reports_found_false(self):
