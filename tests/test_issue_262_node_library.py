@@ -75,7 +75,7 @@ class FakeGHClient:
     async def __aexit__(self, *a):
         return False
 
-    async def request(self, method, path, json=None):
+    async def request(self, method, path, json=None, params=None):
         status, payload = self.status, self.payload
 
         class R:
