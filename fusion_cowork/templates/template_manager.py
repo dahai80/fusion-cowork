@@ -845,12 +845,13 @@ BUILTIN_TEMPLATES = [
                     "default": 3600,
                 },
                 "dispatch_max_tokens": {"type": "number", "description": "派发 token 上限", "default": 200000},
-                # issue #363: studio_run 座位轮次预算 — studio 默认 8 轮会饿死多产物角色
-                # (env-mock/architect), 经 spec.max_turns 显式传入
+                # issue #363/#373: studio_run 座位轮次预算 — studio 默认 8 轮会饿死多产物角色
+                # (env-mock/architect), 经 spec.max_turns 显式传入; live 证据 24 轮对
+                # 内容密集座位仍耗尽 (run_e5d4d34da020), 缺省提到 48
                 "seat_max_turns": {
                     "type": "number",
-                    "description": "studio_run 座位轮次预算 (spec.max_turns; 缺省 24, studio 默认 8 轮会饿死多产物角色)",
-                    "default": 24,
+                    "description": "studio_run 座位轮次预算 (spec.max_turns; 缺省 48, studio 默认 8 轮会饿死多产物角色)",
+                    "default": 48,
                 },
             },
             # issue #320: 座位 ID 二选一 — 装配时显式 graph_id 优先, 清空 agent 缺省 (反之亦然)
