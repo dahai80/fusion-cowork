@@ -131,7 +131,9 @@ def _patch_dispatch_client(monkeypatch, issue_state):
 class TestDispatchNoopDelivery:
     async def test_issue_closed_no_pr_is_success(self, tmp_path, monkeypatch):
         _patch_dispatch_client(monkeypatch, "closed")
-        no_pr = json.dumps({"result": "#9 duplicate of #5, closed with evidence", "usage": {"input_tokens": 10, "output_tokens": 10}})
+        no_pr = json.dumps(
+            {"result": "#9 duplicate of #5, closed with evidence", "usage": {"input_tokens": 10, "output_tokens": 10}}
+        )
         binp = _fake_claude(tmp_path, [f"echo '{no_pr}'"])
         res = await _dispatch_node(tmp_path, binp).execute({})
         assert res.status.value == "success", res.error
