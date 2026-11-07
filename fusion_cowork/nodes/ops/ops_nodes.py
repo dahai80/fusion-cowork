@@ -288,21 +288,24 @@ class GitHubNode(BaseNode):
         logger.info(f"github_api {op} {repo}#{issue_number or '-'}")
         try:
             async with self._client(base_url, token, timeout) as client:
-                # issue #352: issue_create 幂等 — 先查同标题开放 issue, 命中即复用不重建
+                # issue #352: issue_create 幂等 — 先查同标题 issue, 命中即复用不重建
                 # (管道重跑不再重复建任务 issue; 标题精确相等才算命中)
+                # issue #368: 查全状态 (open+closed) — 已交付关闭的同标题 issue 也是重复,
+                # 只查 open 会在 PR 合并关闭后重跑时再建一条假任务
                 if op == "issue_create":
-                    q = f'repo:{repo} is:issue is:open "{title.replace(chr(34), chr(92) + chr(34))}"'
+                    q = f'repo:{repo} is:issue "{title.replace(chr(34), chr(92) + chr(34))}"'
                     sresp = await client.request("GET", "/search/issues", params={"q": q})
                     sresp.raise_for_status()
                     for item in (sresp.json() or {}).get("items") or []:
                         if isinstance(item, dict) and str(item.get("title") or "") == title:
                             logger.info(
-                                f"github_api issue_create 幂等复用: {repo}#{item.get('number')} (同标题开放 issue 已存在)"
+                                f"github_api issue_create 幂等复用: {repo}#{item.get('number')} "
+                                f"(同标题 issue 已存在, state={item.get('state')})"
                             )
                             return NodeResult(
                                 status=NodeStatus.SUCCESS,
-                                data={"result": dict(item), "deduplicated": True},
-                                summary=f"issue 已存在, 复用 #{item.get('number')}: {title[:60]}",
+                                data={"result": dict(item), "deduplicated": True, "state": item.get("state") or ""},
+                                summary=f"issue 已存在 ({item.get('state')}), 复用 #{item.get('number')}: {title[:60]}",
                             )
                 resp = await client.request(method, path, json=payload)
                 resp.raise_for_status()
@@ -343,6 +346,25 @@ class GitHubNode(BaseNode):
                         "(无关闭关键词), pr_link_strength=mention"
                     )
             if bool(params.get("require")) and not found_url:
+                # issue #368: issue 已被派发会话关闭 (duplicate/invalid 处置, 无 PR 交付)
+                # 不算验收阻塞 — no-op 交付放行; 状态查询失败 (空串) 走原阻塞路径
+                state = await self._issue_state(base_url, token, timeout, repo, issue_number)
+                if state == "closed":
+                    logger.info(f"github_api linked_pr: {repo}#{issue_number} 无 PR 但 issue 已关闭 (no-op 交付, 放行)")
+                    return NodeResult(
+                        status=NodeStatus.SUCCESS,
+                        data={
+                            "result": {
+                                "found": False,
+                                "pr_url": "",
+                                "pr_number": 0,
+                                "ci_status": "",
+                                "pr_link_strength": "",
+                                "issue_closed": True,
+                            }
+                        },
+                        summary=f"issue #{issue_number} 已关闭且无关联 PR (no-op 交付)",
+                    )
                 logger.warning(f"github_api linked_pr: {repo}#{issue_number} 无关联 PR (require=true, 阻塞)")
                 return NodeResult(
                     status=NodeStatus.FAILED,
@@ -414,6 +436,16 @@ class GitHubNode(BaseNode):
         except Exception as e:
             logger.info(f"github_api linked_pr: PR 正文获取失败 (降级 mention): {e}")
             return "mention"
+
+    async def _issue_state(self, base_url: str, token: str, timeout: float, repo: str, issue_number: int) -> str:
+        # issue #368: 尽力取 issue 状态; 失败返回空串 (调用方走原阻塞路径, 不放行)
+        try:
+            async with self._client(base_url, token, timeout) as client:
+                issue = (await client.request("GET", f"/repos/{repo}/issues/{issue_number}")).json()
+            return str((issue or {}).get("state") or "")
+        except Exception as e:
+            logger.info(f"github_api linked_pr: issue 状态获取失败 (按未关闭处理): {e}")
+            return ""
 
 
 @register_node
@@ -803,6 +835,20 @@ class ClaudeDispatchNode(BaseNode):
             timeout=timeout,
         )
 
+    async def _issue_state(self, repo: str, issue_number: int) -> str:
+        # issue #368: 尽力取 issue 状态判定 no-op 交付; 失败返回空串 (走原失败路径, 不放行)
+        token = os.environ.get("GITHUB_TOKEN", "").strip()
+        if not token or not issue_number:
+            return ""
+        base_url = os.environ.get("FUSION_GITHUB_API", "https://api.github.com").rstrip("/")
+        try:
+            async with self._api_client(base_url, token, 15.0) as client:
+                issue = (await client.request("GET", f"/repos/{repo}/issues/{issue_number}")).json()
+            return str((issue or {}).get("state") or "")
+        except Exception as e:
+            logger.info(f"claude_dispatch issue 状态获取失败 (按未关闭处理): {e}")
+            return ""
+
     async def _back_to_ready(self, repo: str, issue_number: int, ready_label: str, dispatched_label: str) -> bool:
         # best-effort label restore; failure is loud (WARN) and surfaces in node error data
         token = os.environ.get("GITHUB_TOKEN", "").strip()
@@ -1008,6 +1054,24 @@ class ClaudeDispatchNode(BaseNode):
                 data={"notification": f"task {repo}#{issue_number} token budget exceeded ({total})", "pr_url": pr_url},
             )
         if not pr_url:
+            # issue #368: 会话将 issue 关闭为 duplicate/invalid (带证据) 是合法 no-op 交付 —
+            # 不回退 state:ready 不报失败; 状态查询失败 (空串) 走原失败路径
+            state = await self._issue_state(repo, issue_number)
+            if state == "closed":
+                logger.info(
+                    f"claude_dispatch no-op 交付: {repo}#{issue_number} issue 已关闭且无 PR (duplicate/invalid 处置)"
+                )
+                return NodeResult(
+                    status=NodeStatus.SUCCESS,
+                    data={
+                        "pr_url": "",
+                        "pr_number": 0,
+                        "total_tokens": total,
+                        "session_claim": result_text.strip()[:500],
+                        "outcome": "closed_no_pr",
+                    },
+                    summary=f"{repo}#{issue_number} 已关闭且无 PR (no-op 交付, tokens {total})",
+                )
             restored = await self._back_to_ready(repo, issue_number, ready_label, dispatched_label)
             logger.warning(f"claude_dispatch 无 PR 产出: {repo}#{issue_number}")
             return NodeResult(
@@ -1067,7 +1131,10 @@ class RepoScaffoldNode(BaseNode):
                 "overwrite": {
                     "type": "boolean",
                     "default": False,
-                    "description": "目标目录已存在且有内容时复写脚手架文件 (issue #352 重跑幂等; 空目录始终自动复用)",
+                    "description": (
+                        "目标目录已存在且有内容时补齐缺失的脚手架文件 (issue #352 重跑幂等; "
+                        "issue #368 非破坏性: 不覆写任何既有文件 — 既有文件视为交付/用户内容; 空目录始终自动复用)"
+                    ),
                 },
             },
             "required": ["slug"],
@@ -1086,8 +1153,9 @@ class RepoScaffoldNode(BaseNode):
         if not base.is_dir():
             return NodeResult(status=NodeStatus.FAILED, error=f"base_dir 不存在: {base}")
         repo_path = base / f"ai-{slug}"
-        # issue #352: 重跑幂等 — 空目录自动复用; 有内容时 overwrite=true 复写脚手架文件
-        # (脚手架文件是静态模板, 复写安全; 不动 .git 与既有产出), 否则明确报错给补救提示
+        # issue #352: 重跑幂等 — 空目录自动复用; 有内容时 overwrite=true 补齐缺失脚手架文件
+        # issue #368: overwrite 非破坏性 — 既有文件一律不覆写 (视为交付/用户内容,
+        # 复写会把已交付仓库打回 stub 造成未提交回退), 否则明确报错给补救提示
         reused = False
         existed = repo_path.exists()
         if repo_path.exists():
@@ -1095,12 +1163,12 @@ class RepoScaffoldNode(BaseNode):
                 reused = True
                 logger.info(f"repo_scaffold 复用空目录: {repo_path}")
             elif overwrite:
-                logger.warning(f"repo_scaffold overwrite: 复写脚手架文件: {repo_path}")
+                logger.warning(f"repo_scaffold overwrite: 补齐缺失脚手架文件 (不覆写既有文件): {repo_path}")
             else:
                 return NodeResult(
                     status=NodeStatus.FAILED,
                     error=(
-                        f"目标目录已存在: {repo_path} (重跑幂等: 传 overwrite=true 复写脚手架文件, "
+                        f"目标目录已存在: {repo_path} (重跑幂等: 传 overwrite=true 补齐缺失脚手架文件, "
                         "空目录会自动复用, 或手动删除后重试)"
                     ),
                 )
@@ -1135,10 +1203,14 @@ class RepoScaffoldNode(BaseNode):
             f"src/{pkg}/__init__.py": '__version__ = "0.1.0"\n',
         }
         created: List[str] = []
+        skipped: List[str] = []
         try:
-            # 复用空目录/复写/全新三种路径都写入脚手架文件 (复用 = 目录可落脚手架, 非跳过)
+            # 复用空目录/补齐/全新三种路径都落脚手架文件; issue #368: 既有文件一律跳过不覆写
             for rel, content in files.items():
                 p = repo_path / rel
+                if p.exists():
+                    skipped.append(rel)
+                    continue
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(content, encoding="utf-8")
                 created.append(rel)
@@ -1162,9 +1234,9 @@ class RepoScaffoldNode(BaseNode):
         except TimeoutError:
             return NodeResult(status=NodeStatus.FAILED, error="git init 超时 (30s)")
 
-        logger.info(f"repo_scaffold ok: {repo_path} ({len(created)} files, reused={reused})")
+        logger.info(f"repo_scaffold ok: {repo_path} ({len(created)} written, {len(skipped)} skipped, reused={reused})")
         return NodeResult(
             status=NodeStatus.SUCCESS,
-            data={"repo_path": str(repo_path), "created_files": created, "reused": reused},
+            data={"repo_path": str(repo_path), "created_files": created, "skipped_files": skipped, "reused": reused},
             summary=f"脚手架完成{' (复用已有目录)' if existed else ''}: {repo_path}",
         )
