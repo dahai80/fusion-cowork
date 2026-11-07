@@ -35,7 +35,7 @@ source_of_truth:
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.87-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.88-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -493,6 +493,10 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
 - Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
 - Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+### Seat Turn Budget for Studio Roles (v0.5.88, issue #363)
+
+- **Explicit seat turn budget (#363)** — studio's default 8-turn budget starves multi-artifact roles: live run run_ddeaa4d693e9 hit `Max iterations exceeded` on the env-mock seat after 8 turns / 26s / 11.9k tokens with an empty report (studio side honors the agent manifest's max_iterations as of fusion-agent-studio#637). `studio_run` gains a `max_turns` param forwarded as `spec.max_turns` on the `/v1/runs` body (absent by default — upstream manifest/default applies); `product_lifecycle` exposes `seat_max_turns` (number, default **24**) threaded into all three seats (n1 BA / n3 architect / n9 env-mock), with whole-string `${param.*}` substitution preserving the int type. Tests: `tests/test_issue_363_seat_turns.py` (6 cases).
+
 ### Closing-Link PR Contract + Scaffold Overwrite Threading (v0.5.87, issues #361/#362)
 
 - **`linked_pr` link strength (#362)** — the acceptance gate accepted any cross-referenced PR, including tangential hygiene PRs that merely name-dropped the issue. `linked_pr` now computes `pr_link_strength` (`closing` | `mention`): closing = the PR body links the issue via a closing keyword (`Closes/Fixes/Resolves #N`, word-bounded); mention-only logs a WARN; PR fetch failure degrades to `mention`. New `require_closing_link` param fails the node on mention-only PRs; `claude_dispatch` success output carries `session_claim` (first 500 chars of the session's own delivery statement) for HITL review.
