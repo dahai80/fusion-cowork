@@ -19,6 +19,11 @@ source_of_truth:
 
 Entries are distilled from git tags and merge-commit subjects; full per-issue notes live in the referenced issues and the git history. Format: Keep a Changelog, versions are git tags.
 
+## v0.5.91 (issue #373)
+
+- fix: product_lifecycle seat_max_turns default 24 → 48 (#376).
+- fix: studio_run report-only recovery run on "Max iterations" budget exhaustion, on by default; upstream causes filed at fusion-agent-studio#640.
+
 ## v0.5.90 (issue #372)
 
 - fix: crash-pause evidence — recovery logs the node executing at crash time (#374).
