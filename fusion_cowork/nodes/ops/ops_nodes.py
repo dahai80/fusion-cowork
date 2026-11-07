@@ -202,6 +202,14 @@ class GitHubNode(BaseNode):
                     "default": False,
                     "description": "linked_pr 专用: 无关联 PR 时节点失败 (显式阻塞, 重跑即复查)",
                 },
+                "require_closing_link": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "linked_pr 专用: PR 仅在正文提及 issue (无 Closes/Fixes/Resolves 关闭关键词) 时节点失败 — "
+                        "拦截 hygiene/aside PR 冒充交付 (issue #362)"
+                    ),
+                },
                 "title": {"type": "string"},
                 "body": {"type": "string"},
                 "labels": {"type": "array", "items": {"type": "string"}},
@@ -323,8 +331,17 @@ class GitHubNode(BaseNode):
                     found_num = int(src_issue.get("number") or 0)
                     break
             ci_status = ""
+            link_strength = ""
             if found_num:
                 ci_status = await self._pr_ci_status(base_url, token, timeout, repo, found_num)
+                # issue #362: 链接强度 — closing (PR 正文带 Closes/Fixes/Resolves #N) 才算
+                # 交付性关联; mention (仅正文提及) 记 WARN, 可选 require_closing_link 阻塞
+                link_strength = await self._pr_link_strength(base_url, token, timeout, repo, found_num, issue_number)
+                if link_strength == "mention":
+                    logger.warning(
+                        f"github_api linked_pr: {repo}#{issue_number} PR#{found_num} 仅提及 issue "
+                        "(无关闭关键词), pr_link_strength=mention"
+                    )
             if bool(params.get("require")) and not found_url:
                 logger.warning(f"github_api linked_pr: {repo}#{issue_number} 无关联 PR (require=true, 阻塞)")
                 return NodeResult(
@@ -333,7 +350,28 @@ class GitHubNode(BaseNode):
                     data={"found": False, "pr_url": "", "pr_number": 0, "ci_status": ""},
                     summary="无关联 PR, 阻塞验收",
                 )
-            logger.info(f"github_api linked_pr: {repo}#{issue_number} found={found_num or False} ci={ci_status or '-'}")
+            if bool(params.get("require_closing_link")) and found_url and link_strength == "mention":
+                logger.warning(
+                    f"github_api linked_pr: {repo}#{issue_number} PR#{found_num} 无关闭链接 (require_closing_link=true, 阻塞)"
+                )
+                return NodeResult(
+                    status=NodeStatus.FAILED,
+                    error=(
+                        f"PR#{found_num} 仅提及 issue 未以关闭关键词关联 (需 Closes/Fixes/Resolves #{issue_number} "
+                        "在 PR 正文), 不计为交付 PR (issue #362)"
+                    ),
+                    data={
+                        "found": True,
+                        "pr_url": found_url,
+                        "pr_number": found_num,
+                        "ci_status": ci_status,
+                        "pr_link_strength": link_strength,
+                    },
+                    summary="PR 无关闭链接, 阻塞验收",
+                )
+            logger.info(
+                f"github_api linked_pr: {repo}#{issue_number} found={found_num or False} ci={ci_status or '-'} link={link_strength or '-'}"
+            )
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={
@@ -342,6 +380,7 @@ class GitHubNode(BaseNode):
                         "pr_url": found_url,
                         "pr_number": found_num,
                         "ci_status": ci_status,
+                        "pr_link_strength": link_strength,
                     }
                 },
                 summary=f"linked_pr {'✓ ' + found_url if found_url else '未关联 PR'}",
@@ -361,6 +400,20 @@ class GitHubNode(BaseNode):
         except Exception as e:
             logger.info(f"github_api linked_pr: CI 状态获取失败 (忽略): {e}")
             return ""
+
+    async def _pr_link_strength(
+        self, base_url: str, token: str, timeout: float, repo: str, pr_number: int, issue_number: int
+    ) -> str:
+        # issue #362: closing = PR 正文带关闭关键词关联本 issue; mention = 仅提及; 失败降级 mention
+        try:
+            async with self._client(base_url, token, timeout) as client:
+                pr = (await client.request("GET", f"/repos/{repo}/pulls/{pr_number}")).json()
+                body = str((pr or {}).get("body") or "")
+            pattern = rf"\b(?:close[sd]?|fix(?:e[sd]?)?|resolve[sd]?)\s*:?\s*#{issue_number}\b"
+            return "closing" if re.search(pattern, body, re.IGNORECASE) else "mention"
+        except Exception as e:
+            logger.info(f"github_api linked_pr: PR 正文获取失败 (降级 mention): {e}")
+            return "mention"
 
 
 @register_node
@@ -965,9 +1018,15 @@ class ClaudeDispatchNode(BaseNode):
 
         pr_number = int(pr_url.rsplit("/", 1)[-1])
         logger.info(f"claude_dispatch ok: {repo}#{issue_number} -> {pr_url} tokens={total}")
+        # issue #362: 会话自述交付声明并入输出 — HITL 评审可区分交付 PR 与 hygiene/aside PR
         return NodeResult(
             status=NodeStatus.SUCCESS,
-            data={"pr_url": pr_url, "pr_number": pr_number, "total_tokens": total},
+            data={
+                "pr_url": pr_url,
+                "pr_number": pr_number,
+                "total_tokens": total,
+                "session_claim": result_text.strip()[:500],
+            },
             summary=f"{repo}#{issue_number} -> {pr_url} (tokens {total})",
         )
 
