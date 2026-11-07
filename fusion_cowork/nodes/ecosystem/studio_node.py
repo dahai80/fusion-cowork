@@ -91,6 +91,17 @@ def _clamp_poll_interval(value: float) -> float:
     return value
 
 
+# issue #373: budget exhaustion marker from agent-studio terminal failures —
+# e.g. "Max iterations exceeded after 24/24 turns (249019 tokens, report_len=0)"
+_BUDGET_EXHAUSTED_MARKER = "max iterations"
+
+
+def _is_budget_exhausted(res: NodeResult) -> bool:
+    result = res.data.get("result") if isinstance(res.data, dict) else None
+    last_error = str(result.get("last_error", "") or "") if isinstance(result, dict) else ""
+    return _BUDGET_EXHAUSTED_MARKER in last_error.lower()
+
+
 @register_node
 class StudioRunNode(BaseNode):
     """Studio 运行节点 — cowork DAG 内调用 fusion-agent-studio 运行 graph/agent。
@@ -159,8 +170,16 @@ class StudioRunNode(BaseNode):
                     "type": "number",
                     "description": (
                         "run 轮次预算 (经 /v1/runs body spec.max_turns 传入; 缺省不传 — 上游按 agent "
-                        "manifest 或 studio 默认 8 轮; 多产物角色建议 16-24, issue #363)"
+                        "manifest 或 studio 默认 8 轮; 多产物角色建议 24-48, issue #363/#373)"
                     ),
+                },
+                "report_recovery": {
+                    "type": "boolean",
+                    "description": (
+                        "run 因 Max iterations 耗尽轮次且报告为空时, 自动补一轮 report-only 续跑 "
+                        "(交付物通常已写入 workspace; 缺省开启, issue #373)"
+                    ),
+                    "default": True,
                 },
             },
             "required": ["input"],
@@ -182,6 +201,9 @@ class StudioRunNode(BaseNode):
         title = str(params.get("title", "") or "")
         idempotency_key = str(params.get("idempotency_key", "") or "")
         max_turns = params.get("max_turns")
+        report_recovery = params.get("report_recovery", True)
+        if report_recovery is None:
+            report_recovery = True
 
         if not text:
             return NodeResult(
@@ -240,7 +262,14 @@ class StudioRunNode(BaseNode):
                         data={"run_id": run_id, "status": str(submitted.get("status", "pending")), "result": {}},
                         summary=f"已提交 run {run_id}",
                     )
-                return await self._await_terminal(client, run_id, timeout, poll_interval)
+                res = await self._await_terminal(client, run_id, timeout, poll_interval)
+                # issue #373: budget 耗尽且报告为空 — 交付物通常已在 workspace, 补一轮
+                # report-only 续跑回收最终报告, 而不是硬失败
+                if res.status is NodeStatus.FAILED and report_recovery and _is_budget_exhausted(res):
+                    recovered = await self._report_recovery(client, payload, run_id, timeout, poll_interval)
+                    if recovered is not None:
+                        return recovered
+                return res
         except httpx.HTTPStatusError as e:
             body = ""
             if e.response is not None:
@@ -277,6 +306,44 @@ class StudioRunNode(BaseNode):
             data={"run_id": "", "status": status, "result": payload},
             summary=f"graph 执行完成 ({len(events)} events)",
         )
+
+    async def _report_recovery(
+        self,
+        client: httpx.AsyncClient,
+        payload: Dict[str, Any],
+        original_run_id: str,
+        timeout: float,
+        poll_interval: float,
+    ) -> NodeResult | None:
+        # issue #373: one report-only continuation run on budget exhaustion.
+        # Returns None on any recovery failure — original failure surfaces unchanged.
+        recovery_payload = dict(payload)
+        recovery_payload["goal"] = (
+            "REPORT ONLY - the previous run exhausted its turn budget. All work products were "
+            "already written to the workspace. Do NOT redo the work. Inspect the workspace and "
+            f"write the final report for run {original_run_id}."
+        )
+        # idempotency key belongs to the original run — reuse would dedup into it
+        recovery_payload.pop("idempotency_key", None)
+        logger.warning("StudioRunNode run %s budget exhausted, submitting report-only recovery run", original_run_id)
+        try:
+            submitted = await _submit_run(client, recovery_payload)
+            new_run_id = str(submitted.get("run_id", "") or "")
+            if not new_run_id:
+                logger.warning("StudioRunNode report recovery submit returned no run_id: %s", submitted)
+                return None
+            res = await self._await_terminal(client, new_run_id, timeout, poll_interval)
+        except Exception as e:
+            logger.warning("StudioRunNode report recovery after %s failed: %s", original_run_id, e)
+            return None
+        if res.status is not NodeStatus.SUCCESS:
+            logger.warning("StudioRunNode report recovery run %s did not complete: %s", new_run_id, res.error)
+            return None
+        logger.info("StudioRunNode report recovery run %s completed (from %s)", new_run_id, original_run_id)
+        res.summary = f"budget exhausted on {original_run_id}, report-only recovery run {new_run_id} completed"
+        res.data["report_recovery"] = True
+        res.data["recovered_from"] = original_run_id
+        return res
 
     async def _await_terminal(
         self,
