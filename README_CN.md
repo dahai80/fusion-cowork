@@ -709,6 +709,12 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### 僵尸 resume + 停滞看门狗 (v0.5.90, issue #372)
+
+- fix: crash 证据 — 崩溃恢复日志点名崩溃时刻执行中的节点 (取自持久化快照), 不再静默 `paused_reason=crash` (#374)。
+- fix: 诚实 resume — 引擎无暂停事件 (执行任务已死) 时 `resume()` 从成功步骤快照真实重启执行; 崩溃的派发节点重新执行, 不再假 running 挂死。
+- fix: 停滞看门狗 — running 运行 `FUSION_COWORK_RUN_STALL_SECONDS` (默认 300) 无任何事件即 crash-pause 并给出原因; HITL 等待豁免。
+
 ### No-op 交付契约 (v0.5.89, issue #368)
 
 - fix: issue 去重查全状态 — `github_api` `issue_create` 去重查 open+closed (标题精确匹配); 已交付关闭的任务 issue 在管道重跑时复用而非重复创建 (#369)。

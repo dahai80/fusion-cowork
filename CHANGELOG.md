@@ -19,6 +19,12 @@ source_of_truth:
 
 Entries are distilled from git tags and merge-commit subjects; full per-issue notes live in the referenced issues and the git history. Format: Keep a Changelog, versions are git tags.
 
+## v0.5.90 (issue #372)
+
+- fix: crash-pause evidence — recovery logs the node executing at crash time (#374).
+- fix: honest resume — dead-task resume relaunches from the success-step snapshot instead of fake-running.
+- fix: stall watchdog — running run with no events for FUSION_COWORK_RUN_STALL_SECONDS (default 300) is crash-paused with cause.
+
 ## v0.5.89 (issue #368)
 
 - fix: all-state issue dedupe — `issue_create` dedupe searches open+closed issues, delivered-and-closed task issues reused on reruns (#369).

@@ -35,7 +35,7 @@ source_of_truth:
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.89-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.90-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -493,6 +493,12 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
 - Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
 - Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+### Zombie-Resume + Stall Watchdog (v0.5.90, issue #372)
+
+- fix: crash-pause evidence — crash recovery logs the node executing at crash time from the persisted snapshot, no more silent `paused_reason=crash` (#374).
+- fix: honest resume — `resume()` relaunches execution from the success-step snapshot when the engine has no pause event (dead task); crashed dispatch nodes re-execute instead of fake-running forever.
+- fix: stall watchdog — a running run with no events for `FUSION_COWORK_RUN_STALL_SECONDS` (default 300) is crash-paused with cause; HITL-pending runs exempt.
+
 ### No-Op Delivery Contract (v0.5.89, issue #368)
 
 - fix: all-state issue dedupe — `github_api` `issue_create` dedupe searches open+closed issues (exact title); delivered-and-closed task issues are reused on pipeline reruns instead of duplicated (#369).
