@@ -689,6 +689,12 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### Studio 运行超时 detach + 管道重跑幂等 (v0.5.85, issues #351/#352/#353)
+
+- **`studio_run` 超时上调 + detach 不取消 (#351)** — 默认 300s sync 超时会取消健康的 agent-studio 长运行 (4B 座位生成时长抖动), 丢掉已完成的产物。默认上调至 900s, 支持 `FUSION_COWORK_STUDIO_RUN_TIMEOUT` 环境变量覆盖 (显式参数仍优先); 超时不再取消上游 run — run 保留在上游继续执行, 凭 `run_id` 可查询/回收结果, 节点结果携带 `detached: true` 与可操作的错误信息。
+- **管道重跑幂等 (#352)** — `repo_scaffold` 复用已存在的空目标目录 (脚手架文件始终写入, `reused: true`); 非空目录未传 `overwrite=true` 时报错带补救提示 (传 `overwrite=true` 原地复写脚手架文件, 保留既有产出); `.git` 已存在时跳过 `git init`; `github_api issue_create` 先查后建 — 同标题开放 issue 直接复用 (`deduplicated: true`), 重跑不再重复建 issue。
+- **`claude_dispatch` 权限模式 (#353)** — headless `claude -p` 下需审批的工具默认被自动拒绝, 交付契约结构性不可达; 节点现在默认携带 `--permission-mode bypassPermissions` (补偿控制不变: `allowed_repos` 白名单、固定 cwd、PR 交付契约、label 状态机回滚), 可用 `permission_mode` 参数覆盖。测试: `tests/test_issue_352_353_pipeline_rerun.py` (9 例) + 更新 `tests/test_issue_133_studio_node.py`。
+
 ### Claude 认证环境变量透传 (v0.5.84, issues #347/#346)
 
 - **`claude_dispatch` 透传 claude 认证变量 (#347)** — 裁剪后的子进程 env 此前只有 PATH/HOME/LANG/GITHUB_TOKEN, 依赖 `ANTHROPIC_AUTH_TOKEN` 认证的宿主 (以及 Keychain 不可达的 daemon 上下文) 每次派发都在模型调用前以 `Not logged in · Please run /login` 退出 1。现在 `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_BASE_URL` 按存在透传。非零退出时会话输出前 500 字符也并入节点错误与 `output_head` 数据 (此前直接丢弃, 崩溃需本地复现才能诊断)。
