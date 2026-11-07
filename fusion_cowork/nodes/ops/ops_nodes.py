@@ -839,11 +839,7 @@ class ClaudeDispatchNode(BaseNode):
         # issue #378: engine watchdog must never fire before this node's own dispatch
         # deadline — resolve the same chain execute() uses (param > env > 3600)
         try:
-            raw = (
-                self.config.params.get("timeout")
-                or os.environ.get("FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT")
-                or 3600
-            )
+            raw = self.config.params.get("timeout") or os.environ.get("FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT") or 3600
             return max(0.0, float(raw))
         except (TypeError, ValueError):
             return 0.0
