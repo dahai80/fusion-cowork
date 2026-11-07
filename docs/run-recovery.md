@@ -1,3 +1,19 @@
+---
+doc_id: fusion-cowork/guide/run-recovery
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: guide
+title: {zh: "运行恢复", en: "Run recovery"}
+audience: engineer
+status: draft
+version: 0.5.85
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/run-recovery.md
+---
+
 # Run State Recovery (issue #191)
 
 Durable run control state for the web engine: paused/resumed status, queued

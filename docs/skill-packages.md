@@ -1,3 +1,19 @@
+---
+doc_id: fusion-cowork/guide/skill-packages
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: guide
+title: {zh: "技能包规范", en: "Skill package spec"}
+audience: engineer
+status: draft
+version: 0.5.85
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/skill-packages.md
+---
+
 # Shared Markdown Skill Package Format
 
 Issue #167. One format, two products: a package dropped into a skills directory is discoverable and executable in both **fusion-cowork** (DAG/skill invocation) and **fusion-agent-studio** (agent/slash-command invocation), with structured forms rendered from the same parameter schema in both web UIs.

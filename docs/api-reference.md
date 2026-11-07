@@ -1,3 +1,19 @@
+---
+doc_id: fusion-cowork/api-reference
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: api-reference
+title: {zh: "Web API 契约", en: "Web API contract"}
+audience: engineer
+status: draft
+version: 0.5.85
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/api-reference.md
+---
+
 # Cowork Web API Contract (v0.5.69)
 
 `fusion-cowork web serve` (:11461, default) REST surface. Auth: `Authorization: Bearer <key>` or `x-api-key: <key>`; the key is `FUSION_COWORK_WEB_API_KEY` (static) or the gateway-issued `fm-` module key. Unauthenticated requests get `401 {"error":{"code":"unauthorized"}}`; unknown paths get FastAPI's plain `404 {"detail":"Not Found"}` — this document is the published contract, do not probe.

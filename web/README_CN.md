@@ -1,3 +1,19 @@
+---
+doc_id: fusion-cowork/readme/web-cn
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: readme
+title: {zh: "Fusion Cowork Web 画布 UI", en: "Fusion Cowork web canvas UI"}
+audience: engineer
+status: draft
+version: 0.5.85
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - web/README_CN.md
+---
+
 # Fusion Cowork Web
 
 fusion-cowork 的 DAG 工作流画布 UI 包 — 工作流构建器 Web 版 (union-web PRD N-6, issue #94)。

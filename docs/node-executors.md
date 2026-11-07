@@ -1,3 +1,19 @@
+---
+doc_id: fusion-cowork/guide/node-executors
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: guide
+title: {zh: "节点执行器", en: "Node executors"}
+audience: engineer
+status: draft
+version: 0.5.85
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/node-executors.md
+---
+
 # Node Executors and Parallel Scheduling (issue #189)
 
 ## Overview

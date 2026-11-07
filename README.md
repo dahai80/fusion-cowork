@@ -1,11 +1,31 @@
+---
+doc_id: fusion-cowork/readme
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: readme
+title: {zh: "Fusion-Cowork — 本地优先的零代码桌面自动化平台", en: "Fusion-Cowork — local-first zero-code desktop automation"}
+audience: engineer
+status: draft
+version: 0.5.85
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - README.md
+---
+
 [English](README.md) | [中文](README_CN.md)
 
 ---
 
 <div align="center">
-  <h1>🧹 Fusion-Cowork</h1>
-  <p><strong>Local-first, zero-code desktop automation platform for macOS Apple Silicon</strong></p>
-  <p><em>Let your Mac do the work — 100% offline, AI-powered, privacy-first.</em></p>
+
+# 🧹 Fusion-Cowork
+
+**Local-first, zero-code desktop automation platform for macOS Apple Silicon**
+
+*Let your Mac do the work — 100% offline, AI-powered, privacy-first.*
+
 </div>
 
 <p align="center">
@@ -42,13 +62,13 @@
 - ✅ **MLX Hardware Acceleration** — Apple Silicon native inference via fusion-mlx
 - ✅ **AI Semantic Understanding** — Understands content, not just filenames
 - ✅ **Zero Code** — Describe your need in plain language, get an automation workflow
-- ✅ **Full Ecosystem Integration** — Seamless with Fusion-Code, Agent-Studio, Fusion-KB, Model-Hub
+- ✅ **Full Ecosystem Integration** — Works with Fusion-Code, Agent-Studio, Fusion-KB, Model-Hub
 
 ---
 
 ## 🚀 Quick Start
 
-> **New to fusion-cowork?** Follow the **[Getting Started Guide](docs/guide.md)** — scenario-based walkthroughs (tidy your Desktop, AI-generate a workflow, batch docs, automate a site, schedule tasks, Claude Code MCP, collaboration, cloud deploy) with a decision table and troubleshooting tree. This README is the full command/node reference catalog; the guide is the on-ramp.
+> **New to fusion-cowork?** Follow the **[Getting Started Guide](docs/guides/guide.md)** — scenario-based walkthroughs (tidy your Desktop, AI-generate a workflow, batch docs, automate a site, schedule tasks, Claude Code MCP, collaboration, cloud deploy) with a decision table and troubleshooting tree. This README is the full command/node reference catalog; the guide is the on-ramp.
 
 ### Installation
 
@@ -588,7 +608,7 @@ Five first-party, generic node families in `fusion_cowork/nodes/ops/` — zero u
 - Guard-enabled deny paths (`block`/L4, `preview`/`redact`, fail-closed cache miss) now register a local pending approval entry — previously only the non-guard local path did, so guard-denied nodes vanished from the web approval inbox and HITL confirm could not wake the paused run.
 - Per-node watchdog: nodes without an explicit `config.timeout` get a default cap (1800s, `FUSION_COWORK_NODE_TIMEOUT_S`, `0` disables); slow nodes fail visibly with a timeout reason instead of hanging forever.
 - Node heartbeat: long-running nodes emit periodic `PROGRESS` events (`FUSION_COWORK_NODE_HEARTBEAT_S`, default 30s) so runs pages / SSE clients see liveness.
-- New API contract doc `docs/api.md` (runs, approvals, skills, workspaces, observability, engine env knobs).
+- New API contract doc `docs/api-reference.md` (runs, approvals, skills, workspaces, observability, engine env knobs).
 - Tests: `tests/test_issue_257_watchdog_hitl.py` (7 cases); `tests/test_issue_249_run_context.py` fixture now uses a context-managed TestClient (per-request event loops cancelled the run background task once nodes yield — watchdog exposed it).
 
 ### Markdown Skill Pack CRUD on the Skills Menu (v0.5.68, issue #255)
@@ -1022,7 +1042,7 @@ export FUSION_CLUSTER_STATE_PATH=/shared/cluster-state.json  # shared volume / N
 Retire the local JWT/tenant/RBAC/quota reimplementation in favor of **fusion-identity** as the sole JWT issuer + tenant registry for the ecosystem (multi-tenant PRD §3/§4, issue #88). **Default OFF** — opt-in, matches the guard (#73) / cluster (#79) pattern; zero behavior change when unset, all existing tests green.
 
 - **`IdentityClient`** (`fusion_cowork/auth/identity.py`) — sync `httpx.Client` `POST /api/v1/auth/verify` (header `Authorization: Bearer <FUSION_IDENTITY_SERVICE_TOKEN>`, body `{"token": "<user JWT>"}`). jti→claims cache (TTL 60s, cap 1024) cuts repeat calls; `revoked`/`tenant_status != active`/conn-fail → fail-closed (no silent fallback to local JWT in prod mode). `emit_usage()` → `POST /api/v1/tenants/{tid}/usage` (best-effort).
-- **Seamless delegation** — `get_default_verifier()` (jwt.py) returns an `_IdentityJWTAdapter` when enabled, so every consumer (mcp_http `_auth_denied`, space/api, rate_limit) gets identity-backed verify with no call-site change. `verify_any_token` (fallback.py) gates static-token dev fallback: enabled + `FUSION_REQUIRE_JWT=1` + verify failed → fail-closed (no static fallback in prod). WS/TCP paths (`remote.py`/`sync.py`/`collab_ws.py`) covered by the same seam.
+- **Transparent delegation** — `get_default_verifier()` (jwt.py) returns an `_IdentityJWTAdapter` when enabled, so every consumer (mcp_http `_auth_denied`, space/api, rate_limit) gets identity-backed verify with no call-site change. `verify_any_token` (fallback.py) gates static-token dev fallback: enabled + `FUSION_REQUIRE_JWT=1` + verify failed → fail-closed (no static fallback in prod). WS/TCP paths (`remote.py`/`sync.py`/`collab_ws.py`) covered by the same seam.
 - **UDS `desk_rpc`** (non-FastAPI, no middleware) — `_authenticate` calls `IdentityClient.verify()` directly (Step 0), fail-closed on revoked/unreachable, keeps existing `set_current_tenant`.
 - **FastAPI apps** (space/api, mcp_http ×2) — adopt `fusion_core.tenant.install_tenant_middleware` (enforces `X-Tenant-Id` header + jwt.tid↔header match) + a cowork bridge middleware that propagates `fusion_core.tenant.TenantContext` → cowork's `get_current_tenant()` contextvar (the dual-contextvar crux: fusion_core sources+enforces, cowork bridge propagates — not two competing enforcers).
 - **Quotas from identity** — `QuotaEnforcer(identity_client=...)` reads `VerifyResponse.quota` from the verify cache (replaces ConfigCenter); `record_usage()` emits to fusion-identity (best-effort).
@@ -1601,8 +1621,8 @@ Fusion-Cowork builds upon patterns from the open-source ecosystem:
 ---
 
 <p align="center">
-  <strong>Fusion-Cowork — Let your Mac do the work, locally and privately.</strong>
+  <b>Fusion-Cowork — Let your Mac do the work, locally and privately.</b>
 </p>
 <p align="center">
-  <sub>Built with ❤️ by the Fusion-MLX Team</sub>
+  Built with ❤️ by the Fusion-MLX Team
 </p>

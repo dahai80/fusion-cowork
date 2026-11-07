@@ -1,3 +1,19 @@
+---
+doc_id: fusion-cowork/guide/node-library
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: guide
+title: {zh: "节点库目录", en: "Node library catalog"}
+audience: engineer
+status: draft
+version: 0.5.85
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/node-library.md
+---
+
 # Official Node Library (issue #262)
 
 Five first-party, generic node families for customer flows. All configuration is per-flow-instance data — node code contains zero use-case constants. Tokens travel via environment variables only and never appear in flow definitions or logs.

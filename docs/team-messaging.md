@@ -1,3 +1,19 @@
+---
+doc_id: fusion-cowork/guide/team-messaging
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: guide
+title: {zh: "团队消息", en: "Team messaging"}
+audience: engineer
+status: draft
+version: 0.5.85
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/team-messaging.md
+---
+
 # Team Messaging — Durable Mailbox + Resident Consumers
 
 Cross-process agent messaging for fusion-cowork (issue #190). Messages are durable rows in SQLite; every agent listed in the roster consumes its own inbox from a daemon-resident pool, runs a workflow, and replies to the sender. No external RPC pull, no in-memory queue.
