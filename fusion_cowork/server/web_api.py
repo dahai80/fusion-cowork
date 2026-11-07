@@ -397,6 +397,9 @@ class RunRegistry:
         self._engine = engine
         self._runs: Dict[str, Dict[str, Any]] = {}
         self._tasks: Dict[str, asyncio.Task] = {}
+        # issue #372: 停滞看门狗 — run 级最后事件时间戳 + 周期清扫 (emitter/engine 不支持心跳则不启用)
+        self._last_event: Dict[str, float] = {}
+        self._sweeper_started = False
         # B2: 运行事件订阅 — 每个 SSE 客户端一个队列
         self._subs: Dict[str, List[asyncio.Queue]] = {}
         self._emitter = event_emitter
@@ -441,6 +444,7 @@ class RunRegistry:
         record = self._runs.get(run_id)
         if record is None:
             return
+        self._last_event[run_id] = time.time()
         try:
             execution = self._engine.get_execution(run_id)
         except Exception:
@@ -582,6 +586,8 @@ class RunRegistry:
             "ancestor_summary": list(ancestor_summary or []),
         }
         self._runs[run_id] = record
+        self._last_event[run_id] = time.time()
+        self._ensure_stall_sweeper()
         self._persist(run_id)
         task = asyncio.create_task(
             self._execute(
@@ -702,6 +708,7 @@ class RunRegistry:
                 logger.info(f"运行待交付审查: {run_id}")
             self._broadcast(run_id, {"event": "run_end", "at": time.time(), "run": self._public(record)})
             self._tasks.pop(run_id, None)
+            self._last_event.pop(run_id, None)
             # issue #154: run 终态 webhook 掬点 (未注入 = 零行为变化)
             if self.push is not None:
                 push = self.push
@@ -771,16 +778,110 @@ class RunRegistry:
         if not record or record["status"] != "paused":
             return False
         if not self._engine.resume(run_id):
-            record["status"] = "running"
-            logger.warning(f"引擎无暂停事件, 记录状态回退 running: {run_id}")
-            self._persist(run_id)
-            return True
+            # issue #372: 引擎无暂停事件 = 执行任务已死 (崩溃后任务丢失/事件被清理) —
+            # 不得假回 running (僵尸运行, 节点永不执行); 从快照真实重启执行
+            return self._relaunch(run_id, record)
         record["status"] = "running"
         record["paused_reason"] = ""
+        self._last_event[run_id] = time.time()
         self._persist(run_id)
         self._broadcast(run_id, {"event": "run_resumed", "at": time.time(), "run": self._public(record)})
         logger.info(f"工作流运行已恢复: {run_id}")
         return True
+
+    def _relaunch(self, run_id: str, record: Dict[str, Any]) -> bool:
+        # issue #372: crash 后 resume 的真实复活路径 — 已完成步骤快照续跑,
+        # 其余节点 (含崩溃时执行中的派发节点) 从头重新执行; 复活失败 loud 报错留在 paused
+        try:
+            wf_def = record.get("workflow_def") or {}
+            if not wf_def:
+                raise ValueError("workflow_def 缺失, 无法重启执行")
+            from ..engine import Workflow
+
+            wf = Workflow.from_dict(wf_def)
+            if not wf.nodes:
+                raise ValueError("workflow_def 无有效节点")
+            snapshot = [
+                dict(s)
+                for s in (record.get("steps") or [])
+                if isinstance(s, dict) and str(s.get("status", "")).lower() in ("success", "completed")
+            ]
+            old = self._tasks.get(run_id)
+            if old and not old.done():
+                old.cancel()
+            record["status"] = "running"
+            record["paused_reason"] = ""
+            self._last_event[run_id] = time.time()
+            task = asyncio.create_task(self._execute(run_id, wf, resume_steps=snapshot))
+            self._tasks[run_id] = task
+            self._persist(run_id)
+            self._broadcast(run_id, {"event": "run_resumed", "at": time.time(), "run": self._public(record)})
+            logger.warning(
+                f"[{run_id}] 引擎无暂停事件 (执行任务已死), 已从快照重启执行 ({len(snapshot)} 步续跑, 其余节点重新执行)"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"[{run_id}] resume 重启执行失败, 运行保持 paused: {e}")
+            record["status"] = "paused"
+            record["paused_reason"] = "crash"
+            record["error"] = f"resume 重启执行失败: {e}"
+            self._persist(run_id)
+            self._broadcast(run_id, {"event": "run_resume_failed", "at": time.time(), "run": self._public(record)})
+            return False
+
+    def _ensure_stall_sweeper(self) -> None:
+        # issue #372: 停滞看门狗 — running run 长时间无任何事件 (含 #257 节点心跳) 视为
+        # 执行任务已死/事件循环卡死, crash-pause 并给出证据; 无 emitter 或引擎无心跳则不启用
+        if self._sweeper_started or self._emitter is None:
+            return
+        if float(getattr(self._engine, "_node_heartbeat_s", 0) or 0) <= 0:
+            return
+        self._sweeper_started = True
+        self._sweeper_task = asyncio.create_task(self._stall_sweeper())
+
+    async def _stall_sweeper(self) -> None:
+        threshold = float(os.environ.get("FUSION_COWORK_RUN_STALL_SECONDS") or 300)
+        interval = min(max(threshold / 6.0, 5.0), 60.0)
+        while True:
+            await asyncio.sleep(interval)
+            self._stall_pass(time.time())
+
+    def _stall_pass(self, now: float) -> int:
+        threshold = float(os.environ.get("FUSION_COWORK_RUN_STALL_SECONDS") or 300)
+        tripped = 0
+        for run_id, record in list(self._runs.items()):
+            if record.get("status") != "running":
+                continue
+            last = self._last_event.get(run_id) or float(record.get("created_at") or now)
+            if now - last <= threshold:
+                continue
+            try:
+                if self._engine.hitl_pending(run_id):
+                    continue
+            except Exception:
+                pass
+            self._stall_trip(run_id, record, now - last)
+            tripped += 1
+        return tripped
+
+    def _stall_trip(self, run_id: str, record: Dict[str, Any], silent_s: float) -> None:
+        # issue #372: 僵尸运行判定 — 节点在跑但其执行任务无任何输出/心跳超过阈值,
+        # 与 daemon 崩溃恢复同路: paused_reason=crash + 证据日志, 任务取消防假 running
+        steps = record.get("steps") or []
+        last_step = steps[-1] if steps and isinstance(steps[-1], dict) else {}
+        logger.warning(
+            f"[{run_id}] 停滞看门狗: running 无事件 {silent_s:.0f}s (> 阈值), 判定执行任务已死, "
+            f"crash-pause; 时间线终点: {last_step.get('node_id') or '?'} ({last_step.get('status') or '?'})"
+        )
+        record["status"] = "paused"
+        record["paused_reason"] = "crash"
+        record["error"] = f"停滞看门狗: {silent_s:.0f}s 无事件 (节点 {last_step.get('node_id') or '?'})"
+        task = self._tasks.get(run_id)
+        if task and not task.done():
+            task.cancel()
+        self._last_event.pop(run_id, None)
+        self._persist(run_id)
+        self._broadcast(run_id, {"event": "run_paused", "at": time.time(), "run": self._public(record)})
 
     # issue #227: inject = 运行中指令注入 (下一节点边界并入目标节点输入, 时间线落修正标记)
     DIRECTIVE_ACTIONS = ("set_params", "insert_node", "skip_remaining", "inject")
@@ -934,9 +1035,21 @@ class RunRegistry:
             if replayed:
                 logger.info(f"[{run_id}] 恢复期间重放改向指令 {replayed} 条")
             if crashed:
+                # issue #372: crash 恢复必须给出可诊断证据 — 崩溃时刻正在执行的节点
+                # (快照中非终态步骤) + 时间线长度, 运维无需跨进程比对 transcript
+                running_steps = [
+                    f"{s.get('node_id')}({s.get('node_name')})"
+                    for s in steps
+                    if isinstance(s, dict)
+                    and str(s.get("status", "")) not in ("success", "completed", "failed", "skipped")
+                ]
+                last_step = steps[-1] if steps and isinstance(steps[-1], dict) else {}
+                suspect = (
+                    ", ".join(running_steps) if running_steps else f"无 (时间线终点: {last_step.get('node_id') or '?'})"
+                )
                 logger.warning(
                     f"[{run_id}] 上次会话非正常退出 (持久化状态 running), 已恢复为 paused "
-                    f"({len(steps)} 步快照), 等待人工 resume/审批"
+                    f"({len(steps)} 步快照), 等待人工 resume/审批; 崩溃时疑似执行中节点: {suspect}"
                 )
             else:
                 logger.info(f"[{run_id}] 恢复暂停中的运行: paused_reason={record['paused_reason']}")
