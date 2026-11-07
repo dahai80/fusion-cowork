@@ -819,7 +819,13 @@ BUILTIN_TEMPLATES = [
                     "description": "agent-studio Env/Mock 代理 agent ID (与 env_graph_id 二选一)",
                     "default": "delivery-env-mock",
                 },
-                "dispatch_timeout": {"type": "number", "description": "派发墙钟上限 (秒)", "default": 1800},
+                # issue #358: 1800s 会硬杀真实交付会话 — 3600s 起步, 可用
+                # FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT 环境变量全局调整
+                "dispatch_timeout": {
+                    "type": "number",
+                    "description": "派发墙钟上限 (秒, 缺省 3600, 可用 FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT 覆盖)",
+                    "default": 3600,
+                },
                 "dispatch_max_tokens": {"type": "number", "description": "派发 token 上限", "default": 200000},
             },
             # issue #320: 座位 ID 二选一 — 装配时显式 graph_id 优先, 清空 agent 缺省 (反之亦然)
@@ -909,6 +915,10 @@ BUILTIN_TEMPLATES = [
                     "id": "n7",
                     "name": "claude_dispatch",
                     "config": {
+                        # issue #358: 看门狗 (#257 默认 1800s) 必须晚于节点内部超时触发,
+                        # 否则节点被取消、detach 语义 (#358) 永远走不到 — 3600 + 300s 余量。
+                        # dispatch_timeout 显式调大超过 3900 时需同步上调此处
+                        "timeout": 3900,
                         "params": {
                             "repo": "${param.repo}",
                             "allowed_repos": ["${param.repo}"],
@@ -918,7 +928,7 @@ BUILTIN_TEMPLATES = [
                             "cwd": "${result.repo_path}",
                             "timeout": "${param.dispatch_timeout}",
                             "max_tokens": "${param.dispatch_max_tokens}",
-                        }
+                        },
                     },
                 },
                 {

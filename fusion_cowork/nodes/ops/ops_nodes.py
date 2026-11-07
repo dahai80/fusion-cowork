@@ -678,6 +678,10 @@ class ApprovalGateNode(BaseNode):
         )
 
 
+# issue #358: detach 会话的后台收割任务强引用集 — 防止任务被 GC, 完成后自清理
+_DETACHED_WATCHERS: set = set()
+
+
 @register_node
 class ClaudeDispatchNode(BaseNode):
     """issue #308: claude_dispatch — 派发短命 coder 会话 (claude -p) 处理单个任务 issue。
@@ -718,7 +722,11 @@ class ClaudeDispatchNode(BaseNode):
                 },
                 "cwd": {"type": "string", "description": "脚手架仓库工作目录 (须已存在)"},
                 "claude_bin": {"type": "string", "default": "claude", "description": "claude 可执行文件路径"},
-                "timeout": {"type": "number", "default": 1800, "description": "墙钟上限 (秒)"},
+                "timeout": {
+                    "type": "number",
+                    "default": 3600,
+                    "description": "墙钟上限 (秒, 缺省 3600, 可用 FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT 覆盖)",
+                },
                 "max_tokens": {"type": "number", "default": 200000, "description": "token 用量上限"},
                 "permission_mode": {
                     "type": "string",
@@ -769,6 +777,34 @@ class ClaudeDispatchNode(BaseNode):
         m = re.search(r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+", text or "")
         return m.group(0) if m else ""
 
+    def _spawn_detached_watcher(self, comm_task, proc, repo, issue_number, ready_label, dispatched_label) -> None:
+        # issue #358: detach 收割 — 同一个 communicate 任务在后台跑完 (不二次 communicate, 不丢数据)
+        task = asyncio.create_task(
+            self._watch_detached(comm_task, proc, repo, issue_number, ready_label, dispatched_label)
+        )
+        _DETACHED_WATCHERS.add(task)
+        task.add_done_callback(_DETACHED_WATCHERS.discard)
+
+    async def _watch_detached(self, comm_task, proc, repo, issue_number, ready_label, dispatched_label) -> None:
+        # issue #358: 收割 detach 会话终局 — 交付 PR 则留痕可回收; 无 PR 则回退 state:ready, 绝不静默丢失
+        try:
+            stdout, _ = await comm_task
+            output = stdout.decode("utf-8", "replace")
+            pr_url = self._extract_pr_url(output)
+            if proc.returncode == 0 and pr_url:
+                logger.info(
+                    f"claude_dispatch detach 会话交付: {repo}#{issue_number} -> {pr_url} "
+                    "(节点已超时返回, PR 需人工关联或重跑管线验收)"
+                )
+                return
+            head = output.strip()[:200]
+            logger.warning(
+                f"claude_dispatch detach 会话无 PR 终局: {repo}#{issue_number} exit={proc.returncode} output_head={head}"
+            )
+        except Exception as e:
+            logger.warning(f"claude_dispatch detach watcher 异常: {repo}#{issue_number} ({e})")
+        await self._back_to_ready(repo, issue_number, ready_label, dispatched_label)
+
     async def execute(self, inputs: Dict[str, Any]) -> NodeResult:
         params = coerce_params(self.config.params, self.get_params_schema())
         repo = str(params.get("repo") or "")
@@ -778,7 +814,9 @@ class ClaudeDispatchNode(BaseNode):
         context_links = [str(x) for x in (params.get("context_links") or [])]
         cwd = str(params.get("cwd") or "")
         claude_bin = str(params.get("claude_bin") or "claude")
-        timeout = float(params.get("timeout") or 1800)
+        # issue #358: 缺省 1800s 会硬杀真实交付会话 (实现+自测+PR 周期普遍超 1800s) —
+        # 3600s 起步, 可用 FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT 环境变量全局调整
+        timeout = float(params.get("timeout") or os.environ.get("FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT") or 3600)
         max_tokens = int(params.get("max_tokens") or 200000)
         # issue #353: headless -p 下需审批工具被自动拒绝 — 自主派发默认 bypassPermissions,
         # 补偿控制: allowed_repos 白名单 + 固定 cwd + PR-only 交付契约 + 标签状态机回退
@@ -836,18 +874,44 @@ class ClaudeDispatchNode(BaseNode):
             await self._back_to_ready(repo, issue_number, ready_label, dispatched_label)
             return NodeResult(status=NodeStatus.FAILED, error=f"claude 进程启动失败: {e}")
 
+        started = time.monotonic()
+        # issue #358: communicate 整体交给任务 — 超时时同一任务移交 watcher 继续收割
+        # (不二次 communicate 不丢数据, 子进程绝不 kill)
+        comm_task = asyncio.create_task(proc.communicate())
         try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except TimeoutError:
-            proc.kill()
-            await proc.wait()
-            restored = await self._back_to_ready(repo, issue_number, ready_label, dispatched_label)
-            logger.warning(f"claude_dispatch 超时: {repo}#{issue_number} timeout={timeout:g}s")
+            done, _pending = await asyncio.wait({comm_task}, timeout=timeout)
+        except asyncio.CancelledError:
+            # issue #358: 引擎级看门狗 (#257) 先于节点超时取消本节点 — 会话不杀,
+            # 移交 watcher 收割终局, 避免孤儿进程无归属
+            logger.warning(
+                f"claude_dispatch 被看门狗取消, detach 收割: {repo}#{issue_number} pid={proc.pid} (会话保留继续执行)"
+            )
+            self._spawn_detached_watcher(comm_task, proc, repo, issue_number, ready_label, dispatched_label)
+            raise
+        if comm_task not in done:
+            elapsed = time.monotonic() - started
+            # issue #358: 超时不 kill — detach 语义与 StudioRunNode (#351/#354) 对齐:
+            # 交付中段硬杀会丢弃接近完成的会话; 会话保留继续执行, watcher 收割终局
+            # (交付 PR 则留痕, 无 PR 则回退 state:ready); 标签保持 state:dispatched 防重复派发
+            logger.warning(
+                f"claude_dispatch 超时 detach: {repo}#{issue_number} timeout={timeout:g}s "
+                f"elapsed={elapsed:.1f}s pid={proc.pid} (会话保留继续执行, 不 kill)"
+            )
+            self._spawn_detached_watcher(comm_task, proc, repo, issue_number, ready_label, dispatched_label)
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"claude 会话超时 ({timeout:g}s), 任务已回退 ({'state:ready 已恢复' if restored else '标签恢复失败, 需人工检查'})",
-                data={"notification": f"task {repo}#{issue_number} dispatch timeout, sent back to ready", "pr_url": ""},
+                error=(
+                    f"claude 会话超时 ({timeout:g}s), 已 detach (pid={proc.pid}, elapsed={elapsed:.0f}s): "
+                    "会话保留继续执行, 终局由后台收割 (交付 PR 留痕 / 无 PR 回退 state:ready)"
+                ),
+                data={
+                    "notification": f"task {repo}#{issue_number} dispatch timeout, session detached (pid {proc.pid})",
+                    "pr_url": "",
+                    "detached": True,
+                    "pid": proc.pid,
+                },
             )
+        stdout, _ = comm_task.result()
 
         output = stdout.decode("utf-8", "replace")
         code = proc.returncode

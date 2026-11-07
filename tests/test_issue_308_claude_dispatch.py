@@ -3,10 +3,11 @@
 Hard guardrails under test:
 - HIGH_RISK_NODES registration (guard evaluates per execution)
 - token + wall-clock budget caps; exceeded -> task issue back to state:ready + notification, never silent
-- session crash/timeout -> same back-to-ready path
+- session crash -> back-to-ready path; timeout -> detach (no kill) + background watcher reap (#358)
 - output must land as PR (no PR URL in result -> FAILED + back-to-ready)
 """
 
+import asyncio
 import json
 import stat
 
@@ -15,7 +16,7 @@ import pytest
 
 from fusion_cowork.engine.permission_manager import HIGH_RISK_NODES
 from fusion_cowork.nodes import import_all_nodes
-from fusion_cowork.nodes.ops.ops_nodes import ClaudeDispatchNode
+from fusion_cowork.nodes.ops.ops_nodes import _DETACHED_WATCHERS, ClaudeDispatchNode
 
 import_all_nodes()
 
@@ -111,14 +112,52 @@ class TestClaudeDispatch:
         assert res.data["notification"]
 
     @pytest.mark.asyncio
-    async def test_timeout_kills_and_back_to_ready(self, tmp_path, monkeypatch):
+    async def test_params_schema_timeout_default_3600(self):
+        # issue #358: 1800s 会硬杀真实交付会话 — 缺省提到 3600
+        schema = ClaudeDispatchNode().get_params_schema()
+        assert schema["properties"]["timeout"]["default"] == 3600
+
+    @pytest.mark.asyncio
+    async def test_timeout_detaches_without_kill(self, tmp_path, monkeypatch):
+        # issue #358: 超时不 kill — 会话 detach 继续执行, 标签保持 dispatched,
+        # watcher 收割终局 (无 PR -> 回退 state:ready)
         requests = []
         _capture_client(monkeypatch, requests)
-        binp = _fake_claude(tmp_path, ["echo hi"], sleep=5)
+        binp = _fake_claude(tmp_path, ["echo 'no pr here'"], sleep=0.6)
         res = await _node(tmp_path, binp, timeout=0.3).execute({})
         assert res.status.value == "failed"
         assert "超时" in res.error
-        assert ("POST", "/repos/org/repo/issues/9/labels") in requests
+        assert res.data["detached"] is True
+        assert res.data["pid"] > 0
+        assert requests == []  # 标签不立即回退 — 会话仍在跑, 防重复派发
+        await asyncio.gather(*list(_DETACHED_WATCHERS))
+        assert ("POST", "/repos/org/repo/issues/9/labels") in requests  # watcher 收割后回退
+
+    @pytest.mark.asyncio
+    async def test_detached_session_delivers_pr(self, tmp_path, monkeypatch):
+        # issue #358: detach 会话最终交付 PR — watcher 留痕, 不回退标签 (PR 已存在可回收)
+        requests = []
+        _capture_client(monkeypatch, requests)
+        binp = _fake_claude(tmp_path, [f"echo '{_OK_RESULT}'"], sleep=0.6)
+        res = await _node(tmp_path, binp, timeout=0.3).execute({})
+        assert res.status.value == "failed"
+        assert res.data["detached"] is True
+        await asyncio.gather(*list(_DETACHED_WATCHERS))
+        assert requests == []  # PR 已交付 — 不回退 state:ready
+
+    @pytest.mark.asyncio
+    async def test_default_timeout_env_override(self, tmp_path, monkeypatch):
+        # issue #358: 参数缺省时 FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT 生效 (小值触发超时路径验证)
+        monkeypatch.setenv("FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT", "0.05")
+        requests = []
+        _capture_client(monkeypatch, requests)
+        binp = _fake_claude(tmp_path, ["echo hi"], sleep=0.5)
+        node = _node(tmp_path, binp)
+        node.config.params.pop("timeout")
+        res = await node.execute({})
+        assert res.status.value == "failed"
+        assert res.data["detached"] is True
+        await asyncio.gather(*list(_DETACHED_WATCHERS))
 
     @pytest.mark.asyncio
     async def test_repo_not_in_allowlist_rejected(self, tmp_path, monkeypatch):
