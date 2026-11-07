@@ -1384,6 +1384,17 @@ class WorkflowEngine:
             timeout = float(node.config.timeout or 0.0)
             if timeout <= 0:
                 timeout = self._node_timeout_default
+            # issue #378: node-resolved watchdog floor — param-driven deadlines
+            # (e.g. claude_dispatch dispatch timeout) must not lose to the engine
+            # default watchdog; floor only ever raises the deadline
+            try:
+                floor = float(node.watchdog_floor())
+            except Exception as fe:
+                logger.warning(f"节点 '{node.name}' watchdog floor 解析失败 (忽略): {fe}")
+                floor = 0.0
+            if floor > timeout:
+                logger.info(f"节点 '{node.name}' watchdog 上调至 {floor:g}s (节点自解析 deadline)")
+                timeout = floor
             max_retries = int(node.config.max_retries or 0)
             retry_delay = float(node.config.retry_delay or 0.0)
             # issue #182: 业务失败 (FAILED 结果而非异常) 默认不重试, 显式 opt-in 后参与重试

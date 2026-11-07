@@ -268,6 +268,12 @@ class BaseNode(ABC):
         """校验节点配置，返回错误列表。空列表表示配置有效。"""
         return []
 
+    def watchdog_floor(self) -> float:
+        # issue #378: node-resolved watchdog floor — param-driven deadlines (e.g.
+        # claude_dispatch dispatch timeout) raise the engine watchdog floor so the
+        # engine never kills a node before its own deadline; 0 = no override
+        return 0.0
+
     def get_params_schema(self) -> Dict[str, Any]:
         """返回节点参数的 JSON Schema，用于 UI 自动生成配置表单。"""
         return {

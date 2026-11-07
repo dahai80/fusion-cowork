@@ -835,6 +835,15 @@ class ClaudeDispatchNode(BaseNode):
             timeout=timeout,
         )
 
+    def watchdog_floor(self) -> float:
+        # issue #378: engine watchdog must never fire before this node's own dispatch
+        # deadline — resolve the same chain execute() uses (param > env > 3600)
+        try:
+            raw = self.config.params.get("timeout") or os.environ.get("FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT") or 3600
+            return max(0.0, float(raw))
+        except (TypeError, ValueError):
+            return 0.0
+
     async def _issue_state(self, repo: str, issue_number: int) -> str:
         # issue #368: 尽力取 issue 状态判定 no-op 交付; 失败返回空串 (走原失败路径, 不放行)
         token = os.environ.get("GITHUB_TOKEN", "").strip()
@@ -982,8 +991,10 @@ class ClaudeDispatchNode(BaseNode):
         except asyncio.CancelledError:
             # issue #358: 引擎级看门狗 (#257) 先于节点超时取消本节点 — 会话不杀,
             # 移交 watcher 收割终局, 避免孤儿进程无归属
+            # issue #378: 双超时同框 — node deadline 与 engine 取消一起留痕
             logger.warning(
-                f"claude_dispatch 被看门狗取消, detach 收割: {repo}#{issue_number} pid={proc.pid} (会话保留继续执行)"
+                f"claude_dispatch 被看门狗取消, detach 收割: {repo}#{issue_number} pid={proc.pid} "
+                f"node_deadline={timeout:g}s (会话保留继续执行)"
             )
             self._spawn_detached_watcher(comm_task, proc, repo, issue_number, ready_label, dispatched_label)
             raise
@@ -1007,6 +1018,8 @@ class ClaudeDispatchNode(BaseNode):
                     "notification": f"task {repo}#{issue_number} dispatch timeout, session detached (pid {proc.pid})",
                     "pr_url": "",
                     "detached": True,
+                    # issue #378: explicit outcome — session alive out-of-band, not a bare timeout
+                    "outcome": "detached_session_still_running",
                     "pid": proc.pid,
                 },
             )
