@@ -35,7 +35,7 @@ source_of_truth:
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.85-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.87-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -493,6 +493,16 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
 - Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
 - Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+### Closing-Link PR Contract + Scaffold Overwrite Threading (v0.5.87, issues #361/#362)
+
+- **`linked_pr` link strength (#362)** — the acceptance gate accepted any cross-referenced PR, including tangential hygiene PRs that merely name-dropped the issue. `linked_pr` now computes `pr_link_strength` (`closing` | `mention`): closing = the PR body links the issue via a closing keyword (`Closes/Fixes/Resolves #N`, word-bounded); mention-only logs a WARN; PR fetch failure degrades to `mention`. New `require_closing_link` param fails the node on mention-only PRs; `claude_dispatch` success output carries `session_claim` (first 500 chars of the session's own delivery statement) for HITL review.
+- **`scaffold_overwrite` template param (#361)** — pipeline reruns hard-failed at n5 because the `repo_scaffold` `overwrite` escape hatch was unreachable from a template launch. `product_lifecycle` now exposes `scaffold_overwrite` (bool, default false) threaded into n5; empty dirs still auto-reuse, and the v0.5.85 task-issue dedup keeps `${result.number}` downstream reuse consistent. Template `task_prompt` default now demands `Closes #N` in the PR body and `require_closing_link` (default true) is wired into n8. Tests: `tests/test_issue_361_362_pr_contract.py` (13 cases).
+
+### Dispatch Detach + Docs Contract (v0.5.86, issues #358/#357)
+
+- **`claude_dispatch` timeout detaches (#358)** — the hard kill destroyed mid-delivery sessions; timeout now detaches to the background watcher (PR delivery / label rollback still completes), default timeout 1800s → 3600s with `FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT` override; engine node-watchdog cancellation detaches to the same watcher.
+- **Docs system contract (#357)** — fusion docs-system v1.1 (platform x service): six Tier 0/1 docs, frontmatter across in-scope markdown, CI validator workflow.
+
 ### Studio Run Detach + Pipeline Rerun Idempotency (v0.5.85, issues #351/#352/#353)
 
 - **`studio_run` timeout raised + detach instead of cancel (#351)** — the 300s default sync timeout cancelled healthy long-running agent-studio runs (4B seat generations with length jitter), destroying already-completed artifacts. Default raised to 900s with `FUSION_COWORK_STUDIO_RUN_TIMEOUT` env override (param still wins); on timeout the upstream run is no longer cancelled — it stays live and recoverable by `run_id`, and the node result carries `detached: true` plus an actionable error message.

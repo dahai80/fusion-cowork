@@ -709,6 +709,16 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### PR 关闭链接契约 + 脚手架覆写透传 (v0.5.87, issues #361/#362)
+
+- **`linked_pr` 链接强度 (#362)** — 验收闸门此前接受任意 cross-referenced PR, 含仅在正文提及 issue 的 hygiene 边角 PR。`linked_pr` 现在计算 `pr_link_strength` (`closing` | `mention`): closing = PR 正文以关闭关键词关联 issue (`Closes/Fixes/Resolves #N`, 词边界校验); 仅提及记 WARN; PR 详情获取失败降级 `mention`。新增 `require_closing_link` 参数 — 仅提及的 PR 节点失败; `claude_dispatch` 成功输出携带 `session_claim` (会话自述交付声明前 500 字符) 供 HITL 评审区分交付与边角 PR。
+- **`scaffold_overwrite` 模板参数 (#361)** — 管线重跑在 n5 硬失败, 因 `repo_scaffold` 的 `overwrite` 逃生口模板启动不可达。`product_lifecycle` 现暴露 `scaffold_overwrite` (bool, 缺省 false) 透传 n5; 空目录仍自动复用, v0.5.85 任务 issue 去重保证 `${result.number}` 下游复用一致。模板 `task_prompt` 缺省要求 PR 正文带 `Closes #N`, `require_closing_link` (缺省 true) 接入 n8。测试: `tests/test_issue_361_362_pr_contract.py` (13 例)。
+
+### 派发 detach + 文档契约 (v0.5.86, issues #358/#357)
+
+- **`claude_dispatch` 超时 detach (#358)** — 硬杀会毁掉交付中的会话; 超时改为 detach 至后台收割器 (PR 留痕 / label 回滚仍完成), 缺省超时 1800s → 3600s, 支持 `FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT` 覆盖; 引擎节点看门狗取消同样 detach 到同一收割器。
+- **文档系统契约 (#357)** — fusion docs-system v1.1 (platform x service): 六份 Tier 0/1 文档, 范围内 markdown 全量 frontmatter, CI 校验 workflow。
+
 ### Studio 运行超时 detach + 管道重跑幂等 (v0.5.85, issues #351/#352/#353)
 
 - **`studio_run` 超时上调 + detach 不取消 (#351)** — 默认 300s sync 超时会取消健康的 agent-studio 长运行 (4B 座位生成时长抖动), 丢掉已完成的产物。默认上调至 900s, 支持 `FUSION_COWORK_STUDIO_RUN_TIMEOUT` 环境变量覆盖 (显式参数仍优先); 超时不再取消上游 run — run 保留在上游继续执行, 凭 `run_id` 可查询/回收结果, 节点结果携带 `detached: true` 与可操作的错误信息。
