@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.84-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.85-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -473,6 +473,12 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
 - Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
 - Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+### Studio Run Detach + Pipeline Rerun Idempotency (v0.5.85, issues #351/#352/#353)
+
+- **`studio_run` timeout raised + detach instead of cancel (#351)** — the 300s default sync timeout cancelled healthy long-running agent-studio runs (4B seat generations with length jitter), destroying already-completed artifacts. Default raised to 900s with `FUSION_COWORK_STUDIO_RUN_TIMEOUT` env override (param still wins); on timeout the upstream run is no longer cancelled — it stays live and recoverable by `run_id`, and the node result carries `detached: true` plus an actionable error message.
+- **Pipeline rerun idempotency (#352)** — `repo_scaffold` now reuses an empty existing target dir (scaffold files always written, `reused: true`), fails with a remediation hint on non-empty dirs unless `overwrite=true` is passed (which rewrites scaffold files in place, preserving prior outputs), and skips `git init` when `.git` exists; `github_api issue_create` performs search-before-create — an exact-title open issue is reused (`deduplicated: true`) instead of duplicated on every rerun.
+- **`claude_dispatch` permission mode (#353)** — headless `claude -p` auto-denies approval-requiring tools, making the delivery contract structurally unreachable; the node now sends `--permission-mode bypassPermissions` by default (compensating controls unchanged: `allowed_repos` whitelist, fixed cwd, PR-only contract, label state machine rollback) and the mode is overridable via the `permission_mode` param. Tests: `tests/test_issue_352_353_pipeline_rerun.py` (9 cases) + updated `tests/test_issue_133_studio_node.py`.
+
 ### Claude Auth Env Passthrough (v0.5.84, issues #347/#346)
 
 - **`claude_dispatch` forwards claude auth env vars (#347)** — the stripped subprocess env only carried PATH/HOME/LANG/GITHUB_TOKEN, so hosts authenticating via `ANTHROPIC_AUTH_TOKEN` (and Keychain-less daemon contexts) failed every dispatch with `Not logged in · Please run /login` before any model call. `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_BASE_URL` are now forwarded when present. Non-zero session exits also include the first 500 chars of claude output in the node error + `output_head` data (previously discarded).
