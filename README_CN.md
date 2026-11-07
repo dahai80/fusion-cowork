@@ -709,6 +709,10 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### Studio 座位轮次预算 (v0.5.88, issue #363)
+
+- **显式座位轮次预算 (#363)** — studio 默认 8 轮会饿死多产物角色: 线上 run run_ddeaa4d693e9 的 env-mock 座位 8 轮即 `Max iterations exceeded`, 26s / 11.9k tokens 后产出空 report (studio 侧已在 fusion-agent-studio#637 尊重 agent manifest 的 max_iterations)。`studio_run` 新增 `max_turns` 参数, 经 `/v1/runs` body 的 `spec.max_turns` 传入 (缺省不传 — 沿用上游 manifest/默认); `product_lifecycle` 暴露 `seat_max_turns` (number, 缺省 24) 透传三个座位 (n1 BA / n3 架构 / n9 env-mock), 整串 `${param.*}` 替换保留 int 类型。测试: `tests/test_issue_363_seat_turns.py` (6 例)。
+
 ### PR 关闭链接契约 + 脚手架覆写透传 (v0.5.87, issues #361/#362)
 
 - **`linked_pr` 链接强度 (#362)** — 验收闸门此前接受任意 cross-referenced PR, 含仅在正文提及 issue 的 hygiene 边角 PR。`linked_pr` 现在计算 `pr_link_strength` (`closing` | `mention`): closing = PR 正文以关闭关键词关联 issue (`Closes/Fixes/Resolves #N`, 词边界校验); 仅提及记 WARN; PR 详情获取失败降级 `mention`。新增 `require_closing_link` 参数 — 仅提及的 PR 节点失败; `claude_dispatch` 成功输出携带 `session_claim` (会话自述交付声明前 500 字符) 供 HITL 评审区分交付与边角 PR。
