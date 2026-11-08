@@ -1,0 +1,76 @@
+{
+  "name": "Nightly Report",
+  "nodes": [
+    {
+      "name": "Every night",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": {
+          "cron": "0 2 * * *"
+        }
+      }
+    },
+    {
+      "name": "Fetch Stats",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "http://stats.example/daily"
+      }
+    },
+    {
+      "name": "Digest",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "name": "digest",
+              "value": "built"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Route",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "left": "{{ $json.status }}",
+          "operation": "equals",
+          "right": "ok"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every night": {
+      "main": [
+        [
+          {
+            "node": "Fetch Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Stats": {
+      "main": [
+        [
+          {
+            "node": "Digest",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Route",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  }
+}

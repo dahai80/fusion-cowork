@@ -1,0 +1,16 @@
+{
+  "name": "Order Sync",
+  "nodes": [
+    {"name": "Webhook", "type": "n8n-nodes-base.webhook", "parameters": {"path": "orders"}},
+    {"name": "Fetch Config", "type": "n8n-nodes-base.httpRequest", "parameters": {"method": "GET", "url": "{{ $env.CFG }}/config"}},
+    {"name": "Post Order", "type": "n8n-nodes-base.httpRequest", "parameters": {"method": "POST", "url": "{{ $node[\"Fetch Config\"].json.target }}", "jsonBody": "={\"order\": 42}"}},
+    {"name": "Transform JS", "type": "n8n-nodes-base.code", "parameters": {"jsCode": "return items.map(i => i.json);"}},
+    {"name": "Notify Slack", "type": "n8n-nodes-base.slack", "parameters": {"channel": "#ops"}}
+  ],
+  "connections": {
+    "Webhook": {"main": [[{"node": "Fetch Config", "type": "main", "index": 0}]]},
+    "Fetch Config": {"main": [[{"node": "Post Order", "type": "main", "index": 0}]]},
+    "Post Order": {"main": [[{"node": "Transform JS", "type": "main", "index": 0}]]},
+    "Transform JS": {"main": [[{"node": "Notify Slack", "type": "main", "index": 0}]]}
+  }
+}

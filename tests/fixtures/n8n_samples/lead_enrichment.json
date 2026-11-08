@@ -1,0 +1,56 @@
+{
+  "name": "Lead Enrichment",
+  "nodes": [
+    {
+      "name": "On new lead",
+      "type": "n8n-nodes-base.manualTrigger",
+      "parameters": {}
+    },
+    {
+      "name": "Fetch Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "http://lead.example/lead/1"
+      }
+    },
+    {
+      "name": "Build Summary",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "name": "lead_name",
+              "value": "ok"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "On new lead": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lead": {
+      "main": [
+        [
+          {
+            "node": "Build Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
