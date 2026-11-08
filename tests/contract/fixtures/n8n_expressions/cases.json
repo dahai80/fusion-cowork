@@ -1,0 +1,95 @@
+{
+  "_contract": "n8n expression translation subset (cowork issue #395). Shared fixture pack: producer-side is fusion-cowork n8n_import; consumer-side (agent-studio importer companion) reuses the same cases. Each case: input n8n param string, upstream cowork node id, node_ids map, expected translation. error_cases must raise UnsupportedExpression.",
+  "cases": [
+    {
+      "name": "json_dotted",
+      "input": "{{ $json.user.name }}",
+      "upstream": "fetch",
+      "node_ids": {},
+      "expected": "${step.fetch.json.user.name}"
+    },
+    {
+      "name": "json_bracket",
+      "input": "{{ $json[\"user\"][\"name\"] }}",
+      "upstream": "fetch",
+      "node_ids": {},
+      "expected": "${step.fetch.json.user.name}"
+    },
+    {
+      "name": "node_root",
+      "input": "{{ $node[\"Fetch Config\"].json.target }}",
+      "upstream": "other",
+      "node_ids": {
+        "Fetch Config": "fetch_config"
+      },
+      "expected": "${step.fetch_config.json.target}"
+    },
+    {
+      "name": "node_root_attr",
+      "input": "{{ $node.Fetch_Config.json.count }}",
+      "upstream": "other",
+      "node_ids": {
+        "Fetch_Config": "fetch_config"
+      },
+      "expected": "${step.fetch_config.json.count}"
+    },
+    {
+      "name": "input_item",
+      "input": "{{ $input.item.json.id }}",
+      "upstream": "fetch",
+      "node_ids": {},
+      "expected": "${step.fetch.json.id}"
+    },
+    {
+      "name": "embedded_literal",
+      "input": "Bearer {{ $json.token }}",
+      "upstream": "auth",
+      "node_ids": {},
+      "expected": "Bearer ${step.auth.json.token}"
+    }
+  ],
+  "error_cases": [
+    {
+      "name": "now",
+      "input": "{{ $now }}",
+      "upstream": "fetch",
+      "node_ids": {}
+    },
+    {
+      "name": "ternary",
+      "input": "{{ $json.x ? 'a' : 'b' }}",
+      "upstream": "fetch",
+      "node_ids": {}
+    },
+    {
+      "name": "function_call",
+      "input": "{{ $json.name.toLowerCase() }}",
+      "upstream": "fetch",
+      "node_ids": {}
+    },
+    {
+      "name": "empty_path",
+      "input": "{{ $json }}",
+      "upstream": "fetch",
+      "node_ids": {}
+    },
+    {
+      "name": "no_upstream",
+      "input": "{{ $json.x }}",
+      "upstream": "",
+      "node_ids": {}
+    },
+    {
+      "name": "unknown_node",
+      "input": "{{ $node[\"Ghost\"].json.x }}",
+      "upstream": "fetch",
+      "node_ids": {}
+    },
+    {
+      "name": "env_root",
+      "input": "{{ $env.LEAD_API }}",
+      "upstream": "fetch",
+      "node_ids": {}
+    }
+  ]
+}

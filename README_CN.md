@@ -709,6 +709,13 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### n8n 导入 (v1, 仅导入)
+
+- feat: 将 n8n 工作流导出导入为 cowork 可运行工作流 (`fusion_cowork/n8n_import/`)。承诺: 接受的必可运行; 不能运行的提前声明, 绝不静默半导入。
+- analyzer: 对每个节点分类 (`mappable` / `mappable_with_warning` / `unsupported`), 产出面向用户的覆盖报告, 点名每个不支持节点 + 建议替代方案。
+- expressions: n8n 表达式子集 (`{{ $json.x }}`、`{{ $node["Name"].json.y }}`) 翻译为 cowork `${step.<id>.json.<path>}` 引用; 子集之外的表达式直接报错并列进报告。契约 fixtures: `tests/contract/fixtures/n8n_expressions/cases.json`。
+- import-and-verify: 导入后状态为 `imported`; 只有引擎真实跑绿才升级为 `imported_verified`。CLI: `python scripts/verify_n8n_import.py <export.json> [--mode mapped_subgraph] [--verify]`。
+
 ### 事务性 Outbox (v0.5.93, issue #382)
 
 - feat: fusion-harness outbox 内核 (harness#11) 接入工作流引擎 — 节点结果 + 声明的副作用单 sqlite 事务落账 (`OutboxBridge.record_step` 经 `commit_step`); 状态变更与副作用之间 kill -9 不再丢数据 (#384)。

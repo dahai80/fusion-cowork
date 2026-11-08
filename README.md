@@ -493,6 +493,13 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
 - Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
 - Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+### n8n Import (v1, import-only)
+
+- feat: import n8n workflow exports into cowork-runnable workflows (`fusion_cowork/n8n_import/`). Commitment: what we accept runs; what we cannot run is declared up front, never silently half-imported.
+- analyzer: classifies every node (`mappable` / `mappable_with_warning` / `unsupported`) with a user-facing coverage report naming each unsupported node + suggested replacement.
+- expressions: n8n expression subset (`{{ $json.x }}`, `{{ $node["Name"].json.y }}`) translated to cowork `${step.<id>.json.<path>}` refs; anything outside the subset raises and is listed in the report. Contract fixtures: `tests/contract/fixtures/n8n_expressions/cases.json`.
+- import-and-verify: imports start as `imported`; only a green engine run upgrades them to `imported_verified`. CLI: `python scripts/verify_n8n_import.py <export.json> [--mode mapped_subgraph] [--verify]`.
+
 ### Transactional Outbox (v0.5.93, issue #382)
 
 - feat: fusion-harness outbox kernel (harness#11) wired into the workflow engine — node results + declared side effects journaled in ONE sqlite transaction (`OutboxBridge.record_step` via `commit_step`); a kill -9 between state change and side effect loses nothing (#384).
