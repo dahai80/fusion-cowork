@@ -136,7 +136,8 @@ def translate_params(params: Dict, upstream_id: str, node_ids: Optional[Dict[str
             try:
                 return translate_expression_value(v, upstream_id, node_ids)
             except UnsupportedExpression as e:
-                unsupported.append(e.expr)
+                if e.expr not in unsupported:
+                    unsupported.append(e.expr)
                 logger.warning("n8n import: %s", e)
                 return v  # kept as literal — caller must treat node as warning/unsupported
         return v

@@ -36,34 +36,86 @@ def _unique_slug(name: str, used: set) -> str:
     return sid
 
 
-def _if_condition_code(node: Dict[str, Any]) -> str:
-    # n8n IF condition -> python predicate. v1 evaluates the static literal
-    # operands; dynamic operands must arrive via upstream ${step...} refs in
-    # other nodes' params (python_repl does not receive merged input).
-    params = node.get("parameters") or {}
-    conds = params.get("conditions") or {}
-    left = conds.get("left") or params.get("value1", "")
-    right = conds.get("right") or params.get("value2", "")
-    op = str(conds.get("operation") or params.get("operation") or "equals")
-    left_expr = left if isinstance(left, str) else json_default(left)
-    right_expr = right if isinstance(right, str) else json_default(right)
-    py_op = {
-        "equals": "==",
-        "notEquals": "!=",
-        "contains": "in",
-        "notContains": "not in",
-    }.get(op, "==")
-    return f'left = {left_expr!r}\nright = {right_expr!r}\nresult = "pass" if left {py_op} right else "drop"'
-
-
 def json_default(v: Any) -> str:
     return str(v)
 
 
-def _set_code(node: Dict[str, Any]) -> str:
-    # n8n Set node assignments -> python dict build. v1 evaluates static
-    # literal values; dynamic values belong in downstream node params via
-    # expression translation (python_repl does not receive merged input).
+def _operand(value: Any, upstream_id: str, ids: Dict[str, str], verdict) -> str:
+    # n8n expression operands are translated to cowork ${step...} refs before
+    # embedding; the engine resolves them at run time against upstream output.
+    # Unsupported expressions surface in the report instead of silently
+    # degrading to a static literal.
+    if not isinstance(value, str):
+        return json_default(value)
+    expr = value[1:] if value.startswith("=") else value
+    if "{{" in expr or "${" in expr:
+        return translate_expression(expr, upstream_id, ids, verdict)
+    return expr
+
+
+# n8n IF operator -> python comparison. "contains" means left-contains-right,
+# so the python form is `right in left` (operand order flips).
+_IF_CMP_OPS = {"equals": "==", "notEquals": "!=", "gt": ">", "lt": "<", "gte": ">=", "lte": "<="}
+_IF_CONTAINS_OPS = {"contains": "in", "notContains": "not in"}
+_IF_METHOD_OPS = {"startsWith": "startswith", "endsWith": "endswith"}
+
+
+def _if_clauses(node: Dict[str, Any], upstream_id: str, ids: Dict[str, str], verdict) -> Tuple[List[str], str]:
+    # n8n IF condition -> python predicate clauses. Supports both the legacy
+    # single-condition shape (conditions.left/right/operation) and the v2/v3
+    # conditions list (leftValue/rightValue/operator + combinator).
+    params = node.get("parameters") or {}
+    conds = params.get("conditions") or {}
+    parsed: List[Tuple[Any, Any, str]] = []
+    combinator = "and"
+    if isinstance(conds, dict) and conds.get("conditions"):
+        combinator = str(conds.get("combinator") or "and")
+        for c in conds["conditions"]:
+            if not isinstance(c, dict):
+                continue
+            op_obj = c.get("operator")
+            op = op_obj.get("operation", "equals") if isinstance(op_obj, dict) else str(op_obj or "equals")
+            parsed.append((c.get("leftValue", ""), c.get("rightValue", ""), str(op)))
+    else:
+        left = conds.get("left") or params.get("value1", "")
+        right = conds.get("right") or params.get("value2", "")
+        op = str(conds.get("operation") or params.get("operation") or "equals")
+        parsed.append((left, right, op))
+    return parsed, combinator
+
+
+def _if_condition_code(node: Dict[str, Any], upstream_id: str, ids: Dict[str, str], verdict) -> str:
+    parsed, combinator = _if_clauses(node, upstream_id, ids, verdict)
+    lines: List[str] = []
+    terms: List[str] = []
+    for i, (left, right, op) in enumerate(parsed):
+        left_expr = _operand(left, upstream_id, ids, verdict)
+        right_expr = _operand(right, upstream_id, ids, verdict)
+        lines.append(f"left_{i} = {left_expr!r}")
+        lines.append(f"right_{i} = {right_expr!r}")
+        if op in _IF_CMP_OPS:
+            lines.append(f"cond_{i} = left_{i} {_IF_CMP_OPS[op]} right_{i}")
+        elif op in _IF_CONTAINS_OPS:
+            # n8n contains: left contains right
+            lines.append(f"cond_{i} = right_{i} {_IF_CONTAINS_OPS[op]} left_{i}")
+        elif op in _IF_METHOD_OPS:
+            lines.append(f"cond_{i} = left_{i}.{_IF_METHOD_OPS[op]}(right_{i})")
+        elif op == "exists":
+            lines.append(f"cond_{i} = left_{i} is not None")
+        else:
+            verdict.expression_issues.append(f"{op} (unsupported n8n operator — defaulted to equals)")
+            lines.append(f"cond_{i} = left_{i} == right_{i}")
+        terms.append(f"cond_{i}")
+    joiner = ") or (" if combinator == "or" else ") and ("
+    joined = f"({joiner.join(terms)})" if len(terms) > 1 else terms[0]
+    lines.append(f'result = "pass" if {joined} else "drop"')
+    return "\n".join(lines)
+
+
+def _set_code(node: Dict[str, Any], upstream_id: str, ids: Dict[str, str], verdict) -> str:
+    # n8n Set node assignments -> python dict build. Values go through the
+    # same expression translation as IF operands (engine resolves
+    # ${step...} refs at run time; unsupported ones surface in the report).
     params = node.get("parameters") or {}
     assignments = params.get("assignments") or {}
     pairs = assignments.get("assignments") if isinstance(assignments, dict) else None
@@ -76,13 +128,13 @@ def _set_code(node: Dict[str, Any]) -> str:
         value = e.get("value", "")
         if not key:
             continue
-        lines.append(f"result[{key!r}] = {value!r}")
+        lines.append(f"result[{key!r}] = {_operand(value, upstream_id, ids, verdict)!r}")
     if len(lines) == 1:
         # fallback: n8n "values" -> "string" legacy shape
         values = params.get("values") or {}
         for e in values.get("string", []) or []:
             if isinstance(e, dict) and e.get("name"):
-                lines.append(f"result[{e['name']!r}] = {e.get('value', '')!r}")
+                lines.append(f"result[{e['name']!r}] = {_operand(e.get('value', ''), upstream_id, ids, verdict)!r}")
     return "\n".join(lines)
 
 
@@ -148,16 +200,18 @@ def import_n8n_workflow(
                 ids,
             )
             if unsup:
-                verdict.expression_issues.extend(unsup)
+                for u in unsup:
+                    if u not in verdict.expression_issues:
+                        verdict.expression_issues.append(u)
             # body JSON string passthrough (http_request parses JSON strings)
             if isinstance(params.get("body"), str) and params["body"].startswith("="):
                 params["body"] = translate_expression(params["body"][1:], upstream_id, ids, verdict)
             cname = "http_request"
         elif node["type"] == "n8n-nodes-base.set":
-            params = {"code": _set_code(node), "timeout": 15}
+            params = {"code": _set_code(node, upstream_id, ids, verdict), "timeout": 15}
             cname = "python_repl"
         elif node["type"] == "n8n-nodes-base.if":
-            params = {"code": _if_condition_code(node), "timeout": 15}
+            params = {"code": _if_condition_code(node, upstream_id, ids, verdict), "timeout": 15}
             cname = "python_repl"
         elif node["type"] == "n8n-nodes-base.merge":
             params = {}

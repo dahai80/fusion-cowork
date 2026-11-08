@@ -131,6 +131,203 @@ class TestImporter:
         assert "left" in route["config"]["params"]["code"]
 
 
+class TestIfOperandTranslation:
+    # review B1: IF operands must be expression-translated (engine resolves
+    # ${step...} refs at run time), never embedded as static literals
+    def test_dynamic_operand_translated(self):
+        wf, _r, _m = import_n8n_workflow(_sample("nightly_report.json"))
+        route = next(n for n in wf["nodes"] if n["config"]["label"] == "Route")
+        code = route["config"]["params"]["code"]
+        assert "left_0 = '${step.fetch_stats.json.status}'" in code
+        assert "right_0 = 'ok'" in code
+        assert 'result = "pass" if cond_0 else "drop"' in code
+
+    def test_static_operands_stay_literal(self):
+        wf, _r, _m = import_n8n_workflow(_sample("nightly_report.json"))
+        route = next(n for n in wf["nodes"] if n["config"]["label"] == "Route")
+        assert "'ok'" in route["config"]["params"]["code"]
+        assert "{{" not in route["config"]["params"]["code"]
+
+    # review B2: n8n contains = left-contains-right = python `right in left`
+    def test_contains_operand_order(self):
+        data = {
+            "name": "contains check",
+            "nodes": [
+                {"name": "Start", "type": "n8n-nodes-base.manualTrigger", "parameters": {}},
+                {"name": "Fetch", "type": "n8n-nodes-base.httpRequest", "parameters": {"url": "http://x/y"}},
+                {
+                    "name": "Check",
+                    "type": "n8n-nodes-base.if",
+                    "parameters": {
+                        "conditions": {
+                            "left": "{{ $json.body.status }}",
+                            "operation": "contains",
+                            "right": "PROBLEM",
+                        }
+                    },
+                },
+            ],
+            "connections": {
+                "Start": {"main": [[{"node": "Fetch", "type": "main", "index": 0}]]},
+                "Fetch": {"main": [[{"node": "Check", "type": "main", "index": 0}]]},
+            },
+        }
+        wf, _r, _m = import_n8n_workflow(data)
+        code = wf["nodes"][-1]["config"]["params"]["code"]
+        assert "cond_0 = right_0 in left_0" in code
+        assert "left_0 in right_0" not in code
+        assert "left_0 = '${step.fetch.json.body.status}'" in code
+
+    def test_v2_conditions_shape_and_combinator(self):
+        # realworld zabbix v3 shape: leftValue with "=" prefix, operator dict
+        data = {
+            "name": "v2 if",
+            "nodes": [
+                {"name": "Start", "type": "n8n-nodes-base.manualTrigger", "parameters": {}},
+                {"name": "Fetch", "type": "n8n-nodes-base.httpRequest", "parameters": {"url": "http://x/y"}},
+                {
+                    "name": "Gate",
+                    "type": "n8n-nodes-base.if",
+                    "parameters": {
+                        "conditions": {
+                            "options": {"version": 3},
+                            "combinator": "or",
+                            "conditions": [
+                                {
+                                    "leftValue": "={{ $json.body.status }}",
+                                    "rightValue": "PROBLEM",
+                                    "operator": {"type": "string", "operation": "equals"},
+                                },
+                                {
+                                    "leftValue": "={{ $json.count }}",
+                                    "rightValue": 0,
+                                    "operator": {"type": "number", "operation": "gt"},
+                                },
+                            ],
+                        }
+                    },
+                },
+            ],
+            "connections": {
+                "Start": {"main": [[{"node": "Fetch", "type": "main", "index": 0}]]},
+                "Fetch": {"main": [[{"node": "Gate", "type": "main", "index": 0}]]},
+            },
+        }
+        wf, _r, _m = import_n8n_workflow(data)
+        code = wf["nodes"][-1]["config"]["params"]["code"]
+        assert "left_0 = '${step.fetch.json.body.status}'" in code
+        assert "cond_0 = left_0 == right_0" in code
+        assert "cond_1 = left_1 > right_1" in code
+        assert 'result = "pass" if (cond_0) or (cond_1) else "drop"' in code
+
+    def test_unsupported_operator_flagged_not_silent(self):
+        data = {
+            "name": "bad op",
+            "nodes": [
+                {"name": "Start", "type": "n8n-nodes-base.manualTrigger", "parameters": {}},
+                {"name": "Fetch", "type": "n8n-nodes-base.httpRequest", "parameters": {"url": "http://x/y"}},
+                {
+                    "name": "Gate",
+                    "type": "n8n-nodes-base.if",
+                    "parameters": {
+                        "conditions": {
+                            "conditions": [
+                                {
+                                    "leftValue": "={{ $json.x }}",
+                                    "rightValue": "",
+                                    "operator": {"type": "array", "operation": "exists", "singleValue": True},
+                                }
+                            ]
+                        }
+                    },
+                },
+            ],
+            "connections": {
+                "Start": {"main": [[{"node": "Fetch", "type": "main", "index": 0}]]},
+                "Fetch": {"main": [[{"node": "Gate", "type": "main", "index": 0}]]},
+            },
+        }
+        wf, report, _m = import_n8n_workflow(data)
+        code = wf["nodes"][-1]["config"]["params"]["code"]
+        assert "cond_0 = left_0 is not None" in code
+
+    def test_set_values_translated(self):
+        data = {
+            "name": "set translate",
+            "nodes": [
+                {"name": "Start", "type": "n8n-nodes-base.manualTrigger", "parameters": {}},
+                {"name": "Fetch", "type": "n8n-nodes-base.httpRequest", "parameters": {"url": "http://x/y"}},
+                {
+                    "name": "Build",
+                    "type": "n8n-nodes-base.set",
+                    "parameters": {
+                        "assignments": {
+                            "assignments": [
+                                {"name": "target", "value": "={{ $json.body.target }}"},
+                                {"name": "label", "value": "static"},
+                            ]
+                        }
+                    },
+                },
+            ],
+            "connections": {
+                "Start": {"main": [[{"node": "Fetch", "type": "main", "index": 0}]]},
+                "Fetch": {"main": [[{"node": "Build", "type": "main", "index": 0}]]},
+            },
+        }
+        wf, _r, _m = import_n8n_workflow(data)
+        code = wf["nodes"][-1]["config"]["params"]["code"]
+        assert "result['target'] = '${step.fetch.json.body.target}'" in code
+        assert "result['label'] = 'static'" in code
+
+
+REALWORLD = SAMPLES / "realworld"
+
+
+class TestRealworldExports:
+    # genuine n8n community exports (downloaded 2026-11-08 from GitHub):
+    # - xavier-maugendre/n8n-zabbix-glpi-prometheus-agent-qdrant-offline workflow.json
+    # - Xavi1995/n8n_execution_report Auditor.json
+    def test_zabbix_ticket_offline_coverage(self):
+        report = analyze_n8n_workflow(json.loads((REALWORLD / "zabbix_ticket_offline.json").read_text()))
+        assert report.total == 31
+        assert len(report.verdicts) == 31  # every node classified, none silent
+        unsup_types = {v.type for v in report.unsupported}
+        assert "n8n-nodes-base.code" in unsup_types
+        assert "@n8n/n8n-nodes-langchain.vectorStoreQdrant" in unsup_types
+        assert "@n8n/n8n-nodes-langchain.embeddingsOllama" in unsup_types
+        # stickyNote is canvas documentation, never "unsupported"
+        assert not any(v.type == "n8n-nodes-base.stickyNote" for v in report.unsupported)
+        # every observed type is declared — no generic "no v1 mapping" fallback
+        assert "declare it here" not in report.report_text()
+
+    def test_zabbix_agent_maps_to_llm_http(self):
+        report = analyze_n8n_workflow(json.loads((REALWORLD / "zabbix_ticket_offline.json").read_text()))
+        agent = next(v for v in report.verdicts if v.type == "@n8n/n8n-nodes-langchain.agent")
+        assert agent.verdict == "mappable_with_warning"
+        assert agent.target == "http_request"
+
+    def test_auditor_coverage(self):
+        report = analyze_n8n_workflow(json.loads((REALWORLD / "auditor.json").read_text()))
+        assert report.total == 25
+        assert len(report.verdicts) == 25
+        unsup_types = {v.type for v in report.unsupported}
+        assert {
+            "n8n-nodes-base.code",
+            "n8n-nodes-base.splitInBatches",
+            "n8n-nodes-base.aggregate",
+            "n8n-nodes-base.convertToFile",
+            "n8n-nodes-base.n8n",
+        } <= unsup_types
+        # every observed type is declared — no generic "no v1 mapping" fallback
+        assert "declare it here" not in report.report_text()
+
+    def test_auditor_abort_mode_rejects(self):
+        with pytest.raises(ValueError) as ei:
+            import_n8n_workflow(json.loads((REALWORLD / "auditor.json").read_text()))
+        assert "unsupported nodes" in str(ei.value)
+
+
 class _StubHTTPServer:
     # minimal asyncio raw-socket HTTP stub — enough for http_request nodes
     def __init__(self):

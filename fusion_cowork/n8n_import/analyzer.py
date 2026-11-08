@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from .expressions import UnsupportedExpression
+from .expressions import UnsupportedExpression, slug_node_id
 
 logger = logging.getLogger("fusion_cowork.n8n_import")
 
@@ -39,7 +39,8 @@ NODE_MAPPINGS: Dict[str, Tuple[str, str, str]] = {
     "n8n-nodes-base.if": (
         "mappable_with_warning",
         "python_repl",
-        "cowork executes topologically serial — IF maps to a condition-evaluating python_repl step, not branching",
+        "cowork executes topologically serial — IF maps to a condition-evaluating python_repl step, not branching; "
+        "expression operands translate to ${step...} refs (false-branch edges are dropped)",
     ),
     "n8n-nodes-base.merge": ("mappable", "merge", ""),
     "n8n-nodes-base.switch": (
@@ -62,9 +63,45 @@ NODE_MAPPINGS: Dict[str, Tuple[str, str, str]] = {
         "",
         "arbitrary JS has no safe v1 mapping — rewrite as a Set node or python_repl in n8n before export",
     ),
+    "n8n-nodes-base.stickyNote": (
+        "mappable",
+        "",
+        "canvas documentation only — no execution node is emitted",
+    ),
+    "n8n-nodes-base.splitInBatches": (
+        "unsupported",
+        "",
+        "batch-loop branching has no serial v1 equivalent — flatten the loop into a single pass or split workflows",
+    ),
+    "n8n-nodes-base.aggregate": (
+        "unsupported",
+        "",
+        "item aggregation has no v1 mapping — collect upstream items in a python_repl step before export",
+    ),
+    "n8n-nodes-base.convertToFile": (
+        "unsupported",
+        "",
+        "binary file conversion is not supported in v1 — produce the file payload in a python_repl step",
+    ),
+    "n8n-nodes-base.n8n": (
+        "unsupported",
+        "",
+        "sub-workflow execution is not wired in v1 — inline the sub-workflow's nodes before export",
+    ),
+    "@n8n/n8n-nodes-langchain.vectorStoreQdrant": (
+        "unsupported",
+        "",
+        "vector-store nodes are not supported in v1 — use the fusion-rag knowledge layer instead",
+    ),
+    "@n8n/n8n-nodes-langchain.embeddingsOllama": (
+        "unsupported",
+        "",
+        "embedding nodes are not supported in v1 — use the fusion-rag knowledge layer instead",
+    ),
 }
 
-_LLM_TYPE_RE = re.compile(r"^n8n-nodes-langchain\.(openAi|lmChatOpenAi|agent|chainLlm|llm)")
+# matches both "n8n-nodes-langchain.*" and the "@n8n/n8n-nodes-langchain.*" package form
+_LLM_TYPE_RE = re.compile(r"^(?:@n8n/)?n8n-nodes-langchain\.(openAi|lmChatOpenAi|agent|chainLlm|llm)")
 
 
 def _classify_type(node_type: str) -> Tuple[str, str, str]:
@@ -162,6 +199,9 @@ def analyze_n8n_workflow(data: Dict[str, Any]) -> N8nImportReport:
     if not isinstance(nodes, list):
         raise ValueError("n8n export JSON missing 'nodes' list")
     report = N8nImportReport(workflow_name=str(data.get("name", "untitled")))
+    # full name->slug map so cross-node $node["Other"] refs in the expression
+    # probe resolve against the real id space (no false-positive warnings)
+    probe_ids = {str(n.get("name", "")): slug_node_id(str(n.get("name", ""))) for n in nodes if isinstance(n, dict)}
     for node in nodes:
         if not isinstance(node, dict):
             continue
@@ -176,7 +216,7 @@ def analyze_n8n_workflow(data: Dict[str, Any]) -> N8nImportReport:
                 from .expressions import translate_expression_value
 
                 try:
-                    translate_expression_value(val, "probe_upstream", {v.name: "probe_target"})
+                    translate_expression_value(val, "probe_upstream", probe_ids)
                 except UnsupportedExpression as e:
                     v.expression_issues.append(e.expr)
         report.verdicts.append(v)
