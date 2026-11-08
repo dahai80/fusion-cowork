@@ -1195,9 +1195,14 @@ class WorkflowEngine:
             node.config.params = _interpolate_step_refs(dict(node.config.params or {}), passed_data, node_input)
             # issue #343: 插值后仍残留 result./step./param. 引用 = 装配期缺参或引用断链 —
             # 明确报错, 不留字面量进节点 (int()/float() 二次崩溃报错难懂)
+            # issue #389/n12: 错误必须列出本节点可用的上游字段, 否则排错要翻整条链
             leftover = _find_unresolved_refs(node.config.params or {})
             if leftover:
-                msg = f"unresolved interpolation: {', '.join(dict.fromkeys(leftover))}"
+                available = sorted(str(k) for k in (node_input or {}) if not str(k).startswith("_"))
+                msg = (
+                    f"unresolved interpolation: {', '.join(dict.fromkeys(leftover))}"
+                    f" (available fields: {', '.join(available) if available else '<none>'})"
+                )
                 logger.error(f"[{exec_id}] {msg} node={node.name}")
                 step = WorkflowStep(
                     node_id=node_id,
