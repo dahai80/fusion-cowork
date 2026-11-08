@@ -885,6 +885,40 @@ class ClaudeDispatchNode(BaseNode):
         m = re.search(r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+", text or "")
         return m.group(0) if m else ""
 
+    @staticmethod
+    def _extract_delivered_pr(text: str) -> str:
+        # issue #381: session may declare an existing open PR as the delivery (retry
+        # re-delivery) via `delivered_pr: <url>` in its result
+        m = re.search(
+            r'delivered_pr["\']?\s*[:=]\s*["\']?(https://github\.com/[\w.-]+/[\w.-]+/pull/\d+)',
+            text or "",
+            re.IGNORECASE,
+        )
+        return m.group(1) if m else ""
+
+    async def _verify_linked_pr(self, repo: str, pr_url: str, issue_number: int) -> bool:
+        # issue #381: linked delivery is valid only if the PR is open and its body
+        # closes the task issue (same closing-link contract as GitHubNode #362);
+        # any verification failure degrades to the strict fail path
+        token = os.environ.get("GITHUB_TOKEN", "").strip()
+        if not token:
+            logger.warning("claude_dispatch linked-PR verification skipped: GITHUB_TOKEN missing")
+            return False
+        pr_number = pr_url.rsplit("/", 1)[-1]
+        base_url = os.environ.get("FUSION_GITHUB_API", "https://api.github.com").rstrip("/")
+        try:
+            async with self._api_client(base_url, token, 15.0) as client:
+                pr = (await client.request("GET", f"/repos/{repo}/pulls/{pr_number}")).json()
+        except Exception as e:
+            logger.warning(f"claude_dispatch linked-PR verification failed: {repo}#{pr_number} ({e})")
+            return False
+        if str((pr or {}).get("state") or "") != "open":
+            return False
+        body = str((pr or {}).get("body") or "")
+        return bool(
+            re.search(rf"\b(?:close[sd]?|fix(?:e[sd]?)?|resolve[sd]?)\s*:?\s*#{issue_number}\b", body, re.IGNORECASE)
+        )
+
     def _spawn_detached_watcher(self, comm_task, proc, repo, issue_number, ready_label, dispatched_label) -> None:
         # issue #358: detach 收割 — 同一个 communicate 任务在后台跑完 (不二次 communicate, 不丢数据)
         task = asyncio.create_task(
@@ -950,6 +984,12 @@ class ClaudeDispatchNode(BaseNode):
             "\n\nDelivery contract: open a pull request for your change. "
             "Never push directly to the default branch. "
             "Include self-test evidence in the PR description."
+            # issue #381: retry re-delivery — an existing open PR covering the scope
+            # is a valid delivery once it closes the task issue and is declared back
+            "\n\nIf this task is a retry and its scope is already delivered by an existing open PR, "
+            "do NOT open a duplicate PR: update that PR's body to reference this issue with "
+            "'Closes #<issue number>', verify the work fresh, and include "
+            "'delivered_pr: <pr url>' in your result."
         )
 
         env = {
@@ -1065,6 +1105,60 @@ class ClaudeDispatchNode(BaseNode):
                 status=NodeStatus.FAILED,
                 error=f"token 预算超限 ({total} > {max_tokens}), 任务已回退 ({'state:ready 已恢复' if restored else '标签恢复失败'})",
                 data={"notification": f"task {repo}#{issue_number} token budget exceeded ({total})", "pr_url": pr_url},
+            )
+        # issue #381: declared re-delivery takes precedence — session linked the task
+        # issue to an existing open PR (Closes #N + delivered_pr declared) instead of
+        # opening a duplicate; verified against the GitHub API, unverified falls
+        # through to the strict path
+        linked = self._extract_delivered_pr(result_text)
+        if linked:
+            if await self._verify_linked_pr(repo, linked, issue_number):
+                logger.info(f"claude_dispatch linked delivery: {repo}#{issue_number} -> existing PR {linked}")
+                return NodeResult(
+                    status=NodeStatus.SUCCESS,
+                    data={
+                        "pr_url": linked,
+                        "pr_number": int(linked.rsplit("/", 1)[-1]),
+                        "total_tokens": total,
+                        "session_claim": result_text.strip()[:500],
+                        "outcome": "linked_existing_pr",
+                    },
+                    summary=f"{repo}#{issue_number} -> existing PR {linked} (linked delivery, tokens {total})",
+                )
+            logger.warning(
+                f"claude_dispatch delivered_pr unverified (not open / not closing #{issue_number}): {linked}"
+            )
+        if linked:
+            # declaration says "not a fresh PR" — never fall through to direct
+            # delivery on the same URL; strict fail (no-op check still applies)
+            state = await self._issue_state(repo, issue_number)
+            if state == "closed":
+                logger.info(
+                    f"claude_dispatch no-op 交付: {repo}#{issue_number} issue 已关闭且无 PR (duplicate/invalid 处置)"
+                )
+                return NodeResult(
+                    status=NodeStatus.SUCCESS,
+                    data={
+                        "pr_url": "",
+                        "pr_number": 0,
+                        "total_tokens": total,
+                        "session_claim": result_text.strip()[:500],
+                        "outcome": "closed_no_pr",
+                    },
+                    summary=f"{repo}#{issue_number} 已关闭且无 PR (no-op 交付, tokens {total})",
+                )
+            restored = await self._back_to_ready(repo, issue_number, ready_label, dispatched_label)
+            logger.warning(f"claude_dispatch linked-PR 交付未通过校验: {repo}#{issue_number} {linked}")
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=(
+                    f"delivered_pr 校验未通过 ({linked}: 须 open 且 body 含 Closes #{issue_number}), "
+                    f"任务已回退 ({'state:ready 已恢复' if restored else '标签恢复失败'})"
+                ),
+                data={
+                    "notification": f"task {repo}#{issue_number} delivered_pr failed verification, sent back to ready",
+                    "pr_url": linked,
+                },
             )
         if not pr_url:
             # issue #368: 会话将 issue 关闭为 duplicate/invalid (带证据) 是合法 no-op 交付 —
