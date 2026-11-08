@@ -976,6 +976,9 @@ class RunRegistry:
             logger.error(f"加载持久化运行状态失败 (跳过恢复): {e}")
             return 0
         recovered = 0
+        discarded: list = []
+        from ..engine.outbox import get_outbox_bridge
+
         for row in rows:
             run_id = str(row.get("run_id", ""))
             if not run_id or run_id in self._runs:
@@ -992,6 +995,7 @@ class RunRegistry:
             except Exception as e:
                 logger.error(f"恢复运行 {run_id} 失败: 持久化数据无法解析, 已废弃该行: {e}")
                 self.run_store.delete(run_id)
+                discarded.append(run_id)
                 continue
             # 持久化状态 running = 上次会话非正常退出 (kill -9/崩溃) — loud 恢复为 paused
             crashed = str(row.get("status", "")) != "paused"
@@ -1055,6 +1059,10 @@ class RunRegistry:
                 logger.info(f"[{run_id}] 恢复暂停中的运行: paused_reason={record['paused_reason']}")
             self._persist(run_id)
             recovered += 1
+        # issue #382: boot reconcile — 过期 lease 重排队; 已废弃 run 的 effects 诚实退役
+        _ob = get_outbox_bridge()
+        if _ob is not None and _ob.enabled:
+            _ob.reconcile(discarded or None)
         return recovered
 
     def _gc(self) -> None:

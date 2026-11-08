@@ -274,6 +274,13 @@ class BaseNode(ABC):
         # engine never kills a node before its own deadline; 0 = no override
         return 0.0
 
+    def collect_outbox_effects(self) -> List[Dict[str, Any]]:
+        # issue #382: outbox effects declared by this node, enqueued with the node
+        # result in ONE transaction (engine/outbox.py record_step). Entries:
+        # {node_id, action, payload, receipt_key?}. Default: no effects — nodes
+        # performing side effects inline (receipts via outbox_ctx) declare none.
+        return []
+
     def get_params_schema(self) -> Dict[str, Any]:
         """返回节点参数的 JSON Schema，用于 UI 自动生成配置表单。"""
         return {
