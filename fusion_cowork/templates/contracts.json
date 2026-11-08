@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "consumers": [
+    "fusion-cowork (fusion_cowork/templates/contract.py)",
+    "agent-studio contract test pack (companion, same fixture path)"
+  ],
+  "nodes": {
+    "github_api": {
+      "top": [
+        "ci_status",
+        "deduplicated",
+        "found",
+        "issue_closed",
+        "notification",
+        "pr_link_strength",
+        "pr_number",
+        "pr_url",
+        "result",
+        "state"
+      ],
+      "ops": {
+        "linked_pr": {
+          "result": [
+            "ci_status",
+            "found",
+            "pr_link_strength",
+            "pr_number",
+            "pr_url"
+          ],
+          "extra": []
+        },
+        "issue_create": {
+          "result": "free",
+          "extra": [
+            "deduplicated",
+            "state"
+          ]
+        },
+        "issue_comment": {
+          "result": "free",
+          "extra": []
+        },
+        "issue_set_labels": {
+          "result": "free",
+          "extra": []
+        },
+        "pr_get": {
+          "result": "free",
+          "extra": []
+        },
+        "issue_list": {
+          "result": "free",
+          "extra": []
+        }
+      }
+    },
+    "studio_run": {
+      "top": [
+        "detached",
+        "recovered_run_id",
+        "recovery",
+        "report",
+        "result",
+        "run_id",
+        "status"
+      ],
+      "ops": {}
+    },
+    "claude_dispatch": {
+      "top": [
+        "detached",
+        "issue_closed",
+        "notification",
+        "outcome",
+        "output_head",
+        "pid",
+        "pr_number",
+        "pr_url",
+        "session_claim",
+        "total_tokens"
+      ],
+      "ops": {}
+    }
+  }
+}
