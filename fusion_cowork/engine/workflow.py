@@ -1136,6 +1136,11 @@ class WorkflowEngine:
             logger.warning(f"[{exec_id}] 待执行节点缺失, 跳过: {node_id}")
             return [], "continue", ""
         executor = executor_for_node(node)
+        # issue #382: outbox 上下文 — 侧效应写操作凭 {run_id, node_id} 做幂等回执
+        from .outbox import get_outbox_bridge, outbox_ctx
+
+        _outbox = get_outbox_bridge()
+        _ob_token = outbox_ctx.set({"run_id": exec_id, "node_id": node_id, "node_name": node.name} if _outbox else None)
 
         # 断点续跑: 已完成节点跳过执行 (P1-2)
         if node_id in state.completed_ids:
@@ -1404,61 +1409,78 @@ class WorkflowEngine:
             # issue #182: 每次尝试的错误留痕, 成功后写入 step.attempt_errors 供 API 观测
             attempt_errors: List[str] = []
             final_attempt = 1
-            for attempt in range(max_retries + 1):
-                final_attempt = attempt + 1
-                ctx = NodeExecutionContext(
-                    execution_id=exec_id,
-                    workflow_id=workflow.id,
-                    workflow_name=workflow.name,
-                    node_id=node_id,
-                    attempt=final_attempt,
-                )
-                # issue #257: 心跳任务 — 节点执行期间周期发 PROGRESS, 完成后取消
-                heartbeat_task: asyncio.Task | None = None
-                if self._event_emitter is not None and self._node_heartbeat_s > 0:
-                    heartbeat_task = asyncio.create_task(self._node_heartbeat(exec_id, node_id, node.name))
-                try:
-                    if timeout > 0:
-                        result = await asyncio.wait_for(executor.execute(node, node_input, ctx), timeout=timeout)
-                    else:
-                        result = await executor.execute(node, node_input, ctx)
-                    if result.status == NodeStatus.FAILED:
-                        err_txt = result.error or "业务失败"
-                        attempt_errors.append(err_txt)
-                        if retry_business and attempt < max_retries:
-                            logger.warning(
-                                f"节点 '{node.name}' 业务失败 attempt={attempt + 1}/{max_retries + 1}: {err_txt}"
-                            )
-                            if retry_delay > 0:
-                                await asyncio.sleep(retry_delay)
-                            continue
-                        # 业务失败但未 opt-in / 重试耗尽
+            try:
+                for attempt in range(max_retries + 1):
+                    final_attempt = attempt + 1
+                    ctx = NodeExecutionContext(
+                        execution_id=exec_id,
+                        workflow_id=workflow.id,
+                        workflow_name=workflow.name,
+                        node_id=node_id,
+                        attempt=final_attempt,
+                    )
+                    # issue #257: 心跳任务 — 节点执行期间周期发 PROGRESS, 完成后取消
+                    heartbeat_task: asyncio.Task | None = None
+                    if self._event_emitter is not None and self._node_heartbeat_s > 0:
+                        heartbeat_task = asyncio.create_task(self._node_heartbeat(exec_id, node_id, node.name))
+                    try:
+                        if timeout > 0:
+                            result = await asyncio.wait_for(executor.execute(node, node_input, ctx), timeout=timeout)
+                        else:
+                            result = await executor.execute(node, node_input, ctx)
+                        if result.status == NodeStatus.FAILED:
+                            err_txt = result.error or "业务失败"
+                            attempt_errors.append(err_txt)
+                            if retry_business and attempt < max_retries:
+                                logger.warning(
+                                    f"节点 '{node.name}' 业务失败 attempt={attempt + 1}/{max_retries + 1}: {err_txt}"
+                                )
+                                if retry_delay > 0:
+                                    await asyncio.sleep(retry_delay)
+                                continue
+                            # 业务失败但未 opt-in / 重试耗尽
+                            break
+                        # 成功
                         break
-                    # 成功
-                    break
-                except TimeoutError as te:
-                    last_err = f"节点 '{node.name}' 超时 (timeout={timeout}s): {te}"
-                    attempt_errors.append(last_err)
-                    logger.warning(f"{last_err} attempt={attempt + 1}/{max_retries + 1}")
-                    result = None
-                except asyncio.CancelledError:
-                    raise
-                except Exception as ne:
-                    last_err = str(ne)
-                    attempt_errors.append(f"异常: {last_err}")
-                    logger.warning(f"节点 '{node.name}' 异常 attempt={attempt + 1}/{max_retries + 1}: {ne}")
-                    result = None
-                finally:
-                    if heartbeat_task is not None:
-                        heartbeat_task.cancel()
-                if attempt < max_retries and retry_delay > 0:
-                    await asyncio.sleep(retry_delay)
+                    except TimeoutError as te:
+                        last_err = f"节点 '{node.name}' 超时 (timeout={timeout}s): {te}"
+                        attempt_errors.append(last_err)
+                        logger.warning(f"{last_err} attempt={attempt + 1}/{max_retries + 1}")
+                        result = None
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as ne:
+                        last_err = str(ne)
+                        attempt_errors.append(f"异常: {last_err}")
+                        logger.warning(f"节点 '{node.name}' 异常 attempt={attempt + 1}/{max_retries + 1}: {ne}")
+                        result = None
+                    finally:
+                        if heartbeat_task is not None:
+                            heartbeat_task.cancel()
+                    if attempt < max_retries and retry_delay > 0:
+                        await asyncio.sleep(retry_delay)
+            finally:
+                outbox_ctx.reset(_ob_token)
             if result is None:
                 # 重试耗尽仍无成功结果 → 构造失败 NodeResult
                 result = NodeResult(
                     status=NodeStatus.FAILED,
                     error=last_err or f"节点 '{node.name}' 重试 {max_retries} 次后仍失败",
                 )
+
+            # issue #382: outbox 日志 — 节点结果 + 声明的 effects 单事务落账;
+            # 落账失败不影响 run (响亮警告)
+            if _outbox is not None:
+                try:
+                    _outbox.record_step(
+                        exec_id,
+                        node_id,
+                        result.status.value,
+                        result.summary or "",
+                        node.collect_outbox_effects(),
+                    )
+                except Exception as oe:
+                    logger.warning(f"节点 '{node.name}' outbox record_step 失败 (忽略): {oe}")
 
             # issue #182: 尝试次数与逐次错误写入 step, run steps API 可观测
             step.attempt = final_attempt

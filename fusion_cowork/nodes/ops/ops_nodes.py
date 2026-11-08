@@ -307,9 +307,29 @@ class GitHubNode(BaseNode):
                                 data={"result": dict(item), "deduplicated": True, "state": item.get("state") or ""},
                                 summary=f"issue 已存在 ({item.get('state')}), 复用 #{item.get('number')}: {title[:60]}",
                             )
-                resp = await client.request(method, path, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
+
+                # issue #382: 写操作 (POST/PUT) 经 outbox 回执 — 同 run 同节点同 op 重放
+                # (崩溃恢复/重试) 不再重复写; 读操作不走回执
+                async def _do_write():
+                    r = await client.request(method, path, json=payload)
+                    r.raise_for_status()
+                    return r.json()
+
+                from fusion_cowork.engine.outbox import get_outbox_bridge, outbox_ctx
+
+                obctx = outbox_ctx.get()
+                _ob = get_outbox_bridge() if obctx else None
+                if _ob is not None and method in ("POST", "PUT"):
+                    cmd_id = f"{obctx.get('run_id', '')}:{obctx.get('node_id', '')}:{op}"
+                    if op == "issue_create" and title:
+                        cmd_id = f"{cmd_id}:{title}"
+                    data, _replayed = await _ob.execute_idempotent_async(cmd_id, f"github:{repo}", _do_write)
+                    if _replayed:
+                        logger.info(f"github_api {op} {repo} outbox 回执重放, 跳过重复写")
+                else:
+                    resp = await client.request(method, path, json=payload)
+                    resp.raise_for_status()
+                    data = resp.json()
         except httpx.HTTPStatusError as e:
             logger.warning(f"github_api HTTP {e.response.status_code}: {op} {repo}")
             return NodeResult(
