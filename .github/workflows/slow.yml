@@ -1,11 +1,12 @@
 name: Slow Suite
 
 # P3-5 (audit v4): the @slow/@chaos suites (load / e2e / chaos) are NOT part
-# of the PR gate — they run on a weekly schedule and on demand so a release
-# always has fresh performance/recovery evidence without slowing merges.
+# of the PR gate. Issue #386 (spec verification-infra-1108 §3.2): the chaos
+# matrix must run NIGHTLY on main — a new failure class found live must
+# convert to a scenario within 48h and replay here.
 on:
   schedule:
-    - cron: "0 3 * * 1" # every Monday 03:00 UTC
+    - cron: "0 3 * * *" # nightly 03:00 UTC
   workflow_dispatch: {}
 
 jobs:
