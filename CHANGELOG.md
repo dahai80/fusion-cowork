@@ -7,8 +7,8 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.85
-updated: 2026-11-07
+version: 0.5.93
+updated: 2026-11-08
 owner: "@dahai"
 source_of_truth:
   - CHANGELOG.md
@@ -18,6 +18,10 @@ source_of_truth:
 # Changelog
 
 Entries are distilled from git tags and merge-commit subjects; full per-issue notes live in the referenced issues and the git history. Format: Keep a Changelog, versions are git tags.
+
+## v0.5.93 (issue #382)
+
+- feat: transactional outbox — fusion-harness kernel (harness#11) wired into the engine: one-transaction node-result + effects journal, idempotent GitHub write receipts, boot reconcile, opt-in effect worker with persisted backoff (#384).
 
 ## v0.5.92 (issue #378)
 

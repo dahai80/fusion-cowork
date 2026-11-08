@@ -709,6 +709,12 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### 事务性 Outbox (v0.5.93, issue #382)
+
+- feat: fusion-harness outbox 内核 (harness#11) 接入工作流引擎 — 节点结果 + 声明的副作用单 sqlite 事务落账 (`OutboxBridge.record_step` 经 `commit_step`); 状态变更与副作用之间 kill -9 不再丢数据 (#384)。
+- feat: GitHubNode 写操作 (issue_create 等) 走幂等命令回执, 键 `{run}:{node}:{op}[:title]` — 崩溃重试重放跳过重复写; #352/#368 搜索去重仍是第二道网。
+- feat: `recover_persisted` 启动 reconcile — 过期 lease 重排队, 已废弃 run 的 effects 诚实退役 (对齐 #372); effect worker 可选启动, 持久化退避 `min(30*2^(n-1), 600)s`。内核缺失或 `FUSION_COWORK_OUTBOX=0` = 禁用 + 一次响亮警告, 零行为变化。测试: `tests/test_issue_382_outbox_integration.py` (14 例)。
+
 ### 看门狗地板 (v0.5.92, issue #378)
 
 - fix: 双层超时分歧 — `claude_dispatch` 已解析 3600s 截止但引擎看门狗 (#257, 默认 1800s) 先杀节点; 合法超过 30 分钟的会话必然失败而 detached 子会话仍在跑 (#379)。
