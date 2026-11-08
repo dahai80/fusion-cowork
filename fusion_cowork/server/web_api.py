@@ -534,7 +534,40 @@ class RunRegistry:
         ]
 
     def get(self, run_id: str) -> Optional[Dict[str, Any]]:
-        return self._runs.get(run_id)
+        run = self._runs.get(run_id)
+        if run is not None:
+            return run
+        # issue #388: 内存 registry 无此 run (重启/淘汰) → 终态摘要行兜底;
+        # 形状对齐 _public (无 workflow_def/directives 等恢复字段)
+        if self.run_store is None or not hasattr(self.run_store, "load_summary"):
+            return None
+        try:
+            row = self.run_store.load_summary(run_id)
+        except Exception as e:
+            logger.warning(f"终态摘要读取失败 {run_id}: {e}")
+            return None
+        if row is None:
+            return None
+        return {
+            "run_id": row.get("run_id", run_id),
+            "workflow_id": row.get("workflow_id", ""),
+            "workflow_name": row.get("workflow_name", ""),
+            "status": row.get("status", ""),
+            "paused_reason": "",
+            "created_at": row.get("created_at") or 0.0,
+            "started_at": row.get("created_at") or 0.0,
+            "finished_at": row.get("finished_at") or 0.0,
+            "steps": row.get("steps") or [],
+            "result": None,
+            "error": row.get("error"),
+            "review": None,
+            "artifacts": [],
+            "memory": False,
+            "space_id": "",
+            "source": row.get("source", ""),
+            "labels": row.get("labels") or {},
+            "summary_row": True,
+        }
 
     def start(
         self,
@@ -566,6 +599,7 @@ class RunRegistry:
             "workflow_name": workflow_name or wf.name or workflow_id,
             "status": "running",
             "created_at": time.time(),
+            "started_at": time.time(),
             "finished_at": None,
             "steps": [],
             "result": None,
@@ -691,7 +725,14 @@ class RunRegistry:
         finally:
             record["finished_at"] = time.time()
             # issue #191: 终态出库 — run 结束后不再需要恢复, 持久层只留活跃 run
+            # issue #388: 终态先落摘要行 (source/labels/每步耗时), 活跃行照删 —
+            # daemon 重启后 GET /api/runs/{id} 仍可查, 下游按 run 时长对账
             if self.run_store is not None:
+                try:
+                    if hasattr(self.run_store, "save_summary"):
+                        self.run_store.save_summary(record)
+                except Exception as e:
+                    logger.warning(f"终态摘要写入失败 (忽略) {run_id}: {e}")
                 try:
                     self.run_store.delete(run_id)
                 except Exception as e:
@@ -1063,6 +1104,16 @@ class RunRegistry:
         _ob = get_outbox_bridge()
         if _ob is not None and _ob.enabled:
             _ob.reconcile(discarded or None)
+        # issue #388: 终态摘要保留期清理 (默认 90 天, FUSION_COWORK_RUN_SUMMARY_RETENTION_DAYS 覆盖)
+        if self.run_store is not None and hasattr(self.run_store, "prune_summaries"):
+            try:
+                retention = int(os.environ.get("FUSION_COWORK_RUN_SUMMARY_RETENTION_DAYS", "90"))
+            except ValueError:
+                retention = 90
+            try:
+                self.run_store.prune_summaries(retention)
+            except Exception as e:
+                logger.warning(f"终态摘要保留期清理失败 (忽略): {e}")
         return recovered
 
     def _gc(self) -> None:
