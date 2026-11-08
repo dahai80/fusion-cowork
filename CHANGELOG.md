@@ -19,6 +19,11 @@ source_of_truth:
 
 Entries are distilled from git tags and merge-commit subjects; full per-issue notes live in the referenced issues and the git history. Format: Keep a Changelog, versions are git tags.
 
+## v0.5.92 (issue #378)
+
+- fix: node-resolved watchdog floor — `BaseNode.watchdog_floor()` lets param-driven deadlines (claude_dispatch) raise the engine watchdog; engine never kills a node before its own deadline (#379).
+- fix: dispatch timeout detach carries explicit `outcome=detached_session_still_running` + pid; cancel log shows both timeouts.
+
 ## v0.5.91 (issue #373)
 
 - fix: product_lifecycle seat_max_turns default 24 → 48 (#376).

@@ -709,6 +709,11 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - Web 端一次性完成 GitHub org 仓库初始化: label 税 (phase/risk/type/blocked)、issue 表单 (requirement/task/acceptance-report)、`CODEOWNERS`、带必需检查的分支保护。`#/wizard` 页: org → 仓库多选 → 预览 (dry-run 计划) → 应用 (幂等 — 已有资源跳过/更新) → 卸载 (只删向导自建产物, 每仓库 `.github/wizard-managed.json` 审计清单跟踪)。
 - Token 只走 `GITHUB_TOKEN` 环境变量 — 不接受请求体传入、不入库; 路由: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 缺 token, 400 参数错, 502 GitHub 上游错误)。
 - 服务: `fusion_cowork/server/github_wizard.py` (`GithubWizard` 带 `client_factory` 测试接缝)。测试: `tests/test_issue_263_github_wizard.py` (9 例, MockTransport 离线)。
+### 看门狗地板 (v0.5.92, issue #378)
+
+- fix: 双层超时分歧 — `claude_dispatch` 已解析 3600s 截止但引擎看门狗 (#257, 默认 1800s) 先杀节点; 合法超过 30 分钟的会话必然失败而 detached 子会话仍在跑 (#379)。
+- fix: `BaseNode.watchdog_floor()` — 有参数驱动截止的节点自报已解析 deadline, 引擎看门狗上调到该值 (只升不降)。dispatch 超时 detach 结果显式 `outcome=detached_session_still_running` + pid, 取消日志双超时同框。
+
 ### 座位预算 + 报告回收 (v0.5.91, issue #373)
 
 - fix: `product_lifecycle` `seat_max_turns` 缺省 24 → 48 — 内容密集座位 (env-mock) 24 轮耗尽且交付物已在磁盘 (live run_e5d4d34da020) (#376)。
