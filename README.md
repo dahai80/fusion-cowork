@@ -35,7 +35,7 @@ source_of_truth:
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.93-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.94-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -499,6 +499,13 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - analyzer: classifies every node (`mappable` / `mappable_with_warning` / `unsupported`) with a user-facing coverage report naming each unsupported node + suggested replacement.
 - expressions: n8n expression subset (`{{ $json.x }}`, `{{ $node["Name"].json.y }}`) translated to cowork `${step.<id>.json.<path>}` refs; anything outside the subset raises and is listed in the report. Contract fixtures: `tests/contract/fixtures/n8n_expressions/cases.json`.
 - import-and-verify: imports start as `imported`; only a green engine run upgrades them to `imported_verified`. CLI: `python scripts/verify_n8n_import.py <export.json> [--mode mapped_subgraph] [--verify]`.
+
+### Run Telemetry + Resilience Test Pack (v0.5.94, issues #386/#388/#389/#391)
+
+- feat: run source/labels persisted with the run record; terminal runs carry a summary (#390).
+- test: pipeline node-boundary contract pack — data passing across node edges is pinned end-to-end (#392).
+- test: fault-injection chaos suite, seven scenarios (kill boundary, rerun scope, upstream 503, cancel long-gen, placeholder mismatch, budget park, deploy drift) under `tests/chaos/` (#393).
+- test: vendored agent-studio run API contract fixtures consumed by `studio_run` tests, byte-identical sync check against the upstream repo (#396).
 
 ### Transactional Outbox (v0.5.93, issue #382)
 

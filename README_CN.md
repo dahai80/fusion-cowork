@@ -716,6 +716,13 @@ cowork 两个 composer (任务首页、运行视图) 均改用 `@fusion/web-ui` 
 - expressions: n8n 表达式子集 (`{{ $json.x }}`、`{{ $node["Name"].json.y }}`) 翻译为 cowork `${step.<id>.json.<path>}` 引用; 子集之外的表达式直接报错并列进报告。契约 fixtures: `tests/contract/fixtures/n8n_expressions/cases.json`。
 - import-and-verify: 导入后状态为 `imported`; 只有引擎真实跑绿才升级为 `imported_verified`。CLI: `python scripts/verify_n8n_import.py <export.json> [--mode mapped_subgraph] [--verify]`。
 
+### 运行遥测 + 韧性测试包 (v0.5.94, issues #386/#388/#389/#391)
+
+- feat: run 记录持久化 source/labels; 终态 run 附带摘要 (#390)。
+- test: 流水线节点边界契约测试包 — 跨节点边的数据传递端到端钉死 (#392)。
+- test: 故障注入混沌测试套件, 七个场景 (kill 边界、重跑范围、上游 503、取消长生成、占位符不匹配、预算停靠、部署漂移), 位于 `tests/chaos/` (#393)。
+- test: 内嵌 agent-studio run API 契约 fixtures 被 `studio_run` 测试消费, 与上游仓库逐字节同步校验 (#396)。
+
 ### 事务性 Outbox (v0.5.93, issue #382)
 
 - feat: fusion-harness outbox 内核 (harness#11) 接入工作流引擎 — 节点结果 + 声明的副作用单 sqlite 事务落账 (`OutboxBridge.record_step` 经 `commit_step`); 状态变更与副作用之间 kill -9 不再丢数据 (#384)。

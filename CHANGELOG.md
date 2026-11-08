@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.93
+version: 0.5.94
 updated: 2026-11-08
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,14 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.94 (issues #386/#388/#389/#391/#395)
+
+- feat: n8n workflow importer v1, import-only with a runnability guarantee — per-node coverage report (mappable / mappable_with_warning / unsupported, never silently dropped), n8n expression subset -> `${step...}` translation (shared contract fixtures, IF/Set operands included, contains direction fixed), 0903 canvas schema output, import vs imported_verified status honesty, two genuine community exports as real-world fixtures + verify CLI (#397).
+- feat: run source/labels persisted + terminal run summaries (#390).
+- feat: pipeline node-boundary contract test pack (#392).
+- test: fault-injection chaos suite — seven scenarios (kill boundary, rerun scope, upstream 503, cancel long-gen, placeholder mismatch, budget park, deploy drift) (#393).
+- test: vendored agent-studio run API contract fixtures consumed by studio_run tests (#396).
 
 Entries are distilled from git tags and merge-commit subjects; full per-issue notes live in the referenced issues and the git history. Format: Keep a Changelog, versions are git tags.
 
