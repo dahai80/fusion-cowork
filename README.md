@@ -35,7 +35,7 @@ source_of_truth:
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.5.92-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.93-blue" alt="Version">
   <img src="https://github.com/dahai80/fusion-cowork/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -493,6 +493,12 @@ Both cowork composers (task home, run view) now use the shared FCS-1 `Composer` 
 - One-shot GitHub org initialization from the web: label taxonomy (phase/risk/type/blocked), issue forms (requirement/task/acceptance-report), `CODEOWNERS`, branch protection with required checks. `#/wizard` page: org → repo multi-select → preview (dry-run plan) → apply (idempotent — existing resources skip/update) → teardown (removes only wizard-managed artifacts, tracked by a `.github/wizard-managed.json` audit file per repo).
 - Token flows via `GITHUB_TOKEN` env only — never accepted in request bodies or persisted; routes: `GET /api/wizard/repos`, `POST /api/wizard/preview|apply|teardown` (503 token missing, 400 bad request, 502 GitHub upstream error).
 - Service: `fusion_cowork/server/github_wizard.py` (`GithubWizard` with `client_factory` test seam). Tests: `tests/test_issue_263_github_wizard.py` (9 offline cases via MockTransport).
+### Transactional Outbox (v0.5.93, issue #382)
+
+- feat: fusion-harness outbox kernel (harness#11) wired into the workflow engine — node results + declared side effects journaled in ONE sqlite transaction (`OutboxBridge.record_step` via `commit_step`); a kill -9 between state change and side effect loses nothing (#384).
+- feat: GitHubNode write ops (issue_create etc.) run under idempotent command receipts keyed `{run}:{node}:{op}[:title]` — crash-retry replays skip duplicate writes; the #352/#368 search-dedupe stays as second net.
+- feat: boot reconcile in `recover_persisted` requeues expired leases and honestly retires effects of discarded runs (#372 alignment); opt-in effect worker with persisted backoff `min(30*2^(n-1), 600)s`. Kernel absent or `FUSION_COWORK_OUTBOX=0` = disabled with one loud warning, zero behavior change. Tests: `tests/test_issue_382_outbox_integration.py` (14 cases).
+
 ### Watchdog Floor (v0.5.92, issue #378)
 
 - fix: two-level timeout disagreement — `claude_dispatch` resolved its 3600s deadline but the engine watchdog (#257, default 1800s) still killed the node first; sessions legitimately needing >30min always failed while the detached child kept working (#379).
