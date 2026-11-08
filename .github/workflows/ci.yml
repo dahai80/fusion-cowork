@@ -89,7 +89,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      # setup-bun downloads from GitHub release assets, which 504'd for 2h on
+      # 2026-11-08 and blocked every PR — npm registry is an independent CDN
+      - name: Install bun
+        run: npm install -g bun
       - name: Install (web/)
         working-directory: web
         run: bun install --frozen-lockfile
