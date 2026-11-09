@@ -514,7 +514,7 @@ class RunRegistry:
         items = sorted(self._runs.values(), key=lambda x: -x["created_at"])
         if space_id:
             items = [r for r in items if str(r.get("space_id") or "") == space_id]
-        return [
+        out = [
             {
                 "run_id": r["run_id"],
                 "workflow_id": r["workflow_id"],
@@ -532,6 +532,42 @@ class RunRegistry:
             }
             for r in items
         ]
+        # issue #399: 重启/淘汰后的 run 只剩终态摘要 — 列表兜底合并持久化行,
+        # 内存记录优先 (同 run_id 跳过); 上限 100 行, 不做全表扫描
+        if self.run_store is not None and hasattr(self.run_store, "load_summaries"):
+            try:
+                rows = self.run_store.load_summaries(limit=100)
+            except Exception as e:
+                logger.warning(f"终态摘要列表读取失败 (忽略) {e}")
+                rows = []
+            seen = set(self._runs.keys())
+            extra: List[Dict[str, Any]] = []
+            for row in rows:
+                rid = str(row.get("run_id", ""))
+                if not rid or rid in seen:
+                    continue
+                row_space = str(row.get("space_id") or "")
+                if space_id and row_space != space_id:
+                    continue
+                extra.append(
+                    {
+                        "run_id": rid,
+                        "workflow_id": str(row.get("workflow_id", "")),
+                        "workflow_name": str(row.get("workflow_name", "")),
+                        "status": str(row.get("status", "")),
+                        "created_at": float(row.get("created_at") or 0.0),
+                        "finished_at": row.get("finished_at") or None,
+                        "error": row.get("error"),
+                        "review": None,
+                        "source": str(row.get("source", "")),
+                        "labels": row.get("labels") or {},
+                        "space_id": row_space,
+                        "summary_row": True,
+                    }
+                )
+            if extra:
+                out = sorted(out + extra, key=lambda x: -x["created_at"])
+        return out
 
     def get(self, run_id: str) -> Optional[Dict[str, Any]]:
         run = self._runs.get(run_id)

@@ -17,7 +17,7 @@ logger = logging.getLogger("fusion_cowork.run_persistence")
 # v2 (issue #223): +space_id 列 — run 归属工作区 (Space), 首页按目录过滤
 # v3 (issue #388): +source/labels 列 (归因持久化) + run_summaries 终态摘要表
 #   (daemon 重启后 GET /api/runs/{id} 仍可查; 带 90 天保留期)
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS run_states (
@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS run_summaries (
     steps TEXT NOT NULL DEFAULT '[]',
     created_at REAL NOT NULL DEFAULT 0,
     started_at REAL NOT NULL DEFAULT 0,
-    finished_at REAL NOT NULL DEFAULT 0
+    finished_at REAL NOT NULL DEFAULT 0,
+    space_id TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_run_summaries_finished ON run_summaries(finished_at);
 """
@@ -87,6 +88,12 @@ class RunStateStore:
                     self._conn.execute(f"ALTER TABLE run_states ADD COLUMN {col}")
                 except sqlite3.OperationalError:
                     pass
+        if version < 4:
+            # issue #399: v3 库 run_summaries 补 space_id 列 — 幂等 ALTER
+            try:
+                self._conn.execute("ALTER TABLE run_summaries ADD COLUMN space_id TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
         if version < SCHEMA_VERSION:
             self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self._conn.commit()
@@ -185,8 +192,8 @@ class RunStateStore:
                 """
                 INSERT OR REPLACE INTO run_summaries
                     (run_id, workflow_id, workflow_name, source, labels, status, error,
-                     steps, created_at, started_at, finished_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     steps, created_at, started_at, finished_at, space_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -200,6 +207,7 @@ class RunStateStore:
                     float(record.get("created_at") or 0.0),
                     float(record.get("started_at") or 0.0),
                     float(record.get("finished_at") or time.time()),
+                    str(record.get("space_id") or ""),
                 ),
             )
             self._conn.commit()
