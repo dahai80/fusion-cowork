@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.97
+version: 0.5.98
 updated: 2026-11-09
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,13 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.98 (issues #413/#416/#418/#409)
+
+- feat: intake gains the architecture-review choice — `launch-intake` accepts `review_arch` (default false, 不评审 = auto-pass); `approval_gate` gains `require_review` and when false the engine skips the permission/HITL check and the node output records `auto_passed`/`review_arch`; TemplatesPage intake form gains the no-review / review-required radio; gates A and C untouched (#419).
+- fix: repo_scaffold no longer doubles the `ai-` prefix on intake slugs (dir/package/title use the normalized slug) (#419).
+- feat: intake repo owner defaults to the `dahai80-business` org (owner decision 2026-11-09), overridable via `FUSION_BUSINESS_GITHUB_OWNER` (#419).
+- fix: studio_run default upstream wait 900s -> 1800s with a template-level `studio_wait_timeout` (default 1800) wired into all three seats; github_api issue_create dedupe search q truncated to the 256-char API limit, long task titles no longer 422 (#419).
 
 ## v0.5.97 (issues #404/#410/#414)
 
