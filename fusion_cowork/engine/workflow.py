@@ -227,6 +227,47 @@ def _find_unresolved_refs(value: Any, out: Optional[List[str]] = None) -> List[s
     return out
 
 
+def _resolve_data_path(obj: Any, path: str) -> Any:
+    cur = obj
+    for part in str(path or "").split("."):
+        if isinstance(cur, dict) and part in cur:
+            cur = cur[part]
+        else:
+            return None
+    return cur
+
+
+def _skip_if_hit(conditions: Any, passed_data: Dict[str, Dict[str, Any]], node_input: Dict[str, Any]) -> str:
+    # issue #422: 全部条件命中返回命中描述 (供 skipped 步骤 summary), 否则空串。
+    # 单条件: {"source": "<node_id>"?, "path": "a.b", equals|not_equals|in|not_in}
+    # source 缺省对合并上游输入求值; source 指定则取该节点输出 (缺输出 = None)
+    for cond in conditions or []:
+        if not isinstance(cond, dict):
+            continue
+        source = str(cond.get("source", "") or "")
+        data = passed_data.get(source) if source else node_input
+        if data is None:
+            data = {}
+        val = _resolve_data_path(data, str(cond.get("path", "") or ""))
+        if "equals" in cond:
+            ok = val == cond["equals"]
+        elif "not_equals" in cond:
+            ok = val != cond["not_equals"]
+        elif "in" in cond:
+            ok = val in (cond["in"] or [])
+        elif "not_in" in cond:
+            ok = val not in (cond["not_in"] or [])
+        else:
+            ok = bool(val)
+        if not ok:
+            return ""
+    return "; ".join(
+        f"{c.get('source') or 'upstream'}.{c.get('path', '')}={c.get('equals', c.get('in', c.get('not_in', '?')))}"
+        for c in (conditions or [])
+        if isinstance(c, dict)
+    )
+
+
 def _node_verdict(status: NodeStatus, output: Any) -> str:
     # verdict ≠ 状态: 节点输出可标记业务门控 (blocked/passed=false/gated)
     if status == NodeStatus.FAILED:
@@ -1231,6 +1272,26 @@ class WorkflowEngine:
         # issue #283: expose the run id to nodes — approval-task payloads carry
         # run_id so external decisions (agent-studio GUI) route back via webhook.
         node_input.setdefault("run_id", exec_id)
+
+        # issue #422: 数据驱动条件跳过 — config.skip_if 全部命中时本节点记 SKIPPED
+        # (不执行不进权限/HITL), verdict 分支路由的基础原语
+        skip_desc = _skip_if_hit(node.config.skip_if, passed_data, node_input)
+        if skip_desc:
+            logger.info(f"[{exec_id}] skip_if 命中, 跳过节点 '{node.name}': {skip_desc}")
+            step = WorkflowStep(
+                node_id=node_id,
+                node_name=node.name,
+                node_display_name=node.config.label or node.display_name,
+                status=NodeStatus.SKIPPED,
+                started_at=time.time(),
+                input_data=node_input,
+                output_data={"skip_if": skip_desc},
+                summary=f"条件跳过 (skip_if: {skip_desc})",
+                executor=executor.name,
+            )
+            step.completed_at = time.time()
+            step.execution_time = 0
+            return [step], "continue", ""
 
         # Permission check — issue #189: 同 run 内 HITL 闸门串行, 避免多节点共用
         # _hitl_decisions[exec_id] 时审批决定互相串台

@@ -1356,6 +1356,16 @@ class RepoScaffoldNode(BaseNode):
                         "issue #368 非破坏性: 不覆写任何既有文件 — 既有文件视为交付/用户内容; 空目录始终自动复用)"
                     ),
                 },
+                # issue #422: extend 路径 — verdict=extend 时不再生成新脚手架, 改为
+                # clone 已有仓库 (extend_repo), 增量扩展; token 只走环境变量
+                "verdict": {
+                    "type": "string",
+                    "description": "historical_match 判定 (extend/base/new; 非 extend 走正常脚手架)",
+                },
+                "extend_repo": {
+                    "type": "string",
+                    "description": "extend 模式克隆的已有仓库 (owner/name; 缺省取上游输入 extend_repo)",
+                },
             },
             "required": ["slug"],
         }
@@ -1366,6 +1376,12 @@ class RepoScaffoldNode(BaseNode):
         base_dir = str(params.get("base_dir") or "~/fusion/business")
         display_name = str(params.get("display_name") or "")
         overwrite = bool(params.get("overwrite") or False)
+        # issue #422: extend 路径 — 判定 extend 时 clone 已有仓, 不建新脚手架
+        verdict = str(inputs.get("verdict") or params.get("verdict", "") or "")
+        extend_repo = str(inputs.get("extend_repo") or params.get("extend_repo", "") or "").strip()
+
+        if verdict == "extend" and extend_repo:
+            return await self._extend_clone(base_dir, extend_repo)
 
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
             return NodeResult(status=NodeStatus.FAILED, error=f"slug 须匹配 ^[a-z0-9][a-z0-9-]*$: {slug!r}")
@@ -1461,4 +1477,61 @@ class RepoScaffoldNode(BaseNode):
             status=NodeStatus.SUCCESS,
             data={"repo_path": str(repo_path), "created_files": created, "skipped_files": skipped, "reused": reused},
             summary=f"脚手架完成{' (复用已有目录)' if existed else ''}: {repo_path}",
+        )
+
+    async def _extend_clone(self, base_dir: str, extend_repo: str) -> NodeResult:
+        # issue #422: extend 路径 — clone 客户已有仓库做增量扩展 (绝不建新仓/新 slug)。
+        # token 只走环境变量 (GIT_CONFIG_* 注入 http.extraHeader, 不进 argv 不进日志)
+        base = Path(base_dir).expanduser()
+        if not base.is_dir():
+            return NodeResult(status=NodeStatus.FAILED, error=f"base_dir 不存在: {base}")
+        repo_name = extend_repo.rsplit("/", 1)[-1]
+        repo_path = base / repo_name
+        if repo_path.is_dir() and any(repo_path.iterdir()):
+            logger.info(f"repo_scaffold extend 复用已有工作树: {repo_path}")
+            return NodeResult(
+                status=NodeStatus.SUCCESS,
+                data={"repo_path": str(repo_path), "extended": True, "extend_repo": extend_repo, "created_files": []},
+                summary=f"extend 复用已有工作树: {repo_path}",
+            )
+        token = os.environ.get("GITHUB_TOKEN", "").strip()
+        if not token:
+            return NodeResult(status=NodeStatus.FAILED, error="extend clone 需要 GITHUB_TOKEN (环境变量)")
+        clone_url = f"https://github.com/{extend_repo}.git"
+        env = dict(os.environ)
+        env.update(
+            {
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "http.extraheader",
+                "GIT_CONFIG_VALUE_0": f"Authorization: Bearer {token}",
+            }
+        )
+        logger.info(f"repo_scaffold extend clone: {extend_repo} -> {repo_path}")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                "clone",
+                "--depth",
+                "50",
+                clone_url,
+                str(repo_path),
+                env=env,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, err = await asyncio.wait_for(proc.communicate(), timeout=300)
+        except OSError as e:
+            return NodeResult(status=NodeStatus.FAILED, error=f"extend clone 启动失败: {e}")
+        except TimeoutError:
+            return NodeResult(status=NodeStatus.FAILED, error=f"extend clone 超时 (300s): {extend_repo}")
+        if proc.returncode != 0:
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"extend clone 失败 ({proc.returncode}): {err.decode('utf-8', 'replace')[:200]}",
+            )
+        logger.info(f"repo_scaffold extend clone ok: {repo_path}")
+        return NodeResult(
+            status=NodeStatus.SUCCESS,
+            data={"repo_path": str(repo_path), "extended": True, "extend_repo": extend_repo, "created_files": []},
+            summary=f"extend 克隆完成: {repo_path}",
         )

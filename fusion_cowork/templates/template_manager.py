@@ -884,6 +884,33 @@ BUILTIN_TEMPLATES = [
                     "description": "GitHub/派发节点合成模式 (确定性伪结果, 零网络); 缺省 false, 合成 E2E 传 true",
                     "default": False,
                 },
+                # issue #422: 历史项目比对 — match 节点参数; candidates 缺省空 = 永远判 new
+                # (现行为), 候选由操作员/上游维护
+                "match_candidates": {
+                    "type": "array",
+                    "description": "候选项目列表 [{slug, repo, capabilities, stack, customer, health}]",
+                    "default": [],
+                },
+                "match_candidates_file": {
+                    "type": "string",
+                    "description": "候选 JSON 文件路径 (与 match_candidates 合并; 缺省空)",
+                    "default": "",
+                },
+                "match_threshold": {
+                    "type": "number",
+                    "description": "extend/base 判定分数阈值 (缺省 0.6)",
+                    "default": 0.6,
+                },
+                "own_customer": {
+                    "type": "string",
+                    "description": "本客户标识 (candidate.customer 相等才判 extend; 缺省空 = 全部自有)",
+                    "default": "",
+                },
+                "required_capabilities": {
+                    "type": "array",
+                    "description": "需求要求的能力清单 (gaps = 要求 - 候选已具备)",
+                    "default": [],
+                },
             },
             # issue #320: 座位 ID 二选一 — 装配时显式 graph_id 优先, 清空 agent 缺省 (反之亦然)
             "seat_pairs": [
@@ -965,10 +992,34 @@ BUILTIN_TEMPLATES = [
                     },
                 },
                 {
+                    # issue #422: 历史项目比对 — extend 复用客户已有仓 (增量扩展), base
+                    # 提炼公共能力后新仓继承 (绝不写他客户仓, 绝不泄露他客户项目名), new 现行为
+                    "id": "n4m",
+                    "name": "historical_match",
+                    "config": {
+                        "params": {
+                            "requirement": "Task: ${param.task_title}\n${param.task_prompt}",
+                            "candidates": "${param.match_candidates}",
+                            "candidates_file": "${param.match_candidates_file}",
+                            "threshold": "${param.match_threshold}",
+                            "own_customer": "${param.own_customer}",
+                            "required_capabilities": "${param.required_capabilities}",
+                        }
+                    },
+                },
+                {
                     # issue #361: scaffold_overwrite 模板参数透传 — 重跑管线不再被已有工作树硬阻塞
+                    # issue #422: verdict=extend 时 repo_scaffold 转为 clone 已有仓 (增量扩展)
                     "id": "n5",
                     "name": "repo_scaffold",
-                    "config": {"params": {"slug": "${param.slug}", "overwrite": "${param.scaffold_overwrite}"}},
+                    "config": {
+                        "params": {
+                            "slug": "${param.slug}",
+                            "overwrite": "${param.scaffold_overwrite}",
+                            "verdict": "${step.n4m.verdict}",
+                            "extend_repo": "${step.n4m.matched_repo}",
+                        }
+                    },
                 },
                 {
                     "id": "n6",
@@ -1091,6 +1142,8 @@ BUILTIN_TEMPLATES = [
                 {"source_id": "n2", "target_id": "n3"},
                 {"source_id": "n3", "target_id": "n4"},
                 {"source_id": "n4", "target_id": "n5"},
+                {"source_id": "n4", "target_id": "n4m"},
+                {"source_id": "n4m", "target_id": "n5"},
                 {"source_id": "n5", "target_id": "n6"},
                 {"source_id": "n6", "target_id": "n7"},
                 {"source_id": "n5", "target_id": "n7"},
