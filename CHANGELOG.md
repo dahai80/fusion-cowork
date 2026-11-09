@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.95
+version: 0.5.96
 updated: 2026-11-09
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,10 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.96 (issue #400)
+
+- feat: delivery-pipeline intake mode — the customer provides exactly one thing, a requirement text; everything else is derived server-side. New `fusion_cowork/server/intake.py`: deterministic slug derivation (ASCII words from the first line, CJK falls back to a content sha1), collision-safe `-2` suffix against `business/registry.yaml`, idempotent private-repo ensure via the GitHub API (existing repo = reuse), textual registry insertion that preserves comments (`source: pipeline` + run_id backfill), and a check-slugs gate that must exit 0 before any repo creation. `POST /api/templates/{id}/launch-intake` (dry_run preview 200 / launch 202, `source=intake` runs) + TemplatesPage intake panel with the explicit-params form moved under Advanced. Token discipline: `GITHUB_TOKEN` env only, never request body, never logged (#405).
 
 ## v0.5.95 (issue #399)
 
