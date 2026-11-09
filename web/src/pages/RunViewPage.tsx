@@ -1167,8 +1167,8 @@ function MatchVerdictCard({
             <div className="mt-1 text-[11px] text-text-secondary">
                 {t('匹配', 'Match')} <b className="text-text-primary">{pct}%</b>
                 <span className="pl-1 text-text-muted">
-                    ({t('阈值', 'threshold')} {Math.round(view.threshold * 100)}% ·{' '}
-                    {view.candidatesScanned} {t('个候选', 'candidates')})
+                    ({t('阈值', 'threshold')} {Math.round(view.threshold * 100)}% {view.candidatesScanned}{' '}
+                    {t('个候选', 'candidates')})
                 </span>
             </div>
             {view.gaps.length > 0 ? (
@@ -1211,7 +1211,10 @@ function MatchVerdictCard({
                         disabled={!steerable || busy}
                         title={
                             steerable
-                                ? t('改判为新建项目, 下游步骤按新判定执行', 'Re-verdict to a new project; downstream steps follow')
+                                ? t(
+                                      '改判为新建项目, 下游步骤按新判定执行',
+                                      'Re-verdict to a new project; downstream steps follow'
+                                  )
                                 : t('仅运行/暂停状态可改判', 'Only while running or paused')
                         }
                         className="rounded-md border border-border bg-bg px-2 py-0.5 text-[11px] text-text-secondary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
