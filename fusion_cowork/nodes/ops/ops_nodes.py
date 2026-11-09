@@ -214,6 +214,12 @@ class GitHubNode(BaseNode):
                 "body": {"type": "string"},
                 "labels": {"type": "array", "items": {"type": "string"}},
                 "timeout": {"type": "number", "default": 30},
+                # issue #387: 合成 E2E — dry_run 返回确定性伪结果, 零网络零 token
+                "dry_run": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "合成模式: 不调 GitHub API, 返回确定性伪结果 (合成 E2E 管线用)",
+                },
             },
             "required": ["op", "repo", "allowed_repos"],
         }
@@ -250,6 +256,37 @@ class GitHubNode(BaseNode):
         if repo not in allowed:
             logger.warning(f"github_api 拒绝: {repo} 不在白名单 {allowed}")
             return NodeResult(status=NodeStatus.FAILED, error=f"仓库 {repo} 不在 allowed_repos 白名单内")
+        # issue #387: 合成 E2E — 校验仍走白名单/操作合法, 但零网络返回确定性伪结果
+        dry_run = params.get("dry_run", False)
+        if isinstance(dry_run, str):
+            dry_run = dry_run.strip().lower() not in ("false", "0", "no", "off")
+        if dry_run:
+            logger.info(f"github_api dry_run 合成模式: {op} {repo}#{issue_number or '-'}")
+            canned: Dict[str, Any]
+            if op == "issue_create":
+                canned = {
+                    "number": 1,
+                    "title": title,
+                    "html_url": f"https://github.invalid/{repo}/issues/1",
+                    "state": "open",
+                }
+            elif op == "linked_pr":
+                canned = {
+                    "found": True,
+                    "pr_url": f"https://github.invalid/{repo}/pull/1",
+                    "pr_number": 1,
+                    "ci_status": "success",
+                    "pr_link_strength": "closing",
+                }
+            elif op == "pr_get":
+                canned = {"number": issue_number, "state": "open"}
+            else:
+                canned = {}
+            return NodeResult(
+                status=NodeStatus.SUCCESS,
+                data={"result": canned, "dry_run": True},
+                summary=f"{op} {repo} (dry_run 合成)",
+            )
         token = os.environ.get("GITHUB_TOKEN", "").strip()
         if not token:
             return NodeResult(status=NodeStatus.FAILED, error="GITHUB_TOKEN 未配置 (令牌只走环境变量, 不入 flow 定义)")
@@ -875,6 +912,12 @@ class ClaudeDispatchNode(BaseNode):
                 },
                 "ready_label": {"type": "string", "default": "state:ready"},
                 "dispatched_label": {"type": "string", "default": "state:dispatched"},
+                # issue #387: 合成 E2E — dry_run 不 spawn 会话, 返回确定性伪 PR
+                "dry_run": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "合成模式: 不派发 claude 会话, 返回确定性伪 PR (合成 E2E 管线用)",
+                },
             },
             "required": ["repo", "allowed_repos", "issue_number", "prompt", "cwd"],
         }
@@ -1027,6 +1070,24 @@ class ClaudeDispatchNode(BaseNode):
             return NodeResult(status=NodeStatus.FAILED, error="prompt 不能为空")
         if not cwd or not Path(cwd).is_dir():
             return NodeResult(status=NodeStatus.FAILED, error=f"工作目录不存在: {cwd}")
+
+        # issue #387: 合成 E2E — 校验仍走白名单/参数完整, 但不 spawn 会话, 零成本确定性伪 PR
+        dry_run = params.get("dry_run", False)
+        if isinstance(dry_run, str):
+            dry_run = dry_run.strip().lower() not in ("false", "0", "no", "off")
+        if dry_run:
+            pr_url = f"https://github.invalid/{repo}/pull/1"
+            logger.info(f"claude_dispatch dry_run 合成模式: {repo}#{issue_number} -> {pr_url}")
+            return NodeResult(
+                status=NodeStatus.SUCCESS,
+                data={
+                    "pr_url": pr_url,
+                    "pr_number": 1,
+                    "total_tokens": 0,
+                    "dry_run": True,
+                },
+                summary=f"dry_run 合成交付: {repo}#{issue_number} -> {pr_url}",
+            )
 
         full_prompt = prompt
         full_prompt += f"\n\nTask issue: {repo}#{issue_number}"

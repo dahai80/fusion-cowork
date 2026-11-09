@@ -866,6 +866,24 @@ BUILTIN_TEMPLATES = [
                     "description": "studio_run 各座位 sync 等待终态上限 (秒; 缺省 1800)",
                     "default": 1800,
                 },
+                # issue #387: 合成 E2E — 三开关缺省全关 = 生产行为; 合成启动传
+                # seat_model=replay-dev + gates_human=false + node_dry_run=true,
+                # 管线零真实模型 token、零 GitHub 写、无人工闸门
+                "seat_model": {
+                    "type": "string",
+                    "description": "座位模型钉选 (spec.model; 缺省空 = 按 agent manifest 选模; 合成 E2E 用 replay-dev)",
+                    "default": "",
+                },
+                "gates_human": {
+                    "type": "boolean",
+                    "description": "人工闸门 A/C 是否需要评审 (闸 B 由 review_arch 独立控制); 缺省 true, 合成 E2E 传 false",
+                    "default": True,
+                },
+                "node_dry_run": {
+                    "type": "boolean",
+                    "description": "GitHub/派发节点合成模式 (确定性伪结果, 零网络); 缺省 false, 合成 E2E 传 true",
+                    "default": False,
+                },
             },
             # issue #320: 座位 ID 二选一 — 装配时显式 graph_id 优先, 清空 agent 缺省 (反之亦然)
             "seat_pairs": [
@@ -890,6 +908,8 @@ BUILTIN_TEMPLATES = [
                             "mode": "sync",
                             # issue #363: 显式轮次预算 — studio 默认 8 轮饿死多产物角色
                             "max_turns": "${param.seat_max_turns}",
+                            # issue #387: 座位模型钉选 (合成 E2E 钉 replay-dev; 空 = 上游选模)
+                            "model": "${param.seat_model}",
                             # issue #409: 上游等待可配 (缺省 1800s)
                             "timeout": "${param.studio_wait_timeout}",
                         }
@@ -902,6 +922,8 @@ BUILTIN_TEMPLATES = [
                         "params": {
                             "prompt": "闸门 A: PRD 评审",
                             "details": "批准 PRD 后进入架构设计; 拒绝则 BA 代理按评审意见修订",
+                            # issue #387: gates_human=false (合成 E2E) 闸门 A 自动通过
+                            "require_review": "${param.gates_human}",
                             # issue #328: 拒绝 → 修订回路 — 回到 n1 (BA) 带评审意见重跑
                             "on_reject": "revise",
                             "revision_node": "n1",
@@ -920,6 +942,8 @@ BUILTIN_TEMPLATES = [
                             "input": "Write the architecture/plan for product ${param.slug} based on the approved PRD below.\n\nPRD artifact id (canonical reference — read the PRD by this artifact id, never guess file paths):\n${step.n1.result.artifacts.0}\n\nPRD document:\n${step.n1.result.last_result.report}",
                             "mode": "sync",
                             "max_turns": "${param.seat_max_turns}",
+                            # issue #387: 座位模型钉选 (合成 E2E 钉 replay-dev; 空 = 上游选模)
+                            "model": "${param.seat_model}",
                             # issue #409: 上游等待可配 (缺省 1800s)
                             "timeout": "${param.studio_wait_timeout}",
                         }
@@ -957,6 +981,8 @@ BUILTIN_TEMPLATES = [
                             "title": "${param.task_title}",
                             "body": "Task for ${param.slug}. Scaffold: ${result.repo_path}. Deliver via PR; self-test evidence required.",
                             "labels": ["state:ready"],
+                            # issue #387: 合成 E2E dry_run — 确定性伪 issue, 零 GitHub 写
+                            "dry_run": "${param.node_dry_run}",
                         }
                     },
                 },
@@ -977,6 +1003,8 @@ BUILTIN_TEMPLATES = [
                             "cwd": "${result.repo_path}",
                             "timeout": "${param.dispatch_timeout}",
                             "max_tokens": "${param.dispatch_max_tokens}",
+                            # issue #387: 合成 E2E dry_run — 不 spawn 会话, 确定性伪 PR
+                            "dry_run": "${param.node_dry_run}",
                         },
                     },
                 },
@@ -992,6 +1020,8 @@ BUILTIN_TEMPLATES = [
                             "issue_number": "${result.number}",
                             "require": True,
                             "require_closing_link": "${param.require_closing_link}",
+                            # issue #387: 合成 E2E dry_run — 确定性伪关联 PR, 零 GitHub 读
+                            "dry_run": "${param.node_dry_run}",
                         }
                     },
                 },
@@ -1006,6 +1036,8 @@ BUILTIN_TEMPLATES = [
                             "input": "Prepare the env/mock pack for product ${param.slug} per the PRD and architecture below.\n\nPRD artifact id (canonical reference):\n${step.n1.result.artifacts.0}\n\nArchitecture artifact id (canonical reference):\n${step.n3.result.artifacts.0}\n\nPRD document:\n${step.n1.result.last_result.report}\n\nArchitecture document:\n${step.n3.result.last_result.report}",
                             "mode": "sync",
                             "max_turns": "${param.seat_max_turns}",
+                            # issue #387: 座位模型钉选 (合成 E2E 钉 replay-dev; 空 = 上游选模)
+                            "model": "${param.seat_model}",
                             # issue #409: 上游等待可配 (缺省 1800s)
                             "timeout": "${param.studio_wait_timeout}",
                         }
@@ -1018,6 +1050,8 @@ BUILTIN_TEMPLATES = [
                         "params": {
                             "prompt": "闸门 C: 人工验收",
                             "details": "支持逐项 batch 决定 (items[]); 全拒 = 任务回退, 混合 = 带逐项结论继续",
+                            # issue #387: gates_human=false (合成 E2E) 闸门 C 自动通过
+                            "require_review": "${param.gates_human}",
                         }
                     },
                 },
@@ -1031,6 +1065,8 @@ BUILTIN_TEMPLATES = [
                             "allowed_repos": ["${param.repo}"],
                             "issue_number": "${result.number}",
                             "labels": ["state:accepted"],
+                            # issue #387: 合成 E2E dry_run — 零 GitHub 写
+                            "dry_run": "${param.node_dry_run}",
                         }
                     },
                 },
@@ -1044,6 +1080,8 @@ BUILTIN_TEMPLATES = [
                             "allowed_repos": ["${param.repo}"],
                             "issue_number": "${result.number}",
                             "body": "Gate C accepted — PR ${result.pr_url} evidence archived (run ${run_id})",
+                            # issue #387: 合成 E2E dry_run — 零 GitHub 写
+                            "dry_run": "${param.node_dry_run}",
                         }
                     },
                 },

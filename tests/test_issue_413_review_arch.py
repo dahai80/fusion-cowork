@@ -89,8 +89,10 @@ class TestTemplate:
         assert gate_b.config.params["require_review"] is True
 
     def test_other_gates_untouched(self):
+        # issue #387: 闸 A/C 改接 ${param.gates_human} (缺省 true = 照常人工) —
+        # review_arch 只控闸 B, 闸 A/C 仍由独立参数控制
         wf = self._tpl().template_to_workflow("product_lifecycle", param_values={"review_arch": True})
         gate_a = wf.nodes["n2"]
         gate_c = wf.nodes["n10"]
-        assert "require_review" not in (gate_a.config.params or {})
-        assert "require_review" not in (gate_c.config.params or {})
+        assert gate_a.config.params["require_review"] is True
+        assert gate_c.config.params["require_review"] is True

@@ -1,0 +1,129 @@
+name: Nightly synthetic E2E
+
+# issue #387: zero-real-model end-to-end validation of the product_lifecycle
+# pipeline. Seat runs are pinned to the replay-dev deterministic model
+# (fusion-mlx#1518), GitHub/dispatch nodes run dry_run, human gates auto-pass.
+# Zero real-model tokens, zero GitHub writes.
+
+on:
+  schedule:
+    - cron: "30 1 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  synthetic-e2e:
+    runs-on: [self-hosted, macOS, synthetic]
+    timeout-minutes: 25
+    steps:
+      - name: Preflight local services
+        run: |
+          set -e
+          for svc in "cowork http://127.0.0.1:11461/health" \
+                     "gateway http://127.0.0.1:11432/health" \
+                     "studio http://127.0.0.1:11442/health" \
+                     "mlx http://127.0.0.1:11434/health"; do
+            name=$(echo "$svc" | cut -d' ' -f1)
+            url=$(echo "$svc" | cut -d' ' -f2)
+            if curl -sf -m 5 "$url" > /dev/null; then
+              echo "$name: healthy"
+            else
+              echo "::error::$name not healthy at $url"
+              exit 1
+            fi
+          done
+
+      - name: Seed permission allow-rules (idempotent)
+        run: |
+          set -e
+          KEY=$(cat "$HOME/.fusion-cowork/web_module_key" 2>/dev/null || true)
+          if [ -z "$KEY" ]; then
+            echo "::error::module key missing at ~/.fusion-cowork/web_module_key"
+            exit 1
+          fi
+          for tool in studio_run claude_dispatch; do
+            code=$(curl -s -o /tmp/perm_$tool.json -w '%{http_code}' \
+              -X POST http://127.0.0.1:11461/api/permissions/rules \
+              -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+              -d "{\"tool_name\":\"$tool\",\"allowed\":true,\"scope\":\"*\"}")
+            echo "$tool rule -> $code"
+            [ "$code" = "200" ] || [ "$code" = "201" ] || { cat /tmp/perm_$tool.json; exit 1; }
+          done
+
+      - name: Launch synthetic run
+        id: launch
+        run: |
+          set -e
+          KEY=$(cat "$HOME/.fusion-cowork/web_module_key")
+          resp=$(mktemp)
+          code=$(curl -s -o "$resp" -w '%{http_code}' \
+            -X POST http://127.0.0.1:11461/api/templates/product_lifecycle/launch \
+            -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+            -d '{
+              "params": {
+                "slug": "nightly-synthetic",
+                "repo": "dahai80-business/ai-nightly-synthetic",
+                "task_title": "Nightly synthetic E2E task (no real delivery)",
+                "seat_model": "replay-dev",
+                "gates_human": false,
+                "node_dry_run": true,
+                "scaffold_overwrite": true,
+                "seat_max_turns": 4,
+                "studio_wait_timeout": 300,
+                "dispatch_timeout": 60
+              }
+            }')
+          echo "launch -> $code"
+          cat "$resp"
+          [ "$code" = "202" ] || exit 1
+          run_id=$(python3 -c "import json;print(json.load(open('$resp'))['run_id'])")
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Poll run to terminal
+        id: poll
+        env:
+          RUN_ID: ${{ steps.launch.outputs.run_id }}
+        run: |
+          set -e
+          KEY=$(cat "$HOME/.fusion-cowork/web_module_key")
+          deadline=$((SECONDS + 600))
+          status="running"
+          while [ $SECONDS -lt $deadline ]; do
+            status=$(curl -sf -H "Authorization: Bearer $KEY" \
+              "http://127.0.0.1:11461/api/runs/$RUN_ID" | python3 -c "import json,sys;print(json.load(sys.stdin).get('status',''))")
+            echo "t=${SECONDS}s status=$status"
+            case "$status" in
+              running|pending|paused) sleep 10 ;;
+              *) break ;;
+            esac
+          done
+          echo "final_status=$status" >> "$GITHUB_OUTPUT"
+          # dump per-step outcomes for debugging either way
+          curl -sf -H "Authorization: Bearer $KEY" "http://127.0.0.1:11461/api/runs/$RUN_ID" | \
+            python3 -c "
+import json, sys
+r = json.load(sys.stdin)
+for s in r.get('steps', []):
+    print(s.get('node_id'), s.get('node_name'), s.get('status'), (s.get('error') or '')[:200])
+"
+          if [ "$status" != "completed" ]; then
+            echo "::error::synthetic E2E did not complete: final_status=$status"
+            exit 1
+          fi
+
+      - name: Assert all steps succeeded
+        env:
+          RUN_ID: ${{ steps.launch.outputs.run_id }}
+        run: |
+          set -e
+          KEY=$(cat "$HOME/.fusion-cowork/web_module_key")
+          curl -sf -H "Authorization: Bearer $KEY" "http://127.0.0.1:11461/api/runs/$RUN_ID" | \
+            python3 -c "
+import json, sys
+r = json.load(sys.stdin)
+steps = r.get('steps', [])
+bad = [s for s in steps if s.get('status') not in ('success', 'skipped')]
+print(f'steps={len(steps)} bad={len(bad)}')
+for s in bad:
+    print(s.get('node_id'), s.get('node_name'), s.get('status'), (s.get('error') or '')[:300])
+sys.exit(1 if bad or not steps else 0)
+"
