@@ -150,8 +150,8 @@ class StudioRunNode(BaseNode):
                 },
                 "timeout": {
                     "type": "number",
-                    "description": "sync 模式等待终态的总超时秒数 (缺省 900, 可用 FUSION_COWORK_STUDIO_RUN_TIMEOUT 覆盖)",
-                    "default": 900.0,
+                    "description": "sync 模式等待终态的总超时秒数 (缺省 1800, 可用 FUSION_COWORK_STUDIO_RUN_TIMEOUT 覆盖)",
+                    "default": 1800.0,
                 },
                 "poll_interval": {
                     "type": "number",
@@ -194,9 +194,10 @@ class StudioRunNode(BaseNode):
         agent_id = str(inputs.get("agent_id", params.get("agent_id", "")) or "")
         text = str(inputs.get("input", params.get("input", "")) or "")
         mode = str(params.get("mode", "sync") or "sync")
-        # issue #351: 默认 300s 会取消健康的 4B 座位长生成 — 900s 起步,
+        # issue #351: 默认 300s 会取消健康的 4B 座位长生成 — 900s 起步;
+        # issue #409: 并发管线 mlx 争抢下 900s 仍不够 (上游 460s 后才终态而管线已判死) — 缺省提到 1800s,
         # 可用 FUSION_COWORK_STUDIO_RUN_TIMEOUT 环境变量全局调整
-        timeout = params.get("timeout") or float(os.environ.get("FUSION_COWORK_STUDIO_RUN_TIMEOUT") or 900.0)
+        timeout = params.get("timeout") or float(os.environ.get("FUSION_COWORK_STUDIO_RUN_TIMEOUT") or 1800.0)
         poll_interval = _clamp_poll_interval(float(params.get("poll_interval", _POLL_INTERVAL) or _POLL_INTERVAL))
         title = str(params.get("title", "") or "")
         idempotency_key = str(params.get("idempotency_key", "") or "")

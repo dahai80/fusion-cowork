@@ -40,7 +40,7 @@ def test_params_schema_required_fields():
     schema = node.get_params_schema()
     assert "input" in schema["required"]
     assert schema["properties"]["mode"]["default"] == "sync"
-    assert schema["properties"]["timeout"]["default"] == 900.0
+    assert schema["properties"]["timeout"]["default"] == 1800.0
 
 
 def _patch_transport(monkeypatch, handler):

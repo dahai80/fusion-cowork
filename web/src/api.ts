@@ -757,7 +757,11 @@ export const api = {
     launchTemplate: (id: string, params: Record<string, unknown>) =>
         post<{ run_id: string; status: string }>(`/api/templates/${encodeURIComponent(id)}/launch`, { params }),
     // issue #400: intake mode — requirement in, slug/private repo/registry derived
-    launchTemplateIntake: (id: string, body: { requirement: string; slug_hint?: string; dry_run?: boolean }) =>
+    // issue #413: review_arch — architecture review gate B opt-in at intake
+    launchTemplateIntake: (
+        id: string,
+        body: { requirement: string; slug_hint?: string; dry_run?: boolean; review_arch?: boolean }
+    ) =>
         post<{
             status: string;
             run_id?: string;
