@@ -30,7 +30,16 @@ import {
 import { useT } from '../i18n';
 import { isPipelineRun } from '../pipeline';
 import { runHistoryActions } from '../runstatus';
-import { capabilitiesInUse, computeWaves, parseParamsDraft, stepArtifactRefs, stepCapability } from '../runview';
+import {
+    applyMatchOverrides,
+    capabilitiesInUse,
+    computeWaves,
+    matchVerdictView,
+    parseParamsDraft,
+    stepArtifactRefs,
+    stepCapability,
+} from '../runview';
+import type { MatchVerdictView } from '../runview';
 import { sdk, streamSse } from '../sdk';
 import { HitlCountdown, RunArtifactPane, StepDrawer } from './RunsPage';
 
@@ -61,6 +70,8 @@ export function RunViewPage({ runId }: { runId: string }) {
     const [hitlApprovals, setHitlApprovals] = useState<GuardApproval[]>([]);
     const [hitlBusy, setHitlBusy] = useState('');
     const [reviewNote, setReviewNote] = useState('');
+    // issue #422 F-1: 历史项目比对判定卡 — 改判按钮提交 override_output 改向指令
+    const [matchBusy, setMatchBusy] = useState('');
 
     useEffect(() => {
         try {
@@ -160,6 +171,20 @@ export function RunViewPage({ runId }: { runId: string }) {
     const gates = gateProgress(record.workflow_def, record.steps ?? []);
     const caps = capabilitiesInUse(record.steps ?? []);
     const correctionLines = (record.steps ?? []).filter((s) => s.user_correction);
+    // issue #422 F-1: 改判指令回显 — override_output payload 覆盖判定卡显示 (引擎边界生效语义)
+    const matchOverrides = new Map<string, Record<string, unknown>>();
+    for (const d of record.directives ?? []) {
+        const payload = d.payload as { node_id?: unknown; merge?: unknown } | undefined;
+        if (
+            d.action === 'override_output' &&
+            payload &&
+            typeof payload.node_id === 'string' &&
+            payload.merge &&
+            typeof payload.merge === 'object'
+        ) {
+            matchOverrides.set(payload.node_id, payload.merge as Record<string, unknown>);
+        }
+    }
     // issue #225: 审批卡内联到被闸节点位置; 无法定位的卡片浮在顶部 (fallback)
     const waveNodeIds = new Set(waves.flatMap((w) => w.nodes.map((n) => n.id)));
     const inlineApprovals = hitlApprovals.filter((a) => a.node_id && waveNodeIds.has(a.node_id));
@@ -241,6 +266,29 @@ export function RunViewPage({ runId }: { runId: string }) {
             sdk.toast.show({ level: 'error', message: t('审批失败', 'Approval failed') });
         } finally {
             setHitlBusy('');
+        }
+    }
+
+    // issue #422 F-1: 改判 — extend/base 判定翻转为 new (downstream 插值取新值);
+    // new 不可反改为 extend (卡片无候选项目可接), base→extend 违反跨客户红线, 均不提供
+    async function reverdictMatch(nodeId: string) {
+        setMatchBusy(nodeId);
+        try {
+            await api.directive(runId, {
+                action: 'override_output',
+                node_id: nodeId,
+                merge: { verdict: 'new', matched_repo: '' },
+            });
+            sdk.toast.show({
+                level: 'success',
+                message: t('已改判: 新建项目', 'Re-verdicted: new project'),
+            });
+            setReloadKey((k) => k + 1);
+        } catch (e) {
+            console.error('[cowork-web] re-verdict failed', e);
+            sdk.toast.show({ level: 'error', message: t('改判失败', 'Re-verdict failed') });
+        } finally {
+            setMatchBusy('');
         }
     }
 
@@ -533,6 +581,23 @@ export function RunViewPage({ runId }: { runId: string }) {
                                                     step={step}
                                                     deadline={record.hitl_deadline ?? undefined}
                                                 />
+                                            );
+                                        }
+                                        // issue #422 F-1: 历史项目比对步骤渲染为判定卡
+                                        const matchView = applyMatchOverrides(
+                                            matchVerdictView(step),
+                                            matchOverrides.get(wn.id)
+                                        );
+                                        if (matchView) {
+                                            return (
+                                                <div key={wn.id}>
+                                                    <MatchVerdictCard
+                                                        view={matchView}
+                                                        steerable={steerable}
+                                                        busy={matchBusy === wn.id}
+                                                        onReverdict={() => void reverdictMatch(wn.id)}
+                                                    />
+                                                </div>
                                             );
                                         }
                                         return (
@@ -1059,6 +1124,131 @@ function WorkspaceDrawer({ spaceId, onClose }: { spaceId: string; onClose: () =>
                     ) : null}
                 </div>
             )}
+        </div>
+    );
+}
+
+// issue #422 F-1: 历史项目比对判定卡 — 判定三态 + 分数 + 缺口 + 明细展开 +
+// 体验已有项目 (仅 extend) + 改判新建 (extend/base, 经 override_output 指令)。
+// base 判定按隐私红线只展示 "命中其他客户项目" — 项目名/能力不可见。
+function MatchVerdictCard({
+    view,
+    steerable,
+    busy,
+    onReverdict,
+}: {
+    view: MatchVerdictView;
+    steerable: boolean;
+    busy: boolean;
+    onReverdict: () => void;
+}) {
+    const t = useT();
+    const [detailOpen, setDetailOpen] = useState(false);
+    const verdictLabel =
+        view.verdict === 'extend'
+            ? t('扩展已有项目', 'Extend existing project')
+            : view.verdict === 'base'
+              ? t('基于成熟方案定制', 'Customize from a mature solution')
+              : t('新建项目', 'New project');
+    const pct = Math.round(view.score * 100);
+    const repoUrl = view.matchedRepo ? `https://github.com/${view.matchedRepo}` : '';
+    const visible = view.matchedVisible ?? {};
+    const visibleCaps = Array.isArray(visible.capabilities) ? (visible.capabilities as unknown[]).map(String) : [];
+    return (
+        <div className="rounded-md border border-border bg-bg-muted/40 p-2">
+            <div className="flex items-center justify-between text-xs">
+                <span className="font-medium text-text-primary">
+                    🧭 {t('历史项目比对', 'Historical project match')}
+                </span>
+                <span className="rounded border border-border bg-bg px-1.5 py-0.5 text-[10px] text-text-secondary">
+                    {verdictLabel}
+                </span>
+            </div>
+            <div className="mt-1 text-[11px] text-text-secondary">
+                {t('匹配', 'Match')} <b className="text-text-primary">{pct}%</b>
+                <span className="pl-1 text-text-muted">
+                    ({t('阈值', 'threshold')} {Math.round(view.threshold * 100)}% ·{' '}
+                    {view.candidatesScanned} {t('个候选', 'candidates')})
+                </span>
+            </div>
+            {view.gaps.length > 0 ? (
+                <div className="mt-1 text-[11px] text-text-secondary">
+                    {t('能力缺口', 'Capability gaps')}:{' '}
+                    <span className="font-mono text-text-primary">{view.gaps.join(', ')}</span>
+                </div>
+            ) : null}
+            {view.verdict === 'base' ? (
+                <div className="mt-1 text-[11px] text-warning">
+                    {t(
+                        '命中其他客户项目 — 项目名不可见; 公共能力沉淀基座后新仓继承, 不跨客户改仓',
+                        'Matched another customer project — name hidden; shared capabilities distill into the base product, never cross-customer writes'
+                    )}
+                </div>
+            ) : null}
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {view.verdict !== 'new' ? (
+                    <button
+                        type="button"
+                        className="rounded-md border border-border bg-bg px-2 py-0.5 text-[11px] text-text-secondary hover:text-text-primary"
+                        onClick={() => setDetailOpen((v) => !v)}
+                    >
+                        {t('详细介绍已有项目', 'Project details')}
+                    </button>
+                ) : null}
+                {view.verdict === 'extend' && repoUrl ? (
+                    <a
+                        href={repoUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-md border border-border bg-bg px-2 py-0.5 text-[11px] text-text-secondary hover:text-text-primary"
+                    >
+                        ▶ {t('体验已有项目', 'Try existing project')}
+                    </a>
+                ) : null}
+                {view.verdict !== 'new' ? (
+                    <button
+                        type="button"
+                        disabled={!steerable || busy}
+                        title={
+                            steerable
+                                ? t('改判为新建项目, 下游步骤按新判定执行', 'Re-verdict to a new project; downstream steps follow')
+                                : t('仅运行/暂停状态可改判', 'Only while running or paused')
+                        }
+                        className="rounded-md border border-border bg-bg px-2 py-0.5 text-[11px] text-text-secondary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={onReverdict}
+                    >
+                        {busy ? t('改判中…', 'Re-verdicting…') : t('改判：新建项目', 'Re-verdict: new project')}
+                    </button>
+                ) : null}
+            </div>
+            {detailOpen && view.verdict !== 'new' ? (
+                <div className="mt-1.5 rounded-md border border-border bg-bg px-2 py-1.5 text-[11px] text-text-secondary">
+                    {view.verdict === 'extend' && visible.slug ? (
+                        <>
+                            <div className="font-medium text-text-primary">{String(visible.slug)}</div>
+                            {repoUrl ? <div className="font-mono text-[10px]">{repoUrl}</div> : null}
+                            {visibleCaps.length > 0 ? (
+                                <div className="mt-0.5">
+                                    {t('已有能力', 'Capabilities')}:{' '}
+                                    <span className="font-mono">{visibleCaps.join(' · ')}</span>
+                                </div>
+                            ) : null}
+                            {visible.stack ? (
+                                <div className="mt-0.5">
+                                    {t('技术栈', 'Stack')}: <span className="font-mono">{String(visible.stack)}</span>
+                                </div>
+                            ) : null}
+                            {visible.health ? (
+                                <div className="mt-0.5">
+                                    {t('健康度', 'Health')}: {String(visible.health)}
+                                </div>
+                            ) : null}
+                        </>
+                    ) : (
+                        <div>{t('项目详情已按隐私策略隐藏', 'Project details hidden by privacy policy')}</div>
+                    )}
+                </div>
+            ) : null}
         </div>
     );
 }

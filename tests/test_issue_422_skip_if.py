@@ -27,6 +27,9 @@ class _EmitNode(BaseNode):
         return {"type": "object", "properties": {"verdict": {"type": "string"}, "score": {"type": "number"}}}
 
     async def execute(self, inputs):
+        import asyncio
+
+        await asyncio.sleep(0.02)
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"verdict": str(self.config.params.get("verdict", "new")), "score": 0.87, "gaps": ["pay"]},
@@ -109,3 +112,77 @@ class TestSkipIfPrimitive:
         steps = {s.node_id: s for s in res.steps}
         assert steps["down1"].status.value == "skipped"
         assert res.status.value == "success"
+
+
+@register_node
+class _EchoNode(BaseNode):
+    name = "_t422_echo"
+    display_name = "echo"
+    category = NodeCategory.LOGIC
+
+    async def execute(self, inputs):
+        return NodeResult(
+            status=NodeStatus.SUCCESS,
+            data={"value": str(self.config.params.get("value", ""))},
+            summary="echoed",
+        )
+
+
+def _reverdict_wf() -> Workflow:
+    wf = Workflow(name="t422-reverdict")
+    a = NodeRegistry.create("_t422_emit", node_id="m1")
+    a.config.params = {"verdict": "extend"}
+    b = NodeRegistry.create("_t422_echo", node_id="sink")
+    b.config.params = {"value": "${step.m1.verdict}"}
+    wf.add_node(a)
+    wf.add_node(b)
+    wf.connect("m1", "sink")
+    return wf
+
+
+class TestOverrideOutputDirective:
+    async def test_override_output_flows_downstream(self):
+        # issue #422 改判: 覆盖已执行节点输出, 下游 ${step.<id>.<path>} 插值取新值
+        import asyncio
+
+        engine = WorkflowEngine()
+        wf = _reverdict_wf()
+        task = asyncio.create_task(engine.execute(wf, execution_id="exec-ov1"))
+        await asyncio.sleep(0.01)
+        assert engine.pause("exec-ov1") is True
+        await asyncio.sleep(0.1)
+        assert engine.is_paused("exec-ov1") is True
+
+        assert engine.add_directive(
+            "exec-ov1", {"action": "override_output", "node_id": "m1", "merge": {"verdict": "new"}}
+        )
+        engine.resume("exec-ov1")
+        res = await asyncio.wait_for(task, timeout=5)
+        steps = {s.node_id: s for s in res.steps if not s.user_correction}
+        assert steps["sink"].output_data["value"] == "new"
+        markers = [s for s in res.steps if s.user_correction]
+        assert len(markers) == 1
+        assert "覆盖输出" in (markers[0].summary or "")
+
+    async def test_override_output_before_target_executed_ignored(self):
+        import asyncio
+
+        engine = WorkflowEngine()
+        wf = _reverdict_wf()
+        task = asyncio.create_task(engine.execute(wf, execution_id="exec-ov2"))
+        await asyncio.sleep(0.01)
+        assert engine.pause("exec-ov2") is True
+        await asyncio.sleep(0.1)
+        # 目标 sink 未执行 — 覆盖拒绝 (fail-closed, 下游拿原值, 不落修正标记)
+        assert engine.add_directive(
+            "exec-ov2", {"action": "override_output", "node_id": "sink", "merge": {"verdict": "new"}}
+        )
+        engine.resume("exec-ov2")
+        res = await asyncio.wait_for(task, timeout=5)
+        steps = {s.node_id: s for s in res.steps if not s.user_correction}
+        assert steps["sink"].output_data["value"] == "extend"
+        assert not [s for s in res.steps if s.user_correction]
+
+    async def test_override_output_requires_merge_dict(self):
+        engine = WorkflowEngine()
+        assert engine.add_directive("missing", {"action": "override_output", "node_id": "m1"}) is False

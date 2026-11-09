@@ -977,6 +977,24 @@ BUILTIN_TEMPLATES = [
                     },
                 },
                 {
+                    # issue #422: 历史项目比对 — 在闸门 B (确认点) 之前自动运行, 闸 B 暂停时
+                    # 运行视图展示判定卡 (分数/缺口), 操作员可改判 (override_output 改向指令)
+                    # 后再批准; extend 复用客户已有仓 (增量扩展), base 提炼公共能力后新仓继承
+                    # (绝不写他客户仓, 绝不泄露他客户项目名), new 现行为
+                    "id": "n4m",
+                    "name": "historical_match",
+                    "config": {
+                        "params": {
+                            "requirement": "Task: ${param.task_title}\n${param.task_prompt}",
+                            "candidates": "${param.match_candidates}",
+                            "candidates_file": "${param.match_candidates_file}",
+                            "threshold": "${param.match_threshold}",
+                            "own_customer": "${param.own_customer}",
+                            "required_capabilities": "${param.required_capabilities}",
+                        }
+                    },
+                },
+                {
                     "id": "n4",
                     "name": "approval_gate",
                     "config": {
@@ -988,22 +1006,6 @@ BUILTIN_TEMPLATES = [
                             # issue #328: 拒绝 → 修订回路 — 回到 n3 (架构) 带评审意见重跑
                             "on_reject": "revise",
                             "revision_node": "n3",
-                        }
-                    },
-                },
-                {
-                    # issue #422: 历史项目比对 — extend 复用客户已有仓 (增量扩展), base
-                    # 提炼公共能力后新仓继承 (绝不写他客户仓, 绝不泄露他客户项目名), new 现行为
-                    "id": "n4m",
-                    "name": "historical_match",
-                    "config": {
-                        "params": {
-                            "requirement": "Task: ${param.task_title}\n${param.task_prompt}",
-                            "candidates": "${param.match_candidates}",
-                            "candidates_file": "${param.match_candidates_file}",
-                            "threshold": "${param.match_threshold}",
-                            "own_customer": "${param.own_customer}",
-                            "required_capabilities": "${param.required_capabilities}",
                         }
                     },
                 },
@@ -1140,9 +1142,9 @@ BUILTIN_TEMPLATES = [
             "edges": [
                 {"source_id": "n1", "target_id": "n2"},
                 {"source_id": "n2", "target_id": "n3"},
-                {"source_id": "n3", "target_id": "n4"},
+                {"source_id": "n3", "target_id": "n4m"},
+                {"source_id": "n4m", "target_id": "n4"},
                 {"source_id": "n4", "target_id": "n5"},
-                {"source_id": "n4", "target_id": "n4m"},
                 {"source_id": "n4m", "target_id": "n5"},
                 {"source_id": "n5", "target_id": "n6"},
                 {"source_id": "n6", "target_id": "n7"},

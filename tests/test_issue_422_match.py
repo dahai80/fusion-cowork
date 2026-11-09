@@ -182,7 +182,8 @@ class TestTemplateWiring:
         assert nodes["n5"]["config"]["params"]["verdict"] == "${step.n4m.verdict}"
         assert nodes["n5"]["config"]["params"]["extend_repo"] == "${step.n4m.matched_repo}"
         edges = {(e["source_id"], e["target_id"]) for e in tpl["workflow"]["edges"]}
-        assert ("n4", "n4m") in edges and ("n4m", "n5") in edges
+        # issue #422 F-1: match 在闸门 B 之前自动运行 — 闸 B 暂停时判定卡可见, 可改判后批准
+        assert ("n3", "n4m") in edges and ("n4m", "n4") in edges and ("n4m", "n5") in edges
 
     def test_new_params_exist(self):
         props = TemplateManager().get_template("product_lifecycle")["params"]["properties"]

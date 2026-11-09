@@ -738,7 +738,7 @@ export const api = {
     directive: (
         id: string,
         body: {
-            action: 'set_params' | 'insert_node' | 'skip_remaining' | 'inject';
+            action: 'set_params' | 'insert_node' | 'skip_remaining' | 'inject' | 'override_output';
             node_id?: string;
             params?: Record<string, unknown>;
             node?: Record<string, unknown>;

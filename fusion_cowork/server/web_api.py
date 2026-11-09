@@ -961,7 +961,7 @@ class RunRegistry:
         self._broadcast(run_id, {"event": "run_paused", "at": time.time(), "run": self._public(record)})
 
     # issue #227: inject = 运行中指令注入 (下一节点边界并入目标节点输入, 时间线落修正标记)
-    DIRECTIVE_ACTIONS = ("set_params", "insert_node", "skip_remaining", "inject")
+    DIRECTIVE_ACTIONS = ("set_params", "insert_node", "skip_remaining", "inject", "override_output")
 
     def resume_from(self, run_id: str, node_id: str) -> Dict[str, Any]:
         """issue #226: 从历史 run 的指定步骤重跑 — 新 run 链回原 run, 已完成步骤快照续跑。"""

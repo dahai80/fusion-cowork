@@ -32,7 +32,8 @@ class TestProductLifecycleTemplate:
         pairs = {(e["source_id"], e["target_id"]) for e in _tpl()["workflow"]["edges"]}
         for a, b in (
             ("n1", "n2"),
-            ("n3", "n4"),
+            ("n3", "n4m"),
+            ("n4m", "n4"),
             ("n4", "n5"),
             ("n5", "n6"),
             ("n6", "n7"),
