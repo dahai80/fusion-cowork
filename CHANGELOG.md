@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.96
+version: 0.5.97
 updated: 2026-11-09
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,12 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.97 (issues #404/#410/#414)
+
+- feat: HITL email notification at every human touchpoint — every approval gate / agent-node permission pause emails the responsible user at their fusion-identity registered address (no new email storage; recipient resolved from the run's identity token via read-only `IdentityClient.get_user_email`, `FUSION_COWORK_NOTIFY_EMAIL` override). SMTP env-injected only (`SMTP_HOST/PORT/USER/PASS/FROM/TLS` — absent = disabled), fire-and-forget daemon thread with 3 attempts, failure logs a WARN and never blocks the pipeline; plain-text English body with run_id, node, `#/pipeline/<run_id>` deep link; resolved acks opt-in via `SMTP_NOTIFY_RESOLVED=1`. Live-verified end-to-end against a local SMTP sink (pending + resolved mails, correct body/deep link) (#411).
+- fix: resume-from 500 on template-sourced runs — `RunRegistry.resume_from` assumed `workflow_def.nodes` is a list; template runs persist nodes as a dict, so every resume of an intake/template run raised `AttributeError`. Both shapes accepted (#411).
+- fix: intake launch doubled the `ai-` slug prefix on template scaffold paths (`business/ai-ai-<name>`) — the template's `slug` param is the bare product slug; launch-intake now strips the prefix for the template param only, registry/repo/labels keep the prefixed form (#415).
 
 ## v0.5.96 (issue #400)
 
