@@ -29,6 +29,8 @@ export function TemplatesPage() {
     const [intakeMode, setIntakeMode] = useState(true);
     const [intakeRequirement, setIntakeRequirement] = useState('');
     const [intakeSlugHint, setIntakeSlugHint] = useState('');
+    // issue #413: gate B (架构评审) intake 二选一 — 缺省不评审 (自动通过)
+    const [intakeReviewArch, setIntakeReviewArch] = useState(false);
     const [intakePreview, setIntakePreview] = useState<{
         slug: string;
         suggested_from: string;
@@ -51,6 +53,7 @@ export function TemplatesPage() {
         setIntakeMode(true);
         setIntakeRequirement('');
         setIntakeSlugHint('');
+        setIntakeReviewArch(false);
         setIntakePreview(null);
         try {
             const detail = (await api.template(tpl.id)) as unknown as {
@@ -87,6 +90,7 @@ export function TemplatesPage() {
                 requirement: intakeRequirement,
                 slug_hint: intakeSlugHint || undefined,
                 dry_run: true,
+                review_arch: intakeReviewArch,
             });
             setIntakePreview({
                 slug: res.plan.slug,
@@ -106,6 +110,7 @@ export function TemplatesPage() {
             const res = await api.launchTemplateIntake(launchTpl.id, {
                 requirement: intakeRequirement,
                 slug_hint: intakeSlugHint || undefined,
+                review_arch: intakeReviewArch,
             });
             if (res.status !== 'started' || !res.run_id) {
                 throw new Error(res.status);
@@ -373,6 +378,29 @@ export function TemplatesPage() {
                                                     }}
                                                 />
                                             </label>
+                                            <div className="text-xs text-text-secondary">
+                                                <span>{t('架构评审 (闸门 B)', 'Architecture review (gate B)')}</span>
+                                                <div className="mt-0.5 flex gap-3">
+                                                    <label className="flex items-center gap-1">
+                                                        <input
+                                                            type="radio"
+                                                            name="intake-review-arch"
+                                                            checked={!intakeReviewArch}
+                                                            onChange={() => setIntakeReviewArch(false)}
+                                                        />
+                                                        {t('不评审 (默认, 自动通过)', 'No review (default, auto-pass)')}
+                                                    </label>
+                                                    <label className="flex items-center gap-1">
+                                                        <input
+                                                            type="radio"
+                                                            name="intake-review-arch"
+                                                            checked={intakeReviewArch}
+                                                            onChange={() => setIntakeReviewArch(true)}
+                                                        />
+                                                        {t('需要评审', 'Review required')}
+                                                    </label>
+                                                </div>
+                                            </div>
                                             {intakePreview ? (
                                                 <div className="rounded-md bg-bg-muted px-2 py-1 text-xs text-text-secondary">
                                                     {intakePreview.suggested_from

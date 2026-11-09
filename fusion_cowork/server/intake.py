@@ -5,8 +5,9 @@ Everything else is derived server-side:
 
 - slug: deterministic normalization from the requirement (collision-safe
   `-2`/`-3` suffix, pattern `^ai-[a-z0-9]+(-[a-z0-9]+)*$`)
-- repo: private `dahai80/business/ai-<slug>` created via the GitHub API at
-  launch (idempotent — existing repo is reused, cow#361/#368 no-op contract)
+- repo: private `dahai80-business/ai-<slug>` created via the GitHub API at
+  launch (idempotent — existing repo is reused, cow#361/#368 no-op contract;
+  owner via FUSION_BUSINESS_GITHUB_OWNER, issue #418)
 - registry: `business/registry.yaml` gains a `source: pipeline` entry with the
   run_id in notes; check-slugs.py must pass 0 errors before repo creation
 
@@ -39,6 +40,11 @@ _MAX_ATTEMPTS = 20
 
 def registry_path() -> Path:
     return Path(os.environ.get("FUSION_BUSINESS_REGISTRY") or _DEFAULT_REGISTRY)
+
+
+def business_github_owner() -> str:
+    # issue #418: ai-* repos live under the dahai80-business org (owner decision 2026-11-09)
+    return (os.environ.get("FUSION_BUSINESS_GITHUB_OWNER") or "dahai80-business").strip() or "dahai80-business"
 
 
 def derive_slug(requirement: str) -> str:
@@ -87,11 +93,13 @@ def check_slug_slug_valid(slug: str) -> None:
 class RepoClient:
     """GitHub repo API — GITHUB_TOKEN env only; client_factory seam for tests."""
 
-    def __init__(self, token: str = "", base_url: str = "", client_factory: Any = None, owner: str = "dahai80"):
+    def __init__(self, token: str = "", base_url: str = "", client_factory: Any = None, owner: str = ""):
         self.token = token or os.environ.get("GITHUB_TOKEN", "")
         self.base_url = (base_url or os.environ.get("FUSION_GITHUB_API", "https://api.github.com")).rstrip("/")
         self.client_factory = client_factory
-        self.owner = owner
+        # issue #418: owner decision 2026-11-09 — ai-* 商用仓归属 dahai80-business org;
+        # FUSION_BUSINESS_GITHUB_OWNER 覆盖 (兼容旧个人账号部署)
+        self.owner = owner or business_github_owner()
 
     def _client(self, timeout: float = 15.0) -> Any:
         if self.client_factory is not None:
@@ -247,7 +255,7 @@ async def prepare_intake(
     plan: Dict[str, Any] = {
         "slug": slug,
         "suggested_from": suggested_from,
-        "repo": f"{'dahai80'}/{slug}",
+        "repo": f"{business_github_owner()}/{slug}",
         "registry_check": check,
         "dry_run": bool(dry_run),
     }

@@ -97,20 +97,20 @@ class TestRepoClient:
                 return httpx.Response(404)
             body = json.loads(request.content)
             assert body["private"] is True
-            return httpx.Response(201, json={"full_name": "dahai80/ai-pet-hotel"})
+            return httpx.Response(201, json={"full_name": "dahai80-business/ai-pet-hotel"})
 
         info = await self._client(handler).ensure_repo("ai-pet-hotel")
-        assert info == {"created": True, "full_name": "dahai80/ai-pet-hotel", "visibility": "private"}
+        assert info == {"created": True, "full_name": "dahai80-business/ai-pet-hotel", "visibility": "private"}
         assert calls[0][0] == "GET"  # check-before-create (idempotent)
 
     async def test_existing_repo_reused_never_recreated(self):
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.method == "GET"  # no POST ever
-            return httpx.Response(200, json={"full_name": "dahai80/ai-alpha", "private": True})
+            return httpx.Response(200, json={"full_name": "dahai80-business/ai-alpha", "private": True})
 
         info = await self._client(handler).ensure_repo("ai-alpha")
         assert info["created"] is False
-        assert info["full_name"] == "dahai80/ai-alpha"
+        assert info["full_name"] == "dahai80-business/ai-alpha"
 
     async def test_create_failure_raises_loud(self):
         def handler(request: httpx.Request) -> httpx.Response:
@@ -130,7 +130,7 @@ class TestRepoClient:
 
 class TestRegistry:
     def test_register_inserts_sorted_with_comments_kept(self, registry):
-        info = register_slug("ai-mike", "run_abc", "dahai80/ai-mike", path=registry)
+        info = register_slug("ai-mike", "run_abc", "dahai80-business/ai-mike", path=registry)
         assert info["registered"] is True
         text = registry.read_text()
         assert "# header comment must survive" in text
@@ -140,13 +140,13 @@ class TestRegistry:
         assert text.index("ai-alpha") < text.index("ai-mike") < text.index("ai-zulu")
 
     def test_register_idempotent(self, registry):
-        register_slug("ai-alpha", "run_1", "dahai80/ai-alpha", path=registry)
-        info = register_slug("ai-alpha", "run_2", "dahai80/ai-alpha", path=registry)
+        register_slug("ai-alpha", "run_1", "dahai80-business/ai-alpha", path=registry)
+        info = register_slug("ai-alpha", "run_2", "dahai80-business/ai-alpha", path=registry)
         assert info["existed"] is True and info["registered"] is False
         assert registry.read_text().count("ai-alpha:") == 1
 
     def test_update_run_id_backfill(self, registry):
-        register_slug("ai-mike", "pending", "dahai80/ai-mike", path=registry)
+        register_slug("ai-mike", "pending", "dahai80-business/ai-mike", path=registry)
         assert update_registry_run_id("ai-mike", "run_999", path=registry) is True
         assert "run_id: run_999" in registry.read_text()
 
@@ -157,7 +157,7 @@ class TestRegistry:
         p = tmp_path / "bad.yaml"
         p.write_text("naming: {}\n")
         with pytest.raises(ValueError):
-            register_slug("ai-x", "run", "dahai80/ai-x", path=p)
+            register_slug("ai-x", "run", "dahai80-business/ai-x", path=p)
 
 
 class TestCheckSlugs:
@@ -188,7 +188,7 @@ class TestPrepareIntake:
             dry_run=True,
         )
         assert plan["slug"] == "ai-build-pet-hotel-booking"
-        assert plan["repo"] == "dahai80/ai-build-pet-hotel-booking"
+        assert plan["repo"] == "dahai80-business/ai-build-pet-hotel-booking"
         assert plan["dry_run"] is True
         assert "repo_info" not in plan
         # registry untouched
@@ -312,7 +312,7 @@ class TestEndpoint:
         body = resp.json()
         assert body["status"] == "dry_run"
         assert body["plan"]["slug"] == "ai-build-pet-hotel-booking"
-        assert body["plan"]["repo"] == "dahai80/ai-build-pet-hotel-booking"
+        assert body["plan"]["repo"] == "dahai80-business/ai-build-pet-hotel-booking"
         assert "ai-build-pet-hotel-booking" not in registry.read_text()
 
     def test_short_requirement_400(self, tmp_path, monkeypatch, registry):

@@ -1252,7 +1252,12 @@ class WorkflowEngine:
                 # issue #326: 附上游产物证据 — 拒绝入待审批队列时卡片带产出快照
                 etoken = set_approval_evidence(_collect_upstream_evidence(workflow, node, passed_data))
                 try:
-                    allowed = await self._permission_manager.check(node.name, "execute", check_input)
+                    # issue #413: approval_gate require_review=false — intake 选择的免评审闸门
+                    # 自动通过, 不进权限拒绝/HITL 暂停 (仅此节点名可免检, 其他高风险节点不受影响)
+                    if node.name == "approval_gate" and check_input.get("require_review") is False:
+                        allowed = True
+                    else:
+                        allowed = await self._permission_manager.check(node.name, "execute", check_input)
                 finally:
                     reset_approval_context(token)
                     reset_approval_evidence(etoken)

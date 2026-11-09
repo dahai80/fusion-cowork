@@ -293,7 +293,14 @@ class GitHubNode(BaseNode):
                 # issue #368: 查全状态 (open+closed) — 已交付关闭的同标题 issue 也是重复,
                 # 只查 open 会在 PR 合并关闭后重跑时再建一条假任务
                 if op == "issue_create":
-                    q = f'repo:{repo} is:issue "{title.replace(chr(34), chr(92) + chr(34))}"'
+                    # issue #409: GitHub search q 上限 256 字符 — 长标题截断 (best-effort 去重,
+                    # 非身份判定; 建 issue 用完整标题不受影响); 截断不吃掉转义反斜杠
+                    q_fixed = len(f'repo:{repo} is:issue "') + 1
+                    q_title = title.replace(chr(34), chr(92) + chr(34))
+                    if q_fixed + len(q_title) > 256:
+                        q_title = q_title[: max(0, 256 - q_fixed)].rstrip("\\").rstrip()
+                        logger.info("github_api issue_create dedupe search q truncated to 256 chars (long title)")
+                    q = f'repo:{repo} is:issue "{q_title}"'
                     sresp = await client.request("GET", "/search/issues", params={"q": q})
                     sresp.raise_for_status()
                     for item in (sresp.json() or {}).get("items") or []:
@@ -749,6 +756,12 @@ class ApprovalGateNode(BaseNode):
             "properties": {
                 "prompt": {"type": "string", "description": "给审批人的说明"},
                 "details": {"type": "string"},
+                # issue #413: intake 选择的免评审闸门 — false 时节点自动通过, 不进 HITL
+                "require_review": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "false = 免评审 (intake review_arch=false), 节点自动通过记录 auto_passed",
+                },
             },
             "required": ["prompt"],
         }
@@ -757,6 +770,25 @@ class ApprovalGateNode(BaseNode):
         params = coerce_params(self.config.params, self.get_params_schema())
         prompt = str(params.get("prompt") or "")
         details = str(params.get("details") or "")
+        require_review = params.get("require_review", True)
+        if isinstance(require_review, str):
+            require_review = require_review.strip().lower() not in ("false", "0", "no", "off")
+        if not require_review:
+            # issue #413: 免评审闸门自动通过 — 引擎侧同步跳过权限/HITL 检查 (workflow.py)
+            logger.info(f"approval_gate auto-pass (require_review=false): {prompt[:80]}")
+            return NodeResult(
+                status=NodeStatus.SUCCESS,
+                data={
+                    "approved": True,
+                    "auto_passed": True,
+                    "require_review": False,
+                    "review_arch": False,
+                    "payload": inputs.get("payload") or {},
+                    "prompt": prompt,
+                    "details": details,
+                },
+                summary=f"免评审自动通过 (require_review=false): {prompt[:40]}",
+            )
         # issue #309: 逐项决定透传 — batch_verdict 由引擎在混合决定唤醒后并入节点输入
         batch = inputs.get("batch_verdict") or []
         if batch:
@@ -1276,10 +1308,12 @@ class RepoScaffoldNode(BaseNode):
 
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
             return NodeResult(status=NodeStatus.FAILED, error=f"slug 须匹配 ^[a-z0-9][a-z0-9-]*$: {slug!r}")
+        # issue #416: intake 派生的 slug 本就带 ai- 前缀 — 先归一化再统一加前缀, 杜绝 ai-ai- 双前缀目录
+        base_slug = slug[3:] if slug.startswith("ai-") else slug
         base = Path(base_dir).expanduser()
         if not base.is_dir():
             return NodeResult(status=NodeStatus.FAILED, error=f"base_dir 不存在: {base}")
-        repo_path = base / f"ai-{slug}"
+        repo_path = base / f"ai-{base_slug}"
         # issue #352: 重跑幂等 — 空目录自动复用; 有内容时 overwrite=true 补齐缺失脚手架文件
         # issue #368: overwrite 非破坏性 — 既有文件一律不覆写 (视为交付/用户内容,
         # 复写会把已交付仓库打回 stub 造成未提交回退), 否则明确报错给补救提示
@@ -1300,8 +1334,8 @@ class RepoScaffoldNode(BaseNode):
                     ),
                 )
 
-        pkg = f"fusion_ai_{slug.replace('-', '_')}"
-        title = display_name or f"ai-{slug}"
+        pkg = f"fusion_ai_{base_slug.replace('-', '_')}"
+        title = display_name or f"ai-{base_slug}"
         files: Dict[str, str] = {
             "pyproject.toml": (
                 f'[build-system]\nrequires = ["setuptools>=68"]\nbuild-backend = "setuptools.build_meta"\n\n'
@@ -1321,7 +1355,7 @@ class RepoScaffoldNode(BaseNode):
             ".python-version": "3.12\n",
             "port_registry_entry.json": json.dumps(
                 {
-                    "service": f"ai-{slug}",
+                    "service": f"ai-{base_slug}",
                     "requested_port": None,
                     "note": "register the real port in ~/fusion/architecture/port-registry.yaml before first serve",
                 },

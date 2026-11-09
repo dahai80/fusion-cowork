@@ -853,6 +853,19 @@ BUILTIN_TEMPLATES = [
                     "description": "studio_run 座位轮次预算 (spec.max_turns; 缺省 48, studio 默认 8 轮会饿死多产物角色)",
                     "default": 48,
                 },
+                # issue #413: 架构评审闸门 (gate B) 在 intake 时二选一 — 缺省不评审 (自动通过),
+                # review_arch=true 时闸 B 照常暂停等人工批准
+                "review_arch": {
+                    "type": "boolean",
+                    "description": "是否需要架构评审 (闸门 B); 缺省 false = 自动通过, true = 暂停等人工批准",
+                    "default": False,
+                },
+                # issue #409: studio_run 上游等待可配 — 并发管线 mlx 争抢下 900s 固定等待不够
+                "studio_wait_timeout": {
+                    "type": "number",
+                    "description": "studio_run 各座位 sync 等待终态上限 (秒; 缺省 1800)",
+                    "default": 1800,
+                },
             },
             # issue #320: 座位 ID 二选一 — 装配时显式 graph_id 优先, 清空 agent 缺省 (反之亦然)
             "seat_pairs": [
@@ -877,6 +890,8 @@ BUILTIN_TEMPLATES = [
                             "mode": "sync",
                             # issue #363: 显式轮次预算 — studio 默认 8 轮饿死多产物角色
                             "max_turns": "${param.seat_max_turns}",
+                            # issue #409: 上游等待可配 (缺省 1800s)
+                            "timeout": "${param.studio_wait_timeout}",
                         }
                     },
                 },
@@ -905,6 +920,8 @@ BUILTIN_TEMPLATES = [
                             "input": "Write the architecture/plan for product ${param.slug} based on the approved PRD below.\n\nPRD artifact id (canonical reference — read the PRD by this artifact id, never guess file paths):\n${step.n1.result.artifacts.0}\n\nPRD document:\n${step.n1.result.last_result.report}",
                             "mode": "sync",
                             "max_turns": "${param.seat_max_turns}",
+                            # issue #409: 上游等待可配 (缺省 1800s)
+                            "timeout": "${param.studio_wait_timeout}",
                         }
                     },
                 },
@@ -915,6 +932,8 @@ BUILTIN_TEMPLATES = [
                         "params": {
                             "prompt": "闸门 B: 架构评审",
                             "details": "批准架构后脚手架 + 派发; 拒绝则架构代理按评审意见修订",
+                            # issue #413: review_arch=false (缺省) → 闸门自动通过不进 HITL
+                            "require_review": "${param.review_arch}",
                             # issue #328: 拒绝 → 修订回路 — 回到 n3 (架构) 带评审意见重跑
                             "on_reject": "revise",
                             "revision_node": "n3",
@@ -987,6 +1006,8 @@ BUILTIN_TEMPLATES = [
                             "input": "Prepare the env/mock pack for product ${param.slug} per the PRD and architecture below.\n\nPRD artifact id (canonical reference):\n${step.n1.result.artifacts.0}\n\nArchitecture artifact id (canonical reference):\n${step.n3.result.artifacts.0}\n\nPRD document:\n${step.n1.result.last_result.report}\n\nArchitecture document:\n${step.n3.result.last_result.report}",
                             "mode": "sync",
                             "max_turns": "${param.seat_max_turns}",
+                            # issue #409: 上游等待可配 (缺省 1800s)
+                            "timeout": "${param.studio_wait_timeout}",
                         }
                     },
                 },

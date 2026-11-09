@@ -2158,6 +2158,8 @@ def create_web_app(
         requirement = str(body.get("requirement") or "")
         slug_hint = str(body.get("slug_hint") or "")
         dry_run = bool(body.get("dry_run"))
+        # issue #413: 架构评审 (gate B) intake 二选一 — 缺省 false = 闸门自动通过
+        review_arch = bool(body.get("review_arch"))
         try:
             plan = await intake.prepare_intake(
                 requirement, slug_hint=slug_hint, dry_run=dry_run, path=intake.registry_path()
@@ -2184,6 +2186,7 @@ def create_web_app(
                     "repo": plan["repo"],
                     "task_title": intake.task_title(requirement),
                     "task_prompt": "Implement the assigned task per PRD/architecture docs; deliver via PR with self-test evidence.",
+                    "review_arch": review_arch,
                 },
             )
         except Exception as exc:
