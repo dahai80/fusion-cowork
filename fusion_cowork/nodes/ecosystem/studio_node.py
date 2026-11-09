@@ -173,6 +173,12 @@ class StudioRunNode(BaseNode):
                         "manifest 或 studio 默认 8 轮; 多产物角色建议 24-48, issue #363/#373)"
                     ),
                 },
+                # issue #387: 座位模型钉选 — 经 /v1/runs body spec.model 传入; 缺省不传
+                # (上游按 agent manifest 选模); replay-dev = 零成本确定性回放 (fusion-mlx#1518)
+                "model": {
+                    "type": "string",
+                    "description": "座位模型 id (spec.model; 缺省不传; 合成 E2E 用 replay-dev)",
+                },
                 "report_recovery": {
                     "type": "boolean",
                     "description": (
@@ -202,6 +208,7 @@ class StudioRunNode(BaseNode):
         title = str(params.get("title", "") or "")
         idempotency_key = str(params.get("idempotency_key", "") or "")
         max_turns = params.get("max_turns")
+        model = str(params.get("model", "") or "")
         report_recovery = params.get("report_recovery", True)
         if report_recovery is None:
             report_recovery = True
@@ -245,9 +252,15 @@ class StudioRunNode(BaseNode):
                     payload["title"] = title
                 if idempotency_key:
                     payload["idempotency_key"] = idempotency_key
-                if max_turns:
+                if max_turns or model:
                     # issue #363: 显式轮次预算 — studio 默认 8 轮会饿死多产物角色
-                    payload["spec"] = {"max_turns": int(max_turns)}
+                    # issue #387: spec.model 座位模型钉选 (合成 E2E 钉 replay-dev)
+                    spec: Dict[str, Any] = {}
+                    if max_turns:
+                        spec["max_turns"] = int(max_turns)
+                    if model:
+                        spec["model"] = model
+                    payload["spec"] = spec
                 submitted = await _submit_run(client, payload)
                 run_id = str(submitted.get("run_id", "") or "")
                 if not run_id:
