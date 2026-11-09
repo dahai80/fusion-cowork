@@ -205,6 +205,11 @@ class NodeConfig:
     max_turns: int = 0
     budget_tokens: int = 0
     params: Dict[str, Any] = field(default_factory=dict)
+    # issue #422: 数据驱动条件跳过 — 全部条件命中时本节点记 SKIPPED
+    # (verdict 分支路由: extend 跳过 new-only 步骤)。条件形如
+    # {"source": "<node_id>", "path": "a.b", "equals": x}; 另支持
+    # not_equals / in / not_in; source 缺省对合并上游输入求值
+    skip_if: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -323,6 +328,7 @@ class BaseNode(ABC):
                 "max_turns": self.config.max_turns,
                 "budget_tokens": self.config.budget_tokens,
                 "params": self.config.params,
+                "skip_if": self.config.skip_if,
             },
             "status": self.status.value,
         }
@@ -352,6 +358,7 @@ class BaseNode(ABC):
             max_turns=int(data.get("config", {}).get("max_turns", 0) or 0),
             budget_tokens=int(data.get("config", {}).get("budget_tokens", 0) or 0),
             params=params or {},
+            skip_if=[c for c in (data.get("config", {}).get("skip_if") or []) if isinstance(c, dict)],
         )
         return cls(node_id=data.get("id", ""), config=config)
 
