@@ -17,6 +17,15 @@ source_of_truth:
 
 # Changelog
 
+## v0.5.100 (issue #422)
+
+- **Historical-project match before scaffolding (product_lifecycle)** — part 1 of #422, follow-ups in #427:
+  - New `historical_match` node (ops): deterministic capability-overlap scoring (containment, zero LLM cost, replay-safe) over candidate projects (inline `candidates` or `candidates_file` JSON); three-way verdict — `extend` (same-customer candidate, downstream clones the existing repo) / `base` (other customer's candidate, matched details hidden — no cross-customer repo access or name disclosure) / `new` (fresh scaffold, prior behavior); `gaps` = required minus matched capabilities
+  - Engine `skip_if` primitive: `NodeConfig.skip_if` conditions (`{source, path, equals|not_equals|in|not_in}`, all must match) evaluated after input interpolation and before the permission check — skipped nodes record `NodeStatus.SKIPPED` with the matched condition and never enter the HITL gate; missing source node fails closed
+  - `repo_scaffold` extend mode: `verdict=extend` + `extend_repo` clones the matched repo (`--depth 50`) instead of scaffolding; GitHub token injected via `GIT_CONFIG_*` env only (never argv); existing non-empty worktree reused
+  - `product_lifecycle` template: new `n4m` `historical_match` step between gate B (arch review) and scaffold; `verdict`/`matched_repo` wired into n5; new params `match_candidates` / `match_candidates_file` / `match_threshold` (0.6) / `own_customer` / `required_capabilities` — all default to prior always-scaffold-new behavior
+  - Tests: `tests/test_issue_422_match.py` + `tests/test_issue_422_skip_if.py` (22 cases) + `test_issue_307` template pin updated to 13 nodes
+
 ## v0.5.99 (issue #387)
 
 - **Synthetic E2E mode for the product_lifecycle pipeline** — zero real-model tokens, zero GitHub writes, unblocked by replay-dev going live (fusion-mlx#1518, deterministic zero-cost replay provider):
