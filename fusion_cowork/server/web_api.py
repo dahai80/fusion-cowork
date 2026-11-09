@@ -973,7 +973,13 @@ class RunRegistry:
         wf_def = record.get("workflow_def") or {}
         if not wf_def:
             raise ValueError("no_workflow_def")
-        node_ids = {n.get("id") for n in wf_def.get("nodes", [])}
+        raw_nodes = wf_def.get("nodes", [])
+        # issue #410: template 来源 run 的 workflow_def.nodes 是 dict (node_id -> node),
+        # 列表形态是画布保存的 run — 两种都接受, from_dict 下游本就双形态兼容
+        if isinstance(raw_nodes, dict):
+            node_ids = set(raw_nodes.keys())
+        else:
+            node_ids = {n.get("id") for n in raw_nodes if isinstance(n, dict)}
         if node_id not in node_ids:
             raise ValueError("unknown_node")
         # 目标步骤在时间线中的位置 — 其之前已完成 (success + 断点续跑 skipped 副本) 的步骤作为续跑快照,
@@ -1418,6 +1424,14 @@ def create_web_app(
     else:
         permission_manager = getattr(engine, "_permission_manager", None) or permission_manager
         emitter = getattr(engine, "_event_emitter", None)
+    # issue #404: HITL 邮件通知 — SMTP_HOST 存在即启用; fire-and-forget, 失败仅 WARN
+    if getattr(engine, "hitl_notifier", None) is None:
+        from .email_notify import HitlEmailNotifier
+
+        notifier = HitlEmailNotifier()
+        if notifier.enabled:
+            engine.hitl_notifier = notifier
+            logger.info("issue #404 HITL email notifier enabled (smtp host=%s)", (notifier._config or {}).get("host"))
     # issue #191: 运行控制状态持久层 — SQLite 落盘, daemon 重启可恢复
     from ..engine.run_persistence import RunStateStore
 

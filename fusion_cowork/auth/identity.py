@@ -183,6 +183,25 @@ class IdentityClient:
             logger.debug("identity usage 上报失败 (best-effort): %s", e)
             return False
 
+    def get_user_email(self, user_id: str) -> Optional[str]:
+        """Registration-record email lookup (issue #404) — read-only, no cache,
+        no email stored cowork-side. Missing endpoint/user → None with WARN."""
+        try:
+            resp = self._client.get(
+                self._base_url + f"/api/v1/users/{user_id}",
+                headers={"Authorization": f"Bearer {self._service_token}"},
+            )
+        except Exception as e:
+            logger.warning("identity user lookup failed uid=%s: %s", user_id, e)
+            return None
+        if resp.status_code != 200:
+            logger.warning("identity user lookup non-200 uid=%s status=%s", user_id, resp.status_code)
+            return None
+        data = resp.json() or {}
+        user = data.get("user") if isinstance(data.get("user"), dict) else data
+        email = str(user.get("email") or "").strip()
+        return email or None
+
     def ping(self) -> bool:
         try:
             resp = self._client.get(self._base_url + "/health")
