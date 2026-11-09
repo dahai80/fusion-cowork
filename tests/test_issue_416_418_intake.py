@@ -64,6 +64,8 @@ class TestOwnerDefault:
 
         def handler(request: httpx.Request) -> httpx.Response:
             seen.append((request.method, request.url.path))
+            if request.url.path == "/user":
+                return httpx.Response(200, json={"login": "dahai80"})
             if request.method == "GET":
                 return httpx.Response(404)
             return httpx.Response(201, json={"full_name": "dahai80-business/ai-pet-hotel"})
@@ -76,6 +78,30 @@ class TestOwnerDefault:
         )
         assert info["full_name"] == "dahai80-business/ai-pet-hotel"
         assert seen[0] == ("GET", "/repos/dahai80-business/ai-pet-hotel")
+        # issue #418: org owner 建仓走 /orgs/{org}/repos, 不是 /user/repos
+        assert ("POST", "/orgs/dahai80-business/repos") in seen
+        assert ("POST", "/user/repos") not in seen
+
+    async def test_ensure_repo_personal_owner_uses_user_endpoint(self, monkeypatch):
+        monkeypatch.delenv("FUSION_BUSINESS_GITHUB_OWNER", raising=False)
+        seen = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append((request.method, request.url.path))
+            if request.url.path == "/user":
+                return httpx.Response(200, json={"login": "dahai80"})
+            if request.method == "GET":
+                return httpx.Response(404)
+            return httpx.Response(201, json={"full_name": "dahai80/ai-pet-hotel"})
+
+        def factory(timeout=15.0):
+            return httpx.AsyncClient(base_url="https://api.github.test", transport=httpx.MockTransport(handler))
+
+        info = await RepoClient(
+            token="t", base_url="https://api.github.test", client_factory=factory, owner="dahai80"
+        ).ensure_repo("ai-pet-hotel")
+        assert info["full_name"] == "dahai80/ai-pet-hotel"
+        assert ("POST", "/user/repos") in seen
 
     async def test_prepare_intake_plan_repo_uses_org(self, tmp_path, monkeypatch):
         monkeypatch.delenv("FUSION_BUSINESS_GITHUB_OWNER", raising=False)

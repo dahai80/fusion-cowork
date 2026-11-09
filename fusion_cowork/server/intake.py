@@ -119,7 +119,23 @@ class RepoClient:
         raise RuntimeError(f"GitHub GET /repos/{self.owner}/{name} -> {resp.status_code}")
 
     async def create_repo(self, name: str) -> Dict[str, Any]:
+        # issue #418: owner org 时必须 POST /orgs/{org}/repos — /user/repos 一律落在
+        # 认证账号个人名下, plan["repo"] 与真实 remote 不一致
         async with self._client() as client:
+            login = ""
+            try:
+                uresp = await client.get("/user")
+                if uresp.status_code == 200:
+                    login = str((uresp.json() or {}).get("login") or "")
+            except Exception as e:
+                logger.warning("GitHub GET /user failed (%s) — defaulting to /user/repos", e)
+            if login and self.owner and login != self.owner:
+                resp = await client.post(f"/orgs/{self.owner}/repos", json={"name": name, "private": True})
+                if resp.status_code in (201, 202):
+                    return resp.json()
+                raise RuntimeError(
+                    f"GitHub POST /orgs/{self.owner}/repos ({name}, private) -> {resp.status_code}: {resp.text[:200]}"
+                )
             resp = await client.post("/user/repos", json={"name": name, "private": True, "auto_init": True})
         if resp.status_code in (201, 202):
             return resp.json()
