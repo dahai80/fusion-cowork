@@ -41,7 +41,10 @@ class TestSchemaV3:
             r["name"] for r in store._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         assert "run_summaries" in tables
-        assert SCHEMA_VERSION == 3
+        # v4 (issue #399) added run_summaries.space_id; source/labels stay from v3
+        assert SCHEMA_VERSION == 4
+        scols = {r["name"] for r in store._conn.execute("PRAGMA table_info(run_summaries)").fetchall()}
+        assert {"space_id"} <= scols
         store.close()
 
     def test_v2_db_migrates_idempotent(self, tmp_path):
