@@ -7,8 +7,8 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.94
-updated: 2026-11-08
+version: 0.5.95
+updated: 2026-11-09
 owner: "@dahai"
 source_of_truth:
   - CHANGELOG.md
@@ -16,6 +16,10 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.95 (issue #399)
+
+- fix: `RunRegistry.list()` falls back to persisted terminal summaries — after a service restart `/api/runs` returned an empty list while run history was on disk; the list now merges the latest 100 persisted summaries with live runs (memory wins, newest-first, `space_id` filter honored). run_summaries schema v4 adds `space_id` (v3 databases migrate via idempotent ALTER). Verified live on :11461 — the restart that previously blanked the run-history GUI now returns the pre-restart runs (#401).
 
 ## v0.5.94 (issues #386/#388/#389/#391/#395)
 
