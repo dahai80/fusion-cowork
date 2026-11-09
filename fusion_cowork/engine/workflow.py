@@ -1756,7 +1756,9 @@ class WorkflowEngine:
             f"(第 {counts[target]}/{max_rev} 次, 评审意见 {len(comments)} 字)"
         )
 
-    def _fire_hitl_email(self, exec_id: str, node: BaseNode, check_input: Dict[str, Any], phase: str, outcome: str) -> None:
+    def _fire_hitl_email(
+        self, exec_id: str, node: BaseNode, check_input: Dict[str, Any], phase: str, outcome: str
+    ) -> None:
         # issue #404: best-effort 邮件通知 — 回调自带重试且不抛错, 这里再兜一层保证零冲击 run
         cb = self.hitl_notifier
         if cb is None:
