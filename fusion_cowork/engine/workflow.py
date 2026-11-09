@@ -661,6 +661,8 @@ class WorkflowEngine:
         self._hitl_pause_overrides: Dict[str, bool] = {}
         # issue #187: 审批等待上限 — 超时自动拒绝, 绝不静默放行
         self._hitl_timeout = _parse_hitl_timeout(os.environ.get("FUSION_COWORK_HITL_TIMEOUT", "1800"))
+        # issue #404: HITL 邮件通知回调 — create_web_app 装配 (SMTP_HOST 存在时), 引擎只管调用
+        self.hitl_notifier: Optional[Any] = None
         # issue #257: 节点级看门狗 — 未显式配 timeout 的节点默认 1800s 上限, 超时结构化失败;
         # FUSION_COWORK_NODE_TIMEOUT_S=0 关闭默认看门狗 (恢复旧行为)
         if node_timeout_s is None:
@@ -1754,6 +1756,18 @@ class WorkflowEngine:
             f"(第 {counts[target]}/{max_rev} 次, 评审意见 {len(comments)} 字)"
         )
 
+    def _fire_hitl_email(
+        self, exec_id: str, node: BaseNode, check_input: Dict[str, Any], phase: str, outcome: str
+    ) -> None:
+        # issue #404: best-effort 邮件通知 — 回调自带重试且不抛错, 这里再兜一层保证零冲击 run
+        cb = self.hitl_notifier
+        if cb is None:
+            return
+        try:
+            cb(exec_id, node.name, check_input, phase, outcome)
+        except Exception as e:
+            logger.warning(f"[{exec_id}] HITL email notify failed (ignored): {e}")
+
     async def _hitl_await(self, exec_id: str, workflow: Workflow, node: BaseNode, check_input: Dict[str, Any]) -> bool:
         # issue #181: 无本地待审批 (如 guard 在线的 L3) → 返回 False 走原 deny-fast, 不悬挂
         finder = getattr(self._permission_manager, "find_pending_by_execution", None)
@@ -1805,6 +1819,7 @@ class WorkflowEngine:
                 },
             )
         logger.info(f"[{exec_id}] HITL: 节点 '{node.name}' 暂停在边界, 等待人工审批")
+        self._fire_hitl_email(exec_id, node, check_input, "pending", "")
         evt.clear()
         timed_out = False
         try:
@@ -1822,6 +1837,7 @@ class WorkflowEngine:
                 if removed:
                     logger.info(f"[{exec_id}] HITL: 超时清理 {len(removed)} 条滞留待审批项")
             logger.warning(f"[{exec_id}] HITL: 节点 '{node.name}' 审批等待超时 ({self._hitl_timeout:g}s), 自动拒绝")
+            self._fire_hitl_email(exec_id, node, check_input, "resolved", "timeout_auto_denied")
             if self._hook_manager:
                 await self._hook_manager.fire(
                     HookEvent.NOTIFICATION,
@@ -1851,6 +1867,7 @@ class WorkflowEngine:
         if self._cancel_flags.get(exec_id):
             logger.info(f"[{exec_id}] HITL: 等待中被取消")
             return False
+        self._fire_hitl_email(exec_id, node, check_input, "resolved", "approved" if approved is True else "denied")
         if approved is not True:
             # issue #328: 拒绝 → 修订回路登记 (on_reject=revise opt-in), 主循环据此回退重跑
             self._register_revision(exec_id, workflow, node)

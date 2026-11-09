@@ -135,3 +135,30 @@ class TestResumeFrom:
         tc, app = client
         r = tc.post("/api/runs/run_missing/resume-from", json={"node_id": "n1"}, headers=_headers())
         assert r.status_code == 404
+
+    def test_resume_from_dict_nodes_template_shape(self, client):
+        # issue #410: template 来源 run 的 workflow_def.nodes 是 dict (node_id -> node),
+        # resume-from 曾经 AttributeError 500 — 两种形态都必须可重跑
+        tc, app = client
+        dict_wf = {
+            "name": "wf-226-dict",
+            "nodes": {
+                "n1": {"id": "n1", "name": "merge", "config": {}},
+                "n2": {"id": "n2", "name": "merge", "config": {}},
+                "n3": {"id": "n3", "name": "merge", "config": {}},
+            },
+            "edges": [
+                {"source_id": "n1", "target_id": "n2"},
+                {"source_id": "n2", "target_id": "n3"},
+            ],
+        }
+        r = tc.post("/api/runs", json={"workflow": dict_wf, "name": "rv226dict"}, headers=_headers())
+        assert r.status_code == 202, r.text
+        orig_id = r.json()["run_id"]
+        orig = _wait_terminal(tc, orig_id)
+        assert orig["status"] == "success" and len(orig["steps"]) == 3
+        r = tc.post(f"/api/runs/{orig_id}/resume-from", json={"node_id": "n2"}, headers=_headers())
+        assert r.status_code == 200, r.text
+        rec = _wait_terminal(tc, r.json()["run_id"])
+        assert rec["status"] == "success"
+        assert [s["node_id"] for s in rec["steps"]] == ["n1", "n2", "n3"]
