@@ -1961,15 +1961,20 @@ class WorkflowEngine:
 
         action: set_params (覆盖未执行节点参数) / insert_node (插入临时节点) /
         skip_remaining (跳过剩余节点) / inject (issue #227 运行中注入指令 —
-        下一节点边界把 instruction 写进目标节点输入, 时间线落 "用户修正" 标记)。
+        下一节点边界把 instruction 写进目标节点输入, 时间线落 "用户修正" 标记) /
+        override_output (issue #422 改判 — 覆盖已执行节点输出, 下游插值取新值)。
         """
         action = str((directive or {}).get("action", ""))
-        if action not in ("set_params", "skip_remaining", "insert_node", "inject"):
+        if action not in ("set_params", "skip_remaining", "insert_node", "inject", "override_output"):
             logger.warning(f"未知运行改向指令: action={action} exec={execution_id}")
             return False
         if action == "inject" and not str((directive or {}).get("instruction") or "").strip():
             # issue #227: 空指令早拒 — 不排队一个注定无效的注入 (API 409 可见)
             logger.warning(f"注入指令 instruction 为空: exec={execution_id}")
+            return False
+        if action == "override_output" and not isinstance((directive or {}).get("merge"), dict):
+            # issue #422: 改判 — merge 必须是 dict (早拒, API 409 可见)
+            logger.warning(f"覆盖输出 merge 非法: exec={execution_id}")
             return False
         if execution_id not in self._pause_events:
             logger.warning(f"运行改向指令目标不存在: exec={execution_id}")
@@ -2087,6 +2092,30 @@ class WorkflowEngine:
                 execution.steps.append(marker)
                 self._notify_progress(execution, marker)
                 logger.info(f"[{exec_id}] 运行改向 指令注入: node={target} instruction={instruction[:80]!r}")
+            elif action == "override_output":
+                # issue #422: 改判 — 覆盖已执行节点的输出数据 (passed_data[target]),
+                # 下游 ${step.<id>.<path>} 插值即取到新值; 时间线落 "用户修正" 标记步。
+                # 仅允许覆盖已执行节点 (passed_data 有记录); 未执行节点请用 set_params。
+                target = str(directive.get("node_id") or "")
+                merge = directive.get("merge") or {}
+                tnode = workflow.nodes.get(target)
+                if tnode is None or target not in passed_data:
+                    logger.warning(f"运行改向 覆盖输出目标不存在或未执行: exec={exec_id} node={target}")
+                    continue
+                passed_data[target].update(merge)
+                marker = WorkflowStep(
+                    node_id=target,
+                    node_name=tnode.name,
+                    node_display_name=tnode.config.label or tnode.display_name,
+                    status=NodeStatus.SKIPPED,
+                    started_at=time.time(),
+                    summary=f"用户修正: 覆盖输出 keys={sorted(merge.keys())}",
+                    user_correction=True,
+                )
+                marker.completed_at = time.time()
+                execution.steps.append(marker)
+                self._notify_progress(execution, marker)
+                logger.info(f"[{exec_id}] 运行改向 覆盖输出: node={target} keys={sorted(merge.keys())}")
         return cursor
 
     def get_execution(self, execution_id: str) -> Optional[WorkflowExecution]:

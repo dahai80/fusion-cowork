@@ -204,3 +204,61 @@ export function stepArtifactRefs(step: { summary?: string; output_data?: Record<
     }
     return out;
 }
+
+// issue #422 F-1: historical-match verdict card — pure view model extracted
+// from a historical_match step so bun tests can pin it. Renders only when the
+// step is a historical_match node with a verdict in its output.
+export interface MatchVerdictView {
+    verdict: 'extend' | 'base' | 'new';
+    score: number;
+    threshold: number;
+    gaps: string[];
+    candidatesScanned: number;
+    matchedRepo: string;
+    matchedVisible: Record<string, unknown>;
+}
+
+export function matchVerdictView(step: {
+    node_name?: string;
+    output_data?: Record<string, unknown>;
+}): MatchVerdictView | null {
+    if (step.node_name !== 'historical_match') return null;
+    const out = step.output_data ?? {};
+    const verdict = out.verdict;
+    if (verdict !== 'extend' && verdict !== 'base' && verdict !== 'new') return null;
+    return {
+        verdict,
+        score: typeof out.score === 'number' ? out.score : 0,
+        threshold: typeof out.threshold === 'number' ? out.threshold : 0.6,
+        gaps: Array.isArray(out.gaps) ? (out.gaps as unknown[]).map(String) : [],
+        candidatesScanned: typeof out.candidates_scanned === 'number' ? out.candidates_scanned : 0,
+        matchedRepo: typeof out.matched_repo === 'string' ? out.matched_repo : '',
+        matchedVisible:
+            out.matched_visible && typeof out.matched_visible === 'object'
+                ? (out.matched_visible as Record<string, unknown>)
+                : {},
+    };
+}
+
+// issue #422 F-1: apply override_output directive payloads (re-verdict) on top
+// of the step output view — record.directives is the source of truth for what
+// the engine will honor at the next node boundary.
+export function applyMatchOverrides(
+    view: MatchVerdictView | null,
+    merge: Record<string, unknown> | undefined
+): MatchVerdictView | null {
+    if (!view || !merge) return view;
+    const merged = { ...view } as Record<string, unknown>;
+    if ('verdict' in merge) merged.verdict = merge.verdict;
+    if ('score' in merge) merged.score = merge.score;
+    if ('threshold' in merge) merged.threshold = merge.threshold;
+    if ('matched_repo' in merge) merged.matchedRepo = merge.matched_repo;
+    if ('candidates_scanned' in merge) merged.candidatesScanned = merge.candidates_scanned;
+    if (Array.isArray(merge.gaps)) merged.gaps = (merge.gaps as unknown[]).map(String);
+    if (merge.matched_visible && typeof merge.matched_visible === 'object') {
+        merged.matchedVisible = merge.matched_visible as Record<string, unknown>;
+    }
+    const v = merged.verdict;
+    if (v !== 'extend' && v !== 'base' && v !== 'new') return null;
+    return merged as unknown as MatchVerdictView;
+}

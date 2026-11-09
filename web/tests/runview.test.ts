@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import {
+    applyMatchOverrides,
     capabilitiesInUse,
     computeWaves,
     findArtifactRefs,
+    matchVerdictView,
     parseParamsDraft,
     stepArtifactRefs,
     stepCapability,
@@ -218,5 +220,68 @@ describe('stepArtifactRefs', () => {
             output_data: { payload: { note: '[Artifact: Chart | ID: c_9 | v1]' } },
         };
         expect(stepArtifactRefs(step)).toEqual([{ artifact_id: 'c_9', name: 'Chart' }]);
+    });
+});
+
+describe('matchVerdictView (#422 F-1)', () => {
+    it('returns null for non-match nodes', () => {
+        expect(matchVerdictView({ node_name: 'repo_scaffold', output_data: { verdict: 'extend' } })).toBeNull();
+        expect(matchVerdictView({ node_name: 'historical_match', output_data: {} })).toBeNull();
+    });
+
+    it('extracts verdict view from match output', () => {
+        const view = matchVerdictView({
+            node_name: 'historical_match',
+            output_data: {
+                verdict: 'extend',
+                score: 0.87,
+                threshold: 0.6,
+                gaps: ['loyalty'],
+                candidates_scanned: 3,
+                matched_repo: 'o/ai-pet',
+                matched_visible: { slug: 'ai-pet', capabilities: ['booking'] },
+            },
+        });
+        expect(view).not.toBeNull();
+        expect(view!.verdict).toBe('extend');
+        expect(view!.score).toBe(0.87);
+        expect(view!.gaps).toEqual(['loyalty']);
+        expect(view!.matchedRepo).toBe('o/ai-pet');
+    });
+
+    it('keeps base-verdict privacy fields as-is', () => {
+        const view = matchVerdictView({
+            node_name: 'historical_match',
+            output_data: { verdict: 'base', score: 0.9, matched_repo: '', matched_visible: {} },
+        });
+        expect(view!.verdict).toBe('base');
+        expect(view!.matchedVisible).toEqual({});
+    });
+});
+
+describe('applyMatchOverrides (#422 F-1 re-verdict)', () => {
+    it('returns null view untouched', () => {
+        expect(applyMatchOverrides(null, { verdict: 'new' })).toBeNull();
+        expect(applyMatchOverrides(null, undefined)).toBeNull();
+    });
+
+    it('applies override_output merge to the view', () => {
+        const view = matchVerdictView({
+            node_name: 'historical_match',
+            output_data: { verdict: 'extend', score: 0.87, matched_repo: 'o/ai-pet', matched_visible: { slug: 'ai-pet' } },
+        });
+        const flipped = applyMatchOverrides(view, { verdict: 'new', matched_repo: '' });
+        expect(flipped!.verdict).toBe('new');
+        expect(flipped!.matchedRepo).toBe('');
+        // score 等未覆盖字段保留
+        expect(flipped!.score).toBe(0.87);
+    });
+
+    it('drops the view when override verdict is invalid', () => {
+        const view = matchVerdictView({
+            node_name: 'historical_match',
+            output_data: { verdict: 'extend', score: 0.87 },
+        });
+        expect(applyMatchOverrides(view, { verdict: 'bogus' })).toBeNull();
     });
 });
