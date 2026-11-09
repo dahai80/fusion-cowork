@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.98
+version: 0.5.99
 updated: 2026-11-09
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,16 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.99 (issue #387)
+
+- **Synthetic E2E mode for the product_lifecycle pipeline** — zero real-model tokens, zero GitHub writes, unblocked by replay-dev going live (fusion-mlx#1518, deterministic zero-cost replay provider):
+  - `github_api` gains `dry_run`: deterministic canned results per op family (`issue_create` / `linked_pr` / `pr_get`), still enforcing op validity + repo whitelist, no `GITHUB_TOKEN` required
+  - `claude_dispatch` gains `dry_run`: no claude session spawn, deterministic pseudo-PR output, whitelist/issue_number/prompt/cwd checks still enforced
+  - `studio_run` gains `model`: seat model pinning via `/v1/runs` body `spec.model` (synthetic mode pins `replay-dev`)
+  - `product_lifecycle` template gains three synthetic switches, all default off (production behavior unchanged): `seat_model` -> n1/n3/n9 `model`; `gates_human` -> gate A/C `require_review` (gate B stays on the independent `review_arch` switch, #413); `node_dry_run` -> `dry_run` on n6/n7/n8/n11/n12
+  - New nightly synthetic E2E workflow (`.github/workflows/nightly-synthetic.yml`) on the self-hosted mac runner (`synthetic` label): preflight the four local services, seed allow-rules for `studio_run`/`claude_dispatch`, launch the synthetic run through the expert channel, poll to terminal, assert every step succeeded; scheduled nightly + `workflow_dispatch`
+  - Tests: `tests/test_issue_387_synthetic.py` (17 cases)
 
 ## v0.5.98 (issues #413/#416/#418/#409)
 
