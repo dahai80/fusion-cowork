@@ -2173,11 +2173,14 @@ def create_web_app(
             return {"status": "dry_run", "plan": plan}
 
         # registry entry was created with run_id "pending" — start the run, then backfill
+        # issue #414: 模板 slug 参数是裸 slug (repo_scaffold 自加 ai- 前缀) — registry/repo/labels
+        # 保持 ai- 前缀形态, 传给模板的去掉, 否则脚手架目录变成 ai-ai-<name>
+        template_slug = plan["slug"].removeprefix("ai-")
         try:
             wf = _tpl_manager().template_to_workflow(
                 template_id,
                 param_values={
-                    "slug": plan["slug"],
+                    "slug": template_slug,
                     "repo": plan["repo"],
                     "task_title": intake.task_title(requirement),
                     "task_prompt": "Implement the assigned task per PRD/architecture docs; deliver via PR with self-test evidence.",

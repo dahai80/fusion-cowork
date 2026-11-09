@@ -373,3 +373,11 @@ class TestEndpoint:
         assert "run_id: pending" in text or f"run_id: {body['run_id']}" in text
         assert "source: pipeline" in text
         assert "ai-build-pet-hotel-booking" in text
+        # issue #414: 模板 slug 参数是裸 slug — ${param.slug} 替换结果不带 ai- 前缀
+        from fastapi.testclient import TestClient  # noqa: F401  (client already built above)
+
+        app_state = client.app.state
+        rec = app_state.run_registry._runs[body["run_id"]]
+        node_cfg = rec["workflow_def"]["nodes"]
+        first = next(iter(node_cfg.values())) if isinstance(node_cfg, dict) else node_cfg[0]
+        assert first["config"]["params"]["path"] == "build-pet-hotel-booking"
