@@ -2121,6 +2121,90 @@ def create_web_app(
                 status_code=400, detail={"code": "bad_request", "message": f"工作流定义无效: {exc}"}
             ) from exc
 
+    # ── issue #400: 需求录入模式 — requirement 进, slug/私有仓/登记全自动派生 ──
+    def _intake_module():
+        from . import intake as _intake
+
+        if _intake.INTAKE_FACTORY is not None:
+            return _intake.INTAKE_FACTORY()
+        return _intake
+
+    @app.post("/api/templates/{template_id}/launch-intake", status_code=202)
+    async def templates_launch_intake(template_id: str, request: Request, response: Response):
+        # 客户只给一件事: requirement 文本 (文档 md/txt v1)。slug/私有仓/registry
+        # 登记/启动参数全部派生; 显式参数模式仍是 /launch (操作员专家通道)
+        intake = _intake_module()
+        tpl = _tpl_manager().get_template(template_id)
+        if not tpl:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"})
+        try:
+            body = await request.json()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}) from e
+        requirement = str(body.get("requirement") or "")
+        slug_hint = str(body.get("slug_hint") or "")
+        dry_run = bool(body.get("dry_run"))
+        try:
+            plan = await intake.prepare_intake(
+                requirement, slug_hint=slug_hint, dry_run=dry_run, path=intake.registry_path()
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=503, detail={"code": "registry_missing", "message": str(exc)}) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": str(exc)}) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail={"code": "upstream_failure", "message": str(exc)}) from exc
+        if dry_run:
+            response.status_code = 200  # preview is not an accepted task
+            return {"status": "dry_run", "plan": plan}
+
+        # registry entry was created with run_id "pending" — start the run, then backfill
+        try:
+            wf = _tpl_manager().template_to_workflow(
+                template_id,
+                param_values={
+                    "slug": plan["slug"],
+                    "repo": plan["repo"],
+                    "task_title": intake.task_title(requirement),
+                    "task_prompt": "Implement the assigned task per PRD/architecture docs; deliver via PR with self-test evidence.",
+                },
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": f"模板装配失败: {exc}"}
+            ) from exc
+        if wf is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"})
+        errors = wf.validate()
+        if errors:
+            raise HTTPException(status_code=400, detail={"code": "invalid_workflow", "message": "; ".join(errors)})
+        wf_dict = wf.to_dict()
+        if "${param." in json.dumps(wf_dict, ensure_ascii=False):
+            raise HTTPException(
+                status_code=400, detail={"code": "params_missing", "message": "必填模板参数缺失 (${param.*} 未替换)"}
+            )
+        from ..auth.identity_propagation import extract_identity_token
+
+        identity_token = extract_identity_token({k.lower(): v for k, v in request.headers.items()})
+        try:
+            run = runs.start(
+                wf_dict,
+                workflow_name=str(tpl.get("name") or template_id),
+                source="intake",
+                labels={"template": template_id, "intake": "1", "slug": plan["slug"]},
+                identity_token=identity_token,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": f"工作流定义无效: {exc}"}
+            ) from exc
+        run_id = str(run.get("run_id", ""))
+        try:
+            intake.update_registry_run_id(plan["slug"], run_id, path=intake.registry_path())
+        except Exception as e:
+            logger.warning(f"registry run_id 回填失败 (忽略) {plan['slug']}: {e}")
+        return {"status": "started", "run_id": run_id, "plan": plan}
+
     # ── issue #263 仓库 onboarding 向导 ──
     def _wizard():
         from . import github_wizard as _gw

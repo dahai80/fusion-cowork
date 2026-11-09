@@ -24,6 +24,16 @@ export function TemplatesPage() {
     const [launchRequired, setLaunchRequired] = useState<string[]>([]);
     const [launchValues, setLaunchValues] = useState<Record<string, string>>({});
     const [launching, setLaunching] = useState(false);
+    // issue #400: intake 模式 — 默认只填 requirement, slug/私有仓/登记全自动派生;
+    // 显式参数表单收进"高级"通道
+    const [intakeMode, setIntakeMode] = useState(true);
+    const [intakeRequirement, setIntakeRequirement] = useState('');
+    const [intakeSlugHint, setIntakeSlugHint] = useState('');
+    const [intakePreview, setIntakePreview] = useState<{
+        slug: string;
+        suggested_from: string;
+        repo: string;
+    } | null>(null);
 
     // issue #300: all hooks above the early returns — hooks declared after a
     // conditional return throw "Rendered more hooks than during the previous
@@ -38,6 +48,10 @@ export function TemplatesPage() {
         if (launching) return;
         setLaunchTpl(tpl);
         setLaunchValues({});
+        setIntakeMode(true);
+        setIntakeRequirement('');
+        setIntakeSlugHint('');
+        setIntakePreview(null);
         try {
             const detail = (await api.template(tpl.id)) as unknown as {
                 params?: {
@@ -59,6 +73,63 @@ export function TemplatesPage() {
             console.error('[cowork-web] template detail failed', e);
             setLaunchTpl(null);
             sdk.toast.show({ level: 'error', message: t('模板详情获取失败', 'Failed to load template') });
+        }
+    }
+
+    async function previewIntake() {
+        if (!launchTpl || launching) return;
+        if (intakeRequirement.trim().length < 10) {
+            setIntakePreview(null);
+            return;
+        }
+        try {
+            const res = await api.launchTemplateIntake(launchTpl.id, {
+                requirement: intakeRequirement,
+                slug_hint: intakeSlugHint || undefined,
+                dry_run: true,
+            });
+            setIntakePreview({
+                slug: res.plan.slug,
+                suggested_from: res.plan.suggested_from,
+                repo: res.plan.repo,
+            });
+        } catch (e) {
+            console.error('[cowork-web] intake preview failed', e);
+            setIntakePreview(null);
+        }
+    }
+
+    async function submitLaunchIntake() {
+        if (!launchTpl || launching) return;
+        setLaunching(true);
+        try {
+            const res = await api.launchTemplateIntake(launchTpl.id, {
+                requirement: intakeRequirement,
+                slug_hint: intakeSlugHint || undefined,
+            });
+            if (res.status !== 'started' || !res.run_id) {
+                throw new Error(res.status);
+            }
+            const conflict = res.plan.suggested_from
+                ? t(`slug 冲突, 已改用 ${res.plan.slug}`, `slug conflict — using ${res.plan.slug}`)
+                : '';
+            sdk.toast.show({
+                level: 'success',
+                message: t(`已启动: ${res.run_id}`, `Launched: ${res.run_id}`) + (conflict ? ` (${conflict})` : ''),
+            });
+            setLaunchTpl(null);
+            window.location.hash = `#/runs/${res.run_id}`;
+        } catch (e) {
+            console.error('[cowork-web] intake launch failed', e);
+            sdk.toast.show({
+                level: 'error',
+                message: t(
+                    '启动失败 — 需求文本/GitHub token/registry 检查服务端日志',
+                    'Launch failed — see server logs'
+                ),
+            });
+        } finally {
+            setLaunching(false);
         }
     }
 
@@ -240,44 +311,148 @@ export function TemplatesPage() {
                             ) : null}
                             {launchTpl?.id === tpl.id ? (
                                 <div className="mt-2 space-y-2 rounded-md border border-border bg-bg p-2">
-                                    {Object.entries(launchProps).map(([key, spec]) => (
-                                        <label key={key} className="block text-xs text-text-secondary">
-                                            <span>
-                                                {key}
-                                                {launchRequired.includes(key) ? ' *' : ''}
-                                                {spec.description ? ` — ${spec.description}` : ''}
-                                            </span>
-                                            <input
-                                                className="mt-0.5 w-full rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
-                                                value={launchValues[key] ?? ''}
-                                                placeholder={
-                                                    spec.type === 'array'
-                                                        ? t('逗号分隔', 'comma-separated')
-                                                        : String(spec.type)
-                                                }
-                                                onChange={(e) =>
-                                                    setLaunchValues((v) => ({ ...v, [key]: e.target.value }))
-                                                }
-                                            />
-                                        </label>
-                                    ))}
-                                    <div className="flex justify-end gap-1">
+                                    <div className="flex items-center gap-2 text-xs">
                                         <button
                                             type="button"
-                                            className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
-                                            onClick={() => setLaunchTpl(null)}
+                                            className={`rounded-md px-2 py-1 ${
+                                                intakeMode
+                                                    ? 'bg-bg-muted font-medium text-text-primary'
+                                                    : 'text-text-secondary hover:bg-bg-muted'
+                                            }`}
+                                            onClick={() => setIntakeMode(true)}
                                         >
-                                            {t('取消', 'Cancel')}
+                                            {t('需求录入', 'Requirement intake')}
                                         </button>
                                         <button
                                             type="button"
-                                            className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted disabled:opacity-50"
-                                            disabled={launching}
-                                            onClick={() => void submitLaunch()}
+                                            className={`rounded-md px-2 py-1 ${
+                                                !intakeMode
+                                                    ? 'bg-bg-muted font-medium text-text-primary'
+                                                    : 'text-text-secondary hover:bg-bg-muted'
+                                            }`}
+                                            onClick={() => setIntakeMode(false)}
                                         >
-                                            {launching ? t('启动中…', 'Launching…') : t('启动运行', 'Launch run')}
+                                            {t('高级 (显式参数)', 'Advanced (explicit params)')}
                                         </button>
                                     </div>
+                                    {intakeMode ? (
+                                        <>
+                                            <label className="block text-xs text-text-secondary">
+                                                <span>
+                                                    {t(
+                                                        '需求描述 (粘贴一段需求文本或文档内容)',
+                                                        'Requirement (paste requirement text or document content)'
+                                                    )}
+                                                    {' *'}
+                                                </span>
+                                                <textarea
+                                                    className="mt-0.5 min-h-24 w-full rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
+                                                    value={intakeRequirement}
+                                                    placeholder={t(
+                                                        '例: 做一个宠物寄养预约小程序, 支持门店浏览、日期选择和微信通知…',
+                                                        'e.g. Build a pet-boarding booking app with store browsing, date pick and notifications…'
+                                                    )}
+                                                    onChange={(e) => {
+                                                        setIntakeRequirement(e.target.value);
+                                                        setIntakePreview(null);
+                                                    }}
+                                                    onBlur={() => void previewIntake()}
+                                                />
+                                            </label>
+                                            <label className="block text-xs text-text-secondary">
+                                                <span>
+                                                    {t('slug 提示 (可空, 高级)', 'Slug hint (optional, advanced)')}
+                                                </span>
+                                                <input
+                                                    className="mt-0.5 w-full rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
+                                                    value={intakeSlugHint}
+                                                    placeholder={t('留空 = 自动派生', 'empty = auto-derived')}
+                                                    onChange={(e) => {
+                                                        setIntakeSlugHint(e.target.value);
+                                                        setIntakePreview(null);
+                                                    }}
+                                                />
+                                            </label>
+                                            {intakePreview ? (
+                                                <div className="rounded-md bg-bg-muted px-2 py-1 text-xs text-text-secondary">
+                                                    {intakePreview.suggested_from
+                                                        ? t(
+                                                              `slug 冲突 — 建议使用 ${intakePreview.slug}`,
+                                                              `slug conflict — suggesting ${intakePreview.slug}`
+                                                          )
+                                                        : t('slug 预览', 'slug preview')}
+                                                    :{' '}
+                                                    <span className="font-medium text-text-primary">
+                                                        {intakePreview.slug}
+                                                    </span>
+                                                    {' · '}
+                                                    {intakePreview.repo} (private)
+                                                </div>
+                                            ) : null}
+                                            <div className="flex justify-end gap-1">
+                                                <button
+                                                    type="button"
+                                                    className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
+                                                    onClick={() => setLaunchTpl(null)}
+                                                >
+                                                    {t('取消', 'Cancel')}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted disabled:opacity-50"
+                                                    disabled={launching || intakeRequirement.trim().length < 10}
+                                                    onClick={() => void submitLaunchIntake()}
+                                                >
+                                                    {launching
+                                                        ? t('启动中…', 'Launching…')
+                                                        : t('启动运行', 'Launch run')}
+                                                </button>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            {Object.entries(launchProps).map(([key, spec]) => (
+                                                <label key={key} className="block text-xs text-text-secondary">
+                                                    <span>
+                                                        {key}
+                                                        {launchRequired.includes(key) ? ' *' : ''}
+                                                        {spec.description ? ` — ${spec.description}` : ''}
+                                                    </span>
+                                                    <input
+                                                        className="mt-0.5 w-full rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
+                                                        value={launchValues[key] ?? ''}
+                                                        placeholder={
+                                                            spec.type === 'array'
+                                                                ? t('逗号分隔', 'comma-separated')
+                                                                : String(spec.type)
+                                                        }
+                                                        onChange={(e) =>
+                                                            setLaunchValues((v) => ({ ...v, [key]: e.target.value }))
+                                                        }
+                                                    />
+                                                </label>
+                                            ))}
+                                            <div className="flex justify-end gap-1">
+                                                <button
+                                                    type="button"
+                                                    className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
+                                                    onClick={() => setLaunchTpl(null)}
+                                                >
+                                                    {t('取消', 'Cancel')}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted disabled:opacity-50"
+                                                    disabled={launching}
+                                                    onClick={() => void submitLaunch()}
+                                                >
+                                                    {launching
+                                                        ? t('启动中…', 'Launching…')
+                                                        : t('启动运行', 'Launch run')}
+                                                </button>
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
                             ) : null}
                             <div className="mt-auto flex justify-end gap-1 pt-2">
