@@ -17,6 +17,14 @@ source_of_truth:
 
 # Changelog
 
+## v0.5.101 (issue #422 F-1)
+
+- **Match verdict card in run view + re-verdict (F-1 of the #422 conditional-pass acceptance)**:
+  - `product_lifecycle` template: `n4m` `historical_match` moved before gate B (arch review) — edges now `n3 -> n4m -> n4 -> n5`; the pause at the confirm gate shows the completed verdict, matching the approved prototype intake flow (match auto-completes before the single human point)
+  - Engine: new run directive action `override_output` — merges a dict into an already-executed node's output data so downstream `${step.<id>.<path>}` interpolation picks up the flipped verdict; unexecuted targets refused (fail-closed, `set_params` covers that case); a user-correction marker step lands on the timeline; web API `DIRECTIVE_ACTIONS` whitelists the action
+  - Run view (`#/runs/<id>`): `historical_match` steps render as a dedicated verdict card — verdict badge (extend / base / new), match % vs threshold, capability gaps, candidate count; detail expand shows the matched project (extend) or the privacy note (base — name hidden per red line); "try existing project" opens the matched repo (extend only); "re-verdict: new project" submits `override_output` (extend/base only — `new` cannot claim a repo, `base->extend` would cross the customer red line); card display applies override payloads from `record.directives` so the flip shows immediately
+  - Tests: 3 engine cases (override flows downstream + marker, unexecuted target refused, merge dict required), template wiring/#307 pin updated, 6 bun cases (`matchVerdictView` extraction, privacy fields, override application)
+
 ## v0.5.100 (issue #422)
 
 - **Historical-project match before scaffolding (product_lifecycle)** — part 1 of #422, follow-ups in #427:
