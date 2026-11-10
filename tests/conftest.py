@@ -9,6 +9,12 @@ from fusion_cowork import config_center as _cc_mod
 # HITL 专属测试文件在自己的 fixture 里 monkeypatch.delenv 恢复默认 ON 语义
 os.environ.setdefault("FUSION_COWORK_HITL_PAUSE", "0")
 
+# issue #429: CI 按 pytest-split 分片跑 — 分片不再保证含有 import_all_nodes()
+# 的测试文件被收集, 节点注册表断言 (72 节点等) 需要套件级完整注册
+from fusion_cowork.nodes import import_all_nodes
+
+import_all_nodes()
+
 
 @pytest.fixture(autouse=True)
 def _isolate_config_center():

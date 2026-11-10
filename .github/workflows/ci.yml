@@ -6,7 +6,37 @@ on:
   pull_request:
     branches: [main]
 
+# issue #429: cancel superseded runs on the same branch/PR — repeated push
+# does not queue another full matrix behind the previous one
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # issue #429: docs/comments-only changes skip the heavy jobs. Job-level
+  # conditional (not `paths-ignore`) so the required checks still report
+  # (skipped = success for branch protection) instead of never appearing.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'fusion_cowork/**'
+              - 'tests/**'
+              - 'scripts/**'
+              - 'pyproject.toml'
+              - 'web/src/**'
+              - 'web/tests/**'
+              - 'web/package.json'
+              - 'web/bun.lock'
+              - '.github/workflows/ci.yml'
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -24,26 +54,54 @@ jobs:
         run: python scripts/check_claims.py
 
   test-sqlite:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
         python-version: ["3.11", "3.12", "3.13"]
+        # issue #429: wall time ~ suite/3 — deterministic round-robin file shards
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: python -m pip install --upgrade pip
-      - run: pip install fusion-harness
+      - run: pip install fusion-harness pytest-split
       - run: pip install -e ".[test,cloud,web,office]"
-      - name: Test (SQLite backend, default marks)
-        run: python -m pytest tests/ -q --tb=short --timeout=600 --timeout-method=thread -m "not slow and not chaos and not postgres"
-      - name: Coverage
+      - name: Test (SQLite backend, shard ${{ matrix.shard }}/3)
+        run: |
+          python -m pytest tests/ -q --tb=short --timeout=600 --timeout-method=thread \
+            -m "not slow and not chaos and not postgres" \
+            --splits 3 --group ${{ matrix.shard }} --splitting-algorithm=least_duration
+
+  # issue #429: coverage ran the full suite 6 extra times (one per matrix leg);
+  # one dedicated leg keeps the --cov-fail-under gate at 1/7 of the cost
+  coverage:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: python -m pip install --upgrade pip
+      - run: pip install fusion-harness pytest-split
+      - run: pip install -e ".[test,cloud,web,office]"
+      - name: Coverage (full suite, single leg)
         run: python -m pytest tests/ -q --timeout=600 --timeout-method=thread -m "not slow and not chaos and not postgres" --cov=fusion_cowork --cov-report=term-missing --cov-fail-under=50
 
   test-postgres:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -66,6 +124,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: python -m pip install --upgrade pip
       - run: pip install fusion-harness
       - run: pip install -e ".[test,cloud,web,office]"
@@ -73,19 +133,25 @@ jobs:
         run: python -m pytest tests/ -q --tb=short --timeout=600 --timeout-method=thread -m "postgres"
 
   test-slow:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: python -m pip install --upgrade pip
-      - run: pip install fusion-harness
+      - run: pip install fusion-harness pytest-split
       - run: pip install -e ".[test,cloud,web,office]"
       - name: Slow + chaos tests
         run: python -m pytest tests/ -q --tb=short --timeout=600 --timeout-method=thread -m "slow or chaos"
 
   web:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -110,12 +176,16 @@ jobs:
         run: bun run build
 
   security:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: python -m pip install --upgrade pip
       - run: pip install fusion-harness
       - run: pip install -e ".[test,cloud,web,office]"
