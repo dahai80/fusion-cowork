@@ -70,8 +70,9 @@ class TestProductLifecycleTemplate:
         assert p["max_tokens"] == "${param.dispatch_max_tokens}"
 
     def test_task_issue_ready_label(self):
+        # issue #427: extension 标签按判定插值 (github_api 过滤空串), 装配期含占位符
         n6 = next(n for n in _tpl()["workflow"]["nodes"] if n["id"] == "n6")
-        assert n6["config"]["params"]["labels"] == ["state:ready"]
+        assert n6["config"]["params"]["labels"] == ["state:ready", "${step.n4m.extension_label}"]
 
     def test_substitution(self):
         wf = TemplateManager().template_to_workflow(

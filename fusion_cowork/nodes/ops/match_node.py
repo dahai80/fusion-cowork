@@ -110,6 +110,8 @@ class HistoricalMatchNode(BaseNode):
         {"key": "score", "label": "匹配分", "type": "number"},
         {"key": "matched", "label": "命中项目", "type": "object"},
         {"key": "gaps", "label": "能力缺口", "type": "list"},
+        {"key": "extension_label", "label": "扩展标签 (extend 判定为 extension, 其余空)", "type": "string"},
+        {"key": "extension_contract", "label": "扩展交付契约段落 (extend 判定非空, 其余空)", "type": "string"},
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -198,6 +200,19 @@ class HistoricalMatchNode(BaseNode):
                 "matched_repo": matched.get("repo", "") if verdict == "extend" else "",
                 # base 判定的隐私红线: 新客户可见面绝不携带他客户项目名
                 "matched_visible": {} if verdict == "base" else matched,
+                # issue #427: 扩展可追溯 — extend 判定下发 extension 标签 (github_api 过滤空串)
+                "extension_label": "extension" if verdict == "extend" else "",
+                # issue #427: extend 运行的交付契约 — PR 必须带 Extension Log (CHANGELOG)
+                # 并标注本运行是既有仓扩展; 非 extend 运行为空串 (prompt 逐字节不变)
+                "extension_contract": (
+                    "\n\n## Extension contract (match verdict: extend)"
+                    "\nThis run extends the existing repo (see scaffold source). Deliverables must include:"
+                    "\n1. A PR label `extension`."
+                    "\n2. A CHANGELOG entry under a top-level `## Extension Log` heading listing the capabilities added by this run."
+                    "\n3. The PR body states it extends the existing product rather than a new project."
+                )
+                if verdict == "extend"
+                else "",
             },
             summary=f"判定 {verdict} (score={max(best_score, 0.0):.2f}, {len(candidates)} 候选)",
         )
