@@ -38,7 +38,7 @@ class MCPClientNode(BaseNode):
     default_label = "MCP 工具调用"
 
     inputs = [
-        {"key": "url", "label": "MCP 服务器 URL", "type": "string"},
+        {"key": "url", "label": "MCP 服务器 URL (transport=http)", "type": "string"},
         {"key": "tool", "label": "工具名", "type": "string"},
         {"key": "arguments", "label": "工具参数 (JSON 对象)", "type": "object"},
     ]
@@ -51,10 +51,22 @@ class MCPClientNode(BaseNode):
         return {
             "type": "object",
             "properties": {
-                "url": {"type": "string", "description": "MCP 服务器 URL (http/https)"},
+                "url": {"type": "string", "description": "MCP 服务器 URL (http/https; transport=http 时必填)"},
                 "tool": {"type": "string", "description": "要调用的工具名"},
                 "arguments": {"type": "object", "description": "工具参数", "default": {}},
-                "headers": {"type": "object", "description": "附加请求头 (如鉴权)", "default": {}},
+                "transport": {
+                    "type": "string",
+                    "description": "传输方式: http (缺省, Streamable HTTP) | stdio (子进程 JSON-RPC, 需 FUSION_COWORK_MCP_STDIO_ALLOW 白名单)",
+                    "enum": ["http", "stdio"],
+                    "default": "http",
+                },
+                "command": {
+                    "type": "string",
+                    "description": "stdio 模式: 可执行文件 (basename 须在 FUSION_COWORK_MCP_STDIO_ALLOW 白名单)",
+                    "default": "",
+                },
+                "args": {"type": "array", "description": "stdio 模式: 命令行参数", "default": []},
+                "headers": {"type": "object", "description": "附加请求头 (如鉴权, http 模式)", "default": {}},
                 "timeout": {"type": "number", "description": "单请求超时 (秒)", "default": 30},
             },
             "required": ["url", "tool"],
@@ -117,6 +129,40 @@ class MCPClientNode(BaseNode):
         except (json.JSONDecodeError, ValueError):
             return {}
 
+    async def _execute_stdio(
+        self, command: str, args: list, tool: str, arguments: Dict[str, Any], timeout: float
+    ) -> NodeResult:
+        # issue #431: stdio 传输 — 子进程 JSON-RPC; 命令必须在 FUSION_COWORK_MCP_STDIO_ALLOW
+        # 白名单内 (basename 精确匹配, 缺省空 = 一律拒绝, fail-closed)
+        if not command or not tool:
+            return NodeResult(status=NodeStatus.FAILED, error="stdio 模式缺少 command 或 tool 参数", summary="参数缺失")
+        from fusion_cowork.nodes.ecosystem.mcp_stdio import (
+            STDIO_ALLOW_ENV,
+            stdio_allowed,
+            stdio_allowlist,
+            stdio_tool_calls,
+        )
+
+        if not stdio_allowed(command):
+            allowed = ", ".join(stdio_allowlist()) or "(空 — 一律拒绝)"
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"命令 {command} 不在 {STDIO_ALLOW_ENV} 白名单内 (当前: {allowed})",
+                summary="stdio 命令未授权",
+            )
+        logger.info(f"mcp_client: stdio 调用 command={command} tool={tool}")
+        try:
+            results = await stdio_tool_calls(command, args, [{"tool": tool, "arguments": arguments}], timeout=timeout)
+        except Exception as e:
+            logger.warning(f"mcp_client: stdio 调用失败 command={command} tool={tool}: {e}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"stdio MCP 调用失败: {e}", summary="调用失败")
+        first = results[0] if results else {"text": "", "content": []}
+        return NodeResult(
+            status=NodeStatus.SUCCESS,
+            data={"result": first["text"], "raw": first["content"]},
+            summary=f"MCP stdio 工具 {tool} 调用成功",
+        )
+
     async def execute(self, inputs: Dict[str, Any]) -> NodeResult:
         params = coerce_params(self.config.params, self.get_params_schema())
         url = str(inputs.get("url") or params.get("url") or "").strip()
@@ -124,6 +170,23 @@ class MCPClientNode(BaseNode):
         arguments = inputs.get("arguments", params.get("arguments", {}))
         extra_headers = params.get("headers", {}) or {}
         timeout = float(params.get("timeout", 30) or 30)
+        transport = str(params.get("transport") or "http").strip().lower()
+        stdio_command = str(params.get("command") or "").strip()
+        stdio_args = params.get("args") or []
+
+        if transport == "stdio":
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments.strip())
+                except json.JSONDecodeError as e:
+                    return NodeResult(
+                        status=NodeStatus.FAILED,
+                        error=f"arguments 须为 JSON 对象 (JSON 字符串解析失败: {e})",
+                        summary="参数非法",
+                    )
+            if not isinstance(arguments, dict):
+                return NodeResult(status=NodeStatus.FAILED, error="arguments 须为 JSON 对象", summary="参数非法")
+            return await self._execute_stdio(stdio_command, stdio_args, tool, arguments, timeout)
 
         if not url or not tool:
             return NodeResult(status=NodeStatus.FAILED, error="缺少 url 或 tool 参数", summary="参数缺失")

@@ -100,7 +100,7 @@ fusion-cowork browser start   # launch .app
 
 ### Node System (`fusion_cowork/nodes/`)
 
-All nodes subclass `BaseNode`, use `@register_node`, live in category subpackages. **72 node classes across 12 module files** (runtime-verified: `tool=38, macos_system=13, file_operation=6, ai_processing=4, logic=3, fusion_ecosystem=4, io=4`). Nodes self-register at module-import time, so the server must explicitly import all node modules — `nodes/__init__.py::import_all_nodes()` does this (12 modules) and is called by `DeskRPCServer.start()` + the `desk rpc` CLI. Historical gap (v0.2.10): only cli.py's side-effect imports registered macos+browser → 33/47 visible. Now 72/72.
+All nodes subclass `BaseNode`, use `@register_node`, live in category subpackages. **73 node classes across 13 module files** (runtime-verified: `tool=38, macos_system=13, file_operation=6, ai_processing=4, logic=3, fusion_ecosystem=5, io=4`). Nodes self-register at module-import time, so the server must explicitly import all node modules — `nodes/__init__.py::import_all_nodes()` does this (13 modules) and is called by `DeskRPCServer.start()` + the `desk rpc` CLI. Historical gap (v0.2.10): only cli.py's side-effect imports registered macos+browser → 33/47 visible. Now 73/73.
 
 | Subpackage | Category | Key Nodes |
 |---|---|---|

@@ -19,10 +19,11 @@ def _tpl():
 
 
 class TestProductLifecycleTemplate:
-    def test_registered_13_nodes(self):
-        # issue #422: n4m historical_match inserted between gate B and scaffold
+    def test_registered_14_nodes(self):
+        # issue #422: n4m historical_match before gate B
+        # issue #431: n4d design_context after gate A
         nodes = _tpl()["workflow"]["nodes"]
-        assert len(nodes) == 13
+        assert len(nodes) == 14
 
     def test_exactly_three_gates(self):
         gates = [n for n in _tpl()["workflow"]["nodes"] if n["name"] == "approval_gate"]
@@ -32,6 +33,8 @@ class TestProductLifecycleTemplate:
         pairs = {(e["source_id"], e["target_id"]) for e in _tpl()["workflow"]["edges"]}
         for a, b in (
             ("n1", "n2"),
+            ("n2", "n4d"),
+            ("n4d", "n3"),
             ("n3", "n4m"),
             ("n4m", "n4"),
             ("n4", "n5"),
