@@ -17,6 +17,16 @@ source_of_truth:
 
 # Changelog
 
+## v0.5.103 (issue #427)
+
+- **Extension-run traceability (remaining in-repo scope of #427)**:
+  - `historical_match` emits `extension_label` (`extension` when verdict=extend, empty otherwise) and `extension_contract` (deliverables for extend runs: PR label `extension`, a CHANGELOG top-level `## Extension Log` entry listing the capabilities added, PR body stating it extends the existing product); new/base verdicts emit empty strings so labels and the coder prompt stay byte-identical
+  - `github_api` drops blank labels — the verdict-keyed extension label placeholder collapses cleanly on non-extension runs
+  - `product_lifecycle`: n6 task issue carries the extension label placeholder, n7 coder prompt appends `extension_contract`
+  - base-verdict extraction path deliberately out of cowork (cross-repo writes forbidden; needs the companion process on the multi-nodes side) — tracked on the issue
+  - Tests: `tests/test_issue_427_traceability.py` (6 cases) + #307 label pin
+  - Shipped earlier for #427: verdict card + re-verdict toggle (v0.5.101, PR #430)
+
 ## v0.5.102 (issue #431)
 
 - **desigma-mcp integration — customer design docs flow into the delivery pipeline**:
