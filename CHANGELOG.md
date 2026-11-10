@@ -17,6 +17,26 @@ source_of_truth:
 
 # Changelog
 
+## v0.5.103 (issue #427)
+
+- **Extension-run traceability (remaining in-repo scope of #427)**:
+  - `historical_match` emits `extension_label` (`extension` when verdict=extend, empty otherwise) and `extension_contract` (deliverables for extend runs: PR label `extension`, a CHANGELOG top-level `## Extension Log` entry listing the capabilities added, PR body stating it extends the existing product); new/base verdicts emit empty strings so labels and the coder prompt stay byte-identical
+  - `github_api` drops blank labels — the verdict-keyed extension label placeholder collapses cleanly on non-extension runs
+  - `product_lifecycle`: n6 task issue carries the extension label placeholder, n7 coder prompt appends `extension_contract`
+  - base-verdict extraction path deliberately out of cowork (cross-repo writes forbidden; needs the companion process on the multi-nodes side) — tracked on the issue
+  - Tests: `tests/test_issue_427_traceability.py` (6 cases) + #307 label pin
+  - Shipped earlier for #427: verdict card + re-verdict toggle (v0.5.101, PR #430)
+
+## v0.5.102 (issue #431)
+
+- **desigma-mcp integration — customer design docs flow into the delivery pipeline**:
+  - `mcp_stdio` helper: newline-delimited JSON-RPC over a subprocess (initialize → notifications/initialized → tools/call sequence, per-request timeout, server always terminated incl. protocol errors). Spawn gated by `FUSION_COWORK_MCP_STDIO_ALLOW` — exact basename allowlist, empty/unset = deny all (fail-closed)
+  - `mcp_client` node: new `transport=stdio` mode (`command`/`args` params); Streamable HTTP path untouched; JSON-string arguments still parsed (#211 semantics)
+  - New `design_context` node: empty `workspace` → success no-op with empty `design_section` (zero-design runs byte-identical to prior behavior); with a workspace exports the doc structure (`desigma_get_document`) + node list (`desigma_list_nodes`) + per-language codegen (`desigma_generate_code`, frame auto-picked from the list when `frame_id=0`) into a full `design_section` block carrying the implement-from-design red line (deviations only where fd-design-lint flags)
+  - `product_lifecycle`: `n4d` `design_context` step after gate A; n7 coder prompt appends `design_section` (empty string = prompt unchanged byte-for-byte); new params `design_workspace` / `design_command` / `design_frame_id` / `design_languages` / `design_timeout`, all defaulting to no-design behavior
+  - `design_context` deliberately not in HIGH_RISK_NODES: the no-op path never spawns and the empty-default allowlist already refuses every command — high-risk classification would HITL-pause zero-design runs and break the unchanged-behavior red line
+  - Tests: `tests/test_issue_431_desigma.py` (21 cases: allowlist, stdio protocol, node paths, template wiring, no-design regression) + #307 pin 13 → 14 nodes
+
 ## v0.5.101 (issue #422 F-1)
 
 - **Match verdict card in run view + re-verdict (F-1 of the #422 conditional-pass acceptance)**:

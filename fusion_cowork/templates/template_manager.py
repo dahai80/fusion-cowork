@@ -911,6 +911,33 @@ BUILTIN_TEMPLATES = [
                     "description": "需求要求的能力清单 (gaps = 要求 - 候选已具备)",
                     "default": [],
                 },
+                # issue #431: 客户设计稿 — design_workspace 空 = 无设计稿, 行为与旧版完全一致;
+                # 有设计稿时 design_context 经 desigma-mcp (stdio) 导出结构 + 代码, 注入 coder prompt
+                "design_workspace": {
+                    "type": "string",
+                    "description": "客户设计稿工作区路径 (.desigma 目录); 空 = 无设计稿 (现行为)",
+                    "default": "",
+                },
+                "design_command": {
+                    "type": "string",
+                    "description": "desigma-mcp 命令 (basename 须在 FUSION_COWORK_MCP_STDIO_ALLOW 白名单)",
+                    "default": "desigma-mcp",
+                },
+                "design_frame_id": {
+                    "type": "number",
+                    "description": "导出的设计 frame 节点 id; 0 = 取首个节点",
+                    "default": 0,
+                },
+                "design_languages": {
+                    "type": "array",
+                    "description": "导出语言 (缺省 react + tailwind)",
+                    "default": ["react", "tailwind"],
+                },
+                "design_timeout": {
+                    "type": "number",
+                    "description": "desigma-mcp 单请求超时 (秒)",
+                    "default": 60,
+                },
             },
             # issue #320: 座位 ID 二选一 — 装配时显式 graph_id 优先, 清空 agent 缺省 (反之亦然)
             "seat_pairs": [
@@ -922,7 +949,7 @@ BUILTIN_TEMPLATES = [
         },
         "workflow": {
             "name": "交付-产品生命周期",
-            "description": "PRD gate A -> arch gate B -> scaffold -> dispatch -> PR evidence -> env/mock -> gate C -> accepted",
+            "description": "PRD gate A -> design context -> arch gate B -> scaffold -> dispatch -> PR evidence -> env/mock -> gate C -> accepted",
             "nodes": [
                 {
                     "id": "n1",
@@ -954,6 +981,22 @@ BUILTIN_TEMPLATES = [
                             # issue #328: 拒绝 → 修订回路 — 回到 n1 (BA) 带评审意见重跑
                             "on_reject": "revise",
                             "revision_node": "n1",
+                        }
+                    },
+                },
+                {
+                    # issue #431: 设计上下文 — 闸门 A (需求确认) 后挂载; workspace 空 = 无设计稿
+                    # 空转成功 (design_section 空串, coder prompt 逐字节不变); 有设计稿时导出
+                    # 结构 + 代码, design_section 以完整段落拼在 n7 coder prompt 尾部 (实现红线)
+                    "id": "n4d",
+                    "name": "design_context",
+                    "config": {
+                        "params": {
+                            "workspace": "${param.design_workspace}",
+                            "command": "${param.design_command}",
+                            "frame_id": "${param.design_frame_id}",
+                            "languages": "${param.design_languages}",
+                            "timeout": "${param.design_timeout}",
                         }
                     },
                 },
@@ -1033,7 +1076,9 @@ BUILTIN_TEMPLATES = [
                             "allowed_repos": ["${param.repo}"],
                             "title": "${param.task_title}",
                             "body": "Task for ${param.slug}. Scaffold: ${result.repo_path}. Deliver via PR; self-test evidence required.",
-                            "labels": ["state:ready"],
+                            # issue #427: 扩展可追溯 — extend 判定的运行带 extension 标签
+                            # (github_api 过滤空串, 非扩展运行标签集不变)
+                            "labels": ["state:ready", "${step.n4m.extension_label}"],
                             # issue #387: 合成 E2E dry_run — 确定性伪 issue, 零 GitHub 写
                             "dry_run": "${param.node_dry_run}",
                         }
@@ -1051,7 +1096,9 @@ BUILTIN_TEMPLATES = [
                             "repo": "${param.repo}",
                             "allowed_repos": ["${param.repo}"],
                             "issue_number": "${result.number}",
-                            "prompt": "${param.task_prompt}",
+                            # issue #431: design_section 空串 (无设计稿) 时 prompt 逐字节不变;
+                            # 有设计稿时完整设计契约段落拼在尾部 (结构/token 以导出为准, fd-design-lint 外不偏离)
+                            "prompt": "${param.task_prompt}${step.n4d.design_section}${step.n4m.extension_contract}",
                             "context_links": ["${result.repo_path}/CLAUDE.md"],
                             "cwd": "${result.repo_path}",
                             "timeout": "${param.dispatch_timeout}",
@@ -1141,7 +1188,8 @@ BUILTIN_TEMPLATES = [
             ],
             "edges": [
                 {"source_id": "n1", "target_id": "n2"},
-                {"source_id": "n2", "target_id": "n3"},
+                {"source_id": "n2", "target_id": "n4d"},
+                {"source_id": "n4d", "target_id": "n3"},
                 {"source_id": "n3", "target_id": "n4m"},
                 {"source_id": "n4m", "target_id": "n4"},
                 {"source_id": "n4", "target_id": "n5"},
