@@ -1076,7 +1076,9 @@ BUILTIN_TEMPLATES = [
                             "allowed_repos": ["${param.repo}"],
                             "title": "${param.task_title}",
                             "body": "Task for ${param.slug}. Scaffold: ${result.repo_path}. Deliver via PR; self-test evidence required.",
-                            "labels": ["state:ready"],
+                            # issue #427: 扩展可追溯 — extend 判定的运行带 extension 标签
+                            # (github_api 过滤空串, 非扩展运行标签集不变)
+                            "labels": ["state:ready", "${step.n4m.extension_label}"],
                             # issue #387: 合成 E2E dry_run — 确定性伪 issue, 零 GitHub 写
                             "dry_run": "${param.node_dry_run}",
                         }
@@ -1096,7 +1098,7 @@ BUILTIN_TEMPLATES = [
                             "issue_number": "${result.number}",
                             # issue #431: design_section 空串 (无设计稿) 时 prompt 逐字节不变;
                             # 有设计稿时完整设计契约段落拼在尾部 (结构/token 以导出为准, fd-design-lint 外不偏离)
-                            "prompt": "${param.task_prompt}${step.n4d.design_section}",
+                            "prompt": "${param.task_prompt}${step.n4d.design_section}${step.n4m.extension_contract}",
                             "context_links": ["${result.repo_path}/CLAUDE.md"],
                             "cwd": "${result.repo_path}",
                             "timeout": "${param.dispatch_timeout}",

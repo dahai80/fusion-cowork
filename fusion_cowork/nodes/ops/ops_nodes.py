@@ -240,7 +240,8 @@ class GitHubNode(BaseNode):
         issue_number = int(inputs.get("issue_number") or params.get("issue_number") or 0)
         title = str(params.get("title") or "")
         body = str(params.get("body") or "")
-        labels = [str(x) for x in (params.get("labels") or [])]
+        # issue #427: 空串标签过滤 — 模板按判定插值 extension 标签, 非扩展运行为空串
+        labels = [str(x) for x in (params.get("labels") or []) if str(x).strip()]
         timeout = float(params.get("timeout") or 30)
 
         if op not in (
