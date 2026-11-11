@@ -1616,15 +1616,12 @@ def create_web_app(
 
     @app.get("/health")
     async def health():
-        # issue #448: shell registration state for supervisor alerting (enabled probe never raises)
-        from .shell_registry import registration_health, shell_registration_enabled
-
-        shell_state = registration_health()
-        try:
-            shell_state["enabled"] = shell_registration_enabled()
-        except Exception:
-            shell_state["enabled"] = False
-        return {"status": "ok", "module": "fusion-cowork", "version": _version(), "shell_registration": shell_state}
+        return {
+            "status": "ok",
+            "module": "fusion-cowork",
+            "version": _version(),
+            "shell_registration": _shell_registration_state(),
+        }
 
     @app.get("/api/nodes")
     async def nodes_list():
@@ -4711,3 +4708,16 @@ def _version() -> str:
     from .. import __version__
 
     return __version__
+
+
+def _shell_registration_state() -> Dict[str, Any]:
+    # issue #448: shell registration state for supervisor alerting. The
+    # enabled probe never raises (prod may lack the admin key it requires).
+    from .shell_registry import registration_health, shell_registration_enabled
+
+    state = dict(registration_health())
+    try:
+        state["enabled"] = shell_registration_enabled()
+    except Exception:
+        state["enabled"] = False
+    return state
