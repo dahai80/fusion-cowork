@@ -17,6 +17,14 @@ source_of_truth:
 
 # Changelog
 
+## v0.5.105 (issues #442/#443/#444/#445)
+
+- **Gate approval semantics (#442)**: approving an `approval_gate` HITL card without `once:true` woke the run but the post-wake permission recheck denied it — #340 deliberately does not persist gate approvals as rules, so the recheck always refused. Gate tools (`HITL_GATE_TOOLS`) now skip the recheck on explicit approval; non-gate nodes keep the recheck path unchanged
+- **Resume at a gate re-arms the HITL wait (#445)**: pause/resume shares the pause event with the HITL wait — resuming a run parked at a gate woke the wait with no recorded decision, treated as a denial (step 0.000s, run failed) before any approval could land. The wait now re-arms when woken without a decision or cancel, preserving the remaining #187 deadline; a later confirm wakes the run normally
+- **Base-verdict leak fix (#444)**: base-verdict step output no longer carries the raw `matched` object (other customer's slug/repo leaked verbatim through `GET /api/runs/{id}`); `matched` is now `{}` for base, same policy as `matched_visible`. Template interpolation unaffected
+- **Seat requirement wiring (#443)**: `product_lifecycle` n1 BA seat input embeds `${param.task_title}` + `${param.task_prompt}` — the seat previously received only the slug and hallucinated an unrelated PRD; n3/n9 already carry PRD/arch content (#346)
+- Tests: `tests/test_issue_442_445_hitl_batch.py` (9 cases) + #422 base assertion updated
+
 ## v0.5.104 (issue #439)
 
 - **CJK matching fix in `historical_match`**: contiguous CJK runs tokenized as a single token, so Chinese requirements never matched Chinese capability lists (score always 0.0, verdict always `new`). CJK runs now segment into character bigrams (single chars kept as-is) before scoring; latin/digit tokenization and the deterministic zero-LLM containment contract unchanged; stopword filtering stays symmetric on both sides
