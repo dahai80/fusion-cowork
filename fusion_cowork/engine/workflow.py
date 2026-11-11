@@ -28,6 +28,7 @@ from .executors import NodeExecutionContext, executor_for_node, executor_names
 from .hooks import HookEvent
 from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus
 from .permission_manager import (
+    HITL_GATE_TOOLS,
     reset_approval_context,
     reset_approval_evidence,
     set_approval_context,
@@ -1888,11 +1889,26 @@ class WorkflowEngine:
         self._fire_hitl_email(exec_id, node, check_input, "pending", "")
         evt.clear()
         timed_out = False
-        try:
-            # issue #187: 有界等待 — 超时自动拒绝, 绝不无限悬挂也不静默放行
-            await asyncio.wait_for(evt.wait(), timeout=self._hitl_timeout)
-        except TimeoutError:
-            timed_out = True
+        while True:
+            try:
+                # issue #187: 有界等待 — 超时自动拒绝, 绝不无限悬挂也不静默放行
+                remaining = self._hitl_deadlines.get(exec_id, time.time() + self._hitl_timeout) - time.time()
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                await asyncio.wait_for(evt.wait(), timeout=remaining)
+            except TimeoutError:
+                timed_out = True
+                break
+            # issue #445: pause/resume 与 HITL 等待共用同一事件 — resume 唤醒但
+            # 无审批决定 (也无取消) = 手动恢复, 重新挂起等决定, 绝不合成拒绝
+            if exec_id in self._hitl_decisions or self._cancel_flags.get(exec_id):
+                break
+            evt.clear()
+            logger.info(
+                f"[{exec_id}] HITL: resume 唤醒但无审批决定, 重新等待 "
+                f"(剩余 {max(self._hitl_deadlines.get(exec_id, 0) - time.time(), 0):.0f}s)"
+            )
         self._hitl_waiting.discard(exec_id)
         self._hitl_deadlines.pop(exec_id, None)
         if timed_out:
@@ -1944,6 +1960,12 @@ class WorkflowEngine:
         if exec_id in self._hitl_once_grants:
             self._hitl_once_grants.discard(exec_id)
             logger.info(f"[{exec_id}] HITL: 节点 '{node.name}' 一次性批准, 放行 (不落规则)")
+            return True
+        # issue #442: #340 起闸门工具 (approval_gate 等) 的批准不落 approve 规则 —
+        # 原地权限复查必然拒绝, 把显式批准变成 权限拒绝。闸门批准即人工决策本身,
+        # 放行本节点; 非闸门节点仍走复查 (confirm_guard 已落规则)
+        if node.name in HITL_GATE_TOOLS:
+            logger.info(f"[{exec_id}] HITL: 闸门 '{node.name}' 已批准, 放行 (闸门不落规则, 免复查)")
             return True
         token = set_approval_context({"workflow": "", "node_id": node.id, "execution_id": exec_id})
         try:

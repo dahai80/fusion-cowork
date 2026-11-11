@@ -78,7 +78,8 @@ class TestMatchVerdicts:
             own_customer="tenant-b",
         ).execute({})
         assert res.data["verdict"] == "base"
-        assert res.data["matched"]["repo"] == "o/ai-pet-hotel"  # run 内部可见
+        # issue #444: 原始 matched 也置空 — runs API 逐字暴露 step output_data
+        assert res.data["matched"] == {}
         assert res.data["matched_visible"] == {}  # 新客户可见面零泄露
         assert res.data["matched_repo"] == ""
 
