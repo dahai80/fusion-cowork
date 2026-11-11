@@ -14,8 +14,10 @@ import asyncio
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,17 @@ MANIFEST_PATH_ENV = "FUSION_SHELL_MANIFEST"
 UPSTREAM_OVERRIDE_ENV = "FUSION_COWORK_WEB_UPSTREAM"
 REGISTER_INTERVAL_SECONDS = 15.0
 HTTP_TIMEOUT_SECONDS = 5.0
+# issue #448: 连续失败达到阈值后, 每小时至多一条 ERROR 摘要 (替代逐拍 WARNING 刷屏)
+FAIL_STREAK_ERROR_THRESHOLD = 10
+ERROR_SUMMARY_INTERVAL_SECONDS = 3600.0
+
+# issue #448: 注册状态供 /health 暴露 (supervisor/监控可告警 shell_registered=false)
+_REGISTRATION_STATE: Dict[str, Any] = {
+    "enabled": False,
+    "registered": False,
+    "gateway": "",
+    "last_error": "",
+}
 
 # issue #168 (K4): 网关签发 fm- 模块密钥落盘路径 (0600)。
 # 静态 env 密钥继续作为覆盖路径向后兼容; 网关签发后文件覆盖 env 值。
@@ -99,6 +112,42 @@ def shell_registration_enabled() -> bool:
     return bool(_gateway_admin_key().strip())
 
 
+def registration_health() -> Dict[str, Any]:
+    # issue #448: 只读快照 — /health 与监控消费, 不含 admin key
+    return dict(_REGISTRATION_STATE)
+
+
+def _gateway_url_valid(gateway: str) -> bool:
+    # issue #448: 启动自检 — URL 必须能解析为 http(s)://host[:port], 否则快速失败
+    try:
+        parsed = urlparse(gateway)
+    except ValueError:
+        return False
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+
+
+def _classify_registry_error(e: Exception, gateway: str) -> str:
+    # issue #448: 异常分类 — 连接类错误点名目标 URL, 其余原样; 操作员可区分
+    # 配置错误 (错 host/端口) 与网关故障
+    try:
+        import httpx
+
+        if isinstance(e, httpx.ConnectError):
+            return f"connection refused/unreachable: {gateway} ({e})"
+        if isinstance(e, httpx.HTTPError):
+            return f"http error against {gateway}: {e}"
+    except ImportError:
+        pass
+    return str(e)
+
+
+def _mark_registration(registered: bool, gateway: str = "", error: str = "") -> None:
+    _REGISTRATION_STATE["registered"] = registered
+    if gateway:
+        _REGISTRATION_STATE["gateway"] = gateway
+    _REGISTRATION_STATE["last_error"] = error
+
+
 def load_manifest() -> Dict[str, Any]:
     path = Path(os.environ.get(MANIFEST_PATH_ENV, "").strip() or _default_manifest_path())
     if not path.exists():
@@ -132,15 +181,29 @@ def load_manifest() -> Dict[str, Any]:
 async def _registry_loop_body(client: Any, manifest: Dict[str, Any], interval: float) -> None:
     module_id = str(manifest["id"])
     gateway = os.environ.get(GATEWAY_URL_ENV, "").strip().rstrip("/")
+    # issue #448: 启动自检 — URL 非法直接快速失败, 不无限循环
+    if not _gateway_url_valid(gateway):
+        logger.error(f"shell 注册禁用 (FUSION_SHELL_GATEWAY_URL 非法, 须为 http(s)://host[:port]): '{gateway}'")
+        _mark_registration(False, gateway=gateway, error="invalid gateway url")
+        return
     admin_key = _gateway_admin_key().strip()
     admin_headers = {"Authorization": f"Bearer {admin_key}", "Content-Type": "application/json"}
     registered = False
+    # issue #448: 循环启动即记录解析后的目标 URL (绝不含 admin key) — ps -E 拿不到
+    # 守护进程 env, 操作员只能从这里知道注册打到哪
+    logger.info(f"shell 注册循环启动: gateway={gateway} module={module_id} interval={interval:g}s")
+    _REGISTRATION_STATE["enabled"] = True
+    _mark_registration(False, gateway=gateway, error="")
+    consecutive_failures = 0
+    last_error_log_at = 0.0
     while True:
         try:
             if not registered:
                 resp = await client.post(f"{gateway}/api/v1/shell/manifests", json=manifest, headers=admin_headers)
                 if resp.status_code == 200:
                     registered = True
+                    consecutive_failures = 0
+                    _mark_registration(True, error="")
                     logger.info(f"shell manifest 已注册: {module_id}")
                     # issue #168 (K4): 注册响应携带网关签发密钥时持久化 (仅此一次返回明文)
                     issued = _extract_issued_key(_safe_json(resp))
@@ -149,7 +212,7 @@ async def _registry_loop_body(client: Any, manifest: Dict[str, Any], interval: f
                     elif issued:
                         logger.info("网关签发密钥与已存值一致, 不重复落盘")
                 else:
-                    logger.warning(f"shell manifest 注册失败: {resp.status_code} {resp.text[:200]}")
+                    raise RuntimeError(f"shell manifest 注册失败: {resp.status_code} {resp.text[:200]}")
             else:
                 # issue #168 (K4): 心跳改用签发 fm- 密钥鉴权; 未签发时回退 admin key
                 module_key = load_module_key()
@@ -175,11 +238,27 @@ async def _registry_loop_body(client: Any, manifest: Dict[str, Any], interval: f
                     registered = False
                 elif resp.status_code != 200:
                     raise RuntimeError(f"shell 心跳失败: {resp.status_code} {resp.text[:200]}")
+                # 心跳成功 — 连败计数清零, /health 恢复 registered
+                consecutive_failures = 0
+                _mark_registration(True, error="")
         except asyncio.CancelledError:
             logger.info(f"shell 注册循环已取消 (module={module_id})")
             raise
         except Exception as e:
-            logger.warning(f"shell 注册循环错误 (将重试): {e}")
+            consecutive_failures += 1
+            detail = _classify_registry_error(e, gateway)
+            _mark_registration(False, error=detail)
+            now = time.monotonic()
+            if consecutive_failures >= FAIL_STREAK_ERROR_THRESHOLD:
+                # issue #448: 持续故障降频 — 阈值后每小时至多一条 ERROR 摘要 (带连败
+                # 次数与目标 URL), 不再逐拍 WARNING 刷屏
+                if consecutive_failures == FAIL_STREAK_ERROR_THRESHOLD or now - last_error_log_at >= (
+                    ERROR_SUMMARY_INTERVAL_SECONDS
+                ):
+                    logger.error(f"shell 注册连续失败 {consecutive_failures} 次 (最近错误): {detail}")
+                    last_error_log_at = now
+            else:
+                logger.warning(f"shell 注册循环错误 (将重试): {detail}")
         await asyncio.sleep(interval)
 
 
