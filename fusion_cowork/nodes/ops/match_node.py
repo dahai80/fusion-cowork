@@ -206,7 +206,10 @@ class HistoricalMatchNode(BaseNode):
                 "verdict": verdict,
                 "score": round(max(best_score, 0.0), 4),
                 "threshold": threshold,
-                "matched": matched,
+                # issue #444: base 判定原始 matched 也置空 — step output_data 经
+                # GET /api/runs/{id} 逐字暴露, 原始字段带他客户 slug/repo 违反 #422 红线;
+                # 与 matched_visible 同策略。模板插值安全: matched_repo 对 base 恒 ""
+                "matched": {} if verdict == "base" else matched,
                 "gaps": gaps,
                 "candidates_scanned": len(candidates),
                 # issue #422: 扁平键供模板 ${step.<id>.result.matched_repo} 插值 —

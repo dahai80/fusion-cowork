@@ -958,7 +958,14 @@ BUILTIN_TEMPLATES = [
                         "params": {
                             "graph_id": "${param.ba_graph_id}",
                             "agent_id": "${param.ba_agent_id}",
-                            "input": "Write the PRD for product ${param.slug}. Output the PRD document content.",
+                            # issue #443: 座位输入必须携带原始需求 — 只给 slug 时 BA 只能
+                            # 编造无关 PRD; task_title/task_prompt 是权威需求原文
+                            "input": (
+                                "Write the PRD for product ${param.slug}. Output the PRD document content.\n\n"
+                                "Customer requirement (authoritative — design exactly this scope, do not invent):\n"
+                                "Title: ${param.task_title}\n\n"
+                                "${param.task_prompt}"
+                            ),
                             "mode": "sync",
                             # issue #363: 显式轮次预算 — studio 默认 8 轮饿死多产物角色
                             "max_turns": "${param.seat_max_turns}",
