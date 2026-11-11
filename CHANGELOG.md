@@ -17,6 +17,16 @@ source_of_truth:
 
 # Changelog
 
+## v0.5.106 (issue #448)
+
+- **Shell registry loop observability**: the registration loop logged bare exceptions with no target and spammed a WARNING every cycle during a gateway outage, and `/health` carried no registration signal — operators could not tell a config error (wrong host/port) from a gateway outage, and the failure rate was invisible. Fixes:
+  - Loop startup logs the resolved gateway URL (`gateway=... module=... interval=...s`; admin key never logged)
+  - Exceptions classified — `httpx.ConnectError` names the target (`connection refused/unreachable: <gateway>`), other httpx errors prefixed, unknown errors passed through
+  - Invalid `FUSION_SHELL_GATEWAY_URL` fails fast at startup (ERROR log + no network loop) instead of looping forever
+  - Sustained failure rate-limited: first 9 cycles keep per-cycle WARNINGs; from the 10th consecutive failure one ERROR summary per hour (`consecutive_failures` + target URL), suppressed cycles stay silent; recovery resets the counter
+  - `/health` now carries `shell_registration` (`enabled` / `registered` / `gateway` / `last_error`) so supervisor/alerting can flag `registered=false`
+- Tests: `tests/test_issue_448_registry_observability.py` (11 cases: URL validation, fail-fast, error classification, health transitions, hourly ERROR rate limit, recovery reset, /health envelope)
+
 ## v0.5.105 (issues #442/#443/#444/#445)
 
 - **Gate approval semantics (#442)**: approving an `approval_gate` HITL card without `once:true` woke the run but the post-wake permission recheck denied it — #340 deliberately does not persist gate approvals as rules, so the recheck always refused. Gate tools (`HITL_GATE_TOOLS`) now skip the recheck on explicit approval; non-gate nodes keep the recheck path unchanged
