@@ -1616,23 +1616,15 @@ def create_web_app(
 
     @app.get("/health")
     async def health():
-        # issue #448: shell 注册状态入 /health — 注册静默掉线时 supervisor/监控可告警;
-        # enabled 解析绝不抛 (prod 缺 admin key 的 RuntimeError 吞成 False)
-        from .shell_registry import registration_health
+        # issue #448: shell registration state for supervisor alerting (enabled probe never raises)
+        from .shell_registry import registration_health, shell_registration_enabled
 
         shell_state = registration_health()
         try:
-            from .shell_registry import shell_registration_enabled
-
             shell_state["enabled"] = shell_registration_enabled()
         except Exception:
             shell_state["enabled"] = False
-        return {
-            "status": "ok",
-            "module": "fusion-cowork",
-            "version": _version(),
-            "shell_registration": shell_state,
-        }
+        return {"status": "ok", "module": "fusion-cowork", "version": _version(), "shell_registration": shell_state}
 
     @app.get("/api/nodes")
     async def nodes_list():
