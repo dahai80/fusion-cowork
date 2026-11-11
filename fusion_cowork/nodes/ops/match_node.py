@@ -30,7 +30,8 @@ from ...engine.node import (
 
 logger = logging.getLogger(__name__)
 
-_WORD_RE = re.compile(r"[a-z0-9一-鿿]+")
+_WORD_RE = re.compile(r"[a-z0-9]+|[一-鿿]+")
+_CJK_RE = re.compile(r"[一-鿿]+")
 _STOPWORDS = frozenset(
     {
         "the",
@@ -64,8 +65,21 @@ _STOPWORDS = frozenset(
 
 
 def _tokenize(text: str) -> set:
-    words = _WORD_RE.findall(str(text or "").lower())
-    return {w for w in words if len(w) >= 2 and w not in _STOPWORDS}
+    # issue #439: CJK runs have no separators — a contiguous run tokenizes as one
+    # token and never equals a capability token. Segment CJK into character
+    # bigrams (single chars kept as-is) so substring overlap scores deterministically;
+    # latin/digit words unchanged.
+    lower = str(text or "").lower()
+    tokens = set()
+    for w in _WORD_RE.findall(lower):
+        if _CJK_RE.fullmatch(w):
+            if len(w) == 1:
+                tokens.add(w)
+            else:
+                tokens.update(w[i : i + 2] for i in range(len(w) - 1))
+        elif len(w) >= 2:
+            tokens.add(w)
+    return {t for t in tokens if t not in _STOPWORDS}
 
 
 def score_overlap(requirement: str, capabilities: List[str], stack: str = "") -> float:
