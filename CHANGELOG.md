@@ -17,6 +17,11 @@ source_of_truth:
 
 # Changelog
 
+## v0.5.104 (issue #439)
+
+- **CJK matching fix in `historical_match`**: contiguous CJK runs tokenized as a single token, so Chinese requirements never matched Chinese capability lists (score always 0.0, verdict always `new`). CJK runs now segment into character bigrams (single chars kept as-is) before scoring; latin/digit tokenization and the deterministic zero-LLM containment contract unchanged; stopword filtering stays symmetric on both sides
+- Tests: `tests/test_issue_439_cjk_match.py` (17 cases: bigram segmentation, single-char runs, mixed EN/CN, partial/zero overlap, extend/new verdicts, English regression)
+
 ## v0.5.103 (issue #427)
 
 - **Extension-run traceability (remaining in-repo scope of #427)**:
