@@ -545,6 +545,8 @@ class RunRegistry:
             "attempt_errors": getattr(s, "attempt_errors", []),
             # issue #227: 用户修正标记步 (运行中指令注入的落点)
             "user_correction": bool(getattr(s, "user_correction", False)),
+            # issue #460: 会话级检查点 — 步级会话归因 (旧快照/老引擎为 None)
+            "session_id": getattr(s, "session_id", None),
         }
 
     def list(self, space_id: str = "") -> List[Dict[str, Any]]:

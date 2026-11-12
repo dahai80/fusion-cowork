@@ -340,6 +340,9 @@ class WorkflowStep:
     # issue #227: 用户修正标记 — 运行中注入的指令在时间线落一条标记步
     # (status=skipped 的零耗时标记, 非节点执行), 供 run 视图渲染 "用户修正"
     user_correction: bool = False
+    # issue #460: 会话级检查点 — 该步所属 run 会话 id, 随快照持久;
+    # resume 采纳后 agent 座位节点可续用原会话 (旧快照无此字段 = 行为不变)
+    session_id: Optional[str] = None
 
 
 @dataclass
@@ -825,20 +828,35 @@ class WorkflowEngine:
             f"concurrency={effective_concurrency} executors={execution.executors}"
         )
 
-        # Session: auto-create
+        # Session: auto-create — issue #460: resume 快照带 session_id 时采纳原会话
+        # (会话续用不新建, agent 座位的多轮历史得以延续; 旧快照无该字段 = 新建不变)
         session = None
+        resume_session_id = ""
+        for sstep in resume_steps or []:
+            if isinstance(sstep, dict) and sstep.get("session_id"):
+                resume_session_id = str(sstep["session_id"])
+                break
         if self._session_store:
             from .session import Session
 
-            session = Session(
-                workflow_id=workflow.id,
-                workflow_name=workflow.name,
-                status="running",
-                initial_input=initial_input or {},
-                execution_id=exec_id,
-            )
-            self._session_store.save(session)
-            logger.debug(f"Session 自动创建: {session.id}")
+            if resume_session_id:
+                session = self._session_store.get(resume_session_id)
+                if session is not None:
+                    session.status = "running"
+                    self._session_store.save(session)
+                    logger.info(f"[{exec_id}] resume 采纳快照会话 {session.id} (会话续用)")
+                else:
+                    logger.warning(f"[{exec_id}] resume 快照会话不存在, 改新建: {resume_session_id}")
+            if session is None:
+                session = Session(
+                    workflow_id=workflow.id,
+                    workflow_name=workflow.name,
+                    status="running",
+                    initial_input=initial_input or {},
+                    execution_id=exec_id,
+                )
+                self._session_store.save(session)
+                logger.debug(f"Session 自动创建: {session.id}")
 
         # D1 轨迹飞轮：绑定 session_id 并 attach Hook 处理器
         if self._trajectory_recorder is not None:
@@ -913,6 +931,15 @@ class WorkflowEngine:
             start_nodes = workflow.get_start_nodes()
             for sn in start_nodes:
                 passed_data[sn] = initial_input
+        # issue #460: 采纳的会话注入节点输入 — agent 座位节点读 _session_id 续用原会话
+        # (下划线前缀 = 引擎内部字段, 不参与插值解析)
+        if session is not None and resume_session_id:
+            for sn in workflow.get_start_nodes():
+                base = passed_data.get(sn)
+                d = dict(base) if isinstance(base, dict) else {}
+                d.setdefault("_session_id", session.id)
+                passed_data[sn] = d
+            logger.debug(f"[{exec_id}] resume 会话 _session_id 已注入起始节点输入")
 
         # Hook: WORKFLOW_START
         if self._hook_manager:
@@ -1019,6 +1046,9 @@ class WorkflowEngine:
                         control = "fail"
                         control_error = node_error or control_error
                 for _, step in sorted(collected, key=lambda item: item[0]):
+                    # issue #460: 步级会话归因 — 非 marker 步随快照携带会话 id
+                    if session is not None and step.session_id is None and not step.user_correction:
+                        step.session_id = session.id
                     execution.steps.append(step)
                     self._notify_progress(execution, step)
                 if control == "cancel":
@@ -1110,6 +1140,8 @@ class WorkflowEngine:
                         "summary": s.summary,
                         "input_data": s.input_data,
                         "output_data": s.output_data,
+                        # issue #460: 会话归因随 session steps_snapshot 透出
+                        "session_id": s.session_id,
                     }
                     for s in execution.steps
                 ]
