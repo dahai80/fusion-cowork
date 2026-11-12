@@ -357,12 +357,25 @@ class SpaceStore:
         # A-8: sqlite 写事务序列化锁 — 单共享连接下并发写必 OperationalError: database is locked。
         # asyncio.Lock 让写串行, 配 busy_timeout 重试, 不再裸 commit。postgres 走 pool+MVCC, 此锁 no-op。
         self._write_lock = asyncio.Lock()
+        # issue #463: _ensure_db 并发触发 initialize 双跑 — 第二个 executescript 会撞
+        # 'no such table' (WAL 下另一连接尚未见到未提交 schema)。锁 + 幂等哨兵。
+        self._init_lock = asyncio.Lock()
+        self._initialized = False
 
     @property
     def backend(self) -> str:
         return self._backend
 
     async def initialize(self) -> None:
+        if self._initialized:
+            return
+        async with self._init_lock:
+            if self._initialized:
+                return
+            await self._initialize_inner()
+            self._initialized = True
+
+    async def _initialize_inner(self) -> None:
         if self._backend == "postgres":
             await self._init_postgres()
         else:

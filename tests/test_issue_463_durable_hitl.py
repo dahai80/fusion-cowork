@@ -231,6 +231,7 @@ class TestAuditChainWiring:
         from fusion_cowork.space.store import SpaceStore
 
         store = SpaceStore(data_dir=str(tmp_path / "spaces"))
+        await store.initialize()
         audit = AuditLog(store)
         app = types.SimpleNamespace(state=types.SimpleNamespace(audit_log=audit))
         _schedule_hitl_audit(app, "run-audit-1", "act-audit-1", True, "web")
