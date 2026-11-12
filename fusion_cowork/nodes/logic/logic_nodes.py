@@ -330,3 +330,69 @@ class MergeNode(BaseNode):
             data={"merged": merged},
             summary="数据合并完成",
         )
+
+
+@register_node
+class WaitForEventNode(BaseNode):
+    """事件等待节点 — 挂起直到同名入站事件到达 (issue #459)。
+
+    与入站触发器 (POST /api/hooks/trigger/<token>) 或 POST /api/events/{name}
+    配合: 事件总线按事件名唤醒等待中的节点。timeout 秒内无事件 = 结构化失败;
+    timeout=0 表示无限等待 (受节点看门狗 FUSION_COWORK_NODE_TIMEOUT_S 约束)。
+    """
+
+    name = "wait_for_event"
+    display_name = "等待事件"
+    category = NodeCategory.LOGIC
+    description = "挂起等待命名入站事件到达后继续"
+    icon = "📡"
+    default_label = "等待事件"
+
+    inputs = [
+        {"key": "data", "label": "输入数据", "type": "any", "optional": True},
+    ]
+    outputs = [
+        {"key": "event", "label": "事件名", "type": "string"},
+        {"key": "payload", "label": "事件负载", "type": "dict"},
+    ]
+
+    def get_params_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "event": {"type": "string", "description": "等待的事件名 (触发器事件名为 trigger.<名称>)"},
+                "timeout": {"type": "number", "description": "等待上限秒数, 0=无限 (默认 300)"},
+            },
+            "required": ["event"],
+        }
+
+    async def execute(self, inputs: Dict[str, Any]) -> NodeResult:
+        from ...engine.event_bus import get_event_bus
+
+        event = str(self.config.params.get("event") or "").strip()
+        if not event:
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error="event 参数必填",
+                summary="等待事件失败: 缺少 event 参数",
+            )
+        try:
+            timeout = float(self.config.params.get("timeout", 300))
+        except (TypeError, ValueError):
+            timeout = 300.0
+        logger.info(f"wait_for_event: 挂起等待事件 '{event}' (timeout={timeout:g}s)")
+        try:
+            result = await get_event_bus().wait(event, timeout=timeout)
+        except TimeoutError:
+            logger.warning(f"wait_for_event: 事件 '{event}' 等待超时 ({timeout:g}s)")
+            return NodeResult(
+                status=NodeStatus.FAILED,
+                error=f"事件 '{event}' 等待超时 ({timeout:g}s), 无入站事件到达",
+                summary=f"等待事件超时: {event}",
+            )
+        logger.info(f"wait_for_event: 事件 '{event}' 到达, 继续执行")
+        return NodeResult(
+            status=NodeStatus.SUCCESS,
+            data={"event": result["event"], "payload": result["payload"]},
+            summary=f"事件 '{event}' 已到达",
+        )
