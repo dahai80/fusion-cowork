@@ -1887,9 +1887,15 @@ class WorkflowEngine:
             )
         logger.info(f"[{exec_id}] HITL: 节点 '{node.name}' 暂停在边界, 等待人工审批")
         self._fire_hitl_email(exec_id, node, check_input, "pending", "")
-        evt.clear()
         timed_out = False
         while True:
+            # issue #453: resolve_hitl 可能在上方 NOTIFICATION hook / 邮件 await 期间早到 —
+            # 事件已 set 且决定已入 _hitl_decisions。先查决定再 clear: 无决定才清事件进入
+            # 有界等待; 有决定直接 break 且保持事件 set, 让节点间 W8 检查点 (pause_evt.wait)
+            # 不被误挂。clear 与检查间无 await, 单线程事件循环内原子, 竞态窗口闭合
+            if exec_id in self._hitl_decisions or self._cancel_flags.get(exec_id):
+                break
+            evt.clear()
             try:
                 # issue #187: 有界等待 — 超时自动拒绝, 绝不无限悬挂也不静默放行
                 remaining = self._hitl_deadlines.get(exec_id, time.time() + self._hitl_timeout) - time.time()
@@ -1904,7 +1910,6 @@ class WorkflowEngine:
             # 无审批决定 (也无取消) = 手动恢复, 重新挂起等决定, 绝不合成拒绝
             if exec_id in self._hitl_decisions or self._cancel_flags.get(exec_id):
                 break
-            evt.clear()
             logger.info(
                 f"[{exec_id}] HITL: resume 唤醒但无审批决定, 重新等待 "
                 f"(剩余 {max(self._hitl_deadlines.get(exec_id, 0) - time.time(), 0):.0f}s)"
