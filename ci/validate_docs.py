@@ -345,15 +345,9 @@ def check_frontmatter(doc: Doc, rel: str, out: List[Finding]) -> None:
 
     owner = val("owner")
     if owner and not owner.startswith("@"):
-        out.append(
-            Finding(
-                "ERROR", "FM-OWNER", rel, 1, "owner must be an @handle (a single specific person)"
-            )
-        )
+        out.append(Finding("ERROR", "FM-OWNER", rel, 1, "owner must be an @handle (a single specific person)"))
     if owner and owner.startswith("@") and len(owner.strip("@")) > 39:
-        out.append(
-            Finding("WARN", "FM-OWNER", rel, 1, f"owner too long, looks like a team name: {owner}")
-        )
+        out.append(Finding("WARN", "FM-OWNER", rel, 1, f"owner too long, looks like a team name: {owner}"))
 
     up = val("updated")
     if up and not re.match(r"^\d{4}-\d{2}-\d{2}$", up):
@@ -361,14 +355,10 @@ def check_frontmatter(doc: Doc, rel: str, out: List[Finding]) -> None:
 
     doc_id = val("doc_id")
     if doc_id and not re.match(r"^[a-z0-9-]+/[a-z0-9-]+(/[a-z0-9-]+)?$", doc_id):
-        out.append(
-            Finding("ERROR", "FM-DOCID", rel, 1, f"doc_id must be <product>/<doc_type>: {doc_id}")
-        )
+        out.append(Finding("ERROR", "FM-DOCID", rel, 1, f"doc_id must be <product>/<doc_type>: {doc_id}"))
 
     if st == "deprecated" and not doc.meta.get("superseded_by"):
-        out.append(
-            Finding("ERROR", "FM-SUPERSEDE", rel, 1, "status=deprecated requires superseded_by")
-        )
+        out.append(Finding("ERROR", "FM-SUPERSEDE", rel, 1, "status=deprecated requires superseded_by"))
 
     sot = doc.meta.get("source_of_truth")
     if not isinstance(sot, list) or not sot:
@@ -385,9 +375,7 @@ def check_sot_paths(doc: Doc, rel: str, repo_root: str, out: List[Finding]) -> N
             continue
         target = os.path.join(repo_root, p)
         if not os.path.exists(target):
-            out.append(
-                Finding("ERROR", "SOT-PATH", rel, 1, f"source_of_truth path does not exist: {p}")
-            )
+            out.append(Finding("ERROR", "SOT-PATH", rel, 1, f"source_of_truth path does not exist: {p}"))
             continue
         # line-range validation
         if "#L" in str(item) and os.path.isfile(target):
@@ -519,11 +507,7 @@ def check_links(doc_path: str, text: str, rel: str, out: List[Finding]) -> None:
             continue
         cand = os.path.normpath(os.path.join(base, frag))
         if not os.path.exists(cand):
-            out.append(
-                Finding(
-                    "ERROR", "LINK-BROKEN", rel, 0, f"relative link target does not exist: {target}"
-                )
-            )
+            out.append(Finding("ERROR", "LINK-BROKEN", rel, 0, f"relative link target does not exist: {target}"))
 
 
 def check_budget(doc: Doc, rel: str, out: List[Finding]) -> None:
@@ -535,9 +519,7 @@ def check_budget(doc: Doc, rel: str, out: List[Finding]) -> None:
     if dt == "get-started" and entry == "guided-ui":
         limit = GUIDED_UI_BUDGET
     if limit is None:
-        out.append(
-            Finding("INFO", "BUDGET", rel, 0, f"body {doc.body_lines} lines ({dt} has no hard cap)")
-        )
+        out.append(Finding("INFO", "BUDGET", rel, 0, f"body {doc.body_lines} lines ({dt} has no hard cap)"))
         return
     if doc.body_lines > limit:
         over = doc.body_lines - limit
@@ -569,13 +551,9 @@ def check_bi_lingual(doc: Doc, rel: str, out: List[Finding]) -> None:
     title = doc.meta.get("title")
     if isinstance(title, str):
         if "zh" not in title or "en" not in title:
-            out.append(
-                Finding("WARN", "I18N-TITLE", rel, 1, "title should be { zh: ..., en: ... }")
-            )
+            out.append(Finding("WARN", "I18N-TITLE", rel, 1, "title should be { zh: ..., en: ... }"))
     elif isinstance(title, list):
-        out.append(
-            Finding("WARN", "I18N-TITLE", rel, 1, "title failed to parse, check indentation")
-        )
+        out.append(Finding("WARN", "I18N-TITLE", rel, 1, "title failed to parse, check indentation"))
 
 
 def check_inventory(root: str, cls: str, entry: str, out: List[Finding]) -> None:
@@ -597,11 +575,7 @@ def check_inventory(root: str, cls: str, entry: str, out: List[Finding]) -> None
     for rel in TIER1[key]:
         p = os.path.join(root, rel)
         if not os.path.exists(p):
-            out.append(
-                Finding(
-                    "ERROR", "INV-T1", rel, 0, f"Tier 1 doc missing (grid position {cls}x{entry})"
-                )
-            )
+            out.append(Finding("ERROR", "INV-T1", rel, 0, f"Tier 1 doc missing (grid position {cls}x{entry})"))
         elif os.path.isdir(p) and not os.listdir(p):
             out.append(Finding("ERROR", "INV-T1", rel, 0, "Tier 1 directory is empty"))
     for rel, need in TIER1_MIN_COUNT.get(key, []):
@@ -609,9 +583,7 @@ def check_inventory(root: str, cls: str, entry: str, out: List[Finding]) -> None
         if os.path.isdir(d):
             n = len([f for f in os.listdir(d) if f.endswith(".md") and not f.startswith("_")])
             if n < need:
-                out.append(
-                    Finding("ERROR", "INV-COUNT", rel, 0, f"need at least {need} docs, found {n}")
-                )
+                out.append(Finding("ERROR", "INV-COUNT", rel, 0, f"need at least {need} docs, found {n}"))
 
 
 # ---------------------------------------------------------------- main
@@ -631,18 +603,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="fusion docs-system validator")
     ap.add_argument("--root", default=".", help="repository root directory")
     ap.add_argument("--product", help="e.g. fusion-mlx, used for the doc-set check")
-    ap.add_argument(
-        "--class", dest="cls", choices=sorted(VALID_CLASS), help="product class core/platform/app"
-    )
+    ap.add_argument("--class", dest="cls", choices=sorted(VALID_CLASS), help="product class core/platform/app")
     ap.add_argument(
         "--entry",
         choices=sorted(VALID_ENTRY),
         help="integration form developer/service/guided-ui/none",
     )
     ap.add_argument("--strict", action="store_true", help="treat WARN as failure too")
-    ap.add_argument(
-        "--skip-inventory", action="store_true", help="skip doc-set completeness checks"
-    )
+    ap.add_argument("--skip-inventory", action="store_true", help="skip doc-set completeness checks")
     ap.add_argument(
         "--skip-placeholder",
         action="store_true",
@@ -665,9 +633,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.product:
         if not args.cls or not args.entry:
-            print(
-                "[ERROR] --class and --entry are required together with --product", file=sys.stderr
-            )
+            print("[ERROR] --class and --entry are required together with --product", file=sys.stderr)
             return 2
         if not args.skip_inventory:
             check_inventory(root, args.cls, args.entry, findings)
@@ -709,9 +675,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f)
 
     print()
-    print(
-        f"scanned {len(docs_paths)} docs | ERROR {len(errs)} | WARN {len(warns)} | INFO {len(infos)}"
-    )
+    print(f"scanned {len(docs_paths)} docs | ERROR {len(errs)} | WARN {len(warns)} | INFO {len(infos)}")
 
     if errs:
         return 1
