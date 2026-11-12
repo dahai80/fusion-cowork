@@ -753,6 +753,7 @@ class RunRegistry:
                 if ids is not None:
                     record["memory_ids"] = ids
         except asyncio.CancelledError:
+            logger.info(f"run task cancelled: {run_id}")
             record["status"] = "cancelled"
         except Exception as e:
             logger.error(f"工作流运行失败 {run_id}: {e}")
@@ -1404,6 +1405,10 @@ def create_web_app(
     except Exception as e:
         logger.warning(f"插件加载失败 (忽略): {e}")
     store = WorkflowDefStore(root=store_root)
+    # issue #459: 入站触发器注册表 — token 鉴权 webhook 建新 run, 与 workflow 定义同盘持久化
+    from ..engine.triggers import TriggerRegistry
+
+    triggers = TriggerRegistry(Path(store_root) if store_root else None)
     if permission_manager is None:
         from ..engine import PermissionManager
 
@@ -1668,6 +1673,97 @@ def create_web_app(
                 status_code=404, detail={"code": "not_found", "message": f"工作流不存在: {workflow_id}"}
             )
         return {"deleted": True}
+
+    # ── issue #459: 入站触发器 — webhook/事件可新建 run (事件驱动链路起点) ──
+
+    @app.get("/api/triggers")
+    async def triggers_list():
+        items = triggers.list()
+        return {"triggers": items, "count": len(items)}
+
+    @app.post("/api/triggers", status_code=201)
+    async def triggers_create(body: Dict[str, Any]):
+        workflow_id = str(body.get("workflow_id") or "").strip()
+        record = store.get(workflow_id)
+        if not record:
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": f"workflow_id 不存在: {workflow_id}"}
+            )
+        try:
+            created = triggers.create(
+                body.get("name"),
+                workflow_id,
+                params=body.get("params") if isinstance(body.get("params"), dict) else None,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": str(e)}) from e
+        return {**created, "token_masked": True}
+
+    @app.delete("/api/triggers/{trigger_id}")
+    async def triggers_delete(trigger_id: str):
+        if not triggers.delete(trigger_id):
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"触发器不存在: {trigger_id}"})
+        return {"deleted": True}
+
+    @app.post("/api/hooks/trigger/{token}", status_code=202)
+    async def trigger_hook(token: str, request: Request):
+        # token 即鉴权 (/api/hooks/ 前缀免静态 key); 比对用 compare_digest 防时序
+        trigger = triggers.find_by_token(token)
+        if not trigger:
+            logger.warning(f"trigger hook token 无效: {token[:12]}…")
+            raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "trigger token 无效"})
+        try:
+            payload = json.loads((await request.body()).decode("utf-8") or "{}")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}) from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON 对象"})
+        workflow_id = str(trigger.get("workflow_id") or "")
+        record = store.get(workflow_id)
+        if not record:
+            raise HTTPException(
+                status_code=410,
+                detail={"code": "gone", "message": f"触发器绑定的 workflow 已删除: {workflow_id}"},
+            )
+        workflow_def = record.get("workflow") or {}
+        if not workflow_def:
+            raise HTTPException(
+                status_code=410, detail={"code": "gone", "message": f"workflow 定义为空: {workflow_id}"}
+            )
+        params = dict(trigger.get("params") or {})
+        params.update({k: v for k, v in payload.items() if k not in ("payload",)})
+        try:
+            started = runs.start(
+                workflow_def,
+                workflow_id=workflow_id,
+                workflow_name=record.get("name", workflow_id),
+                source="trigger",
+                labels={"trigger": str(trigger.get("name") or "")},
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": f"工作流定义无效: {exc}"}
+            ) from exc
+        run_id = started.get("run_id") if isinstance(started, dict) else ""
+        # 触发器事件同时广播到事件总线 — wait_for_event 可链式响应入站触发
+        from ..engine.event_bus import get_event_bus
+
+        get_event_bus().emit(f"trigger.{trigger.get('name')}", {"run_id": run_id, **payload})
+        logger.info(f"trigger hook 建 run: trigger={trigger.get('name')} run={run_id}")
+        return {"run_id": run_id, "trigger": trigger.get("name"), "started": bool(run_id)}
+
+    @app.post("/api/events/{name}")
+    async def events_emit(name: str, request: Request):
+        try:
+            payload = json.loads((await request.body()).decode("utf-8") or "{}")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}) from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON 对象"})
+        from ..engine.event_bus import get_event_bus
+
+        woken = get_event_bus().emit(name, payload)
+        return {"event": name, "woken": woken}
 
     @app.post("/api/runs", status_code=202)
     async def runs_create(request: Request, body: Dict[str, Any]):
