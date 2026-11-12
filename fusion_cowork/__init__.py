@@ -144,6 +144,7 @@ _LAZY_IMPORTS: dict[str, str] = {
     "WorkflowExecution": "fusion_cowork.engine.workflow",
     "Edge": "fusion_cowork.engine.workflow",
     "WorkflowStep": "fusion_cowork.engine.workflow",
+    "RunGate": "fusion_cowork.engine.run_gate",
     "BaseNode": "fusion_cowork.engine.node",
     "NodeConfig": "fusion_cowork.engine.node",
     "NodeResult": "fusion_cowork.engine.node",
