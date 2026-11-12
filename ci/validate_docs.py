@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 fusion docs-system static validator (stdlib only, CI-ready)
 
@@ -301,7 +300,7 @@ def parse_frontmatter(text: str) -> Tuple[Dict[str, object], int, int]:
 
 
 def load_doc(path: str) -> Doc:
-    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+    with open(path, encoding="utf-8", errors="replace") as fh:
         text = fh.read()
     meta, body_start, total = parse_frontmatter(text)
     return Doc(path=path, meta=meta, body_start=body_start, body_lines=total - body_start)
@@ -397,7 +396,7 @@ def check_sot_paths(doc: Doc, rel: str, repo_root: str, out: List[Finding]) -> N
                 start = int(m.group(1))
                 end = int(m.group(2) or start)
                 try:
-                    with open(target, "r", encoding="utf-8", errors="replace") as fh:
+                    with open(target, encoding="utf-8", errors="replace") as fh:
                         n = sum(1 for _ in fh)
                 except OSError:
                     continue
@@ -681,7 +680,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     for path in docs_paths:
         rel = os.path.relpath(path, root)
         doc = load_doc(path)
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        with open(path, encoding="utf-8", errors="replace") as fh:
             text = fh.read()
 
         check_frontmatter(doc, rel, findings)
