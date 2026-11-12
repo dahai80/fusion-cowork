@@ -17,6 +17,10 @@ source_of_truth:
 
 # Changelog
 
+## v0.5.108 (issue #453)
+
+- **HITL early-approval race fixed (`_hitl_await`)** — an approval arriving while the engine was still in its pre-wait awaits (hitl_pending NOTIFICATION hook, HITL email) had its wake signal wiped by the pause-event clear before the wait loop: the approved node was either auto-denied at HITL timeout or the run hung forever at the between-node W8 checkpoint with the node already executed (live signature: approved shell_exec stays blocked, run never finalizes). Decision/cancel check now runs at the top of every wait iteration and the event is cleared only when no decision exists (check + clear are await-free, atomic under the event loop); break-with-decision keeps the event set so the W8 checkpoint passes and the run finalizes normally. Regression test simulates the approval racing the hook fire (`tests/test_issue_453_tool_hitl_resume.py`).
+
 ## v0.5.107 (issue #452)
 
 - **Demo contract gate (`demo_contract` node)** — AGENTS.md rule 7 "delivery is experience-able" wired into the delivery pipeline:
