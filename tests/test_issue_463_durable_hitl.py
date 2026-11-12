@@ -7,6 +7,7 @@ pending 行重建进审批队列 / web 待审批队列合并。
 from __future__ import annotations
 
 import asyncio
+import types
 from pathlib import Path
 
 from fusion_cowork.engine import PermissionLevel, PermissionManager
@@ -221,3 +222,35 @@ class TestWebPendingMerge:
             assert entry["source"] == "journal"
             assert entry["execution_id"] == "run-web-1"
             assert entry["params"] == {"cmd": "ls"}
+
+
+class TestAuditChainWiring:
+    async def test_hitl_decision_enters_audit_chain(self, tmp_path: Path):
+        from fusion_cowork.security.audit import AuditLog
+        from fusion_cowork.server.web_api import _schedule_hitl_audit
+        from fusion_cowork.space.store import SpaceStore
+
+        store = SpaceStore(data_dir=str(tmp_path / "spaces"))
+        audit = AuditLog(store)
+        app = types.SimpleNamespace(state=types.SimpleNamespace(audit_log=audit))
+        _schedule_hitl_audit(app, "run-audit-1", "act-audit-1", True, "web")
+        for _ in range(100):
+            rows = await audit._fetch_chain("default")
+            if rows:
+                break
+            await asyncio.sleep(0.02)
+        rows = await audit._fetch_chain("default")
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["actor"] == "web"
+        assert row["action"] == "hitl.resolve"
+        assert row["resource"] == "run/run-audit-1/approval/act-audit-1"
+        verdict = await audit.verify_chain("default")
+        assert verdict["ok"] is True and verdict["count"] == 1
+        await store.close()
+
+    async def test_hitl_decision_without_audit_store_noop(self):
+        from fusion_cowork.server.web_api import _schedule_hitl_audit
+
+        app = types.SimpleNamespace(state=types.SimpleNamespace(audit_log=None))
+        _schedule_hitl_audit(app, "run-audit-2", "act-audit-2", False, "webhook")  # must not raise

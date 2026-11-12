@@ -21,6 +21,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# issue #463: fire-and-forget audit tasks need a strong ref or the loop GC's them mid-run
+_PENDING_AUDIT_TASKS: set = set()
+
 _WEB_DIR = Path(__file__).resolve().parent.parent.parent / "web"
 _DEFAULT_SPACE_DATA_DIR = str(Path.home() / ".fusion-cowork" / "spaces")
 _RUN_TTL_SECONDS = 3600
@@ -1410,6 +1413,35 @@ async def _takeover_session(ws, run_id: str, runs: Any, permission_manager: Any)
         pump.cancel()
 
 
+def _schedule_hitl_audit(app: Any, run_id: str, action_id: str, approved: bool, decided_by: str) -> None:
+    """issue #463: HITL 决定进防篡改审计链 (security/audit.py) — fire-and-forget, 失败仅 WARN。"""
+    audit = getattr(app.state, "audit_log", None)
+    if audit is None:
+        return
+
+    async def _run():
+        try:
+            from ..tenant import get_current_tenant
+
+            tenant = get_current_tenant()
+            tenant_id = str(tenant) if tenant else "default"
+            await audit.log(
+                tenant_id=tenant_id,
+                actor=decided_by,
+                action="hitl.resolve",
+                resource=f"run/{run_id}/approval/{action_id}",
+                detail={"approved": approved, "decided_by": decided_by},
+            )
+        except Exception as e:
+            logger.warning(f"HITL audit log write failed run={run_id}: {e}")
+
+    try:
+        # strong ref: fire-and-forget tasks are weakly held by the loop and can be GC'd mid-run
+        _PENDING_AUDIT_TASKS.add(asyncio.get_running_loop().create_task(_run()))
+    except RuntimeError:
+        logger.debug("HITL audit log skipped: no running loop")
+
+
 async def _takeover_apply(method: str, params: dict, run_id: str, runs: Any, permission_manager: Any) -> dict:
     """issue #154: 转向帧分发 — 复用 RunRegistry + permission manager, 返回回执帧。"""
     if method == "directive":
@@ -1573,6 +1605,11 @@ def create_web_app(
     app.state.space_api = space_api
     app.state.artifact_svc = artifact_svc
     app.state.space_store = space_store
+    # issue #463: HITL 决定审计链 — 复用 space store 的 audit_log 表 (无 space 栈则无审计)
+    if space_store is not None:
+        from ..security.audit import AuditLog
+
+        app.state.audit_log = AuditLog(space_store)
     app.state.permission_manager = permission_manager
     app.state.run_registry = runs
     # W22: 跨设备同步引擎接缝 — 注入后 /api/deliver 可投递; 默认 None (503 诚实不可用)
@@ -3981,6 +4018,7 @@ def create_web_app(
                     except TypeError:
                         resumed = bool(resolver(run_id, approved, once=True))
         logger.info(f"webhook 回调续跑: run={run_id} approved={approved} resumed={resumed}")
+        _schedule_hitl_audit(app, run_id, action_id, approved, "webhook")
         return {
             "run_id": run_id,
             "resumed": resumed,
@@ -4309,6 +4347,7 @@ def create_web_app(
                             # 兼容无 once 参数的旧引擎 — 规则未落, 复查会拒绝但 run 被唤醒
                             resolver(hitl_exec, True)
                 logger.info(f"HITL 一次性批准已唤醒 run: {hitl_exec} (action_id={action_id}, 不落规则)")
+                _schedule_hitl_audit(app, hitl_exec, action_id, True, "web")
                 return {"action_id": action_id, "approved": True, "confirmed": True, "once": True}
             if released and not approved:
                 # issue #216: 一次性拒绝同样要唤醒 run (拒绝路径无 once-grant, 不落规则),
@@ -4329,6 +4368,7 @@ def create_web_app(
                     except TypeError:
                         resolver(hitl_exec, False)
                 logger.info(f"HITL 一次性拒绝已唤醒 run: {hitl_exec} (action_id={action_id}, 不落规则)")
+                _schedule_hitl_audit(app, hitl_exec, action_id, False, "web")
                 return {"action_id": action_id, "approved": False, "confirmed": True, "once": True}
         confirmed = await permission_manager.confirm_guard(
             action_id, approved, approved_by="web", scope=str(body.get("scope") or "*")
@@ -4350,6 +4390,7 @@ def create_web_app(
                 except TypeError:
                     resolver(hitl_exec, approved)
                 logger.info(f"HITL confirm 已唤醒 run: {hitl_exec} approved={approved}")
+                _schedule_hitl_audit(app, hitl_exec, action_id, approved, "web")
         # issue #138: 确认落规则后立即持久化 (重启不丢)
         try:
             saver = getattr(permission_manager, "save", None)
