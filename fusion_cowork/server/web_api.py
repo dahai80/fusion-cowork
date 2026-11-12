@@ -1041,7 +1041,8 @@ class RunRegistry:
         self._broadcast(run_id, {"event": "run_paused", "at": time.time(), "run": self._public(record)})
 
     # issue #227: inject = 运行中指令注入 (下一节点边界并入目标节点输入, 时间线落修正标记)
-    DIRECTIVE_ACTIONS = ("set_params", "insert_node", "skip_remaining", "inject", "override_output")
+    # issue #465: remove_node/retarget_edge — 波边界动态变更 (结构校验在引擎侧)
+    DIRECTIVE_ACTIONS = ("set_params", "insert_node", "skip_remaining", "inject", "override_output", "remove_node", "retarget_edge")
 
     def resume_from(self, run_id: str, node_id: str) -> Dict[str, Any]:
         """issue #226: 从历史 run 的指定步骤重跑 — 新 run 链回原 run, 已完成步骤快照续跑。"""
@@ -1120,7 +1121,10 @@ class RunRegistry:
         if action not in self.DIRECTIVE_ACTIONS:
             return "bad_action"
         if not self._engine.add_directive(run_id, directive):
-            return "rejected"
+            # issue #465: 结构化拒绝 — 引擎侧校验失败时取走结构化错误码透传给路由
+            structured = getattr(self._engine, "pop_directive_error", None)
+            err = structured(run_id) if callable(structured) else None
+            return err or "rejected"
         # issue #191: 全量 payload 落 record — 恢复重放需要完整指令 (仅 action 不够)
         record.setdefault("directives", []).append({"action": action, "at": time.time(), "payload": dict(directive)})
         self._persist(run_id)
@@ -2053,6 +2057,10 @@ def create_web_app(
             raise HTTPException(
                 status_code=409, detail={"code": "not_running", "message": f"运行不在运行/暂停态: {run_id}"}
             )
+        if isinstance(err, dict):
+            # issue #465: 结构化拒绝 (mid_wave/already_executed/unknown_target/bad_directive)
+            status = 400 if err.get("code") == "bad_directive" else 409
+            raise HTTPException(status_code=status, detail={"code": err.get("code"), "message": err.get("message")})
         if err:
             raise HTTPException(status_code=409, detail={"code": err, "message": f"运行改向被拒绝: {run_id}"})
         return {"status": "queued", "run_id": run_id, "action": body.get("action")}

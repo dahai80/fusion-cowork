@@ -758,6 +758,25 @@ class WorkflowEngine:
         self._max_executions = 100
         # issue #228: exec_id -> 工作区 id — 能力闸门按工作区能力池判定 (未设置 = 空, 零行为变化)
         self._run_workspace: Dict[str, str] = {}
+        # issue #465: 波内执行中节点集合 — 改向指令只允许波边界生效, 波内目标结构化拒绝
+        self._wave_running: Dict[str, Set[str]] = {}
+        # issue #465: exec_id -> 结构化改向拒绝 (add_directive 同步拒绝时入队, API 取走返回)
+        self._directive_errors: Dict[str, List[Dict[str, Any]]] = {}
+        # issue #465: exec_id -> 运行中的 workflow 引用 — 指令结构校验 (节点/边存在性)
+        self._run_workflows: Dict[str, Any] = {}
+
+    def pop_directive_error(self, execution_id: str) -> Optional[Dict[str, Any]]:
+        # issue #465: 取走最近一条结构化改向拒绝 (API 409/400 detail 直接可用)
+        errors = self._directive_errors.get(execution_id)
+        if not errors:
+            return None
+        err = errors[-1]
+        self._directive_errors[execution_id] = []
+        return err
+
+    def _reject_directive(self, execution_id: str, code: str, message: str) -> None:
+        self._directive_errors.setdefault(execution_id, []).append({"code": code, "message": message})
+        logger.warning(f"运行改向拒绝: exec={execution_id} code={code} {message}")
 
     def set_run_workspace(self, execution_id: str, workspace_id: str) -> None:
         if execution_id:
@@ -966,6 +985,8 @@ class WorkflowEngine:
                 return execution
 
         try:
+            # issue #465: 结构校验引用 — add_directive 同步校验节点/边存在性
+            self._run_workflows[exec_id] = workflow
             state = _RunState(
                 exec_id=exec_id,
                 workflow=workflow,
@@ -1033,10 +1054,13 @@ class WorkflowEngine:
                 wave = ready[:1] if effective_concurrency <= 1 else ready[:effective_concurrency]
 
                 logger.debug(f"[{exec_id}] 波次开始: concurrency={effective_concurrency} nodes={wave}")
+                # issue #465: 波内节点登记 — 改向指令波边界防线 (防线 4)
+                self._wave_running[exec_id] = set(wave)
                 if len(wave) == 1:
                     results = [await self._run_node(state, wave[0])]
                 else:
                     results = await asyncio.gather(*(self._run_node(state, nid) for nid in wave))
+                self._wave_running.pop(exec_id, None)
 
                 # issue #189: 并发完成顺序不确定, 步骤统一按拓扑序落盘, 保证确定性
                 position = {nid: idx for idx, nid in enumerate(order)}
@@ -1104,6 +1128,9 @@ class WorkflowEngine:
         finally:
             execution.completed_at = time.time()
             execution.total_time = execution.completed_at - execution.started_at
+            # issue #465: 异常旁路也清波内状态 (终态清理块只覆盖正常出循环路径)
+            self._wave_running.pop(exec_id, None)
+            self._run_workflows.pop(exec_id, None)
 
             # Hook: WORKFLOW_END / WORKFLOW_CANCEL
             if self._hook_manager:
@@ -1178,6 +1205,10 @@ class WorkflowEngine:
             self._pause_events.pop(exec_id, None)
             self._directives.pop(exec_id, None)
             self._run_workspace.pop(exec_id, None)
+            # issue #465: 波内状态/结构校验引用/拒绝队列随 run 终态清理
+            self._wave_running.pop(exec_id, None)
+            self._run_workflows.pop(exec_id, None)
+            self._directive_errors.pop(exec_id, None)
             self._hitl_pause_overrides.pop(exec_id, None)
             # issue #300: run 到终态时兜底清理 HITL 残留 — _hitl_waiting/_hitl_deadlines
             # 正常在 _hitl_await 唤醒/超时路径清掉, 但任何旁路 (取消/异常/竞态) 漏清
@@ -2083,7 +2114,7 @@ class WorkflowEngine:
         override_output (issue #422 改判 — 覆盖已执行节点输出, 下游插值取新值)。
         """
         action = str((directive or {}).get("action", ""))
-        if action not in ("set_params", "skip_remaining", "insert_node", "inject", "override_output"):
+        if action not in ("set_params", "skip_remaining", "insert_node", "inject", "override_output", "remove_node", "retarget_edge"):
             logger.warning(f"未知运行改向指令: action={action} exec={execution_id}")
             return False
         if action == "inject" and not str((directive or {}).get("instruction") or "").strip():
@@ -2094,6 +2125,11 @@ class WorkflowEngine:
             # issue #422: 改判 — merge 必须是 dict (早拒, API 409 可见)
             logger.warning(f"覆盖输出 merge 非法: exec={execution_id}")
             return False
+        if action in ("remove_node", "retarget_edge"):
+            # issue #465: 波边界动态变更 — 同步结构校验, 非法请求结构化拒绝
+            # (波内目标 mid_wave / 已执行 already_executed / 不存在 unknown_target / 字段缺失 bad_directive)
+            if not self._validate_mutation_directive(execution_id, action, directive or {}):
+                return False
         if execution_id not in self._pause_events:
             logger.warning(f"运行改向指令目标不存在: exec={execution_id}")
             return False
@@ -2105,6 +2141,57 @@ class WorkflowEngine:
                 self._trajectory_recorder.record_directive(execution_id, payload)
             except Exception as e:
                 logger.error(f"运行改向指令轨迹写入失败: {e}")
+        return True
+
+    def _validate_mutation_directive(self, execution_id: str, action: str, directive: Dict[str, Any]) -> bool:
+        # issue #465: remove_node / retarget_edge 结构校验 — 只允许波边界语义:
+        # 目标不得在执行中的波里 (mid_wave), 不得已执行 (already_executed),
+        # 节点/边必须存在 (unknown_target)。非法即结构化拒绝, 不排队。
+        wf = self._run_workflows.get(execution_id)
+        if wf is None:
+            self._reject_directive(execution_id, "not_running", "运行不在执行中, 无法结构校验")
+            return False
+        running_wave = self._wave_running.get(execution_id, set())
+        execution = self._executions.get(execution_id)
+        executed = {
+            s.node_id
+            for s in (execution.steps if execution else [])
+            if s.status in (NodeStatus.SUCCESS, NodeStatus.FAILED, NodeStatus.SKIPPED)
+        }
+
+        def _node_ok(nid: str, label: str) -> bool:
+            if nid not in wf.nodes:
+                self._reject_directive(execution_id, "unknown_target", f"{label}节点不存在: {nid}")
+                return False
+            if nid in running_wave:
+                # 防线 4: 波语义 — 波内节点结构变更拒绝 (等下一波边界重发)
+                self._reject_directive(execution_id, "mid_wave", f"{label}节点在执行中的波内: {nid}")
+                return False
+            if nid in executed:
+                self._reject_directive(execution_id, "already_executed", f"{label}节点已执行: {nid}")
+                return False
+            return True
+
+        if action == "remove_node":
+            node_id = str(directive.get("node_id") or "")
+            if not node_id:
+                self._reject_directive(execution_id, "bad_directive", "remove_node 缺 node_id")
+                return False
+            return _node_ok(node_id, "移除目标")
+        # retarget_edge: 边 source→target 改指向 new_target (仅改 target 端)
+        source_id = str(directive.get("source_id") or "")
+        target_id = str(directive.get("target_id") or "")
+        new_target_id = str(directive.get("new_target_id") or "")
+        if not source_id or not target_id or not new_target_id:
+            self._reject_directive(execution_id, "bad_directive", "retarget_edge 需 source_id/target_id/new_target_id")
+            return False
+        if not any(e.source_id == source_id and e.target_id == target_id for e in wf.edges):
+            self._reject_directive(execution_id, "unknown_target", f"边不存在: {source_id}→{target_id}")
+            return False
+        if not _node_ok(target_id, "原目标"):
+            return False
+        if not _node_ok(new_target_id, "新目标"):
+            return False
         return True
 
     def _apply_directives(
@@ -2234,6 +2321,41 @@ class WorkflowEngine:
                 execution.steps.append(marker)
                 self._notify_progress(execution, marker)
                 logger.info(f"[{exec_id}] 运行改向 覆盖输出: node={target} keys={sorted(merge.keys())}")
+            elif action == "remove_node":
+                # issue #465: 波边界移除未执行节点 — 连同关联边一并摘除
+                node_id = str(directive.get("node_id") or "")
+                if node_id in node_results or node_id in self._wave_running.get(exec_id, set()):
+                    self._reject_directive(exec_id, "already_executed", f"移除目标已执行/执行中: {node_id}")
+                    continue
+                node = workflow.nodes.get(node_id)
+                if node is None:
+                    self._reject_directive(exec_id, "unknown_target", f"移除目标不存在: {node_id}")
+                    continue
+                workflow.nodes.pop(node_id, None)
+                workflow.edges = [e for e in workflow.edges if e.source_id != node_id and e.target_id != node_id]
+                if node_id in order:
+                    idx = order.index(node_id)
+                    order.pop(idx)
+                    if idx < cursor:
+                        cursor -= 1
+                logger.info(f"[{exec_id}] 运行改向 移除节点: node={node_id} name={node.name}")
+            elif action == "retarget_edge":
+                # issue #465: 波边界改边 — source→target 改指向 new_target (下游就绪判定随 workflow.edges 实时取)
+                source_id = str(directive.get("source_id") or "")
+                target_id = str(directive.get("target_id") or "")
+                new_target_id = str(directive.get("new_target_id") or "")
+                if target_id in node_results or target_id in self._wave_running.get(exec_id, set()):
+                    self._reject_directive(exec_id, "already_executed", f"原目标已执行/执行中: {target_id}")
+                    continue
+                if new_target_id not in workflow.nodes or new_target_id in node_results:
+                    self._reject_directive(exec_id, "unknown_target", f"新目标不存在或已执行: {new_target_id}")
+                    continue
+                edge = next((e for e in workflow.edges if e.source_id == source_id and e.target_id == target_id), None)
+                if edge is None:
+                    self._reject_directive(exec_id, "unknown_target", f"边不存在: {source_id}→{target_id}")
+                    continue
+                edge.target_id = new_target_id
+                logger.info(f"[{exec_id}] 运行改向 改边: {source_id}: {target_id} → {new_target_id}")
         return cursor
 
     def get_execution(self, execution_id: str) -> Optional[WorkflowExecution]:
