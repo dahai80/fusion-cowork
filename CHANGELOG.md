@@ -17,6 +17,16 @@ source_of_truth:
 
 # Changelog
 
+## v0.5.107 (issue #452)
+
+- **Demo contract gate (`demo_contract` node)** — AGENTS.md rule 7 "delivery is experience-able" wired into the delivery pipeline:
+  - Three-piece validation (semantics mirrored from the meta-repo `check-demo-runnable.py`): `docker-compose.demo.yml` with per-service healthchecks, `demo.yaml` (web.port/terminal entry, optional mobile section: platform android|ios + artifact + stream), non-empty stub pack (`demo-stubs/` or `tests/fixtures/stubs/`). Missing pieces fail the delivery with an actionable error listing every violation
+  - Bundle manifest output: slug, compose services, entry points, mobile section, stub dir + recorded fixture list — the payload the executor demo API consumes; optional meta-gate subprocess run (only violations naming this repo block; other repos warn), secret scan on stub pack (on by default) fails on credential-looking content — zero real customer data in the bundle
+  - Opt-in executor registration (`register=true`): POST `{slug, kind, bundle}` to `<executor_url>/api/v1/demo/register` (`FUSION_EXECUTOR_URL`); unconfigured executor or non-2xx fails loudly. Executor-side e2e tracked with fusion-executor#68
+  - `product_lifecycle` gains `n13 demo_contract` after close-out; `demo_gate` defaults false = success no-op (existing and synthetic-E2E runs byte-identical); empty `demo_deliverable_dir` resolves via `FUSION_BUSINESS_ROOT/<slug>`
+- Tests: `tests/test_issue_452_demo_contract.py` (23 cases) + #307 template pin 14 → 15 nodes
+- #451 (anonymous `/shell/` raw JSON) verified fixed live — gateway-side (`shellLoginRedirect`), closed with evidence, no cowork change
+
 ## v0.5.106 (issue #448)
 
 - **Shell registry loop observability**: the registration loop logged bare exceptions with no target and spammed a WARNING every cycle during a gateway outage, and `/health` carried no registration signal — operators could not tell a config error (wrong host/port) from a gateway outage, and the failure rate was invisible. Fixes:
