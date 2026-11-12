@@ -938,6 +938,34 @@ BUILTIN_TEMPLATES = [
                     "description": "desigma-mcp 单请求超时 (秒)",
                     "default": 60,
                 },
+                # issue #452: 演示契约门 — demo_gate=false 时 n13 成功 no-op (现行为);
+                # true 时校验交付物三件套 (docker-compose.demo.yml / demo.yaml / stub pack),
+                # 缺件 = 交付失败; register=true 时向 executor demo API 注册样例
+                "demo_gate": {
+                    "type": "boolean",
+                    "description": "是否启用演示契约门 (AGENTS.md rule 7); 缺省 false = 跳过",
+                    "default": False,
+                },
+                "demo_deliverable_dir": {
+                    "type": "string",
+                    "description": "交付物仓库/worktree 路径 (缺省空 = 用脚手架目录 business/<repo>)",
+                    "default": "",
+                },
+                "demo_check_script": {
+                    "type": "string",
+                    "description": "meta repo check-demo-runnable.py 路径 (可选, 全局跑, 仅本仓库违规判失败)",
+                    "default": "",
+                },
+                "demo_register": {
+                    "type": "boolean",
+                    "description": "契约通过后向 executor demo API 注册样例 (缺省 false)",
+                    "default": False,
+                },
+                "demo_executor_url": {
+                    "type": "string",
+                    "description": "executor demo API base (缺省空 = FUSION_EXECUTOR_URL 环境变量)",
+                    "default": "",
+                },
             },
             # issue #320: 座位 ID 二选一 — 装配时显式 graph_id 优先, 清空 agent 缺省 (反之亦然)
             "seat_pairs": [
@@ -1192,6 +1220,22 @@ BUILTIN_TEMPLATES = [
                         }
                     },
                 },
+                {
+                    # issue #452: 演示契约门 — demo_gate=false 成功 no-op; true 时校验
+                    # 三件套, 缺件 = 交付失败 (AGENTS.md rule 7)
+                    "id": "n13",
+                    "name": "demo_contract",
+                    "config": {
+                        "params": {
+                            "enabled": "${param.demo_gate}",
+                            "deliverable_dir": "${param.demo_deliverable_dir}",
+                            "slug": "${param.slug}",
+                            "check_script": "${param.demo_check_script}",
+                            "register": "${param.demo_register}",
+                            "executor_url": "${param.demo_executor_url}",
+                        }
+                    },
+                },
             ],
             "edges": [
                 {"source_id": "n1", "target_id": "n2"},
@@ -1213,6 +1257,7 @@ BUILTIN_TEMPLATES = [
                 {"source_id": "n11", "target_id": "n12"},
                 {"source_id": "n6", "target_id": "n12"},
                 {"source_id": "n8", "target_id": "n12"},
+                {"source_id": "n12", "target_id": "n13"},
             ],
         },
     },
