@@ -188,6 +188,10 @@ HIGH_RISK_NODES = frozenset(
         # issue #308: claude_dispatch 派发短命 coder 会话 (本地进程 + 仓库写权),
         # 高危执行面 — 预算上限 + 崩溃/超时回退由节点自管, 放行须显式审批
         "claude_dispatch",
+        # issue #467: coordinator_fanout 扇出子代理执行 (多步 agent 行为面),
+        # session_fork 派生并行子会话分支执行任意已注册节点 — 均须显式放行
+        "coordinator_fanout",
+        "session_fork",
     }
 )
 

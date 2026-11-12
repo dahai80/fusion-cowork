@@ -134,6 +134,11 @@ NODE_NAME_ALIASES: dict[str, str] = {
     # 演示契约门 (issue #452)
     "演示契约": "demo_contract",
     "演示验收": "demo_contract",
+    # 协调分发 / 会话分叉 (issue #467)
+    "协调分发": "coordinator_fanout",
+    "子代理分发": "coordinator_fanout",
+    "会话分叉": "session_fork",
+    "会话分叉并行": "session_fork",
 }
 
 # ── Lazy Import 注册表（吸纳自 Squish 的 __getattr__ 机制） ──
