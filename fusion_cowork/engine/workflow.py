@@ -696,6 +696,7 @@ class WorkflowEngine:
         budget_tracker=None,
         hitl_pause=None,
         node_timeout_s: float | None = None,
+        approval_journal=None,
     ):
         self._executions: Dict[str, WorkflowExecution] = {}
         self._cancel_flags: Dict[str, bool] = {}
@@ -747,6 +748,8 @@ class WorkflowEngine:
         self._permission_manager = permission_manager
         self._hook_manager = hook_manager
         self._session_store = session_store
+        # issue #463: 审批决定日志 (durable HITL) — 未注入则零行为变化
+        self._approval_journal = approval_journal
         self._trajectory_recorder = trajectory_recorder
         self._event_emitter = event_emitter
         # HI-19: 预算追踪 — 在节点循环顶部检查, 超预算且 enforce 则中止执行
@@ -1804,6 +1807,18 @@ class WorkflowEngine:
         # issue #181: 审批路由回调 — 记录决定并唤醒暂停中的 run; cancel 共用同一事件
         # issue #187: once=True 一次性批准 — 不落规则, 唤醒后跳过权限复查直接放行本节点
         # issue #225: params — 审批卡 "编辑参数" 后的覆盖, 批准时并入被闸节点输入
+        # issue #463: 决定先落账再唤醒 — 崩溃 run (evt 尚未重建) 的决定也持久, 恢复后重放
+        journal = self._approval_journal
+        if journal is not None:
+            try:
+                journal.resolve_run(
+                    execution_id,
+                    bool(approved),
+                    decided_by=str((attribution or {}).get("decided_by") or "api"),
+                    comments=str(comments or ""),
+                )
+            except Exception as e:
+                logger.warning(f"HITL journal resolve failed (ignored): exec={execution_id} err={e}")
         evt = self._pause_events.get(execution_id)
         if evt is None:
             return False
@@ -1880,6 +1895,17 @@ class WorkflowEngine:
             logger.warning(f"[{exec_id}] HITL email notify failed (ignored): {e}")
 
     async def _hitl_await(self, exec_id: str, workflow: Workflow, node: BaseNode, check_input: Dict[str, Any]) -> bool:
+        # issue #463: durable HITL — 崩溃重启后闸门重入, 日志里已有决定直接重放
+        # (先于本地待审批空判: 重启后 PermissionManager 队列为空, 决定只能来自日志)
+        journal = self._approval_journal
+        if journal is not None:
+            prior = journal.decision_for(exec_id, node.id)
+            if prior is not None:
+                logger.info(
+                    f"[{exec_id}] HITL durable replay: 节点 {node.id} 日志决定 "
+                    f"approved={bool(prior.get('approved'))} (by {prior.get('decided_by') or '-'}), 跳过等待"
+                )
+                return bool(prior.get("approved"))
         # issue #181: 无本地待审批 (如 guard 在线的 L3) → 返回 False 走原 deny-fast, 不悬挂
         finder = getattr(self._permission_manager, "find_pending_by_execution", None)
         if not callable(finder) or not finder(exec_id):
@@ -1891,6 +1917,21 @@ class WorkflowEngine:
         # issue #191: 先置 _hitl_waiting 再发事件 — 事件回调里持久化才能看到 hitl_pending
         self._hitl_waiting.add(exec_id)
         self._hitl_deadlines[exec_id] = time.time() + self._hitl_timeout
+        # issue #463: 闸门入口 pending 落账 — SQLite 持久, 崩溃后审批队列可重建
+        if journal is not None:
+            entry = finder(exec_id) or {}
+            try:
+                journal.record_pending(
+                    action_id=str(entry.get("action_id") or ""),
+                    run_id=exec_id,
+                    node_id=node.id,
+                    node_name=node.name,
+                    tool_name=str(entry.get("tool_name") or node.name),
+                    workflow=str(entry.get("workflow") or ""),
+                    params=entry.get("params") if isinstance(entry.get("params"), dict) else {},
+                )
+            except Exception as e:
+                logger.warning(f"[{exec_id}] HITL journal record_pending failed (ignored): {e}")
         # issue #260: 闸门入口写 blocked 步骤 — 等待审批期间 run 时间线可见,
         # 不再 "running + 0 steps" 观感挂死; 节点终态步骤随后正常追加
         gate_execution = self._executions.get(exec_id)
@@ -1967,6 +2008,12 @@ class WorkflowEngine:
                 removed = discard(exec_id)
                 if removed:
                     logger.info(f"[{exec_id}] HITL: 超时清理 {len(removed)} 条滞留待审批项")
+            # issue #463: 超时自动拒绝也落账 — 重放语义与实时决定一致
+            if journal is not None:
+                try:
+                    journal.resolve_run(exec_id, False, decided_by="timeout")
+                except Exception as e:
+                    logger.warning(f"[{exec_id}] HITL journal timeout resolve failed (ignored): {e}")
             logger.warning(f"[{exec_id}] HITL: 节点 '{node.name}' 审批等待超时 ({self._hitl_timeout:g}s), 自动拒绝")
             self._fire_hitl_email(exec_id, node, check_input, "resolved", "timeout_auto_denied")
             if self._hook_manager:

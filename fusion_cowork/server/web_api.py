@@ -1183,6 +1183,16 @@ class RunRegistry:
                 "space_id": str(row.get("space_id") or ""),
             }
             self._runs[run_id] = record
+            # issue #463: durable HITL — 日志 pending 行重建进审批队列 (仅恢复的 run)
+            journal = getattr(self._engine, "_approval_journal", None)
+            pm = getattr(self._engine, "_permission_manager", None)
+            if journal is not None and pm is not None:
+                try:
+                    n_restored = pm.restore_pending_details(journal.pending_for_run(run_id))
+                    if n_restored:
+                        logger.info(f"[{run_id}] 审批日志 pending 重建 {n_restored} 条")
+                except Exception as e:
+                    logger.warning(f"[{run_id}] 审批日志 pending 重建失败 (忽略): {e}")
             task = asyncio.create_task(self._execute(run_id, wf, start_paused=True, resume_steps=steps))
             self._tasks[run_id] = task
             # 等引擎登记 pause 事件后再重放指令 (add_directive 校验 _pause_events 存在)
@@ -1504,8 +1514,15 @@ def create_web_app(
     else:
         permission_manager = getattr(engine, "_permission_manager", None) or permission_manager
         emitter = getattr(engine, "_event_emitter", None)
-    # issue #404: HITL 邮件通知 — SMTP_HOST 存在即启用; fire-and-forget, 失败仅 WARN
-    if getattr(engine, "hitl_notifier", None) is None:
+    # issue #463: durable HITL — 审批日志注入引擎 (引擎已带则不覆盖, 测试可注入临时库)
+    approval_journal = getattr(engine, "_approval_journal", None)
+    if approval_journal is None:
+        from ..engine.approval_journal import ApprovalJournal
+
+        approval_journal = ApprovalJournal()
+        engine._approval_journal = approval_journal
+        logger.info("issue #463 approval journal attached (durable HITL)")
+        # issue #404: HITL 邮件通知 — SMTP_HOST 存在即启用; fire-and-forget, 失败仅 WARN    if getattr(engine, "hitl_notifier", None) is None:
         from .email_notify import HitlEmailNotifier
 
         notifier = HitlEmailNotifier()
@@ -4196,6 +4213,31 @@ def create_web_app(
             raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"})
         list_merged = getattr(permission_manager, "list_pending", None)
         approvals = list_merged() if callable(list_merged) else permission_manager.list_pending_guard()
+        # issue #463: durable HITL — 审批日志 pending 行兜底合并 (队列丢失仍可见, source=journal)
+        journal = getattr(engine, "_approval_journal", None)
+        if journal is not None:
+            try:
+                seen = {str(a.get("action_id")) for a in approvals if isinstance(a, dict)}
+                for row in journal.pending():
+                    aid = str(row.get("action_id") or "")
+                    if not aid or aid in seen:
+                        continue
+                    approvals.append(
+                        {
+                            "action_id": aid,
+                            "tool_name": str(row.get("tool_name") or ""),
+                            "source": "journal",
+                            "params": json.loads(row.get("params") or "{}")
+                            if isinstance(row.get("params"), str)
+                            else (row.get("params") or {}),
+                            "ts": float(row.get("ts") or 0),
+                            "workflow": str(row.get("workflow") or ""),
+                            "node_id": str(row.get("node_id") or ""),
+                            "execution_id": str(row.get("run_id") or ""),
+                        }
+                    )
+            except Exception as e:
+                logger.warning(f"审批日志 pending 合并失败 (忽略): {e}")
         return {"approvals": approvals}
 
     @app.post("/api/permissions/pending/{action_id}/confirm")
