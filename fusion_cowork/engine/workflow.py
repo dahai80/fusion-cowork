@@ -25,6 +25,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from ..observability.trace import set_trace_id
 from .executors import NodeExecutionContext, executor_for_node, executor_names
 from .hooks import HookEvent
 from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus
@@ -827,6 +828,9 @@ class WorkflowEngine:
         concurrency: issue #189 — 同波并行节点上限; 0 = FUSION_COWORK_MAX_CONCURRENCY (默认 1 串行)。
         """
         exec_id = execution_id or f"exec_{uuid.uuid4().hex[:12]}"
+        # issue #464: OTel spine — run 全程一个 trace_id (取 exec_id), LLM 出站头/波次 span/
+        # 轨迹记录共用; execute 各自 task 上下文隔离, 不跨 run 泄漏
+        set_trace_id(exec_id)
         effective_concurrency = self._resolve_concurrency(concurrency)
         execution = WorkflowExecution(
             id=exec_id,
@@ -1056,10 +1060,14 @@ class WorkflowEngine:
                 logger.debug(f"[{exec_id}] 波次开始: concurrency={effective_concurrency} nodes={wave}")
                 # issue #465: 波内节点登记 — 改向指令波边界防线 (防线 4)
                 self._wave_running[exec_id] = set(wave)
-                if len(wave) == 1:
-                    results = [await self._run_node(state, wave[0])]
-                else:
-                    results = await asyncio.gather(*(self._run_node(state, nid) for nid in wave))
+                # issue #464: OTel spine — 每波一个 span, 属性带节点清单
+                from ..observability.tracing import span
+
+                with span("workflow.wave", run=exec_id, nodes=",".join(wave)):
+                    if len(wave) == 1:
+                        results = [await self._run_node(state, wave[0])]
+                    else:
+                        results = await asyncio.gather(*(self._run_node(state, nid) for nid in wave))
                 self._wave_running.pop(exec_id, None)
 
                 # issue #189: 并发完成顺序不确定, 步骤统一按拓扑序落盘, 保证确定性
@@ -2114,7 +2122,15 @@ class WorkflowEngine:
         override_output (issue #422 改判 — 覆盖已执行节点输出, 下游插值取新值)。
         """
         action = str((directive or {}).get("action", ""))
-        if action not in ("set_params", "skip_remaining", "insert_node", "inject", "override_output", "remove_node", "retarget_edge"):
+        if action not in (
+            "set_params",
+            "skip_remaining",
+            "insert_node",
+            "inject",
+            "override_output",
+            "remove_node",
+            "retarget_edge",
+        ):
             logger.warning(f"未知运行改向指令: action={action} exec={execution_id}")
             return False
         if action == "inject" and not str((directive or {}).get("instruction") or "").strip():

@@ -41,6 +41,20 @@ def set_trace_id(tid: Optional[str]) -> contextvars.Token:
     return _trace_var.set(tid)
 
 
+def trace_propagation_headers() -> dict:
+    # issue #464: OTel spine — 出站 LLM 调用携带 trace 上下文:
+    # x-fusion-trace-id (平台内关联) + W3C traceparent (网关/上游透传, 上游支持前先落格式)
+    tid = _trace_var.get()
+    if not tid:
+        return {}
+    hex_chars = "".join(c for c in tid if c in "0123456789abcdefABCDEF")
+    hex32 = hex_chars.ljust(32, "0")[:32]
+    return {
+        "x-fusion-trace-id": tid,
+        "traceparent": f"00-{hex32}-{hex32[:16]}-01",
+    }
+
+
 class trace_context:
     """async ctx mgr — 块内 get_trace_id() 返指定 tid; 退出恢复。"""
 
