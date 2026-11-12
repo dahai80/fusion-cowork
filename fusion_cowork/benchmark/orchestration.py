@@ -22,7 +22,10 @@ def _ensure_probe_nodes() -> None:
     global _PROBES_REGISTERED
     if _PROBES_REGISTERED:
         return
-    from ..engine.node import BaseNode, NodeCategory, NodeConfig, NodeRegistry, NodeResult, NodeStatus, register_node
+    from ..nodes import import_all_nodes
+
+    import_all_nodes()
+    from ..engine.node import BaseNode, NodeCategory, NodeRegistry, NodeResult, NodeStatus, register_node
 
     if NodeRegistry.get("bench_echo") is None:
 
@@ -50,6 +53,13 @@ def _ensure_probe_nodes() -> None:
             icon = "🏁"
             default_label = "BenchCount"
 
+            def get_params_schema(self) -> dict:
+                return {
+                    "type": "object",
+                    "properties": {"n": {"type": "integer", "description": "count target"}},
+                    "required": ["n"],
+                }
+
             async def execute(self, inputs: dict) -> NodeResult:
                 n = int(inputs.get("n", 0))
                 return NodeResult(status=NodeStatus.SUCCESS, data={"count": n}, summary="count")
@@ -70,7 +80,9 @@ def _ensure_probe_nodes() -> None:
             async def execute(self, inputs: dict) -> NodeResult:
                 type(self).calls += 1
                 if type(self).calls == 1:
-                    return NodeResult(status=NodeStatus.FAILED, error="bench_flaky first-attempt failure", summary="fail")
+                    return NodeResult(
+                        status=NodeStatus.FAILED, error="bench_flaky first-attempt failure", summary="fail"
+                    )
                 return NodeResult(status=NodeStatus.SUCCESS, data={"attempts": type(self).calls}, summary="ok")
 
     if NodeRegistry.get("bench_gate") is None:
@@ -109,7 +121,9 @@ def _ensure_probe_nodes() -> None:
                 return NodeResult(status=NodeStatus.SUCCESS, data={"done": True}, summary="slow")
 
     _PROBES_REGISTERED = True
-    logger.info("orchestration benchmark probe nodes registered (bench_echo/bench_count/bench_flaky/bench_gate/bench_slow)")
+    logger.info(
+        "orchestration benchmark probe nodes registered (bench_echo/bench_count/bench_flaky/bench_gate/bench_slow)"
+    )
 
 
 def _wf(def_dict: Dict[str, Any]) -> Any:
@@ -171,39 +185,16 @@ def _diamond() -> Tuple[Dict[str, Any], Callable[[Any], Tuple[bool, str]]]:
     return d, check
 
 
-def _coercion() -> Tuple[Dict[str, Any], Callable[[Any], Tuple[bool, str]]]:
-    d = {
-        "name": "bench-coercion",
-        "nodes": [{"id": "n", "name": "bench_count", "config": {}}],
-        "edges": [],
-    }
-
-    async def run_extra(engine) -> Any:
-        # LLM 生成字符串参数 → 声明类型强转 (NodeRegistry.create 路径)
-        node = NodeRegistry.create("bench_count", config=NodeConfig(params={"n": "7"}))
-        res = await node.execute({})
-        return res
-
-    def check_builder(engine):
-        async def check_async() -> Tuple[bool, str]:
-            res = await run_extra(engine)
-            if res.status.value != "success":
-                return False, f"强转执行失败: {res.error}"
-            if res.data.get("count") != 7 or isinstance(res.data.get("count"), str):
-                return False, f"类型强转失败: count={res.data.get('count')!r}"
-            return True, "字符串参数强转为 int"
-
-        return check_async
-
-    return d, check_builder  # 特殊: coercion 场景不走引擎执行 (见 run() 分支)
-
-
 def _retry() -> Tuple[Dict[str, Any], Callable[[Any], Tuple[bool, str]]]:
     BenchFlaky_reset()
     d = {
         "name": "bench-retry",
         "nodes": [
-            {"id": "f", "name": "bench_flaky", "config": {"max_retries": 2, "retry_delay": 0.01}},
+            {
+                "id": "f",
+                "name": "bench_flaky",
+                "config": {"max_retries": 2, "retry_delay": 0.01, "retry_on_business_failure": True},
+            },
         ],
         "edges": [],
     }
@@ -279,39 +270,6 @@ def _subworkflow() -> Tuple[Dict[str, Any], Callable[[Any], Tuple[bool, str]]]:
     return d, check
 
 
-def _directive_mutation() -> Tuple[Dict[str, Any], Callable[[Any], Tuple[bool, str]], Callable[[str, Any], Any]]:
-    BenchGate.flag["queued"] = False
-    d = {
-        "name": "bench-directive",
-        "nodes": [
-            {"id": "g", "name": "bench_gate", "config": {}},
-            {"id": "x", "name": "bench_echo", "config": {}},
-        ],
-        "edges": [{"source_id": "g", "target_id": "x"}],
-    }
-
-    async def inject(engine, exec_id_holder: Dict[str, str]) -> None:
-        # 波边界变更 (issue #465): 移除未执行节点 x
-        for _ in range(250):
-            if exec_id_holder.get("id") in getattr(engine, "_wave_running", {}):
-                break
-            await asyncio.sleep(0.02)
-        engine.add_directive(exec_id_holder["id"], {"action": "remove_node", "node_id": "x"})
-        BenchGate.flag["queued"] = True
-
-    def check(execution) -> Tuple[bool, str]:
-        if execution.status.value != "success":
-            return False, f"终态 {execution.status.value}: {execution.error}"
-        ran = {s.node_id for s in execution.steps if s.status.value == "success"}
-        if "x" in ran:
-            return False, "被移除节点仍执行"
-        if "g" not in ran:
-            return False, "闸门节点未执行"
-        return True, "波边界 remove_node 指令生效"
-
-    return d, check, inject
-
-
 class OrchestrationBenchmark:
     """可执行编排评测 — 场景集经真实引擎执行, 输出通过率/得分。"""
 
@@ -321,7 +279,6 @@ class OrchestrationBenchmark:
 
     def _engine(self) -> Any:
         from ..engine import PermissionLevel, PermissionManager
-        from ..engine.node import NodeRegistry
 
         pm = self._permission_manager
         if pm is None:
@@ -334,17 +291,21 @@ class OrchestrationBenchmark:
         return WorkflowEngine(permission_manager=pm)
 
     async def run_async(self, scenarios: Optional[List[str]] = None) -> Dict[str, Any]:
-        from ..engine.node import NodeConfig
-
         results: List[Dict[str, Any]] = []
         engine = self._engine()
 
-        async def run_case(name: str, wf_def: Dict[str, Any], check: Callable[[Any], Tuple[bool, str]], pre: Optional[Callable[[], None]] = None) -> None:
+        async def run_case(
+            name: str,
+            wf_def: Dict[str, Any],
+            check: Callable[[Any], Tuple[bool, str]],
+            pre: Optional[Callable[[], None]] = None,
+            engine_kwargs: Optional[Dict[str, Any]] = None,
+        ) -> None:
             t0 = time.time()
             try:
                 if pre:
                     pre()
-                execution = await asyncio.wait_for(engine.execute(_wf(wf_def)), timeout=60)
+                execution = await asyncio.wait_for(engine.execute(_wf(wf_def), **(engine_kwargs or {})), timeout=60)
                 ok, detail = check(execution)
             except Exception as e:
                 ok, detail = False, f"场景异常: {e}"
@@ -356,26 +317,36 @@ class OrchestrationBenchmark:
 
         # 类型强转场景不走引擎 (测 NodeRegistry.create 强转路径)
         async def run_coercion() -> None:
+            from ..engine.node import NodeConfig, NodeRegistry
+
             t0 = time.time()
             try:
                 node = NodeRegistry.create("bench_count", config=NodeConfig(params={"n": "7"}))
-                res = await node.execute({})
-                ok = res.status.value == "success" and res.data.get("count") == 7 and not isinstance(res.data.get("count"), str)
-                detail = "字符串参数强转为 int" if ok else f"count={res.data.get('count')!r}"
+                coerced = (node.config.params or {}).get("n")
+                res = await node.execute(dict(node.config.params or {}))
+                ok = (
+                    isinstance(coerced, int)
+                    and coerced == 7
+                    and res.status.value == "success"
+                    and res.data.get("count") == 7
+                )
+                detail = "字符串参数强转为 int" if ok else f"coerced={coerced!r} count={res.data.get('count')!r}"
             except Exception as e:
                 ok, detail = False, f"场景异常: {e}"
-            results.append({"name": "type_coercion", "ok": ok, "detail": detail, "duration": round(time.time() - t0, 3)})
+            results.append(
+                {"name": "type_coercion", "ok": ok, "detail": detail, "duration": round(time.time() - t0, 3)}
+            )
 
-        for name, wf_def, check in (
-            ("linear_chain", *_linear()),
-            ("diamond_fanout", *_diamond()),
-            ("retry_on_failure", *_retry()),
-            ("wave_parallel", *_parallel()),
-            ("sub_workflow_nesting", *_subworkflow()),
+        for name, wf_def, check, ekw in (
+            ("linear_chain", *_linear(), None),
+            ("diamond_fanout", *_diamond(), None),
+            ("retry_on_failure", *_retry(), None),
+            ("wave_parallel", *_parallel(), {"concurrency": 3}),
+            ("sub_workflow_nesting", *_subworkflow(), None),
         ):
             if scenarios and name not in scenarios:
                 continue
-            await run_case(name, wf_def, check)
+            await run_case(name, wf_def, check, engine_kwargs=ekw)
         if not scenarios or "type_coercion" in scenarios:
             await run_coercion()
         passed = sum(1 for r in results if r["ok"])

@@ -2727,6 +2727,20 @@ def benchmark_run(node, repeats):
     click.echo(runner.to_json())
 
 
+@benchmark.command("orchestration")
+@click.option("--scenario", "-s", multiple=True, help="只跑指定场景 (可多次指定)")
+def benchmark_orchestration(scenario):
+    """编排质量基准 — 确定性场景过真实引擎, score=100 为门禁 (issue #466)。"""
+    import json as _json
+
+    from fusion_cowork.benchmark.orchestration import OrchestrationBenchmark
+
+    result = OrchestrationBenchmark().run(list(scenario) if scenario else None)
+    click.echo(_json.dumps(result, ensure_ascii=False, indent=2))
+    if result["score"] < 100.0:
+        raise click.exceptions.Exit(1)
+
+
 # ── Space 协作空间 ──
 
 
