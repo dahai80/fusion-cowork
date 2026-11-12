@@ -124,6 +124,9 @@ NODE_NAME_ALIASES: dict[str, str] = {
     # Studio 互通 (fusion-agent-studio, issue #133)
     "运行Studio": "studio_run",
     "Studio运行": "studio_run",
+    # 子工作流 (issue #462)
+    "子工作流": "sub_workflow",
+    "工作流嵌套": "sub_workflow",
     # MCP 客户端 (外部 MCP 工具服务器, issue #185)
     "MCP工具": "mcp_client",
     "MCP调用": "mcp_client",

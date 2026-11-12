@@ -19,6 +19,7 @@ import os
 import re
 import time
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -36,6 +37,10 @@ from .permission_manager import (
 )
 
 logger = logging.getLogger(__name__)
+
+# issue #462: 当前执行引擎上下文 — sub_workflow 节点据此构造共享权限/HITL 配置
+# 的子引擎 (节点执行期间由 _run_node 设置/复位)
+_current_engine: ContextVar[Optional[WorkflowEngine]] = ContextVar("fc_current_engine", default=None)
 
 
 def _parse_hitl_timeout(raw: Any) -> float:
@@ -1530,10 +1535,17 @@ class WorkflowEngine:
                     if self._event_emitter is not None and self._node_heartbeat_s > 0:
                         heartbeat_task = asyncio.create_task(self._node_heartbeat(exec_id, node_id, node.name))
                     try:
-                        if timeout > 0:
-                            result = await asyncio.wait_for(executor.execute(node, node_input, ctx), timeout=timeout)
-                        else:
-                            result = await executor.execute(node, node_input, ctx)
+                        # issue #462: 节点执行期间暴露引擎上下文 (sub_workflow 递归执行用)
+                        engine_token = _current_engine.set(self)
+                        try:
+                            if timeout > 0:
+                                result = await asyncio.wait_for(
+                                    executor.execute(node, node_input, ctx), timeout=timeout
+                                )
+                            else:
+                                result = await executor.execute(node, node_input, ctx)
+                        finally:
+                            _current_engine.reset(engine_token)
                         if result.status == NodeStatus.FAILED:
                             err_txt = result.error or "业务失败"
                             attempt_errors.append(err_txt)
