@@ -128,6 +128,9 @@ NODE_NAME_ALIASES: dict[str, str] = {
     "MCP工具": "mcp_client",
     "MCP调用": "mcp_client",
     "调用MCP": "mcp_client",
+    # 演示契约门 (issue #452)
+    "演示契约": "demo_contract",
+    "演示验收": "demo_contract",
 }
 
 # ── Lazy Import 注册表（吸纳自 Squish 的 __getattr__ 机制） ──
