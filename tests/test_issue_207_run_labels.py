@@ -117,6 +117,7 @@ class TestRunsCreateForwarding:
             space_id="",  # issue #223: runs_create 透传工作区归属
             hitl_pause=None,  # issue #260: per-run HITL 覆盖
             identity_token="",  # issue #288: caller identity JWT for quota metering
+            **kwargs,  # issue #461: concurrency_key/concurrency 等新透传参数
         ):
             started.append(
                 {
