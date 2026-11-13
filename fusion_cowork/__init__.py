@@ -76,6 +76,8 @@ NODE_NAME_ALIASES: dict[str, str] = {
     "循环": "loop",
     "合并数据": "merge",
     "数据合并": "merge",
+    "等待事件": "wait_for_event",
+    "事件等待": "wait_for_event",
     # 工具（新增）
     "运行命令": "shell_exec",
     "执行命令": "shell_exec",
