@@ -95,6 +95,9 @@ describe('initialTheme (issue #176)', () => {
 
     it('falls through on garbage stored value', () => {
         stubStorage(() => 'blue');
+        // DOM-polyfilled window (happy-dom from render smoke tests) may match
+        // prefers-color-scheme — clear it so the fallthrough chain is isolated.
+        g.window = undefined;
         expect(initialTheme()).toBe('dark');
     });
 
@@ -105,6 +108,7 @@ describe('initialTheme (issue #176)', () => {
     });
 
     it('defaults to dark when storage throws and no matchMedia', () => {
+        g.window = undefined; // isolate from DOM-polyfilled window.matchMedia
         Object.defineProperty(globalThis, 'localStorage', {
             value: {
                 getItem: () => {

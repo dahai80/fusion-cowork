@@ -392,6 +392,38 @@ def _collect_artifacts(steps: List[Any]) -> List[Dict[str, Any]]:
     return artifacts
 
 
+def _float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name, "")
+    try:
+        return float(raw) if raw.strip() else default
+    except ValueError:
+        logger.warning(f"{name} invalid: {raw!r}, using {default}")
+        return default
+
+
+def _token_rollup(steps: List[Dict[str, Any]]) -> Dict[str, int]:
+    # issue #461: per-run token 归因 — 汇总各步 usage (issue #143 步级数据)
+    tot = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    for s in steps or []:
+        t = s.get("tokens") if isinstance(s, dict) else None
+        if not isinstance(t, dict):
+            continue
+        for k in tot:
+            try:
+                tot[k] += int(t.get(k, 0) or 0)
+            except (TypeError, ValueError):
+                continue
+    return tot
+
+
+def _spend_usd(total_tokens: int) -> float:
+    # issue #461: 花费估算 — 单价 (USD/百万 token) 未配置时恒 0.0 (诚实不估)
+    price = _float_env("FUSION_COWORK_SPEND_USD_PER_MTOK", 0.0)
+    if price <= 0 or total_tokens <= 0:
+        return 0.0
+    return round(total_tokens / 1_000_000 * price, 6)
+
+
 class RunRegistry:
     def __init__(self, engine: Any, event_emitter: Any = None, run_store: Any = None):
         self._engine = engine
@@ -409,6 +441,10 @@ class RunRegistry:
         self.push = None
         # issue #228: 能力用量入账回调 (未注入 = 不记账, 零行为变化)
         self.capability_recorder = None
+        # issue #461: 跨 run 并发闸门 — per-key 限额 + 可选全局上限 (env 未设 = 不设闸, 零行为变化)
+        from ..engine.run_gate import RunGate
+
+        self._gate = RunGate.from_env()
         if event_emitter is not None:
             event_emitter.on_event(self._on_event)
 
@@ -451,6 +487,9 @@ class RunRegistry:
             execution = None
         if execution is not None:
             record["steps"] = [RunRegistry._step_dict(s) for s in execution.steps]
+            # issue #461: 每 run token/花费归因 — 随事件实时滚动
+            record["tokens"] = _token_rollup(record["steps"])
+            record["spend_usd"] = _spend_usd(record["tokens"]["total_tokens"])
             status = execution.status.value if hasattr(execution.status, "value") else str(execution.status)
             # issue #191: paused 记录不被运行事件翻回 running —
             # 引擎暂停检查点/HITL 边界不改 execution.status, 状态翻转只由 resume() 显式驱动
@@ -529,6 +568,9 @@ class RunRegistry:
                 "labels": r.get("labels"),
                 # issue #223: 归属工作区 (缺省 "" = 未绑定目录, 老数据零变化)
                 "space_id": str(r.get("space_id") or ""),
+                # issue #461: token/花费随列表透出 (/api/usage 聚合用, 缺省 None 老调用方零变化)
+                "tokens": r.get("tokens"),
+                "spend_usd": r.get("spend_usd"),
             }
             for r in items
         ]
@@ -619,6 +661,8 @@ class RunRegistry:
         ancestor_summary: Optional[List[Dict[str, Any]]] = None,
         hitl_pause: Optional[bool] = None,
         identity_token: str = "",
+        concurrency_key: str = "",
+        concurrency: int = 0,
     ) -> Dict[str, Any]:
         from ..engine import Workflow
 
@@ -633,7 +677,10 @@ class RunRegistry:
             "run_id": run_id,
             "workflow_id": workflow_id,
             "workflow_name": workflow_name or wf.name or workflow_id,
-            "status": "running",
+            # issue #461: 闸门饱和时以 queued 起跑, _execute 拿到槽位才翻 running
+            "status": "queued"
+            if (self._gate.enabled and self._gate.saturated(str(concurrency_key or "default")))
+            else "running",
             "created_at": time.time(),
             "started_at": time.time(),
             "finished_at": None,
@@ -654,6 +701,9 @@ class RunRegistry:
             "space_id": str(space_id or ""),
             # issue #249: 祖先 run 滚动摘要 (resume 链) — 摘要行进 run 记录, 整链步体不入上下文
             "ancestor_summary": list(ancestor_summary or []),
+            # issue #461: 跨 run 并发闸 key + 同 run 波次并行度 (0 = 引擎默认)
+            "concurrency_key": str(concurrency_key or ""),
+            "concurrency": int(concurrency or 0),
         }
         self._runs[run_id] = record
         self._last_event[run_id] = time.time()
@@ -667,9 +717,9 @@ class RunRegistry:
         self._tasks[run_id] = task
         logger.info(
             f"工作流运行已启动: {run_id} ({record['workflow_name']}) memory={record['memory']} "
-            f"source={record['source'] or '-'} labels={len(record['labels'])}"
+            f"source={record['source'] or '-'} labels={len(record['labels'])} status={record['status']}"
         )
-        return {"run_id": run_id, "status": "running"}
+        return {"run_id": run_id, "status": record["status"]}
 
     async def _execute(
         self,
@@ -687,6 +737,21 @@ class RunRegistry:
         from ..auth.identity_propagation import set_current_identity_token
 
         set_current_identity_token(identity_token)
+        # issue #461: 跨 run 并发闸门 — 排队等待时 run 记录标 queued, 拿到槽位翻 running
+        gate_key = str(record.get("concurrency_key") or "default")
+        gate_acquired = False
+        if self._gate.enabled:
+            if self._gate.saturated(gate_key):
+                record["status"] = "queued"
+                record["queued_at"] = time.time()
+                self._persist(run_id)
+                logger.info(f"[{run_id}] run 排队等待并发闸 key={gate_key}")
+            await self._gate.acquire(gate_key)
+            gate_acquired = True
+            record["status"] = "running"
+            record["started_at"] = time.time()
+            self._persist(run_id)
+            logger.info(f"[{run_id}] run 已获并发闸 key={gate_key}")
         try:
             # issue #157: run 级记忆集成 — 启动召回注入首节点 / 结束轨迹写回。
             # 桥不可用 (未配 key) 或开关关 → 行为与旧版完全一致; 桥失败零冲击 run。
@@ -720,6 +785,10 @@ class RunRegistry:
             setter = getattr(self._engine, "set_run_workspace", None)
             if callable(setter):
                 setter(run_id, str(record.get("space_id") or ""))
+            # issue #461: per-run 波次并行度 — 老引擎无该 kwarg 也不破
+            wave = int(record.get("concurrency") or 0)
+            if wave > 0:
+                engine_kwargs["concurrency"] = wave
             execution = await self._engine.execute(
                 wf,
                 initial_input=initial_input,
@@ -728,6 +797,9 @@ class RunRegistry:
             )
             record["steps"] = [RunRegistry._step_dict(s) for s in execution.steps]
             record["artifacts"] = _collect_artifacts(execution.steps)
+            # issue #461: 终态 token/花费归因
+            record["tokens"] = _token_rollup(record["steps"])
+            record["spend_usd"] = _spend_usd(record["tokens"]["total_tokens"])
             status = execution.status.value if hasattr(execution.status, "value") else str(execution.status)
             record["status"] = status
             record["result"] = {
@@ -761,6 +833,12 @@ class RunRegistry:
             record["error"] = str(e)
         finally:
             record["finished_at"] = time.time()
+            # issue #461: 释放并发闸槽位 (排队中取消则未获闸, 不释放)
+            if gate_acquired:
+                try:
+                    self._gate.release(gate_key)
+                except Exception as e:
+                    logger.warning(f"并发闸释放失败 (忽略) {run_id}: {e}")
             # issue #191: 终态出库 — run 结束后不再需要恢复, 持久层只留活跃 run
             # issue #388: 终态先落摘要行 (source/labels/每步耗时), 活跃行照删 —
             # daemon 重启后 GET /api/runs/{id} 仍可查, 下游按 run 时长对账
@@ -1817,6 +1895,17 @@ def create_web_app(
                 raise HTTPException(
                     status_code=400, detail={"code": "bad_request", "message": "hitl_pause 须为 boolean"}
                 )
+            # issue #461: 跨 run 并发闸 key + 同 run 波次并行度
+            concurrency_key = body.get("concurrency_key", "")
+            if not isinstance(concurrency_key, str):
+                raise HTTPException(
+                    status_code=400, detail={"code": "bad_request", "message": "concurrency_key 须为字符串"}
+                )
+            concurrency = body.get("concurrency", 0)
+            if not isinstance(concurrency, int) or isinstance(concurrency, bool) or concurrency < 0:
+                raise HTTPException(
+                    status_code=400, detail={"code": "bad_request", "message": "concurrency 须为非负整数"}
+                )
             # issue #288: caller identity JWT → background run LLM calls meter
             # under the user's `sub` at the gateway (never persisted to disk).
             from ..auth.identity_propagation import extract_identity_token
@@ -1833,6 +1922,8 @@ def create_web_app(
                 space_id=space_id,
                 hitl_pause=hitl_pause,
                 identity_token=identity_token,
+                concurrency_key=concurrency_key,
+                concurrency=concurrency,
             )
         except ValueError as exc:
             # issue #135 F-2: 坏边形状/含环等工作流定义错误 → 400 可读信息, 不 500
@@ -1935,6 +2026,10 @@ def create_web_app(
         record = runs.get(run_id)
         if not record:
             raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"})
+        # issue #461: token/花费实时归因 — 步级 usage 汇总, 老记录无该字段也即时可算
+        if record.get("steps"):
+            record["tokens"] = _token_rollup(record["steps"])
+            record["spend_usd"] = _spend_usd(record["tokens"]["total_tokens"])
         # issue #181: HITL 等待中标记 — 前端提示"等待人工审批"而非卡死
         # issue #187: 附带截止时间 — 审批卡倒计时; 状态服务端持久, 页面刷新不丢
         if record.get("status") == "running":
@@ -4376,11 +4471,36 @@ def create_web_app(
                 "max_agents_per_space": -1,
                 "max_storage_mb": -1,
             }
+        # issue #461: token/花费归因 — 按 run 与 workflow 聚合 (进程内注册表 + 重启摘要行)
+        token_usage = {"total_tokens": 0, "prompt_tokens": 0, "completion_tokens": 0, "spend_usd": 0.0, "runs": 0}
+        by_workflow: Dict[str, Dict[str, Any]] = {}
+        for r in runs.list():
+            t = r.get("tokens")
+            if not isinstance(t, dict) and r.get("steps"):
+                t = _token_rollup(r["steps"])
+            if not isinstance(t, dict):
+                continue
+            total = int(t.get("total_tokens", 0) or 0)
+            if total <= 0:
+                continue
+            token_usage["total_tokens"] += total
+            token_usage["prompt_tokens"] += int(t.get("prompt_tokens", 0) or 0)
+            token_usage["completion_tokens"] += int(t.get("completion_tokens", 0) or 0)
+            token_usage["runs"] += 1
+            spend = float(r.get("spend_usd") if r.get("spend_usd") is not None else _spend_usd(total))
+            token_usage["spend_usd"] = round(token_usage["spend_usd"] + spend, 6)
+            wf_name = str(r.get("workflow_name") or r.get("workflow_id") or "-")
+            agg = by_workflow.setdefault(wf_name, {"runs": 0, "total_tokens": 0, "spend_usd": 0.0})
+            agg["runs"] += 1
+            agg["total_tokens"] += total
+            agg["spend_usd"] = round(agg["spend_usd"] + spend, 6)
         return {
             "tenant_id": tenant_id,
             "usage": quotas_usage,
             "quotas": quota_fields,
             "unlimited": all(v < 0 for v in quota_fields.values()),
+            "token_usage": token_usage,
+            "token_by_workflow": by_workflow,
         }
 
     # ── W22 移动只读概览 + 投递到桌面 (remote/sync 底座, cross_sync 注入接缝) ──
