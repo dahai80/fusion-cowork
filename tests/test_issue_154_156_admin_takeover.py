@@ -47,6 +47,7 @@ def client(tmp_path, monkeypatch):
         engine=WorkflowEngine(),
         dist_dir=tmp_path / "no-dist",
         store_root=tmp_path / "workflows",
+        space_data_dir=tmp_path / "spaces",
     )
     yield TestClient(app)
     NodeRegistry._registry.clear()
