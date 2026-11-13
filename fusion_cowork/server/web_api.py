@@ -21,6 +21,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# issue #463: fire-and-forget audit tasks need a strong ref or the loop GC's them mid-run
+_PENDING_AUDIT_TASKS: set = set()
+
 _WEB_DIR = Path(__file__).resolve().parent.parent.parent / "web"
 _DEFAULT_SPACE_DATA_DIR = str(Path.home() / ".fusion-cowork" / "spaces")
 _RUN_TTL_SECONDS = 3600
@@ -545,6 +548,8 @@ class RunRegistry:
             "attempt_errors": getattr(s, "attempt_errors", []),
             # issue #227: 用户修正标记步 (运行中指令注入的落点)
             "user_correction": bool(getattr(s, "user_correction", False)),
+            # issue #460: 会话级检查点 — 步级会话归因 (旧快照/老引擎为 None)
+            "session_id": getattr(s, "session_id", None),
         }
 
     def list(self, space_id: str = "") -> List[Dict[str, Any]]:
@@ -1040,7 +1045,16 @@ class RunRegistry:
         self._broadcast(run_id, {"event": "run_paused", "at": time.time(), "run": self._public(record)})
 
     # issue #227: inject = 运行中指令注入 (下一节点边界并入目标节点输入, 时间线落修正标记)
-    DIRECTIVE_ACTIONS = ("set_params", "insert_node", "skip_remaining", "inject", "override_output")
+    # issue #465: remove_node/retarget_edge — 波边界动态变更 (结构校验在引擎侧)
+    DIRECTIVE_ACTIONS = (
+        "set_params",
+        "insert_node",
+        "skip_remaining",
+        "inject",
+        "override_output",
+        "remove_node",
+        "retarget_edge",
+    )
 
     def resume_from(self, run_id: str, node_id: str) -> Dict[str, Any]:
         """issue #226: 从历史 run 的指定步骤重跑 — 新 run 链回原 run, 已完成步骤快照续跑。"""
@@ -1119,7 +1133,10 @@ class RunRegistry:
         if action not in self.DIRECTIVE_ACTIONS:
             return "bad_action"
         if not self._engine.add_directive(run_id, directive):
-            return "rejected"
+            # issue #465: 结构化拒绝 — 引擎侧校验失败时取走结构化错误码透传给路由
+            structured = getattr(self._engine, "pop_directive_error", None)
+            err = structured(run_id) if callable(structured) else None
+            return err or "rejected"
         # issue #191: 全量 payload 落 record — 恢复重放需要完整指令 (仅 action 不够)
         record.setdefault("directives", []).append({"action": action, "at": time.time(), "payload": dict(directive)})
         self._persist(run_id)
@@ -1182,6 +1199,16 @@ class RunRegistry:
                 "space_id": str(row.get("space_id") or ""),
             }
             self._runs[run_id] = record
+            # issue #463: durable HITL — 日志 pending 行重建进审批队列 (仅恢复的 run)
+            journal = getattr(self._engine, "_approval_journal", None)
+            pm = getattr(self._engine, "_permission_manager", None)
+            if journal is not None and pm is not None:
+                try:
+                    n_restored = pm.restore_pending_details(journal.pending_for_run(run_id))
+                    if n_restored:
+                        logger.info(f"[{run_id}] 审批日志 pending 重建 {n_restored} 条")
+                except Exception as e:
+                    logger.warning(f"[{run_id}] 审批日志 pending 重建失败 (忽略): {e}")
             task = asyncio.create_task(self._execute(run_id, wf, start_paused=True, resume_steps=steps))
             self._tasks[run_id] = task
             # 等引擎登记 pause 事件后再重放指令 (add_directive 校验 _pause_events 存在)
@@ -1387,6 +1414,35 @@ async def _takeover_session(ws, run_id: str, runs: Any, permission_manager: Any)
         pump.cancel()
 
 
+def _schedule_hitl_audit(app: Any, run_id: str, action_id: str, approved: bool, decided_by: str) -> None:
+    """issue #463: HITL 决定进防篡改审计链 (security/audit.py) — fire-and-forget, 失败仅 WARN。"""
+    audit = getattr(app.state, "audit_log", None)
+    if audit is None:
+        return
+
+    async def _run():
+        try:
+            from ..tenant import get_current_tenant
+
+            tenant = get_current_tenant()
+            tenant_id = str(tenant) if tenant else "default"
+            await audit.log(
+                tenant_id=tenant_id,
+                actor=decided_by,
+                action="hitl.resolve",
+                resource=f"run/{run_id}/approval/{action_id}",
+                detail={"approved": approved, "decided_by": decided_by},
+            )
+        except Exception as e:
+            logger.warning(f"HITL audit log write failed run={run_id}: {e}")
+
+    try:
+        # strong ref: fire-and-forget tasks are weakly held by the loop and can be GC'd mid-run
+        _PENDING_AUDIT_TASKS.add(asyncio.get_running_loop().create_task(_run()))
+    except RuntimeError:
+        logger.debug("HITL audit log skipped: no running loop")
+
+
 async def _takeover_apply(method: str, params: dict, run_id: str, runs: Any, permission_manager: Any) -> dict:
     """issue #154: 转向帧分发 — 复用 RunRegistry + permission manager, 返回回执帧。"""
     if method == "directive":
@@ -1507,8 +1563,15 @@ def create_web_app(
     else:
         permission_manager = getattr(engine, "_permission_manager", None) or permission_manager
         emitter = getattr(engine, "_event_emitter", None)
-    # issue #404: HITL 邮件通知 — SMTP_HOST 存在即启用; fire-and-forget, 失败仅 WARN
-    if getattr(engine, "hitl_notifier", None) is None:
+    # issue #463: durable HITL — 审批日志注入引擎 (引擎已带则不覆盖, 测试可注入临时库)
+    approval_journal = getattr(engine, "_approval_journal", None)
+    if approval_journal is None:
+        from ..engine.approval_journal import ApprovalJournal
+
+        approval_journal = ApprovalJournal()
+        engine._approval_journal = approval_journal
+        logger.info("issue #463 approval journal attached (durable HITL)")
+        # issue #404: HITL 邮件通知 — SMTP_HOST 存在即启用; fire-and-forget, 失败仅 WARN    if getattr(engine, "hitl_notifier", None) is None:
         from .email_notify import HitlEmailNotifier
 
         notifier = HitlEmailNotifier()
@@ -1547,6 +1610,11 @@ def create_web_app(
     app.state.space_api = space_api
     app.state.artifact_svc = artifact_svc
     app.state.space_store = space_store
+    # issue #463: HITL 决定审计链 — 复用 space store 的 audit_log 表 (无 space 栈则无审计)
+    if space_store is not None:
+        from ..security.audit import AuditLog
+
+        app.state.audit_log = AuditLog(space_store)
     app.state.permission_manager = permission_manager
     app.state.run_registry = runs
     # W22: 跨设备同步引擎接缝 — 注入后 /api/deliver 可投递; 默认 None (503 诚实不可用)
@@ -2130,6 +2198,10 @@ def create_web_app(
             raise HTTPException(
                 status_code=409, detail={"code": "not_running", "message": f"运行不在运行/暂停态: {run_id}"}
             )
+        if isinstance(err, dict):
+            # issue #465: 结构化拒绝 (mid_wave/already_executed/unknown_target/bad_directive)
+            status = 400 if err.get("code") == "bad_directive" else 409
+            raise HTTPException(status_code=status, detail={"code": err.get("code"), "message": err.get("message")})
         if err:
             raise HTTPException(status_code=409, detail={"code": err, "message": f"运行改向被拒绝: {run_id}"})
         return {"status": "queued", "run_id": run_id, "action": body.get("action")}
@@ -4042,6 +4114,7 @@ def create_web_app(
                     except TypeError:
                         resumed = bool(resolver(run_id, approved, once=True))
         logger.info(f"webhook 回调续跑: run={run_id} approved={approved} resumed={resumed}")
+        _schedule_hitl_audit(app, run_id, action_id, approved, "webhook")
         return {
             "run_id": run_id,
             "resumed": resumed,
@@ -4290,6 +4363,31 @@ def create_web_app(
             raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"})
         list_merged = getattr(permission_manager, "list_pending", None)
         approvals = list_merged() if callable(list_merged) else permission_manager.list_pending_guard()
+        # issue #463: durable HITL — 审批日志 pending 行兜底合并 (队列丢失仍可见, source=journal)
+        journal = getattr(engine, "_approval_journal", None)
+        if journal is not None:
+            try:
+                seen = {str(a.get("action_id")) for a in approvals if isinstance(a, dict)}
+                for row in journal.pending():
+                    aid = str(row.get("action_id") or "")
+                    if not aid or aid in seen:
+                        continue
+                    approvals.append(
+                        {
+                            "action_id": aid,
+                            "tool_name": str(row.get("tool_name") or ""),
+                            "source": "journal",
+                            "params": json.loads(row.get("params") or "{}")
+                            if isinstance(row.get("params"), str)
+                            else (row.get("params") or {}),
+                            "ts": float(row.get("ts") or 0),
+                            "workflow": str(row.get("workflow") or ""),
+                            "node_id": str(row.get("node_id") or ""),
+                            "execution_id": str(row.get("run_id") or ""),
+                        }
+                    )
+            except Exception as e:
+                logger.warning(f"审批日志 pending 合并失败 (忽略): {e}")
         return {"approvals": approvals}
 
     @app.post("/api/permissions/pending/{action_id}/confirm")
@@ -4345,6 +4443,7 @@ def create_web_app(
                             # 兼容无 once 参数的旧引擎 — 规则未落, 复查会拒绝但 run 被唤醒
                             resolver(hitl_exec, True)
                 logger.info(f"HITL 一次性批准已唤醒 run: {hitl_exec} (action_id={action_id}, 不落规则)")
+                _schedule_hitl_audit(app, hitl_exec, action_id, True, "web")
                 return {"action_id": action_id, "approved": True, "confirmed": True, "once": True}
             if released and not approved:
                 # issue #216: 一次性拒绝同样要唤醒 run (拒绝路径无 once-grant, 不落规则),
@@ -4365,6 +4464,7 @@ def create_web_app(
                     except TypeError:
                         resolver(hitl_exec, False)
                 logger.info(f"HITL 一次性拒绝已唤醒 run: {hitl_exec} (action_id={action_id}, 不落规则)")
+                _schedule_hitl_audit(app, hitl_exec, action_id, False, "web")
                 return {"action_id": action_id, "approved": False, "confirmed": True, "once": True}
         confirmed = await permission_manager.confirm_guard(
             action_id, approved, approved_by="web", scope=str(body.get("scope") or "*")
@@ -4386,6 +4486,7 @@ def create_web_app(
                 except TypeError:
                     resolver(hitl_exec, approved)
                 logger.info(f"HITL confirm 已唤醒 run: {hitl_exec} approved={approved}")
+                _schedule_hitl_audit(app, hitl_exec, action_id, approved, "web")
         # issue #138: 确认落规则后立即持久化 (重启不丢)
         try:
             saver = getattr(permission_manager, "save", None)

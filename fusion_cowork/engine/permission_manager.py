@@ -188,6 +188,10 @@ HIGH_RISK_NODES = frozenset(
         # issue #308: claude_dispatch 派发短命 coder 会话 (本地进程 + 仓库写权),
         # 高危执行面 — 预算上限 + 崩溃/超时回退由节点自管, 放行须显式审批
         "claude_dispatch",
+        # issue #467: coordinator_fanout 扇出子代理执行 (多步 agent 行为面),
+        # session_fork 派生并行子会话分支执行任意已注册节点 — 均须显式放行
+        "coordinator_fanout",
+        "session_fork",
     }
 )
 
@@ -595,6 +599,31 @@ class PermissionManager:
                 if details.get("execution_id") == execution_id:
                     return {"action_id": action_id, **details}
         return None
+
+    def restore_pending_details(self, entries: List[Dict[str, Any]]) -> int:
+        # issue #463: 崩溃恢复 — 审批日志里的 pending 行重建进本地待审批队列
+        # (details 形状与 #138 审批卡上下文一致, restored=True 标记来源)
+        restored = 0
+        with self._lock:
+            for entry in entries or []:
+                action_id = str((entry or {}).get("action_id") or "")
+                if not action_id or action_id in self._pending_local_details:
+                    continue
+                details = {
+                    "tool_name": str(entry.get("tool_name") or ""),
+                    "params": entry.get("params") if isinstance(entry.get("params"), dict) else {},
+                    "ts": float(entry.get("ts") or 0) or time.time(),
+                    "workflow": str(entry.get("workflow") or ""),
+                    "node_id": str(entry.get("node_id") or ""),
+                    "execution_id": str(entry.get("run_id") or ""),
+                    "restored": True,
+                }
+                self._pending_local_details[action_id] = details
+                self._pending_local_approvals[action_id] = details["tool_name"]
+                restored += 1
+        if restored:
+            logger.info(f"审批日志 pending 重建: {restored} 条恢复进待审批队列")
+        return restored
 
     def discard_pending_by_execution(self, execution_id: str) -> List[str]:
         # issue #187: HITL 超时 — 清掉该 run 的全部滞留本地待审批项 (不落规则), 返回被清 action_id 列表

@@ -18,6 +18,7 @@ from typing import Any, AsyncIterator
 import httpx
 
 from ..auth.identity_propagation import friendly_quota_error, identity_auth_headers
+from ..observability.trace import trace_propagation_headers
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +199,9 @@ class FusionMLXClient:
                 # issue #288: per-request identity header — gateway meter keys the
                 # quota by the caller's identity JWT `sub` when present.
                 resp = await self.client.post(
-                    "/chat/completions", json=payload, headers=identity_auth_headers() or None
+                    "/chat/completions",
+                    json=payload,
+                    headers={**identity_auth_headers(), **trace_propagation_headers()} or None,
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -254,7 +257,11 @@ class FusionMLXClient:
         async def _do_post() -> httpx.Response:
             # issue #288: per-request identity header — gateway meter keys the
             # quota by the caller's identity JWT `sub` when present.
-            return await client.post("/chat/completions", json=payload, headers=identity_auth_headers() or None)
+            return await client.post(
+                "/chat/completions",
+                json=payload,
+                headers={**identity_auth_headers(), **trace_propagation_headers()} or None,
+            )
 
         try:
             resp = await _with_retry(_do_post, retries=self.max_retries, initial_backoff=self.retry_delay)
@@ -324,7 +331,10 @@ class FusionMLXClient:
         for attempt in range(self.max_retries + 1):
             try:
                 async with self.client.stream(
-                    "POST", "/chat/completions", json=payload, headers=identity_auth_headers() or None
+                    "POST",
+                    "/chat/completions",
+                    json=payload,
+                    headers={**identity_auth_headers(), **trace_propagation_headers()} or None,
                 ) as resp:
                     resp.raise_for_status()
                     async for line in resp.aiter_lines():

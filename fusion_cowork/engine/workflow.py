@@ -19,11 +19,13 @@ import os
 import re
 import time
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from ..observability.trace import set_trace_id
 from .executors import NodeExecutionContext, executor_for_node, executor_names
 from .hooks import HookEvent
 from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus
@@ -36,6 +38,10 @@ from .permission_manager import (
 )
 
 logger = logging.getLogger(__name__)
+
+# issue #462: 当前执行引擎上下文 — sub_workflow 节点据此构造共享权限/HITL 配置
+# 的子引擎 (节点执行期间由 _run_node 设置/复位)
+_current_engine: ContextVar[Optional[WorkflowEngine]] = ContextVar("fc_current_engine", default=None)
 
 
 def _parse_hitl_timeout(raw: Any) -> float:
@@ -340,6 +346,9 @@ class WorkflowStep:
     # issue #227: 用户修正标记 — 运行中注入的指令在时间线落一条标记步
     # (status=skipped 的零耗时标记, 非节点执行), 供 run 视图渲染 "用户修正"
     user_correction: bool = False
+    # issue #460: 会话级检查点 — 该步所属 run 会话 id, 随快照持久;
+    # resume 采纳后 agent 座位节点可续用原会话 (旧快照无此字段 = 行为不变)
+    session_id: Optional[str] = None
 
 
 @dataclass
@@ -688,6 +697,7 @@ class WorkflowEngine:
         budget_tracker=None,
         hitl_pause=None,
         node_timeout_s: float | None = None,
+        approval_journal=None,
     ):
         self._executions: Dict[str, WorkflowExecution] = {}
         self._cancel_flags: Dict[str, bool] = {}
@@ -739,6 +749,8 @@ class WorkflowEngine:
         self._permission_manager = permission_manager
         self._hook_manager = hook_manager
         self._session_store = session_store
+        # issue #463: 审批决定日志 (durable HITL) — 未注入则零行为变化
+        self._approval_journal = approval_journal
         self._trajectory_recorder = trajectory_recorder
         self._event_emitter = event_emitter
         # HI-19: 预算追踪 — 在节点循环顶部检查, 超预算且 enforce 则中止执行
@@ -747,6 +759,25 @@ class WorkflowEngine:
         self._max_executions = 100
         # issue #228: exec_id -> 工作区 id — 能力闸门按工作区能力池判定 (未设置 = 空, 零行为变化)
         self._run_workspace: Dict[str, str] = {}
+        # issue #465: 波内执行中节点集合 — 改向指令只允许波边界生效, 波内目标结构化拒绝
+        self._wave_running: Dict[str, Set[str]] = {}
+        # issue #465: exec_id -> 结构化改向拒绝 (add_directive 同步拒绝时入队, API 取走返回)
+        self._directive_errors: Dict[str, List[Dict[str, Any]]] = {}
+        # issue #465: exec_id -> 运行中的 workflow 引用 — 指令结构校验 (节点/边存在性)
+        self._run_workflows: Dict[str, Any] = {}
+
+    def pop_directive_error(self, execution_id: str) -> Optional[Dict[str, Any]]:
+        # issue #465: 取走最近一条结构化改向拒绝 (API 409/400 detail 直接可用)
+        errors = self._directive_errors.get(execution_id)
+        if not errors:
+            return None
+        err = errors[-1]
+        self._directive_errors[execution_id] = []
+        return err
+
+    def _reject_directive(self, execution_id: str, code: str, message: str) -> None:
+        self._directive_errors.setdefault(execution_id, []).append({"code": code, "message": message})
+        logger.warning(f"运行改向拒绝: exec={execution_id} code={code} {message}")
 
     def set_run_workspace(self, execution_id: str, workspace_id: str) -> None:
         if execution_id:
@@ -797,6 +828,9 @@ class WorkflowEngine:
         concurrency: issue #189 — 同波并行节点上限; 0 = FUSION_COWORK_MAX_CONCURRENCY (默认 1 串行)。
         """
         exec_id = execution_id or f"exec_{uuid.uuid4().hex[:12]}"
+        # issue #464: OTel spine — run 全程一个 trace_id (取 exec_id), LLM 出站头/波次 span/
+        # 轨迹记录共用; execute 各自 task 上下文隔离, 不跨 run 泄漏
+        set_trace_id(exec_id)
         effective_concurrency = self._resolve_concurrency(concurrency)
         execution = WorkflowExecution(
             id=exec_id,
@@ -825,20 +859,35 @@ class WorkflowEngine:
             f"concurrency={effective_concurrency} executors={execution.executors}"
         )
 
-        # Session: auto-create
+        # Session: auto-create — issue #460: resume 快照带 session_id 时采纳原会话
+        # (会话续用不新建, agent 座位的多轮历史得以延续; 旧快照无该字段 = 新建不变)
         session = None
+        resume_session_id = ""
+        for sstep in resume_steps or []:
+            if isinstance(sstep, dict) and sstep.get("session_id"):
+                resume_session_id = str(sstep["session_id"])
+                break
         if self._session_store:
             from .session import Session
 
-            session = Session(
-                workflow_id=workflow.id,
-                workflow_name=workflow.name,
-                status="running",
-                initial_input=initial_input or {},
-                execution_id=exec_id,
-            )
-            self._session_store.save(session)
-            logger.debug(f"Session 自动创建: {session.id}")
+            if resume_session_id:
+                session = self._session_store.get(resume_session_id)
+                if session is not None:
+                    session.status = "running"
+                    self._session_store.save(session)
+                    logger.info(f"[{exec_id}] resume 采纳快照会话 {session.id} (会话续用)")
+                else:
+                    logger.warning(f"[{exec_id}] resume 快照会话不存在, 改新建: {resume_session_id}")
+            if session is None:
+                session = Session(
+                    workflow_id=workflow.id,
+                    workflow_name=workflow.name,
+                    status="running",
+                    initial_input=initial_input or {},
+                    execution_id=exec_id,
+                )
+                self._session_store.save(session)
+                logger.debug(f"Session 自动创建: {session.id}")
 
         # D1 轨迹飞轮：绑定 session_id 并 attach Hook 处理器
         if self._trajectory_recorder is not None:
@@ -913,6 +962,15 @@ class WorkflowEngine:
             start_nodes = workflow.get_start_nodes()
             for sn in start_nodes:
                 passed_data[sn] = initial_input
+        # issue #460: 采纳的会话注入节点输入 — agent 座位节点读 _session_id 续用原会话
+        # (下划线前缀 = 引擎内部字段, 不参与插值解析)
+        if session is not None and resume_session_id:
+            for sn in workflow.get_start_nodes():
+                base = passed_data.get(sn)
+                d = dict(base) if isinstance(base, dict) else {}
+                d.setdefault("_session_id", session.id)
+                passed_data[sn] = d
+            logger.debug(f"[{exec_id}] resume 会话 _session_id 已注入起始节点输入")
 
         # Hook: WORKFLOW_START
         if self._hook_manager:
@@ -931,6 +989,8 @@ class WorkflowEngine:
                 return execution
 
         try:
+            # issue #465: 结构校验引用 — add_directive 同步校验节点/边存在性
+            self._run_workflows[exec_id] = workflow
             state = _RunState(
                 exec_id=exec_id,
                 workflow=workflow,
@@ -998,10 +1058,17 @@ class WorkflowEngine:
                 wave = ready[:1] if effective_concurrency <= 1 else ready[:effective_concurrency]
 
                 logger.debug(f"[{exec_id}] 波次开始: concurrency={effective_concurrency} nodes={wave}")
-                if len(wave) == 1:
-                    results = [await self._run_node(state, wave[0])]
-                else:
-                    results = await asyncio.gather(*(self._run_node(state, nid) for nid in wave))
+                # issue #465: 波内节点登记 — 改向指令波边界防线 (防线 4)
+                self._wave_running[exec_id] = set(wave)
+                # issue #464: OTel spine — 每波一个 span, 属性带节点清单
+                from ..observability.tracing import span
+
+                with span("workflow.wave", run=exec_id, nodes=",".join(wave)):
+                    if len(wave) == 1:
+                        results = [await self._run_node(state, wave[0])]
+                    else:
+                        results = await asyncio.gather(*(self._run_node(state, nid) for nid in wave))
+                self._wave_running.pop(exec_id, None)
 
                 # issue #189: 并发完成顺序不确定, 步骤统一按拓扑序落盘, 保证确定性
                 position = {nid: idx for idx, nid in enumerate(order)}
@@ -1019,6 +1086,9 @@ class WorkflowEngine:
                         control = "fail"
                         control_error = node_error or control_error
                 for _, step in sorted(collected, key=lambda item: item[0]):
+                    # issue #460: 步级会话归因 — 非 marker 步随快照携带会话 id
+                    if session is not None and step.session_id is None and not step.user_correction:
+                        step.session_id = session.id
                     execution.steps.append(step)
                     self._notify_progress(execution, step)
                 if control == "cancel":
@@ -1066,6 +1136,9 @@ class WorkflowEngine:
         finally:
             execution.completed_at = time.time()
             execution.total_time = execution.completed_at - execution.started_at
+            # issue #465: 异常旁路也清波内状态 (终态清理块只覆盖正常出循环路径)
+            self._wave_running.pop(exec_id, None)
+            self._run_workflows.pop(exec_id, None)
 
             # Hook: WORKFLOW_END / WORKFLOW_CANCEL
             if self._hook_manager:
@@ -1110,6 +1183,8 @@ class WorkflowEngine:
                         "summary": s.summary,
                         "input_data": s.input_data,
                         "output_data": s.output_data,
+                        # issue #460: 会话归因随 session steps_snapshot 透出
+                        "session_id": s.session_id,
                     }
                     for s in execution.steps
                 ]
@@ -1138,6 +1213,10 @@ class WorkflowEngine:
             self._pause_events.pop(exec_id, None)
             self._directives.pop(exec_id, None)
             self._run_workspace.pop(exec_id, None)
+            # issue #465: 波内状态/结构校验引用/拒绝队列随 run 终态清理
+            self._wave_running.pop(exec_id, None)
+            self._run_workflows.pop(exec_id, None)
+            self._directive_errors.pop(exec_id, None)
             self._hitl_pause_overrides.pop(exec_id, None)
             # issue #300: run 到终态时兜底清理 HITL 残留 — _hitl_waiting/_hitl_deadlines
             # 正常在 _hitl_await 唤醒/超时路径清掉, 但任何旁路 (取消/异常/竞态) 漏清
@@ -1498,10 +1577,17 @@ class WorkflowEngine:
                     if self._event_emitter is not None and self._node_heartbeat_s > 0:
                         heartbeat_task = asyncio.create_task(self._node_heartbeat(exec_id, node_id, node.name))
                     try:
-                        if timeout > 0:
-                            result = await asyncio.wait_for(executor.execute(node, node_input, ctx), timeout=timeout)
-                        else:
-                            result = await executor.execute(node, node_input, ctx)
+                        # issue #462: 节点执行期间暴露引擎上下文 (sub_workflow 递归执行用)
+                        engine_token = _current_engine.set(self)
+                        try:
+                            if timeout > 0:
+                                result = await asyncio.wait_for(
+                                    executor.execute(node, node_input, ctx), timeout=timeout
+                                )
+                            else:
+                                result = await executor.execute(node, node_input, ctx)
+                        finally:
+                            _current_engine.reset(engine_token)
                         if result.status == NodeStatus.FAILED:
                             err_txt = result.error or "业务失败"
                             attempt_errors.append(err_txt)
@@ -1760,6 +1846,18 @@ class WorkflowEngine:
         # issue #181: 审批路由回调 — 记录决定并唤醒暂停中的 run; cancel 共用同一事件
         # issue #187: once=True 一次性批准 — 不落规则, 唤醒后跳过权限复查直接放行本节点
         # issue #225: params — 审批卡 "编辑参数" 后的覆盖, 批准时并入被闸节点输入
+        # issue #463: 决定先落账再唤醒 — 崩溃 run (evt 尚未重建) 的决定也持久, 恢复后重放
+        journal = self._approval_journal
+        if journal is not None:
+            try:
+                journal.resolve_run(
+                    execution_id,
+                    bool(approved),
+                    decided_by=str((attribution or {}).get("decided_by") or "api"),
+                    comments=str(comments or ""),
+                )
+            except Exception as e:
+                logger.warning(f"HITL journal resolve failed (ignored): exec={execution_id} err={e}")
         evt = self._pause_events.get(execution_id)
         if evt is None:
             return False
@@ -1836,6 +1934,17 @@ class WorkflowEngine:
             logger.warning(f"[{exec_id}] HITL email notify failed (ignored): {e}")
 
     async def _hitl_await(self, exec_id: str, workflow: Workflow, node: BaseNode, check_input: Dict[str, Any]) -> bool:
+        # issue #463: durable HITL — 崩溃重启后闸门重入, 日志里已有决定直接重放
+        # (先于本地待审批空判: 重启后 PermissionManager 队列为空, 决定只能来自日志)
+        journal = self._approval_journal
+        if journal is not None:
+            prior = journal.decision_for(exec_id, node.id)
+            if prior is not None:
+                logger.info(
+                    f"[{exec_id}] HITL durable replay: 节点 {node.id} 日志决定 "
+                    f"approved={bool(prior.get('approved'))} (by {prior.get('decided_by') or '-'}), 跳过等待"
+                )
+                return bool(prior.get("approved"))
         # issue #181: 无本地待审批 (如 guard 在线的 L3) → 返回 False 走原 deny-fast, 不悬挂
         finder = getattr(self._permission_manager, "find_pending_by_execution", None)
         if not callable(finder) or not finder(exec_id):
@@ -1847,6 +1956,21 @@ class WorkflowEngine:
         # issue #191: 先置 _hitl_waiting 再发事件 — 事件回调里持久化才能看到 hitl_pending
         self._hitl_waiting.add(exec_id)
         self._hitl_deadlines[exec_id] = time.time() + self._hitl_timeout
+        # issue #463: 闸门入口 pending 落账 — SQLite 持久, 崩溃后审批队列可重建
+        if journal is not None:
+            entry = finder(exec_id) or {}
+            try:
+                journal.record_pending(
+                    action_id=str(entry.get("action_id") or ""),
+                    run_id=exec_id,
+                    node_id=node.id,
+                    node_name=node.name,
+                    tool_name=str(entry.get("tool_name") or node.name),
+                    workflow=str(entry.get("workflow") or ""),
+                    params=entry.get("params") if isinstance(entry.get("params"), dict) else {},
+                )
+            except Exception as e:
+                logger.warning(f"[{exec_id}] HITL journal record_pending failed (ignored): {e}")
         # issue #260: 闸门入口写 blocked 步骤 — 等待审批期间 run 时间线可见,
         # 不再 "running + 0 steps" 观感挂死; 节点终态步骤随后正常追加
         gate_execution = self._executions.get(exec_id)
@@ -1923,6 +2047,12 @@ class WorkflowEngine:
                 removed = discard(exec_id)
                 if removed:
                     logger.info(f"[{exec_id}] HITL: 超时清理 {len(removed)} 条滞留待审批项")
+            # issue #463: 超时自动拒绝也落账 — 重放语义与实时决定一致
+            if journal is not None:
+                try:
+                    journal.resolve_run(exec_id, False, decided_by="timeout")
+                except Exception as e:
+                    logger.warning(f"[{exec_id}] HITL journal timeout resolve failed (ignored): {e}")
             logger.warning(f"[{exec_id}] HITL: 节点 '{node.name}' 审批等待超时 ({self._hitl_timeout:g}s), 自动拒绝")
             self._fire_hitl_email(exec_id, node, check_input, "resolved", "timeout_auto_denied")
             if self._hook_manager:
@@ -1992,7 +2122,15 @@ class WorkflowEngine:
         override_output (issue #422 改判 — 覆盖已执行节点输出, 下游插值取新值)。
         """
         action = str((directive or {}).get("action", ""))
-        if action not in ("set_params", "skip_remaining", "insert_node", "inject", "override_output"):
+        if action not in (
+            "set_params",
+            "skip_remaining",
+            "insert_node",
+            "inject",
+            "override_output",
+            "remove_node",
+            "retarget_edge",
+        ):
             logger.warning(f"未知运行改向指令: action={action} exec={execution_id}")
             return False
         if action == "inject" and not str((directive or {}).get("instruction") or "").strip():
@@ -2003,6 +2141,11 @@ class WorkflowEngine:
             # issue #422: 改判 — merge 必须是 dict (早拒, API 409 可见)
             logger.warning(f"覆盖输出 merge 非法: exec={execution_id}")
             return False
+        if action in ("remove_node", "retarget_edge"):
+            # issue #465: 波边界动态变更 — 同步结构校验, 非法请求结构化拒绝
+            # (波内目标 mid_wave / 已执行 already_executed / 不存在 unknown_target / 字段缺失 bad_directive)
+            if not self._validate_mutation_directive(execution_id, action, directive or {}):
+                return False
         if execution_id not in self._pause_events:
             logger.warning(f"运行改向指令目标不存在: exec={execution_id}")
             return False
@@ -2014,6 +2157,57 @@ class WorkflowEngine:
                 self._trajectory_recorder.record_directive(execution_id, payload)
             except Exception as e:
                 logger.error(f"运行改向指令轨迹写入失败: {e}")
+        return True
+
+    def _validate_mutation_directive(self, execution_id: str, action: str, directive: Dict[str, Any]) -> bool:
+        # issue #465: remove_node / retarget_edge 结构校验 — 只允许波边界语义:
+        # 目标不得在执行中的波里 (mid_wave), 不得已执行 (already_executed),
+        # 节点/边必须存在 (unknown_target)。非法即结构化拒绝, 不排队。
+        wf = self._run_workflows.get(execution_id)
+        if wf is None:
+            self._reject_directive(execution_id, "not_running", "运行不在执行中, 无法结构校验")
+            return False
+        running_wave = self._wave_running.get(execution_id, set())
+        execution = self._executions.get(execution_id)
+        executed = {
+            s.node_id
+            for s in (execution.steps if execution else [])
+            if s.status in (NodeStatus.SUCCESS, NodeStatus.FAILED, NodeStatus.SKIPPED)
+        }
+
+        def _node_ok(nid: str, label: str) -> bool:
+            if nid not in wf.nodes:
+                self._reject_directive(execution_id, "unknown_target", f"{label}节点不存在: {nid}")
+                return False
+            if nid in running_wave:
+                # 防线 4: 波语义 — 波内节点结构变更拒绝 (等下一波边界重发)
+                self._reject_directive(execution_id, "mid_wave", f"{label}节点在执行中的波内: {nid}")
+                return False
+            if nid in executed:
+                self._reject_directive(execution_id, "already_executed", f"{label}节点已执行: {nid}")
+                return False
+            return True
+
+        if action == "remove_node":
+            node_id = str(directive.get("node_id") or "")
+            if not node_id:
+                self._reject_directive(execution_id, "bad_directive", "remove_node 缺 node_id")
+                return False
+            return _node_ok(node_id, "移除目标")
+        # retarget_edge: 边 source→target 改指向 new_target (仅改 target 端)
+        source_id = str(directive.get("source_id") or "")
+        target_id = str(directive.get("target_id") or "")
+        new_target_id = str(directive.get("new_target_id") or "")
+        if not source_id or not target_id or not new_target_id:
+            self._reject_directive(execution_id, "bad_directive", "retarget_edge 需 source_id/target_id/new_target_id")
+            return False
+        if not any(e.source_id == source_id and e.target_id == target_id for e in wf.edges):
+            self._reject_directive(execution_id, "unknown_target", f"边不存在: {source_id}→{target_id}")
+            return False
+        if not _node_ok(target_id, "原目标"):
+            return False
+        if not _node_ok(new_target_id, "新目标"):
+            return False
         return True
 
     def _apply_directives(
@@ -2143,6 +2337,41 @@ class WorkflowEngine:
                 execution.steps.append(marker)
                 self._notify_progress(execution, marker)
                 logger.info(f"[{exec_id}] 运行改向 覆盖输出: node={target} keys={sorted(merge.keys())}")
+            elif action == "remove_node":
+                # issue #465: 波边界移除未执行节点 — 连同关联边一并摘除
+                node_id = str(directive.get("node_id") or "")
+                if node_id in node_results or node_id in self._wave_running.get(exec_id, set()):
+                    self._reject_directive(exec_id, "already_executed", f"移除目标已执行/执行中: {node_id}")
+                    continue
+                node = workflow.nodes.get(node_id)
+                if node is None:
+                    self._reject_directive(exec_id, "unknown_target", f"移除目标不存在: {node_id}")
+                    continue
+                workflow.nodes.pop(node_id, None)
+                workflow.edges = [e for e in workflow.edges if e.source_id != node_id and e.target_id != node_id]
+                if node_id in order:
+                    idx = order.index(node_id)
+                    order.pop(idx)
+                    if idx < cursor:
+                        cursor -= 1
+                logger.info(f"[{exec_id}] 运行改向 移除节点: node={node_id} name={node.name}")
+            elif action == "retarget_edge":
+                # issue #465: 波边界改边 — source→target 改指向 new_target (下游就绪判定随 workflow.edges 实时取)
+                source_id = str(directive.get("source_id") or "")
+                target_id = str(directive.get("target_id") or "")
+                new_target_id = str(directive.get("new_target_id") or "")
+                if target_id in node_results or target_id in self._wave_running.get(exec_id, set()):
+                    self._reject_directive(exec_id, "already_executed", f"原目标已执行/执行中: {target_id}")
+                    continue
+                if new_target_id not in workflow.nodes or new_target_id in node_results:
+                    self._reject_directive(exec_id, "unknown_target", f"新目标不存在或已执行: {new_target_id}")
+                    continue
+                edge = next((e for e in workflow.edges if e.source_id == source_id and e.target_id == target_id), None)
+                if edge is None:
+                    self._reject_directive(exec_id, "unknown_target", f"边不存在: {source_id}→{target_id}")
+                    continue
+                edge.target_id = new_target_id
+                logger.info(f"[{exec_id}] 运行改向 改边: {source_id}: {target_id} → {new_target_id}")
         return cursor
 
     def get_execution(self, execution_id: str) -> Optional[WorkflowExecution]:

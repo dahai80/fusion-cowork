@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..engine.hooks import HookContext, HookEvent, HookManager
+from ..observability.trace import get_trace_id
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,8 @@ class TrajectoryEvent:
     workflow_id: str = ""
     workflow_name: str = ""
     session_id: str = ""
+    # issue #464: OTel spine — 轨迹事件与 OTel 导出共用一个 trace_id
+    trace_id: str = ""
     node_id: str = ""
     node_name: str = ""
     status: str = ""
@@ -262,6 +265,7 @@ class TrajectoryRecorder:
             workflow_id=state["workflow_id"],
             workflow_name=state["workflow_name"],
             session_id=self._session_id,
+            trace_id=get_trace_id(),
             node_id=node_id,
             node_name=node_name,
             status=status if isinstance(status, str) else str(status),
@@ -296,6 +300,7 @@ class TrajectoryRecorder:
             workflow_id=state.get("workflow_id", ""),
             workflow_name=state.get("workflow_name", ""),
             session_id=self._session_id,
+            trace_id=get_trace_id(),
             status="queued",
             data=_json_safe(dict(directive)),
         )

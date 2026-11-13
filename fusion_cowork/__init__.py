@@ -126,6 +126,9 @@ NODE_NAME_ALIASES: dict[str, str] = {
     # Studio 互通 (fusion-agent-studio, issue #133)
     "运行Studio": "studio_run",
     "Studio运行": "studio_run",
+    # 子工作流 (issue #462)
+    "子工作流": "sub_workflow",
+    "工作流嵌套": "sub_workflow",
     # MCP 客户端 (外部 MCP 工具服务器, issue #185)
     "MCP工具": "mcp_client",
     "MCP调用": "mcp_client",
@@ -133,6 +136,11 @@ NODE_NAME_ALIASES: dict[str, str] = {
     # 演示契约门 (issue #452)
     "演示契约": "demo_contract",
     "演示验收": "demo_contract",
+    # 协调分发 / 会话分叉 (issue #467)
+    "协调分发": "coordinator_fanout",
+    "子代理分发": "coordinator_fanout",
+    "会话分叉": "session_fork",
+    "会话分叉并行": "session_fork",
 }
 
 # ── Lazy Import 注册表（吸纳自 Squish 的 __getattr__ 机制） ──
@@ -147,6 +155,7 @@ _LAZY_IMPORTS: dict[str, str] = {
     "Edge": "fusion_cowork.engine.workflow",
     "WorkflowStep": "fusion_cowork.engine.workflow",
     "RunGate": "fusion_cowork.engine.run_gate",
+    "ApprovalJournal": "fusion_cowork.engine.approval_journal",
     "BaseNode": "fusion_cowork.engine.node",
     "NodeConfig": "fusion_cowork.engine.node",
     "NodeResult": "fusion_cowork.engine.node",
