@@ -144,6 +144,9 @@ NODE_NAME_ALIASES: dict[str, str] = {
     # 阶梯编排 (issue #470)
     "阶梯编排": "workflow_ladder",
     "工作流阶梯": "workflow_ladder",
+    # 目标校验 (issue #480)
+    "目标校验": "verify_objective",
+    "交付验证": "verify_objective",
 }
 
 # ── Lazy Import 注册表（吸纳自 Squish 的 __getattr__ 机制） ──

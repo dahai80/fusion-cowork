@@ -32,6 +32,7 @@ _NODE_MODULES = (
     "fusion_cowork.nodes.ops.ops_nodes",
     "fusion_cowork.nodes.ops.match_node",
     "fusion_cowork.nodes.ops.demo_node",
+    "fusion_cowork.nodes.ops.verify_node",
 )
 
 

@@ -448,11 +448,15 @@ class Workflow:
         description: str = "",
         workflow_id: str = "",
         tags: List[str] = None,
+        verification_policy: str = "lenient",
     ):
         self.id = workflow_id or f"wf_{uuid.uuid4().hex[:12]}"
         self.name = name or f"工作流_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.description = description
         self.tags = tags or []
+        # issue #480: 终端交付物须有 verify_objective 前驱 — strict = 校验报错,
+        # lenient = 仅告警 (缺省, 存量工作流零破坏), off = 静默
+        self.verification_policy = str(verification_policy or "lenient").strip().lower()
         self.nodes: Dict[str, BaseNode] = {}
         self.edges: List[Edge] = []
         self.created_at = time.time()
@@ -610,7 +614,49 @@ class Workflow:
             for e in node_errors:
                 errors.append(f"节点 '{node.config.label or nid}': {e}")
 
+        # issue #480: 终端交付物须有 verify_objective 前驱 (策略可配) —
+        # MAST FC3: 显式目标校验步是编排成功率的最大杠杆, 缺失在 DAG 层拦截
+        if self.verification_policy in ("strict", "lenient"):
+            unverified = self._terminal_nodes_without_verification()
+            if unverified:
+                msg = (
+                    f"终端交付物缺少 verify_objective 前驱: {sorted(unverified)} — "
+                    f"在交付物与顶层目标之间加 verify_objective 节点 (verification_policy={self.verification_policy})"
+                )
+                if self.verification_policy == "strict":
+                    errors.append(msg)
+                else:
+                    logger.warning(f"工作流 '{self.name}': {msg}")
+
         return errors
+
+    def _terminal_nodes_without_verification(self) -> Set[str]:
+        # 终端节点 = 无出边; 其自身或任一祖先为 verify_objective 即视为已校验
+        outgoing = {e.source_id for e in self.edges}
+        terminals = [nid for nid in self.nodes if nid not in outgoing]
+        if not terminals:
+            return set()
+        incoming: Dict[str, List[str]] = {}
+        for e in self.edges:
+            incoming.setdefault(e.target_id, []).append(e.source_id)
+        verified: Set[str] = set()
+        for terminal in terminals:
+            stack = [terminal]
+            seen: Set[str] = set()
+            ok = False
+            while stack:
+                cur = stack.pop()
+                if cur in seen:
+                    continue
+                seen.add(cur)
+                node = self.nodes.get(cur)
+                if node is not None and node.name == "verify_objective":
+                    ok = True
+                    break
+                stack.extend(incoming.get(cur, []))
+            if not ok:
+                verified.add(terminal)
+        return verified
 
     def to_dict(self) -> Dict[str, Any]:
         """序列化工作流为字典。"""
@@ -619,6 +665,7 @@ class Workflow:
             "name": self.name,
             "description": self.description,
             "tags": self.tags,
+            "verification_policy": self.verification_policy,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "nodes": {nid: node.to_dict() for nid, node in self.nodes.items()},
@@ -651,6 +698,7 @@ class Workflow:
             description=data.get("description", ""),
             workflow_id=data.get("id", ""),
             tags=data.get("tags", []),
+            verification_policy=data.get("verification_policy", "lenient"),
         )
         # 恢复节点（支持 dict 和 list 两种格式）
         nodes_data = data.get("nodes", {})
@@ -1725,6 +1773,36 @@ class WorkflowEngine:
                     self._kernel_checkpoints.record_receipt(exec_id, node_id, result.data or {})
                 except Exception as rc_err:
                     logger.warning(f"[{exec_id}] kernel receipt record failed (ignored): {rc_err}")
+
+            # issue #480: verify_objective 结果落审批日志 (rubric + 结论可审计)
+            if self._approval_journal is not None and node.name == "verify_objective":
+                try:
+                    action_id = f"verify:{exec_id}:{node_id}"
+                    vdata = result.data or {}
+                    self._approval_journal.record_pending(
+                        action_id,
+                        exec_id,
+                        node_id=node_id,
+                        node_name=node.name,
+                        tool_name=node.name,
+                        workflow=workflow.name,
+                        params={
+                            "objective": vdata.get("objective", ""),
+                            "rubric": [r.get("item") for r in (vdata.get("rubric_results") or [])],
+                            "strategy": vdata.get("strategy", ""),
+                            "ratio": vdata.get("ratio"),
+                            "min_ratio": vdata.get("min_ratio"),
+                        },
+                    )
+                    self._approval_journal.resolve(
+                        action_id,
+                        approved=bool(vdata.get("passed", result.status == NodeStatus.SUCCESS)),
+                        decided_by="engine",
+                        comments=str(result.summary or ""),
+                    )
+                    logger.info(f"[{exec_id}] verify_objective 结果落审批日志: action={action_id}")
+                except Exception as vj_err:
+                    logger.warning(f"[{exec_id}] verify_objective journal failed (ignored): {vj_err}")
 
             # 结构化输出校验 (P1-9) — 节点声明 schema 时强制校验
             if result.schema and result.status == NodeStatus.SUCCESS:
