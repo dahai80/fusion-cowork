@@ -17,6 +17,13 @@ source_of_truth:
 
 # Changelog
 
+## v0.5.111 (issues #470/#478/#479 — kernel checkpoint binding, workflow ladder, pipeline fixes)
+
+- **Kernel checkpoint binding (#470, PR #481)**: `engine/kernel_checkpoint.py::KernelCheckpointBinder` wraps harness `CheckpointStore` (pre-execution state per DAG node, `session_id = run_id`, metadata carries node_id/node_name/params) + `ReceiptCache` (committed-node receipts keyed `{run_id}:{node_id}`); `WorkflowEngine(kernel_checkpoints=...)` opt-in seam — same-execution_id re-dispatch replays committed nodes as SKIPPED steps instead of re-executing effects (idempotent zombie resume); default None = zero behavior change
+- **Workflow ladder node (#470, PR #481)**: `workflow_ladder` ecosystem node — staged worker ladders on harness `ParallelTeam` (stage-by-stage sequential, workers parallel), stage summaries feed the next stage (`propagate_context`), failure propagation, `allow_partial`, per-stage timeout, loud harness-missing error; HIGH_RISK_NODES + aliases 阶梯编排/工作流阶梯
+- **String require_review gate fix (#479, PR #481)**: approval_gate auto-pass coerces `require_review` through the registry bool coercion — template param substitution renders booleans as the string `"false"`, which strict `is False` missed, so headless synthetic runs paused at every gate
+- **Pipeline interpolation fixes (#478, PR #481)**: `${step.*}`/`${result.*}` refs accept an optional `|literal` fallback (missed paths degrade instead of leaving unresolved refs); product_lifecycle n3/n9 artifact-id handoff falls back to inline report when seats produce no artifacts; n12 `issue_number` references `${step.n6.result.number}` explicitly (ambient `${result.number}` resolved against the nearest upstream envelope and broke)
+
 ## v0.5.110 (issues #466/#470-scope follow-ups — CI gate, docs, export hardening)
 
 - **Orchestration benchmark gates CI (#466 final piece, PR #475)**: new `benchmark-orchestration` job runs `fusion-cowork benchmark orchestration` on every code PR — the 6 deterministic scenarios must score 100 or the run fails (evolution plan W8 acceptance: benchmark runs in CI alongside the test matrix)
