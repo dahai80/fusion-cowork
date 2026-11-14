@@ -195,6 +195,9 @@ HIGH_RISK_NODES = frozenset(
         # issue #470: workflow_ladder 阶梯编排 — 多阶段子代理执行任意 worker_node,
         # 同 coordinator_fanout 的多步 agent 行为面, 须显式放行
         "workflow_ladder",
+        # issue #488: team_call 驱动 agent-studio 团队成员执行任务 — 远端多步
+        # agent 行为面 (同 studio_run 类), 须显式放行
+        "team_call",
     }
 )
 
