@@ -114,6 +114,11 @@ class WorkflowDefStore:
             "workflow": payload.get("workflow", {}),
             "updated_at": time.time(),
         }
+        # issue #485: template seed metadata rides along (seed-refresh bookkeeping,
+        # per-run params re-assembly via template_id on /api/runs)
+        for _meta_key in ("template_id", "source", "alias_of", "_seed_hash"):
+            if _meta_key in payload:
+                record[_meta_key] = payload[_meta_key]
         path = self._path(workflow_id)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(record, ensure_ascii=False, indent=4), encoding="utf-8")
@@ -1491,6 +1496,72 @@ async def _pump_run_events(ws, queue) -> None:
             return
 
 
+def _seed_hash(workflow: Dict[str, Any]) -> str:
+    import hashlib
+
+    return hashlib.sha256(json.dumps(workflow, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+
+def _seed_template_workflows(store: WorkflowDefStore, templates_dir: Optional[Path] = None) -> List[str]:
+    # issue #485: register templates as workflow definitions so external callers
+    # (e.g. fusion-site factory) can kick off runs by workflow_id right after a
+    # fresh deploy — no manual install step. Templates with required params that
+    # lack defaults are seeded raw (residue kept) so the per-run params path on
+    # /api/runs can assemble them with caller-provided values.
+    from ..templates import TemplateManager
+
+    try:
+        tm = TemplateManager(custom_dir=str(templates_dir)) if templates_dir else TemplateManager()
+    except Exception as e:
+        logger.warning(f"issue #485 template seeding skipped (TemplateManager unavailable): {e}")
+        return []
+    seeded: List[str] = []
+    for tpl in tm.list_templates():
+        tid = str(tpl.get("id") or "")
+        wf_data = tpl.get("workflow") or {}
+        if not tid or not isinstance(wf_data, dict) or not (wf_data.get("nodes") or []):
+            continue
+        try:
+            wf = tm.template_to_workflow(tid)
+            assembled = wf.to_dict() if wf is not None else wf_data
+            if "${param." in json.dumps(assembled, ensure_ascii=False):
+                assembled = wf_data
+        except Exception as e:
+            logger.warning(f"issue #485 template assembly failed for {tid}: {e}")
+            assembled = wf_data
+        # digest over the RAW template workflow (deterministic — assembled dicts
+        # embed created_at/updated_at timestamps, so hashing those never converges)
+        digest = _seed_hash(wf_data)
+        for rid in [tid] + [a for a in tpl.get("web_aliases", []) if isinstance(a, str) and a]:
+            existing = store.get(rid)
+            if existing and (
+                existing.get("template_id") != tid
+                or existing.get("source") != "template_seed"
+                or existing.get("_seed_hash") == digest
+            ):
+                # never clobber operator-created or install-source definitions;
+                # refresh only our own seeded records when the template changed
+                continue
+            record = {
+                "name": tpl.get("name", tid),
+                "description": tpl.get("description", ""),
+                "workflow": assembled,
+                "template_id": tid,
+                "source": "template_seed",
+                "_seed_hash": digest,
+            }
+            if rid != tid:
+                record["alias_of"] = tid
+            try:
+                store.save(rid, record)
+                seeded.append(rid)
+            except ValueError as e:
+                logger.warning(f"issue #485 seed skipped for {rid}: {e}")
+    if seeded:
+        logger.info(f"issue #485 template seeds registered: {len(seeded)} workflow definition(s)")
+    return seeded
+
+
 def create_web_app(
     engine: Any = None,
     dist_dir: Optional[Path] = None,
@@ -1539,6 +1610,12 @@ def create_web_app(
     except Exception as e:
         logger.warning(f"插件加载失败 (忽略): {e}")
     store = WorkflowDefStore(root=store_root)
+    # issue #485: seed templates as workflow definitions so fresh deploys can kick
+    # off runs by workflow_id (e.g. product_lifecycle_agents) immediately
+    try:
+        _seed_template_workflows(store, templates_dir)
+    except Exception as e:
+        logger.warning(f"issue #485 template seeding failed (ignored): {e}")
     # issue #459: 入站触发器注册表 — token 鉴权 webhook 建新 run, 与 workflow 定义同盘持久化
     from ..engine.triggers import TriggerRegistry
 
@@ -1571,7 +1648,9 @@ def create_web_app(
         approval_journal = ApprovalJournal()
         engine._approval_journal = approval_journal
         logger.info("issue #463 approval journal attached (durable HITL)")
-        # issue #404: HITL 邮件通知 — SMTP_HOST 存在即启用; fire-and-forget, 失败仅 WARN    if getattr(engine, "hitl_notifier", None) is None:
+    # issue #404: HITL email notification — enabled when SMTP_HOST is set;
+    # fire-and-forget, failure logs a warning only. Never overrides an injected notifier.
+    if getattr(engine, "hitl_notifier", None) is None:
         from .email_notify import HitlEmailNotifier
 
         notifier = HitlEmailNotifier()
@@ -1925,6 +2004,7 @@ def create_web_app(
             workflow_name = record.get("name", workflow_id)
         else:
             workflow_name = body.get("name", "")
+            record = None
         if not workflow_def:
             raise HTTPException(
                 status_code=400, detail={"code": "bad_request", "message": "workflow 或 workflow_id 必填"}
@@ -1974,6 +2054,35 @@ def create_web_app(
                 raise HTTPException(
                     status_code=400, detail={"code": "bad_request", "message": "concurrency 须为非负整数"}
                 )
+            # issue #485: per-run template params — template-backed records re-assemble
+            # the source template with param_values so ${param.*} resolve before execution
+            params_obj = body.get("params")
+            if params_obj is not None and not isinstance(params_obj, dict):
+                raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "params 须为 JSON 对象"})
+            template_id = str((record or {}).get("template_id") or "")
+            if params_obj and not template_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "bad_request", "message": "params 仅支持模板工作流 (记录缺 template_id)"},
+                )
+            if params_obj and template_id:
+                _wf = _tpl_manager().template_to_workflow(template_id, param_values=params_obj)
+                if _wf is None:
+                    raise HTTPException(
+                        status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}
+                    )
+                _errors = _wf.validate()
+                if _errors:
+                    raise HTTPException(
+                        status_code=400, detail={"code": "invalid_workflow", "message": "; ".join(_errors)}
+                    )
+                _assembled = _wf.to_dict()
+                if "${param." in json.dumps(_assembled, ensure_ascii=False):
+                    raise HTTPException(
+                        status_code=400,
+                        detail={"code": "params_missing", "message": "必填模板参数缺失 (${param.*} 未替换)"},
+                    )
+                workflow_def = _assembled
             # issue #288: caller identity JWT → background run LLM calls meter
             # under the user's `sub` at the gateway (never persisted to disk).
             from ..auth.identity_propagation import extract_identity_token
@@ -2360,6 +2469,51 @@ def create_web_app(
                 status_code=400, detail={"code": "not_custom", "message": f"仅自定义模板可删除: {template_id}"}
             )
         return {"deleted": template_id}
+
+    @app.post("/api/templates/{template_id}/install", status_code=201)
+    async def templates_install(template_id: str, body: Optional[Dict[str, Any]] = None):
+        # issue #485: register a template as a workflow definition on demand —
+        # builtin templates are auto-seeded at serve startup; this covers custom
+        # templates published after startup and explicit operator installs
+        tm = _tpl_manager()
+        tpl = tm.get_template(template_id)
+        if not tpl:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"})
+        body = body if isinstance(body, dict) else {}
+        param_values = body.get("params") if isinstance(body.get("params"), dict) else {}
+        wf = tm.template_to_workflow(template_id, param_values=param_values)
+        if wf is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"})
+        errors = wf.validate()
+        if errors:
+            raise HTTPException(status_code=400, detail={"code": "invalid_workflow", "message": "; ".join(errors)})
+        wf_dict = wf.to_dict()
+        if "${param." in json.dumps(wf_dict, ensure_ascii=False):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "params_missing", "message": "必填模板参数缺失 (${param.*} 未替换)"},
+            )
+        primary = str(body.get("id") or template_id)
+        ids = [primary] + [a for a in tpl.get("web_aliases", []) if isinstance(a, str) and a and a != primary]
+        try:
+            installed = []
+            for rid in ids:
+                payload = {
+                    "name": tpl.get("name", template_id),
+                    "description": tpl.get("description", ""),
+                    "workflow": wf_dict,
+                    "template_id": template_id,
+                    "source": "template_install",
+                    # raw-template digest: seed refresh skips install-source records anyway
+                    "_seed_hash": _seed_hash(tpl.get("workflow") or {}),
+                }
+                if rid != primary:
+                    payload["alias_of"] = primary
+                installed.append(store.save(rid, payload))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": str(e)}) from e
+        logger.info(f"issue #485 template installed as workflow definition: {template_id} -> {ids}")
+        return {"installed": ids, "records": installed}
 
     @app.post("/api/templates/{template_id}/launch", status_code=202)
     async def templates_launch(template_id: str, request: Request):
