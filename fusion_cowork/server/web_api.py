@@ -4780,6 +4780,8 @@ def create_web_app(
                     },
                 }
             )
+        # chronological order — audit rows and run records share one log stream
+        records.sort(key=lambda r: r["time_unix_nano"])
         return _otlp_logs(records[:lim])
 
     @app.post("/api/admin/push/test")
