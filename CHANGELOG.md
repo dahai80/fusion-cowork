@@ -17,6 +17,13 @@ source_of_truth:
 
 # Changelog
 
+## v0.5.110 (issues #466/#470-scope follow-ups — CI gate, docs, export hardening)
+
+- **Orchestration benchmark gates CI (#466 final piece, PR #475)**: new `benchmark-orchestration` job runs `fusion-cowork benchmark orchestration` on every code PR — the 6 deterministic scenarios must score 100 or the run fails (evolution plan W8 acceptance: benchmark runs in CI alongside the test matrix)
+- **Admin audit export hardened (PR #476)**: `/api/admin/audit/export` now emits records in strict chronological order (audit rows + run.finished sorted by `time_unix_nano`) and the run-view assertion no longer depends on record position — export order is stable regardless of store write timing
+- **Test fixture isolation (PR #474)**: the admin-takeover test client injects a tmp_path-isolated `space_data_dir` so assertions no longer read ambient audit rows from the shared default SpaceStore on machines running a live web serve
+- **Evolution plan doc landed (PR #458)**: `docs/evolution-plan-2026-11.md` merged into the repo (docs-contract frontmatter included)
+
 ## v0.5.109 (issues #459/#460/#461/#462/#463/#464/#465/#466/#467 — evolution plan 2026-11 batch)
 
 - **Inbound triggers (#459, PR #468)**: token-authed webhooks start runs — trigger CRUD (`GET/POST /api/triggers`, `DELETE /api/triggers/{id}`, token masked at rest) + `POST /api/hooks/trigger/{token}` (202, `compare_digest` token check, `/api/hooks/` prefix exempt from static key) resolves the bound workflow and launches a run with trigger params overlaid by the JSON payload; `wait_for_event` node parks the run mid-workflow until a matching external event resumes it (timeout = visible failure)
