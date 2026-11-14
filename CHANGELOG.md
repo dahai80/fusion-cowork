@@ -17,6 +17,15 @@ source_of_truth:
 
 # Changelog
 
+## v0.5.113 (issue #485 — templates as workflow definitions: seed, install, per-run params)
+
+- **Template seeding (#485, PR #486)**: `_seed_template_workflows` registers every builtin (+ custom-dir) template with a workflow graph into the web `WorkflowDefStore` at `create_web_app` startup — fresh deploys can kick off runs by workflow_id immediately (fusion-site factory kickoff no longer 404s `workflow_not_found`). Idempotent via a digest over the raw template workflow (assembled dicts embed timestamps and never converge); refreshes only its own `template_seed` records when the template changes; never clobbers operator-created or install-source definitions
+- **Site contract alias**: `product_lifecycle` template declares `web_aliases: ["product_lifecycle_agents"]` — the id fusion-site factory kicks off is registered as an alias record alongside the primary
+- **`POST /api/templates/{id}/install` (#485)**: on-demand registration of any template as a workflow definition (custom templates published after startup, explicit installs) with param assembly, alias ids installed alongside, 400 `params_missing` on unresolved template params
+- **Per-run params on `/api/runs` (#485)**: template-backed records (`template_id` present) accept `params` — the source template is re-assembled with caller `param_values` before the run starts; `params` on non-template records → 400
+- **Fix**: restore the `hitl_notifier` guard a merge artifact swallowed into a comment line in `create_web_app` (injected notifiers are no longer overridden)
+- Tests: `tests/test_issue_485_template_seed.py` (13 cases)
+
 ## v0.5.112 (issue #480 — mandatory verify_objective node)
 
 - **verify_objective node (#480, PR #483)**: `nodes/ops/verify_node.py` — explicit deliverable-vs-top-level-objective verification as a DAG node (MAST FC3: explicit verification beats implied role prompts); `strategy=keyword` (deterministic case-insensitive rubric containment, zero-LLM, CI-safe) or `strategy=llm` (chat judge, JSON per-item verdict, conservative False on parse miss); `min_ratio` gate (default 1.0), `on_fail=fail` (node FAILED) / `flag` (SUCCESS with passed=false for branch routing); loud FAILED on missing rubric/objective/deliverable; Chinese aliases 目标校验/交付验证
