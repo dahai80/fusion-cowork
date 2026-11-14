@@ -1044,7 +1044,9 @@ BUILTIN_TEMPLATES = [
                             "agent_id": "${param.arch_agent_id}",
                             # issue #346: 规范交接 — 下方传入 BA 产物的 artifact id (agent-studio
                             # run result artifacts[0] 为 id 字符串), 下游座位按 id 取 PRD, 不猜路径
-                            "input": "Write the architecture/plan for product ${param.slug} based on the approved PRD below.\n\nPRD artifact id (canonical reference — read the PRD by this artifact id, never guess file paths):\n${step.n1.result.artifacts.0}\n\nPRD document:\n${step.n1.result.last_result.report}",
+                            # issue #478: replay-dev 等座位不产 artifacts 时 artifacts.0 必然断链 —
+                            # 加 |fallback 降级, artifacts 存在时规范 id 交接不变, 空时内联报告兜底
+                            "input": "Write the architecture/plan for product ${param.slug} based on the approved PRD below.\n\nPRD artifact id (canonical reference — read the PRD by this artifact id, never guess file paths; may be absent):\n${step.n1.result.artifacts.0|(no artifact id — use the PRD document below)}\n\nPRD document:\n${step.n1.result.last_result.report}",
                             "mode": "sync",
                             "max_turns": "${param.seat_max_turns}",
                             # issue #387: 座位模型钉选 (合成 E2E 钉 replay-dev; 空 = 上游选模)
@@ -1168,7 +1170,8 @@ BUILTIN_TEMPLATES = [
                             "graph_id": "${param.env_graph_id}",
                             "agent_id": "${param.env_agent_id}",
                             # issue #346: env pack 同样收规范 artifact id 交接 (PRD + 架构)
-                            "input": "Prepare the env/mock pack for product ${param.slug} per the PRD and architecture below.\n\nPRD artifact id (canonical reference):\n${step.n1.result.artifacts.0}\n\nArchitecture artifact id (canonical reference):\n${step.n3.result.artifacts.0}\n\nPRD document:\n${step.n1.result.last_result.report}\n\nArchitecture document:\n${step.n3.result.last_result.report}",
+                            # issue #478: artifacts 为空时降级为内联报告交接 (|fallback)
+                            "input": "Prepare the env/mock pack for product ${param.slug} per the PRD and architecture below.\n\nPRD artifact id (canonical reference; may be absent):\n${step.n1.result.artifacts.0|(no artifact id — use the PRD document below)}\n\nArchitecture artifact id (canonical reference; may be absent):\n${step.n3.result.artifacts.0|(no artifact id — use the architecture document below)}\n\nPRD document:\n${step.n1.result.last_result.report}\n\nArchitecture document:\n${step.n3.result.last_result.report}",
                             "mode": "sync",
                             "max_turns": "${param.seat_max_turns}",
                             # issue #387: 座位模型钉选 (合成 E2E 钉 replay-dev; 空 = 上游选模)
@@ -1213,7 +1216,9 @@ BUILTIN_TEMPLATES = [
                             "op": "issue_comment",
                             "repo": "${param.repo}",
                             "allowed_repos": ["${param.repo}"],
-                            "issue_number": "${result.number}",
+                            # issue #478: ${result.*} 速记对最近上游 (n11 issue_set_labels) 解析,
+                            # 其信封无 number — 显式引用 issue_create 节点 n6 的 result.number
+                            "issue_number": "${step.n6.result.number}",
                             "body": "Gate C accepted — PR ${result.pr_url} evidence archived (run ${run_id})",
                             # issue #387: 合成 E2E dry_run — 零 GitHub 写
                             "dry_run": "${param.node_dry_run}",

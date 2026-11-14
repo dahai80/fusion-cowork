@@ -73,22 +73,22 @@ class TestArtifactHandoffTemplate:
         # n3 架构座位 prompt 传入 BA 产物 artifact id 规范引用
         nodes = {n["id"]: n for n in _tpl()["workflow"]["nodes"]}
         n3_input = nodes["n3"]["config"]["params"]["input"]
-        assert "${step.n1.result.artifacts.0}" in n3_input
+        assert "${step.n1.result.artifacts.0" in n3_input
         assert "canonical reference" in n3_input
 
     def test_env_pack_prompt_carries_both_refs(self):
         nodes = {n["id"]: n for n in _tpl()["workflow"]["nodes"]}
         n9_input = nodes["n9"]["config"]["params"]["input"]
-        assert "${step.n1.result.artifacts.0}" in n9_input
-        assert "${step.n3.result.artifacts.0}" in n9_input
+        assert "${step.n1.result.artifacts.0" in n9_input
+        assert "${step.n3.result.artifacts.0" in n9_input
 
     def test_assembly_preserves_artifact_refs(self):
         # ${param.*} 装配期替换, ${step.*} artifact 引用留给引擎运行期
         wf = TemplateManager().template_to_workflow(
             "product_lifecycle", param_values={"slug": "demo", "repo": "o/r", "task_title": "t"}
         )
-        assert "${step.n1.result.artifacts.0}" in wf.nodes["n3"].config.params["input"]
-        assert "${step.n3.result.artifacts.0}" in wf.nodes["n9"].config.params["input"]
+        assert "${step.n1.result.artifacts.0" in wf.nodes["n3"].config.params["input"]
+        assert "${step.n3.result.artifacts.0" in wf.nodes["n9"].config.params["input"]
 
 
 class TestArtifactRefInterpolation:

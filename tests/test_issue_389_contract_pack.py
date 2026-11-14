@@ -13,14 +13,20 @@ from fusion_cowork.templates.contract import (
     validate_template_placeholders,
     validate_template_structure,
 )
-from fusion_cowork.templates.template_manager import TemplateManager
+from fusion_cowork.templates.template_manager import BUILTIN_TEMPLATES, TemplateManager
 
 
 def _all_builtin_templates():
+    # Contract test covers BUILTIN templates only — list_templates() also picks up
+    # operator-local custom templates from ~/.fusion-cowork/templates/, which may
+    # reference test-only or environment-specific nodes and are not CI's contract.
     tm = TemplateManager()
+    builtin_ids = {b.get("id") for b in BUILTIN_TEMPLATES}
     out = []
     for t in tm.list_templates():
         tid = t.get("id") if isinstance(t, dict) else t
+        if tid not in builtin_ids:
+            continue
         tpl = tm.get_template(tid)
         if tpl:
             out.append(tpl)
