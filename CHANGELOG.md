@@ -17,6 +17,13 @@ source_of_truth:
 
 # Changelog
 
+## v0.5.114 (issue #488 — team_call DAG node)
+
+- **team_call node (#488, PR #490)**: drive agent-studio team members from cowork workflows — `nodes/ecosystem/team_node.py::TeamCallNode` calls the `teams.*` dispatcher over JSON-RPC 2.0 (`POST /v1/rpc`, `x-api-key` auth, same seam/env as `studio_run`); `mode=run` (default) = `teams.add_task` → `teams.run_member` → poll `teams.status` to task terminal (output: task_id / status / summary / artifact_ref); `mode=add_task` = board write only (one-way DAG → board mirror with `blocked_by` + `artifact_refs` per design doc §5.4); `mode=run_member` = run an existing task_id
+- **Lifecycle guard**: inactive team state (paused/disbanded) rejects before any board mutation and again mid-run (task preserved, never mutated by the DAG side); RPC failure leaves the board untouched; timeout detaches with task_id kept on the board (studio_run detach semantics); T3 missing (JSON-RPC -32601) fails loud with a dispatcher hint — no silent degradation
+- **Registration**: HIGH_RISK_NODES (remote multi-step agent execution), aliases 团队调用/团队任务
+- Tests: `tests/test_issue_488_team_call.py` (17 cases, JSON-RPC MockTransport stub)
+
 ## v0.5.113 (issue #485 — templates as workflow definitions: seed, install, per-run params)
 
 - **Template seeding (#485, PR #486)**: `_seed_template_workflows` registers every builtin (+ custom-dir) template with a workflow graph into the web `WorkflowDefStore` at `create_web_app` startup — fresh deploys can kick off runs by workflow_id immediately (fusion-site factory kickoff no longer 404s `workflow_not_found`). Idempotent via a digest over the raw template workflow (assembled dicts embed timestamps and never converge); refreshes only its own `template_seed` records when the template changes; never clobbers operator-created or install-source definitions
