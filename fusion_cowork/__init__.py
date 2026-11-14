@@ -126,6 +126,9 @@ NODE_NAME_ALIASES: dict[str, str] = {
     # Studio 互通 (fusion-agent-studio, issue #133)
     "运行Studio": "studio_run",
     "Studio运行": "studio_run",
+    # 团队互通 (agent-studio teams.*, issue #488)
+    "团队调用": "team_call",
+    "团队任务": "team_call",
     # 子工作流 (issue #462)
     "子工作流": "sub_workflow",
     "工作流嵌套": "sub_workflow",
