@@ -17,6 +17,13 @@ source_of_truth:
 
 # Changelog
 
+## v0.5.112 (issue #480 — mandatory verify_objective node)
+
+- **verify_objective node (#480, PR #483)**: `nodes/ops/verify_node.py` — explicit deliverable-vs-top-level-objective verification as a DAG node (MAST FC3: explicit verification beats implied role prompts); `strategy=keyword` (deterministic case-insensitive rubric containment, zero-LLM, CI-safe) or `strategy=llm` (chat judge, JSON per-item verdict, conservative False on parse miss); `min_ratio` gate (default 1.0), `on_fail=fail` (node FAILED) / `flag` (SUCCESS with passed=false for branch routing); loud FAILED on missing rubric/objective/deliverable; Chinese aliases 目标校验/交付验证
+- **Workflow validation policy (#480)**: `Workflow(verification_policy=...)` — `strict` = validate() errors when terminal deliverable chains lack a verify_objective predecessor; `lenient` (default) = warning only; `off` = silent; serialized via to_dict/from_dict
+- **ApprovalJournal feed (#480)**: verify_objective outcomes recorded as decided journal rows (action_id `verify:{exec_id}:{node_id}`, params carry objective + rubric, approved = verdict) for audit
+- Tests: `tests/test_issue_480_verify_objective.py` (20 cases: node strategies/thresholds/on_fail, validation policy matrix, journal feed)
+
 ## v0.5.111 (issues #470/#478/#479 — kernel checkpoint binding, workflow ladder, pipeline fixes)
 
 - **Kernel checkpoint binding (#470, PR #481)**: `engine/kernel_checkpoint.py::KernelCheckpointBinder` wraps harness `CheckpointStore` (pre-execution state per DAG node, `session_id = run_id`, metadata carries node_id/node_name/params) + `ReceiptCache` (committed-node receipts keyed `{run_id}:{node_id}`); `WorkflowEngine(kernel_checkpoints=...)` opt-in seam — same-execution_id re-dispatch replays committed nodes as SKIPPED steps instead of re-executing effects (idempotent zombie resume); default None = zero behavior change
