@@ -288,10 +288,18 @@ class TestAdminConsole:
         data = resp.json()
         logs = data["resourceLogs"][0]["scopeLogs"][0]["logRecords"]
         assert logs, "导出应至少含 run.finished 记录"
-        attrs = {a["key"]: a["value"]["stringValue"] for a in logs[0]["attributes"]}
+        # export mixes audit rows and run records — locate the run.finished one
+        target = None
+        for rec in logs:
+            attrs = {a["key"]: a["value"]["stringValue"] for a in rec["attributes"]}
+            if attrs.get("event.name") == "run.finished":
+                target = (rec, attrs)
+                break
+        assert target, "run.finished 记录缺失"
+        rec, attrs = target
         assert attrs["event.name"] == "run.finished"
         assert attrs["run_id"] == "run_audit_1"
-        assert logs[0]["severityText"] == "ERROR"
+        assert rec["severityText"] == "ERROR"
 
     def test_push_test_disabled(self, client):
         resp = client.post("/api/admin/push/test", headers=_admin())
