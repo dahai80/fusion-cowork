@@ -198,6 +198,9 @@ HIGH_RISK_NODES = frozenset(
         # issue #488: team_call 驱动 agent-studio 团队成员执行任务 — 远端多步
         # agent 行为面 (同 studio_run 类), 须显式放行
         "team_call",
+        # issue #489: deploy_service 执行 docker/launchd/安装脚本部署并拉起服务 —
+        # 本机命令执行 + 服务生命周期操作 (shell 执行类), 须显式放行
+        "deploy_service",
     }
 )
 

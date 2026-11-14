@@ -1129,6 +1129,63 @@ class RunRegistry:
             "context": stats,
         }
 
+    # issue #489: rewind 重入键 — (run_id, node_id) 相同且产物 run 仍在活跃态时幂等返回
+    _ACTIVE_RUN_STATUSES = ("running", "pending", "paused")
+
+    def rewind(self, run_id: str, node_id: str, rule: str = "", actor: str = "") -> Dict[str, Any]:
+        """issue #489: 门控驳回回退 — 从回退点起重跑下游, 回退点前已消耗步骤快照免重跑 (不重复付费模型工作)。
+
+        与 resume_from 的差异: 幂等键 (run_id, node_id) — 同键重复调用在产物 run 活跃期间返回
+        同一 run; 每次 rewind 落历史 (who/when/which rule) 到原 run 记录 rewinds 字段。
+        """
+        record = self._runs.get(run_id)
+        if not record:
+            raise KeyError(run_id)
+        for rw in reversed(record.get("rewinds") or []):
+            if rw.get("node_id") != node_id:
+                continue
+            prev = self._runs.get(str(rw.get("new_run_id") or ""))
+            if prev and prev.get("status") in self._ACTIVE_RUN_STATUSES:
+                logger.info(f"rewind 幂等命中: {run_id} node={node_id} → 已有活跃 run {prev.get('run_id')}")
+                return {
+                    "run_id": prev.get("run_id"),
+                    "resumed_from": node_id,
+                    "rewind_of": run_id,
+                    "idempotent": True,
+                    "snapshot_steps": len(prev.get("steps") or []),
+                    "context": {},
+                }
+        result = self.resume_from(run_id, node_id)
+        new_id = str(result.get("run_id") or "")
+        entry = {
+            "at": time.time(),
+            "node_id": node_id,
+            "rule": str(rule or ""),
+            "actor": str(actor or ""),
+            "new_run_id": new_id,
+        }
+        record.setdefault("rewinds", []).append(entry)
+        # 回退元数据随链传递: 新 run 的 labels 带 rewind 规则/操作人 (审计可追溯)
+        new_record = self._runs.get(new_id)
+        if new_record is not None:
+            labels = new_record.setdefault("labels", {})
+            labels["rewind_of"] = run_id
+            if rule:
+                labels["rewind_rule"] = str(rule)
+            if actor:
+                labels["rewind_actor"] = str(actor)
+        self._persist(run_id)
+        self._broadcast(
+            run_id, {"event": "run_rewound", "at": time.time(), "rewind": entry, "run": self._public(record)}
+        )
+        logger.info(
+            f"rewind: {run_id} → {new_id} node={node_id} rule={rule!r} actor={actor!r} "
+            f"snapshot={result.get('snapshot_steps', 0)} 步"
+        )
+        result["rewind_of"] = run_id
+        result["idempotent"] = False
+        return result
+
     def directive(self, run_id: str, directive: Dict[str, Any]) -> Optional[str]:
         """W8/B1: 排队运行改向指令; 返回 None 表示已排队, 否则错误码。"""
         record = self._runs.get(run_id)
@@ -2339,6 +2396,32 @@ def create_web_app(
                 ) from exc
             # no_workflow_def / from_dict 校验失败 → 400
             raise HTTPException(status_code=400, detail={"code": "bad_request", "message": f"无法重跑: {msg}"}) from exc
+
+    # ── issue #489: 门控驳回回退 — 幂等 rewind + 历史 (who/when/which rule) ──
+    @app.post("/api/runs/{run_id}/rewind")
+    async def runs_rewind(run_id: str, body: Dict[str, Any]):
+        node_id = str(body.get("node_id") or "").strip()
+        if not node_id:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "node_id 必填"})
+        rule = str(body.get("rule") or "").strip()
+        actor = str(body.get("actor") or "").strip()
+        try:
+            return runs.rewind(run_id, node_id, rule=rule, actor=actor)
+        except KeyError:
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"}
+            ) from None
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "not_terminal":
+                raise HTTPException(
+                    status_code=409, detail={"code": "not_terminal", "message": f"运行未到终态: {run_id}"}
+                ) from exc
+            if msg == "unknown_node":
+                raise HTTPException(
+                    status_code=400, detail={"code": "unknown_node", "message": f"步骤不存在于工作流: {node_id}"}
+                ) from exc
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": f"无法回退: {msg}"}) from exc
 
     # ── issue #233: artifact 卡片代理 (fusion-artifacts-engine v0.6.0 contract) ──
     @app.get("/api/artifacts/refs/{artifact_id}")

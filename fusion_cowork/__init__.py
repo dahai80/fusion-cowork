@@ -129,6 +129,9 @@ NODE_NAME_ALIASES: dict[str, str] = {
     # 团队互通 (agent-studio teams.*, issue #488)
     "团队调用": "team_call",
     "团队任务": "team_call",
+    # 部署执行 (issue #489)
+    "应用部署": "deploy_service",
+    "部署服务": "deploy_service",
     # 子工作流 (issue #462)
     "子工作流": "sub_workflow",
     "工作流嵌套": "sub_workflow",
