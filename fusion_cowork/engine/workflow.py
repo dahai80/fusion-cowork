@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from ..observability.trace import set_trace_id
 from .executors import NodeExecutionContext, executor_for_node, executor_names
 from .hooks import HookEvent
-from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus
+from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus, _coerce_bool
 from .permission_manager import (
     HITL_GATE_TOOLS,
     reset_approval_context,
@@ -135,8 +135,12 @@ def _collect_upstream_evidence(workflow: Workflow, node: BaseNode, passed_data: 
     return evidence
 
 
-_STEP_REF_RE = re.compile(r"\$\{step\.([A-Za-z0-9_\-]+)((?:\.[A-Za-z0-9_\-]+)*)\}")
-_RESULT_REF_RE = re.compile(r"\$\{result\.([A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]+)*)\}")
+# issue #478: refs accept an optional `|literal` fallback — when the path misses,
+# the fallback is used instead of leaving the literal ${...} behind (which the
+# fail-fast #343 check would reject). E.g. ${step.n1.result.artifacts.0|-} keeps
+# canonical artifact handoff when artifacts exist and degrades gracefully when empty.
+_STEP_REF_RE = re.compile(r"\$\{step\.([A-Za-z0-9_\-]+)((?:\.[A-Za-z0-9_\-]+)*)(?:\|([^\}]*))?\}")
+_RESULT_REF_RE = re.compile(r"\$\{result\.([A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]+)*)(?:\|([^\}]*))?\}")
 
 
 def _walk_ref_path(cur: Any, parts: List[str]) -> Tuple[Any, bool]:
@@ -184,6 +188,9 @@ def _interpolate_step_refs(value: Any, passed_data: Dict[str, Dict[str, Any]], l
             )
             if ok:
                 return found
+            if m.group(3) is not None:
+                # issue #478: 显式 fallback — 缺失路径降级为字面量, 不留 ${...} 残留
+                return m.group(3)
             logger.warning(f"step 引用未命中, 保留字面量: {value[:120]}")
             return value
         m = _RESULT_REF_RE.fullmatch(value)
@@ -191,10 +198,13 @@ def _interpolate_step_refs(value: Any, passed_data: Dict[str, Dict[str, Any]], l
             found, ok = _resolve_result_ref(local_input, m.group(1).split("."))
             if ok:
                 return found
+            if m.group(2) is not None:
+                return m.group(2)
             logger.warning(f"result 引用未命中, 保留字面量: {value[:120]}")
             return value
 
         def _repl(m: re.Match[str]) -> str:
+            fallback = m.group(3) if m.re is _STEP_REF_RE else m.group(2)
             if m.re is _STEP_REF_RE:
                 found, ok = _walk_ref_path(
                     passed_data.get(m.group(1)), m.group(2).lstrip(".").split(".") if m.group(2) else []
@@ -202,6 +212,8 @@ def _interpolate_step_refs(value: Any, passed_data: Dict[str, Dict[str, Any]], l
             else:
                 found, ok = _resolve_result_ref(local_input, m.group(1).split("."))
             if not ok:
+                if fallback is not None:
+                    return fallback
                 logger.warning(f"引用未命中, 保留字面量: {m.group(0)[:120]}")
                 return m.group(0)
             return json.dumps(found, ensure_ascii=False) if isinstance(found, (dict, list)) else str(found)
@@ -698,6 +710,7 @@ class WorkflowEngine:
         hitl_pause=None,
         node_timeout_s: float | None = None,
         approval_journal=None,
+        kernel_checkpoints=None,
     ):
         self._executions: Dict[str, WorkflowExecution] = {}
         self._cancel_flags: Dict[str, bool] = {}
@@ -751,6 +764,10 @@ class WorkflowEngine:
         self._session_store = session_store
         # issue #463: 审批决定日志 (durable HITL) — 未注入则零行为变化
         self._approval_journal = approval_journal
+        # issue #470: 内核检查点绑定 (harness CheckpointStore + ReceiptCache) —
+        # 未注入则零行为变化; 注入后每个节点执行前落 pre-state 检查点,
+        # 成功后记回执, 同 run_id 重派发时已提交节点凭回执重放不重执行
+        self._kernel_checkpoints = kernel_checkpoints
         self._trajectory_recorder = trajectory_recorder
         self._event_emitter = event_emitter
         # HI-19: 预算追踪 — 在节点循环顶部检查, 超预算且 enforce 则中止执行
@@ -1343,6 +1360,37 @@ class WorkflowEngine:
                 return [step], "fail", msg
             logger.debug(f"[{exec_id}] step 引用解析完成: node={node.name}")
 
+        # issue #470: 内核检查点 — 已提交节点凭回执重放 (同 run_id 重派发幂等),
+        # 未提交节点执行前落 pre-state 检查点 (失败 run 可从 latest checkpoint 定位)
+        if self._kernel_checkpoints is not None:
+            try:
+                replayed_output = self._kernel_checkpoints.replay_receipt(exec_id, node_id)
+            except Exception as re_err:
+                logger.warning(f"[{exec_id}] kernel receipt replay check failed (ignored): {re_err}")
+                replayed_output = None
+            if replayed_output is not None:
+                logger.info(f"[{exec_id}] kernel checkpoint: node '{node.name}' 回执命中, 重放输出不重执行")
+                step = WorkflowStep(
+                    node_id=node_id,
+                    node_name=node.name,
+                    node_display_name=node.config.label or node.display_name,
+                    status=NodeStatus.SKIPPED,
+                    started_at=time.time(),
+                    input_data=node_input,
+                    output_data=replayed_output if isinstance(replayed_output, dict) else {"replayed": replayed_output},
+                    summary="replayed from kernel checkpoint receipt (committed effects not re-executed)",
+                    executor=executor.name,
+                )
+                step.completed_at = time.time()
+                step.execution_time = 0
+                return [step], "continue", ""
+            try:
+                self._kernel_checkpoints.save_node_checkpoint(
+                    exec_id, node_id, node.name, node.config.params, node_input
+                )
+            except Exception as ck_err:
+                logger.warning(f"[{exec_id}] kernel checkpoint save failed (ignored): {ck_err}")
+
         # issue #328: 修订回路 — 重跑产出节点时评审意见并入输入 (节点读 revision_comments)
         rev_map = self._revision_comments.get(exec_id)
         if rev_map and node_id in rev_map:
@@ -1395,7 +1443,9 @@ class WorkflowEngine:
                 try:
                     # issue #413: approval_gate require_review=false — intake 选择的免评审闸门
                     # 自动通过, 不进权限拒绝/HITL 暂停 (仅此节点名可免检, 其他高风险节点不受影响)
-                    if node.name == "approval_gate" and check_input.get("require_review") is False:
+                    # issue #479: 模板参数装配把 boolean 渲染成字符串 "false" — 严格 `is False`
+                    # 漏掉字符串形态, 闸门漏进权限拒绝/HITL 暂停; 复用注册表 bool 强转后再判
+                    if node.name == "approval_gate" and _coerce_bool(check_input.get("require_review")) is False:
                         allowed = True
                     else:
                         allowed = await self._permission_manager.check(node.name, "execute", check_input)
@@ -1668,6 +1718,13 @@ class WorkflowEngine:
             # 缓存结果
             node_results[node_id] = result
             passed_data[node_id] = result.data or {}
+
+            # issue #470: 成功提交记回执 — 同 run_id 重派发时该节点凭回执重放 (幂等)
+            if self._kernel_checkpoints is not None and result.status == NodeStatus.SUCCESS:
+                try:
+                    self._kernel_checkpoints.record_receipt(exec_id, node_id, result.data or {})
+                except Exception as rc_err:
+                    logger.warning(f"[{exec_id}] kernel receipt record failed (ignored): {rc_err}")
 
             # 结构化输出校验 (P1-9) — 节点声明 schema 时强制校验
             if result.schema and result.status == NodeStatus.SUCCESS:

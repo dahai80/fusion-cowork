@@ -28,6 +28,7 @@ _NODE_MODULES = (
     "fusion_cowork.nodes.ecosystem.mcp_client_node",
     "fusion_cowork.nodes.ecosystem.desigma_node",
     "fusion_cowork.nodes.ecosystem.fanout_node",
+    "fusion_cowork.nodes.ecosystem.ladder_node",
     "fusion_cowork.nodes.ops.ops_nodes",
     "fusion_cowork.nodes.ops.match_node",
     "fusion_cowork.nodes.ops.demo_node",

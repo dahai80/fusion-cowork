@@ -192,6 +192,9 @@ HIGH_RISK_NODES = frozenset(
         # session_fork 派生并行子会话分支执行任意已注册节点 — 均须显式放行
         "coordinator_fanout",
         "session_fork",
+        # issue #470: workflow_ladder 阶梯编排 — 多阶段子代理执行任意 worker_node,
+        # 同 coordinator_fanout 的多步 agent 行为面, 须显式放行
+        "workflow_ladder",
     }
 )
 

@@ -141,6 +141,9 @@ NODE_NAME_ALIASES: dict[str, str] = {
     "子代理分发": "coordinator_fanout",
     "会话分叉": "session_fork",
     "会话分叉并行": "session_fork",
+    # 阶梯编排 (issue #470)
+    "阶梯编排": "workflow_ladder",
+    "工作流阶梯": "workflow_ladder",
 }
 
 # ── Lazy Import 注册表（吸纳自 Squish 的 __getattr__ 机制） ──
