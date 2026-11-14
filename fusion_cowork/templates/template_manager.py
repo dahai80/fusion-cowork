@@ -771,6 +771,9 @@ BUILTIN_TEMPLATES = [
     # verdicts per #309).
     {
         "id": "product_lifecycle",
+        # issue #485: workflow-definition ids registered at web-serve seed time —
+        # external callers (fusion-site factory) kick off runs by these ids
+        "web_aliases": ["product_lifecycle_agents"],
         "name": "交付-产品生命周期 (A/B/C 三闸门)",
         "description": "全交付管线: BA 出 PRD -> 闸门 A -> 架构 -> 闸门 B -> 脚手架 ai-<slug> -> 建任务 issue (state:ready) -> claude_dispatch 派发 coder 会话 (PR-only 契约, 预算上限) -> 关联 PR 机器验收 -> Env/Mock 代理 -> 闸门 C 人工验收 (支持逐项 batch 决定) -> accepted 打标 + 证据归档。LLM 座位经 studio_run 调 agent-studio graph 或 agent (issue #320, 默认 delivery-* seat agents)。",
         "category": "交付",
