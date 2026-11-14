@@ -1,3 +1,19 @@
+---
+doc_id: fusion-cowork/docs/evolution-plan-2026-11
+product: fusion-cowork
+class: platform
+entry: developer
+doc_type: guide
+title: {zh: "能力补齐与超越计划 2026-11", en: "Capability Catch-up & Beyond Plan (2026-11)"}
+audience: engineer
+status: stable
+version: 1.0
+updated: 2026-11-14
+owner: "@dahai"
+source_of_truth:
+  - docs/evolution-plan-2026-11.md
+---
+
 # Capability Catch-up & Beyond Plan (2026-11)
 
 Source: `~/fusion/insight/fusion-cowork-evolution-2026-11.md` (industry survey: LangGraph / MAF / CrewAI / OpenAI Agents SDK / Temporal / Hatchet / DBOS / n8n / Dify, plus local code audit). This doc turns the survey's gap register (W1-W8) and three-phase goals into a concrete, sequenced execution plan for fusion-cowork.
