@@ -17,6 +17,13 @@ source_of_truth:
 
 # Changelog
 
+## v0.5.115 (issue #489 — pipeline stage rewind + deployment executor)
+
+- **Rewind API (#489, PR #492)**: `POST /api/runs/{run_id}/rewind` `{node_id, rule?, actor?}` — gate rejection semantics: re-executes from the rewind point onward, steps consumed before it are snapshotted into the resumed run (paid model work never re-executed, resume_from chain mechanics with ancestor summary + token budget); idempotent per run (same `(run_id, node_id)` key returns the same active resumed run); every rewind recorded on the original run (`rewinds: at/node_id/rule/actor/new_run_id`) and mirrored into the resumed run labels (`rewind_of`/`rewind_rule`/`rewind_actor`); gate→node mapping stays caller-encoded
+- **deploy_service node (ops, #489)**: deployment executor with healthcheck and app endpoint — `target=docker` (pull → replace container → run -d with env/ports), `target=launchd` (plist validation → launchctl bootstrap, load fallback), `target=script` (install script); stage chain `pull → start → healthcheck` with per-stage status/attempts/duration/log excerpt + stage retries; healthcheck polls until HTTP 200 within deadline; endpoint returned only when healthy (no fake preview); output `{deployed, endpoint, stages, summary}` consumable by a site deployment GUI via run steps
+- **Registration**: HIGH_RISK_NODES (local command execution + service lifecycle), aliases 应用部署/部署服务
+- Tests: `tests/test_issue_489_rewind_deploy.py` (13 cases, zero network / zero subprocess in CI)
+
 ## v0.5.114 (issue #488 — team_call DAG node)
 
 - **team_call node (#488, PR #490)**: drive agent-studio team members from cowork workflows — `nodes/ecosystem/team_node.py::TeamCallNode` calls the `teams.*` dispatcher over JSON-RPC 2.0 (`POST /v1/rpc`, `x-api-key` auth, same seam/env as `studio_run`); `mode=run` (default) = `teams.add_task` → `teams.run_member` → poll `teams.status` to task terminal (output: task_id / status / summary / artifact_ref); `mode=add_task` = board write only (one-way DAG → board mirror with `blocked_by` + `artifact_refs` per design doc §5.4); `mode=run_member` = run an existing task_id
