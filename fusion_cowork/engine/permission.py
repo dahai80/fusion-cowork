@@ -3,10 +3,11 @@
 # HIGH_RISK_NODES/confirm_guard/list_pending_guard/guard delegation, 5
 # cowork levels) lives in permission_manager.py; kernel types come from the
 # fusion-harness package ([plugins] extra, #2; 裸装缺包时给出可执行安装指引 —
-# issue #196). Cowork check() semantics
-# (deny-rules-first, HIGH_RISK_NODES guard delegation, confirm_guard,
-# atomic save/load) do not map 1:1 onto the kernel, so PermissionManager
-# stays backed by the cowork implementation.
+# issue #196). issue #493 (K1): rule-model/scope-matching semantics now
+# delegate to fusion_harness.scoped_permissions; PermissionManager keeps the
+# cowork check() orchestration (hook audit, HITL gate exemption, trusted-sync,
+# capability gate, guard IPC) — kernel scoped_permissions docstring records
+# those as consumer wiring.
 
 from __future__ import annotations
 
@@ -16,6 +17,21 @@ try:
         PermissionEngine,
         PermissionMode,
         PermissionRule,
+    )
+    from fusion_harness.scoped_permissions import (
+        DECISIONS as KERNEL_DECISIONS,
+    )
+    from fusion_harness.scoped_permissions import (
+        PendingApproval as KernelPendingApproval,
+    )
+    from fusion_harness.scoped_permissions import (
+        ScopedPermission as KernelScopedPermission,
+    )
+    from fusion_harness.scoped_permissions import (
+        ScopedPermissionEngine as KernelScopedPermissionEngine,
+    )
+    from fusion_harness.scoped_permissions import (
+        ScopedPermissionError as KernelScopedPermissionError,
     )
 except ImportError as exc:
     from ._harness_guard import harness_import_error
@@ -32,6 +48,11 @@ from .permission_manager import (
 
 __all__ = [
     "HIGH_RISK_NODES",
+    "KERNEL_DECISIONS",
+    "KernelPendingApproval",
+    "KernelScopedPermission",
+    "KernelScopedPermissionEngine",
+    "KernelScopedPermissionError",
     "Permission",
     "PermissionDecision",
     "PermissionEngine",
