@@ -2,13 +2,27 @@
 
 支持:
 - 5 级权限: CONFIRM(默认, 规则/高风险驱动) / MANUAL / AUTO / PLAN / BYPASS(全放行)
-- 规则匹配: tool_name + scope (如 file:~/Desktop/**)
+- 规则匹配: tool_name + scope (如 file:~/Desktop/**) — 匹配语义委托 kernel
+  fusion_harness.scoped_permissions (issue #493, K1 迁移)
 - 高风险节点无显式批准 → 拒绝 (CR-16/17/18)
 - 权限规则持久化到 JSON 配置文件
 
 CR-16: check() 顺序 — approve 规则命中→allow (任意 level); deny→deny;
        高风险→deny (需显式 approve 或 Hook 放行); 否则→allow。
        approve() 全 level 生效 (移除旧 MANUAL no-op)。
+
+#493 kernel 迁移边界 (kernel scoped_permissions docstring 明示的 consumer wiring
+留本侧, 每处附 parity 注释):
+- 规则模型/前缀 scope 匹配 (file:/command:/url:) → kernel ScopedPermission 语义;
+  engine.check() 不直接委托 — 它把 bypass/allow-rule/default-allow 折叠成同一
+  "allow" 返回值, 而 check() 流程需三态区分 (trusted-sync 与高风险闸门夹在
+  allow 规则与默认放行之间), 强行委托会改变 CR-16 顺序
+- Hook 审计/HITL 闸门豁免 (issue #340)/trusted-sync (#301)/能力闸门 (#228)/
+  guard IPC 委托 (#73) = consumer wiring, 留本侧 (kernel: guard clients 与
+  capability gates stay consumer-side)
+- 待审批队列保本地富上下文实现 (审批卡 diff 分块/execution_id 唤醒/崩溃恢复);
+  kernel PendingApproval(id/action/resource/reason) 无卡片上下文且 resolve()
+  自动落规则, 与 #340 闸门不落规则语义冲突 — parity 差异, 刻意不迁
 
 #109: in-tree fallback copy of fusion-cowork permission. Used when
 fusion-harness is not installed; the shim in permission.py routes to
@@ -237,39 +251,45 @@ class Permission:
     scope: str = "*"
 
     def matches(self, tool_name: str, params: Dict[str, Any] = None) -> bool:
+        # issue #493: 匹配语义委托 kernel scoped_permissions._scope_match
+        # (deny-first 规则模型 K1 的匹配层)。
+        # parity 覆盖 (kernel 差异表记录的 intentionally-different 项):
+        # 1. 无 params → 匹配任意 scope (上游与 kernel 空 resource 语义一致)
+        # 2. params 存在但无对应键 (command/url) → 不匹配 (kernel 空 resource 视为匹配, 不复制)
+        # 3. file: scope 两侧 expanduser (E-3: kernel 不展开 ~, 上游展开 — 保留)
+        # 4. 未知前缀 scope → True (kernel 改为 resource 前缀匹配 — 上游 fallback 保留)
+        # kernel 修复项按 kernel 侧执行: file:/url: 路径边界检查 (上游 raw startswith
+        # 使 file:/a 误中 file:/ab — kernel parity 表记录的 quirk, 不复制)
         if self.tool_name != "*" and self.tool_name != tool_name:
             return False
-        if self.scope == "*":
+        scope = self.scope
+        if scope == "*":
             return True
         if not params:
+            # parity: 上游无参调用匹配任意 scope; kernel 空 resource 亦匹配 — 语义一致
             return True
-        if self.scope.startswith("file:"):
-            # E-3: scope 前缀含 ~/ 须 expanduser — 路径已展开为绝对 (/Users/x/...),
-            # 否则 startswith("~/Desktop/") 恒 False, 规则静默失效。
-            # params 值若仍带 ~/ 也一并展开比较 (两侧都对齐绝对路径)。
-            prefix = os.path.expanduser(self.scope[5:].replace("**", ""))
+        if not scope.startswith(("file:", "command:", "url:")):
+            # parity: 上游未知前缀 fallback = True (kernel 改 resource 前缀匹配, 不复制)
+            return True
+        from fusion_harness.scoped_permissions import _scope_match
+
+        if scope.startswith("file:"):
+            # E-3: scope 前缀含 ~/ 须 expanduser — params 值两侧都对齐绝对路径
+            expanded_scope = "file:" + os.path.expanduser(scope[5:])
             for key in ("path", "output_path", "save_path", "source_path"):
                 val = params.get(key, "")
-                if isinstance(val, str):
-                    val_exp = os.path.expanduser(val)
-                    if val_exp == prefix.rstrip("/") or val_exp.startswith(prefix):
+                if isinstance(val, str) and val:
+                    if _scope_match(expanded_scope, os.path.expanduser(val)):
                         return True
             return False
-        if self.scope.startswith("command:"):
-            prefix = self.scope[8:].replace("*", "")
+        if scope.startswith("command:"):
+            # parity: params 存在但无 command 键 → 不匹配 (kernel 空 resource 视为匹配, 不复制)
             cmd = params.get("command", "")
-            if isinstance(cmd, str) and cmd.startswith(prefix):
-                return True
-            return False
-        if self.scope.startswith("url:"):
-            # issue #185: url: 前缀 scope — 按 URL 前缀授权 (mcp_client 等远程调用节点),
-            # 授权单个服务不放开任意目标; ** 通配尾段
-            prefix = self.scope[4:].replace("**", "").rstrip("/")
-            target = params.get("url", "")
-            if isinstance(target, str) and target.rstrip("/").startswith(prefix):
-                return True
-            return False
-        return True
+            return isinstance(cmd, str) and bool(cmd) and _scope_match(scope, cmd)
+        # url: — issue #185 前缀 scope (mcp_client 等远程调用节点)
+        # parity: params 存在但无 url 键 → 不匹配 (同上)
+        target = params.get("url", "")
+        return isinstance(target, str) and bool(target) and _scope_match(scope, target)
 
 
 class PermissionManager:
