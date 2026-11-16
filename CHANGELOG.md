@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.99
+version: 0.5.118
 updated: 2026-11-09
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,11 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.118 (issue #497 — journal pending rows hygiene)
+
+- **Approvals inbox hygiene (#497, PR #503)**: `/api/permissions/pending` journal merge no longer surfaces unresolvable `approval_journal` rows — empty `run_id` (recorded before the run binding, can never be woken/resolved) and rows whose run reached a terminal state are skipped; active-run and unknown-run (pre-#399 history) rows stay visible (conservative). Root cause: nightly eval verify filters pendings by node_id/tool_name across ALL runs — one stale row from an old nightly failed every later verification. Dropped-row count logged INFO (issue #497)
+- Tests: `tests/test_issue_497_journal_hygiene.py` (4 cases: empty-run_id dropped, terminal-run dropped, active-run kept with source=journal, unknown-run kept)
 
 ## v0.5.117 (issue #494 — node substrate + orchestrator kernel convergence, parts A/B/C)
 
