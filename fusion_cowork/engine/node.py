@@ -16,11 +16,31 @@ from __future__ import annotations
 
 import logging
 import threading
-import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
+
+# issue #494 (K2): node substrate delegates to fusion-harness dag_node —
+# BaseNode subclasses the kernel BaseNode (id generation / node_type stamping
+# shared) and NodeRegistry routes registration through a kernel NodeRegistry
+# instance (dup-reject enforcement = kernel code, `existing is not node_class`).
+# Cowork extensions kept on top, kernel semantics untouched:
+#   - aliases / freeze_builtins / protected+builtin names / R-3 lock — cowork-only
+#     hardening the kernel registry does not model
+#   - coerce_params stays LOCAL lenient per-field (kernel coerce_params is strict
+#     all-or-nothing: non-integral float "3.7" errors vs cowork truncates to 3;
+#     comma-string array errors vs cowork splits; dict-level raise vs per-field
+#     keep). LLM-generated params rely on lenient coercion — switching would
+#     break the regression net. Parity gap filed upstream (fusion-harness issue).
+try:
+    from fusion_harness.dag_node import BaseNode as KernelBaseNode
+    from fusion_harness.dag_node import NodeRegistry as KernelNodeRegistry
+    from fusion_harness.dag_node import NodeRegistryError as KernelNodeRegistryError
+except ImportError as exc:
+    from ._harness_guard import harness_import_error
+
+    raise harness_import_error(exc) from exc
 
 logger = logging.getLogger(__name__)
 
@@ -232,11 +252,15 @@ class NodeResult:
         return True
 
 
-class BaseNode(ABC):
+class BaseNode(KernelBaseNode, ABC):
     """所有自动化节点的基类。
 
     节点是整个工作流的基本单元。每个节点执行一个特定操作，
     接收输入数据，产生输出数据，传递给下一个节点。
+
+    issue #494: subclasses the fusion-harness kernel BaseNode — id
+    generation (`node_<hex8>`) and the kernel `node_type` attribute come
+    from the kernel; cowork adds config/status/`name`-keyed metadata.
     """
 
     # 节点元数据（子类覆盖）
@@ -247,12 +271,13 @@ class BaseNode(ABC):
     icon: str = "⚙️"
     default_label: str = "节点"
 
-    # 输入/输出定义
+    # 输入/输出定义（kernel BaseNode declares inputs/outputs as Dict — cowork
+    # schema is a list of {key,label,type}; subclass attr wins)
     inputs: List[Dict[str, Any]] = []
     outputs: List[Dict[str, Any]] = [{"key": "output", "label": "输出", "type": "any"}]
 
     def __init__(self, node_id: str = "", config: Optional[NodeConfig] = None):
-        self.id = node_id or f"node_{uuid.uuid4().hex[:8]}"
+        super().__init__(node_id=node_id)
         self.config = config or NodeConfig()
         self.status = NodeStatus.PENDING
         self.result: Optional[NodeResult] = None
@@ -377,6 +402,11 @@ class NodeRegistry:
     """
 
     _registry: Dict[str, type[BaseNode]] = {}
+    # issue #494 (K2): kernel NodeRegistry instance — registration dup-reject
+    # (`existing is not node_class`) is enforced by kernel code. Cowork keeps a
+    # mirror dict for alias lookup / unregister / clear (kernel registry has no
+    # removal API; rebuilds happen on those paths).
+    _kernel_registry: KernelNodeRegistry = KernelNodeRegistry()
     # 工具名称映射表（吸纳自 Squish tool_name_map.py）
     # 用于用户友好的名称 ↔ 后端节点名称的转换
     _name_aliases: Dict[str, str] = {}
@@ -407,10 +437,39 @@ class NodeRegistry:
                     f"节点类型 '{name}' 已注册为 {existing.__name__}, 拒绝 {node_class.__name__} 覆盖 (防劫持)"
                 )
                 return node_class
+            # issue #494: kernel registry is the registration gate. force=True
+            # replaces an existing class — kernel has no removal API, so the
+            # kernel instance is rebuilt from the mirror (minus `name`) first.
+            if force and existing is not None:
+                cls._rebuild_kernel_registry(skip=name)
+            try:
+                cls._kernel_registry.register(node_class, node_type=name)
+            except KernelNodeRegistryError:
+                # kernel instance stale vs mirror (external _registry mutation,
+                # e.g. test fixtures restoring the dict directly) — rebuild from
+                # the mirror and retry once before giving up
+                cls._rebuild_kernel_registry()
+                try:
+                    cls._kernel_registry.register(node_class, node_type=name)
+                except KernelNodeRegistryError as exc:
+                    logger.error(f"kernel node registration rejected '{name}': {exc}")
+                    return node_class
             cls._registry[name] = node_class
             if name not in cls._protected_names:
                 cls._protected_names.add(name)
         return node_class
+
+    @classmethod
+    def _rebuild_kernel_registry(cls, *, skip: str = "") -> None:
+        # kernel NodeRegistry has no unregister/clear — rebuild from the mirror
+        cls._kernel_registry = KernelNodeRegistry()
+        for reg_name, reg_class in cls._registry.items():
+            if reg_name == skip:
+                continue
+            try:
+                cls._kernel_registry.register(reg_class, node_type=reg_name)
+            except KernelNodeRegistryError as exc:
+                logger.warning(f"kernel registry rebuild skipped '{reg_name}': {exc}")
 
     @classmethod
     def get(cls, name: str) -> Optional[type[BaseNode]]:
@@ -541,12 +600,14 @@ class NodeRegistry:
                 return
             cls._registry.pop(name, None)
             cls._protected_names.discard(name)
+            cls._rebuild_kernel_registry()
 
     @classmethod
     def clear(cls) -> None:
         """清空注册表。"""
         with cls._lock:
             cls._registry.clear()
+            cls._kernel_registry = KernelNodeRegistry()
             cls._protected_names.clear()
             cls._builtin_names.clear()
             cls._builtins_frozen = False
