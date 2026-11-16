@@ -20,6 +20,16 @@ class _Store:
     async def get_agent_def(self, space_id, agent_id):
         return {"id": agent_id, "system_prompt": "", "config": {"model": "config-model"}}
 
+    # issue #496: the kernel TeamMessage plane validates members — the stub
+    # store exposes the roster (sender "u" + agent "agent-1").
+    async def list_members(self, space_id):
+        from types import SimpleNamespace
+
+        return [SimpleNamespace(user_id="u")]
+
+    async def list_agents(self, space_id):
+        return [{"id": "agent-1", "name": "A1"}]
+
 
 class _Mlx:
     def __init__(self):
