@@ -12,6 +12,15 @@
 #
 # Opt-in: WorkflowEngine(kernel_checkpoints=KernelCheckpointBinder(...)).
 # Default None = zero behavior change.
+#
+# issue #494 (K2) parity note — kernel checkpoint_binding.NodeStateBinder is
+# NOT a drop-in replacement for this binder: it keys sessions "run:node" and
+# stores only {"node_state"} metadata, while resume/latest_checkpoint needs
+# session=run_id + metadata node_id/node_name/params to locate where a failed
+# run stopped. Switching would break list_checkpoints/resume consumers; the
+# receipt half (mark_emitted) matches but adds no capability over ReceiptCache.
+# Documented divergence, revisit if kernel NodeStateBinder grows run-level
+# session keying.
 
 from __future__ import annotations
 
