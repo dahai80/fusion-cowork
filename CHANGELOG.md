@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.118
+version: 0.5.119
 updated: 2026-11-09
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,13 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.119 (issue #496 — space chat on kernel TeamMessage plane)
+
+- **Message plane re-point (#496, PR #505)**: `space/kernel_plane.py` (new) — per-space in-process kernel `TeamRuntime` built from the space roster (members + agents); choice documented: the studio daemon `teams.*` surface is a task-board dispatcher with no chat send/inbox plane, so in-process runtime matches the topology. Kernel provides member-validated send, @mention validation, disk-write-confirmed delivery, `reply_to` threading, per-member inbox files verbatim; cowork maps roster ids to kernel member names (deterministic hash) and carries SpaceMessage metadata in the record `transcript` envelope
+- **Write path retirement**: `send_message`/`stream_message`/`_agent_respond`/`relay_agents` all write through the plane (mention routes to target member inbox, broadcast fan-out shares one msg_id, ref-only attachments — non-strings dropped+logged); `list_messages` dual-reads kernel plane + legacy chat-table rows (roadmap §7.3 transition); `/api/sessions` space summary `last_message` reads the plane with chat-table fallback; single-member space delivers to self (kernel permits sender==recipient)
+- **Web surface**: vendored `@fusion/chat` (fusion-web-shell#157, byte-identical) + `web/src/spaceChatAdapter.ts` (ChatAdapter over the space REST surface, 3s poll subscribe) + SpacePage messages tab renders `ChatView` (mentions/replies capability-gated); `sendSpaceMessage` passes `parent_msg_id`; `GET /spaces/{id}/agents` getter added
+- Tests: `tests/test_issue_496_space_kernel_plane.py` (9: mention→kernel inbox not store, unknown mention fails, broadcast single msg_id, reply threading, ref-only attachments + artifact read, legacy dual-read, rebuild persistence, roster APIs intact) + `web/tests/spaceChatAdapter.test.ts` (3) + model-selector stub roster update
 
 ## v0.5.118 (issue #497 — journal pending rows hygiene)
 
