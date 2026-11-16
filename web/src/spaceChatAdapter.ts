@@ -3,15 +3,8 @@
 // the cowork space chat REST surface onto the ChatAdapter contract. The
 // backend plane is the kernel TeamMessage runtime (space/kernel_plane.py);
 // @ mentions are validated server-side by kernel member checks.
-import type {
-    ChatAdapter,
-    ChatCapabilities,
-    ChatMember,
-    ChatMessage,
-    ListPage,
-    SendPayload,
-} from '@fusion/chat';
-import { api, type SpaceMessage } from './api';
+import type { ChatAdapter, ChatCapabilities, ChatMember, ChatMessage, ListPage, SendPayload } from '@fusion/chat';
+import { type SpaceMessage, api } from './api';
 
 export class SpaceChatAdapter implements ChatAdapter {
     readonly capabilities: ChatCapabilities = {
@@ -41,12 +34,7 @@ export class SpaceChatAdapter implements ChatAdapter {
     }
 
     async send(payload: SendPayload): Promise<{ delivered: boolean; msgId?: string }> {
-        const msg = await api.sendSpaceMessage(
-            this.spaceId,
-            payload.body,
-            this.model,
-            payload.replyTo,
-        );
+        const msg = await api.sendSpaceMessage(this.spaceId, payload.body, this.model, payload.replyTo);
         return { delivered: true, msgId: msg?.id };
     }
 

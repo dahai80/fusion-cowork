@@ -1,18 +1,12 @@
+import { ChatView } from '@fusion/chat';
 import { EmptyState, ErrorState, SkeletonLines } from '@fusion/web-ui';
 import { useAutoRetry } from '@fusion/web-ui';
-import { ChatView } from '@fusion/chat';
 import { useEffect, useMemo, useState } from 'react';
-import {
-    type ArtifactReview,
-    type DiffBlock,
-    type SpaceArtifact,
-    type SpaceInfo,
-    api,
-} from '../api';
+import { type ArtifactReview, type DiffBlock, type SpaceArtifact, type SpaceInfo, api } from '../api';
 import { useT } from '../i18n';
-import { SpaceChatAdapter } from '../spaceChatAdapter';
 import { preferredModel } from '../modelPref';
 import { sdk } from '../sdk';
+import { SpaceChatAdapter } from '../spaceChatAdapter';
 
 // W12/W13/W10: collaboration space surface — list + create (W12), chat with
 // 5s polling (W13; SSE stream exists server-side, polling survives gateway
@@ -142,7 +136,7 @@ export function SpacePage() {
 function SpaceDetail({ spaceId }: { spaceId: string }) {
     const t = useT();
     const [tab, setTab] = useState<Tab>('messages');
-        const [artifactPreview, setArtifactPreview] = useState<SpaceArtifact | null>(null);
+    const [artifactPreview, setArtifactPreview] = useState<SpaceArtifact | null>(null);
     // #149: 产物就地修订 — 预览内选中文本触发
     const [selText, setSelText] = useState('');
 
