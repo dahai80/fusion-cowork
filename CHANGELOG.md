@@ -17,6 +17,13 @@ source_of_truth:
 
 # Changelog
 
+## v0.5.116 (issue #493 — kernel scoped-permissions migration boundary)
+
+- **Scope-matching delegation (#493, PR #498)**: `Permission.matches` file:/command:/url: prefix matching now delegates to `fusion_harness.scoped_permissions._scope_match` (kernel path-boundary fix adopted: `file:/data` no longer matches `/database`; same fix applied to cowork path keys `path`/`output_path`/`save_path`/`source_path` with expanduser on both scope and value); wildcard/subject/empty-params semantics preserved exactly (regression net unchanged)
+- **Deliberate non-migrations documented**: `engine.check()` stays cowork-authoritative (kernel ScopedPermissionEngine folds BYPASS/allow-rule/default-allow into one "allow" — tri-state lost, breaks CR-16 ordering); pending-approval queue stays local (kernel PendingApproval lacks card context; kernel resolve() auto-appends allow rules — conflicts #340 confirm-does-not-persist); hook/HITL/trusted/capability/guard = consumer wiring per kernel contract
+- **Shim**: `engine/permission.py` re-exports kernel `ScopedPermissionEngine`/`ScopedPermission`/`PendingApproval`/`ScopedPermissionError` + DECISIONS as `KERNEL_DECISIONS`
+- Tests: `tests/test_issue_493_kernel_permissions.py` (16 cases: scope-matching parity, on-disk permissions.json compat, consumer-wiring invariants, shim re-exports)
+
 ## v0.5.115 (issue #489 — pipeline stage rewind + deployment executor)
 
 - **Rewind API (#489, PR #492)**: `POST /api/runs/{run_id}/rewind` `{node_id, rule?, actor?}` — gate rejection semantics: re-executes from the rewind point onward, steps consumed before it are snapshotted into the resumed run (paid model work never re-executed, resume_from chain mechanics with ancestor summary + token budget); idempotent per run (same `(run_id, node_id)` key returns the same active resumed run); every rewind recorded on the original run (`rewinds: at/node_id/rule/actor/new_run_id`) and mirrored into the resumed run labels (`rewind_of`/`rewind_rule`/`rewind_actor`); gate→node mapping stays caller-encoded
