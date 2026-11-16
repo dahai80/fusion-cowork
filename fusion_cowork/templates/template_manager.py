@@ -491,6 +491,8 @@ BUILTIN_TEMPLATES = [
                 "approvals_url": {
                     "type": "string",
                     "description": "agent-studio 审批任务同步端点",
+                    # product-level call (roadmap §6): template param default —
+                    # the approval task store lives in the agent-studio daemon.
                     "default": "http://127.0.0.1:11442/v1/agent-platform/approvals",
                 },
             },

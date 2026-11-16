@@ -10,6 +10,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONNECTOR_DIR = Path.home() / ".fusion-cowork" / "connectors"
 DEFAULT_RAG_WIRED_PATH = Path.home() / ".fusion-cowork" / "web" / "rag_wired.json"
+# product-level call (roadmap §6): capability discovery lists agent-studio-side
+# entities (graphs/agents/skills) — the catalog lives in the agent-studio daemon,
+# not in-process.
 DEFAULT_STUDIO_URL = "http://127.0.0.1:11442"
 _STUDIO_TIMEOUT = 3.0
 _ROUTE_BY_TYPE = {"skill": "/skills", "connector": "/extensions", "subagent": "/templates"}

@@ -34,6 +34,11 @@ from ...engine.node import (
 
 logger = logging.getLogger(__name__)
 
+# product-level call (roadmap §6): team_call drives agent-studio team members
+# via teams.* JSON-RPC — the members/tasks live in the agent-studio daemon.
+# In-process kernel TeamRuntime would change what executes (cowork-side
+# subagents instead of studio members) — divergence documented in
+# orchestrator/runner_pool.py (issue #494 Part B).
 _DEFAULT_BASE_URL = "http://127.0.0.1:11442"
 
 # 对齐 studio_run 的终态语义 (任务板 done/failed 即终态)
