@@ -323,6 +323,7 @@ def create_space_api(
             agent_id=body.get("agent_id"),
             content_type=body.get("content_type", "text"),
             attachments=body.get("attachments"),
+            parent_msg_id=body.get("parent_msg_id"),
             model=body.get("model", ""),
         )
         return JSONResponse(msg.to_dict(), status_code=201)

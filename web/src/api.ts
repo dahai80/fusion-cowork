@@ -252,8 +252,14 @@ export interface SpaceMemberInfo {
 export interface SpaceMessage {
     id: string;
     user_id: string;
+    agent_id?: string | null;
+    role?: string;
     content: string;
     content_type?: string;
+    attachments?: Array<string | Record<string, unknown>>;
+    parent_msg_id?: string | null;
+    thread_id?: string | null;
+    metadata?: Record<string, unknown>;
     created_at?: string;
 }
 
@@ -923,12 +929,15 @@ export const api = {
     addSpaceMember: (id: string, body: { user_id: string; role?: string; display_name?: string }) =>
         post<SpaceMemberInfo>(`/api/space/spaces/${encodeURIComponent(id)}/members`, body),
     spaceMembers: (id: string) => get<SpaceMemberInfo[]>(`/api/space/spaces/${encodeURIComponent(id)}/members`),
+    spaceAgents: (id: string) =>
+        get<Array<{ id: string; name?: string }>>(`/api/space/spaces/${encodeURIComponent(id)}/agents`),
     spaceMessages: (id: string) => get<SpaceMessage[]>(`/api/space/spaces/${encodeURIComponent(id)}/messages`),
-    sendSpaceMessage: (id: string, content: string, model = '') =>
+    sendSpaceMessage: (id: string, content: string, model = '', parentMsgId?: string) =>
         post<SpaceMessage>(`/api/space/spaces/${encodeURIComponent(id)}/messages`, {
             user_id: 'local_user',
             content,
             model: model || undefined,
+            parent_msg_id: parentMsgId || undefined,
         }),
     spaceArtifacts: (id: string) => get<SpaceArtifact[]>(`/api/space/spaces/${encodeURIComponent(id)}/artifacts`),
     spaceArtifact: (id: string, aid: string) =>

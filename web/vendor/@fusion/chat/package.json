@@ -1,0 +1,31 @@
+{
+    "name": "@fusion/chat",
+    "version": "0.1.0",
+    "description": "Plane-agnostic chat component for fusion web modules (adapter-injected: teams RPC, domain session APIs)",
+    "license": "Apache-2.0",
+    "type": "module",
+    "main": "src/index.ts",
+    "types": "src/index.ts",
+    "exports": {
+        ".": "./src/index.ts",
+        "./adapters/rag": "./src/adapters/rag.ts"
+    },
+    "dependencies": {
+        "@fusion/design-tokens": "file:../design-tokens",
+        "lucide-react": "^0.462.0"
+    },
+    "scripts": {
+        "typecheck": "tsc --noEmit",
+        "build": "bun run typecheck && bun build src/index.ts --outdir dist --target browser --format esm --external react --external react-dom"
+    },
+    "peerDependencies": {
+        "react": "^18.3.0"
+    },
+    "devDependencies": {
+        "@types/react": "^18.3.12",
+        "@types/react-dom": "^18.3.1",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
+        "typescript": "^5.6.3"
+    }
+}
