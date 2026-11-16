@@ -7,6 +7,19 @@ ack 语义 at-least-once: 消息派发成功之后才 ack, 崩溃重放不丢消
 cowork 自己的 roster 落在 cowork_roster 表 — 不改 agent-studio 的
 roster 表语义 (其 inbox consumer 按 autonomous_inbox 抢消息), 两个
 daemon 各管各的花名册, 共用一个信箱。
+
+issue #494 (K4) kernel convergence note: fusion_harness.team_runtime
+TeamRuntime.send is also disk-write-confirmed (persist failure rolls back
++ delivered=false), but it CANNOT replace this mailbox here:
+- the mailbox table IS the cross-repo wire protocol — agent-studio's
+  daemon consumes this exact SQLite schema via shared FUSION_TEAM_DB;
+- kernel MSG_TYPES is a closed 4-value set (text/plan_approval/
+  shutdown_request/shutdown_response) — cowork kinds ("message"/"reply")
+  don't map;
+- kernel send() requires sender+recipient to be declared team members —
+  cross-repo senders are not. TeamMailbox stays the protocol owner;
+  row_to_team_message() exports rows as kernel TeamMessage for kernel-typed
+  consumers (kind unmappable to MSG_TYPES falls back to "text").
 """
 
 from __future__ import annotations
@@ -55,6 +68,24 @@ _COWORK_ROSTER_SQL = """
 def resolve_db_path(path: Optional[str] = None) -> str:
     # FUSION_COWORK_TEAM_DB 优先, 其次沿用 agent-studio 的 FUSION_TEAM_DB (共享信箱)
     return str(path or os.environ.get("FUSION_COWORK_TEAM_DB") or os.environ.get("FUSION_TEAM_DB") or DEFAULT_DB)
+
+
+def row_to_team_message(row: Dict[str, Any]) -> Any:
+    # issue #494: export a mailbox row as a kernel TeamMessage for kernel-typed
+    # consumers. Lossy by design: kind → kernel MSG_TYPES ("message"/"reply" and
+    # other cowork kinds fall back to "text"); team/acked_at/created_at have no
+    # kernel counterpart (caller keeps the row for those).
+    from fusion_harness.team_runtime import MSG_TYPES, TeamMessage
+
+    kind = str(row.get("kind", "message"))
+    msg_type = kind if kind in MSG_TYPES else "text"
+    return TeamMessage(
+        type=msg_type,
+        sender=str(row.get("sender", "")),
+        recipient=str(row.get("recipient", "")),
+        body=str(row.get("body", "")),
+        msg_id=str(row.get("message_id", "")),
+    )
 
 
 @contextmanager
