@@ -10,6 +10,16 @@ three places (prompt text, validator, role_map) with silent-drift risk.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
+
+# issue #494 (K4): kernel team convergence boundary. BusinessRole specs export
+# to kernel fusion_harness.team types so kernel-side consumers (TeamRuntime,
+# team diagnostics) can consume cowork role catalogs without re-defining them.
+# The cowork registry stays authoritative: BusinessRole carries planner-facing
+# business semantics (duties/deliverables/acceptor, Chinese-language catalog)
+# that kernel TeamMember does not model — mapping is additive export, not a
+# replacement (kernel TeamMember(name, role, skills, tool_allowlist,
+# permission_mode, budget_tokens, max_concurrency) has no acceptor/deliverables).
 
 # The physical executor ids (execution layer, unchanged by business roles)
 EXECUTOR_ROLES = ("executor_node", "executor_workflow", "executor_mlx", "executor_shell")
@@ -59,6 +69,23 @@ class RoleRegistry:
             acc = f", 默认验收人={r.acceptor}" if r.acceptor else ""
             lines.append(f"- {r.role_id} (executor={r.executor}{acc}): {duties}; 交付物: {r.deliverables}")
         return "\n".join(lines)
+
+    def to_team_definition(self, name: str, namespace_key: str) -> Any:
+        # issue #494: export the whole registry as a kernel TeamDefinition —
+        # one TeamMember per business role (name=role_id, role=executor,
+        # skills=duties). Raises TeamDefError on kernel-side validation.
+        from fusion_harness.team import TeamDefinition
+
+        members = [to_team_member(r) for r in sorted(self._roles.values(), key=lambda x: x.role_id)]
+        return TeamDefinition(name=name, namespace_key=namespace_key, members=members)
+
+
+def to_team_member(role: BusinessRole) -> Any:
+    # BusinessRole -> kernel TeamMember (issue #494). duties map to skills;
+    # acceptor/deliverables have no kernel counterpart and stay cowork-only.
+    from fusion_harness.team import TeamMember
+
+    return TeamMember(name=role.role_id, role=role.executor, skills=list(role.duties or []))
 
 
 def seed_default_roles(registry: RoleRegistry) -> None:

@@ -31,6 +31,8 @@ from ...engine.node import (
 
 logger = logging.getLogger(__name__)
 
+# product-level call (roadmap §6): studio_run submits graph/agent runs to the
+# agent-studio daemon — the executed entities live there, not in-process.
 _DEFAULT_BASE_URL = "http://127.0.0.1:11442"
 
 # 对齐 agent-studio task_store._VALID_STATUSES 终态 (canceled 单 l)

@@ -8,6 +8,16 @@ run 终态后把结果作为回信投回发送方信箱, 跨仓对话无需任�
 - 推送: 本地 TeamMailbox.send 触发 wake() 立即消费; 外部 (其他 daemon)
   可调 wake() / HTTP notify 唤醒, 见 web_api 的 /api/team/notify。
 - 轮询: 兜底间隔 FUSION_INBOX_POLL_INTERVAL (默认 5s), 覆盖无通知能力的对端。
+
+issue #494 (K4) kernel convergence note: kernel TeamRuntime.run_member is NOT
+a drop-in for this pool's execution path — run_member spawns a subagent via
+the kernel SubagentRunner, while dispatch() here launches a cowork workflow
+run per rostered agent and replies through the cross-repo mailbox protocol
+(at-least-once ack, in-flight dedup, terminal-state reply collection). The
+depth/max_depth contract lives in kernel TeamDefinition; cowork's durable
+consumer semantics (ack-after-dispatch, crash replay) are stricter than the
+kernel inbox model. Documented divergence — revisit if kernel gains
+workflow-dispatch member runners.
 """
 
 from __future__ import annotations

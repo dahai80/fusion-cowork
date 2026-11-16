@@ -3790,6 +3790,8 @@ def create_web_app(
             return {"kind": "template", "definition": tpl}
         import httpx
 
+        # product-level call (roadmap §6): capability pitch instantiation starts
+        # a graph run on the agent-studio daemon — the graph lives there.
         base = (studio_base_url or os.environ.get("FUSION_AGENT_STUDIO_URL", "http://127.0.0.1:11442")).rstrip("/")
         key = (studio_api_key or os.environ.get("FUSION_AGENT_STUDIO_API_KEY", "")).strip()
         headers = {"x-api-key": key} if key else {}
@@ -3847,6 +3849,9 @@ def create_web_app(
             return {"kind": "template", "run_id": started["run_id"], "route": f"/runs/{started['run_id']}"}
         import httpx
 
+        # product-level call (roadmap §6): subagent spawn (capability pitch)
+        # submits an agent run to the agent-studio daemon — the agent runtime
+        # lives there.
         base = (studio_base_url or os.environ.get("FUSION_AGENT_STUDIO_URL", "http://127.0.0.1:11442")).rstrip("/")
         key = (studio_api_key or os.environ.get("FUSION_AGENT_STUDIO_API_KEY", "")).strip()
         headers = {"x-api-key": key} if key else {}

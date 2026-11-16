@@ -17,6 +17,8 @@ EXECUTOR_AGENT = "agent"
 KNOWN_EXECUTORS = (EXECUTOR_SIMPLE, EXECUTOR_AGENT)
 
 _AS_DEFAULT_SOCKET = "/tmp/fusion-studio.sock"
+# product-level call (roadmap §6): AgentExecutor submits/polls agent runs on
+# the agent-studio daemon (UDS or HTTP) — the agent runtime lives there.
 _AS_DEFAULT_URL = "http://127.0.0.1:11442"
 _AS_TERMINAL = frozenset({"completed", "failed", "canceled"})
 _AS_POLL_INTERVAL = 2.0

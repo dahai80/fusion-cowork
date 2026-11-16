@@ -224,6 +224,9 @@ HIGH_RISK_NODES = frozenset(
 # prefixes are trusted — never a blanket allow for http_request itself.
 # Operators override via FUSION_COWORK_TRUSTED_SYNC_URLS (comma-separated
 # prefixes; "off" disables seeding entirely).
+# product-level call (roadmap §6): approval sync targets the agent-studio
+# approvals endpoint — the approval task store lives there (deterministic
+# template-sync trust seed, never a blanket http_request allow).
 DEFAULT_TRUSTED_SYNC_URLS = ("http://127.0.0.1:11442/v1/agent-platform/approvals",)
 
 
