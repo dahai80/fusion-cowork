@@ -4606,13 +4606,26 @@ def create_web_app(
         list_merged = getattr(permission_manager, "list_pending", None)
         approvals = list_merged() if callable(list_merged) else permission_manager.list_pending_guard()
         # issue #463: durable HITL — 审批日志 pending 行兜底合并 (队列丢失仍可见, source=journal)
+        # issue #497: journal 行卫生 — 空 run_id (崩溃前未落账, 永远无法唤醒/解决) 和
+        # 终态 run 的行不再出现在待审批列表 (污染审批箱 + 跨 run 过滤器误报); 活跃
+        # run 的行照常兜底可见
         journal = getattr(engine, "_approval_journal", None)
         if journal is not None:
             try:
                 seen = {str(a.get("action_id")) for a in approvals if isinstance(a, dict)}
+                active_statuses = set(getattr(runs, "_ACTIVE_RUN_STATUSES", ())) or {"running", "pending", "paused"}
+                dropped = 0
                 for row in journal.pending():
                     aid = str(row.get("action_id") or "")
                     if not aid or aid in seen:
+                        continue
+                    rid = str(row.get("run_id") or "")
+                    if not rid:
+                        dropped += 1
+                        continue
+                    rec = runs.get(rid)
+                    if rec is not None and rec.get("status") not in active_statuses:
+                        dropped += 1
                         continue
                     approvals.append(
                         {
@@ -4625,9 +4638,11 @@ def create_web_app(
                             "ts": float(row.get("ts") or 0),
                             "workflow": str(row.get("workflow") or ""),
                             "node_id": str(row.get("node_id") or ""),
-                            "execution_id": str(row.get("run_id") or ""),
+                            "execution_id": rid,
                         }
                     )
+                if dropped:
+                    logger.info(f"审批日志 pending 卫生清理: {dropped} 条失效行不进待审批列表 (issue #497)")
             except Exception as e:
                 logger.warning(f"审批日志 pending 合并失败 (忽略): {e}")
         return {"approvals": approvals}
