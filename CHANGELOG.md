@@ -17,6 +17,13 @@ source_of_truth:
 
 # Changelog
 
+## v0.5.117 (issue #494 — node substrate + orchestrator kernel convergence, parts A/B/C)
+
+- **Part A node substrate (PR #500)**: `engine/node.py` BaseNode subclasses kernel `fusion_harness.dag_node.BaseNode` (id generation + `node_type` stamping shared); `NodeRegistry` routes registration through a kernel `NodeRegistry` instance — dup-reject (`existing is not node_class`) is kernel code, cowork mirror dict kept for alias/unregister/clear (rebuild + stale-rebuild retry on external `_registry` mutation); coercion stays local lenient per-field (kernel `coerce_params` strict all-or-nothing breaks LLM-generated params — parity gap filed upstream fusion-harness#39); `checkpoint_binding.NodeStateBinder` divergence documented (session keying `run:node` vs run_id); recovery replay test: mid-run crash on 3-node chain, same `execution_id` re-dispatch replays committed receipt without re-execution
+- **Part B orchestrator boundary (PR #501)**: `BusinessRole.to_team_member` + `RoleRegistry.to_team_definition` export the business-role catalog as kernel `TeamMember`/`TeamDefinition`; `row_to_team_message` exports mailbox rows as kernel `TeamMessage`; mailbox storage stays the cross-repo SQLite protocol with agent-studio (kernel MSG_TYPES closed set + member-only senders documented as divergence); runner_pool workflow-dispatch divergence documented; persisted-state compat tests (mailbox/roster state reloadable by fresh instances)
+- **Part C :11442 audit (PR #501)**: all 8 hardcoded agent-studio endpoints annotated `# product-level call (roadmap §6)` — every site drives agent-studio-side entities (graph/agent runs, team members, approvals store, capability catalog); grep exit criterion met
+- Tests: `tests/test_issue_494_part_a_node_substrate.py` (9) + `tests/test_issue_494_part_b_team_convergence.py` (8)
+
 ## v0.5.116 (issue #493 — kernel scoped-permissions migration boundary)
 
 - **Scope-matching delegation (#493, PR #498)**: `Permission.matches` file:/command:/url: prefix matching now delegates to `fusion_harness.scoped_permissions._scope_match` (kernel path-boundary fix adopted: `file:/data` no longer matches `/database`; same fix applied to cowork path keys `path`/`output_path`/`save_path`/`source_path` with expanduser on both scope and value); wildcard/subject/empty-params semantics preserved exactly (regression net unchanged)
