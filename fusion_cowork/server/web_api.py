@@ -5122,13 +5122,31 @@ def create_web_app(
 
                 tid = resolve_tenant_id(None)
                 try:
+                    # issue #496: live messages live on the kernel plane now —
+                    # read the last one from the plane (default state dir is
+                    # derived from the same store), legacy chat table as
+                    # read-compat fallback for pre-migration rows.
+                    from ..space.kernel_plane import SpaceKernelPlane
+
+                    plane = SpaceKernelPlane(space_store)
                     for sp in await space_store.list_spaces(limit=lim):
-                        last = await space_store._fetchone(
-                            "SELECT content, role, created_at FROM space_messages "
-                            "WHERE space_id = ? AND tenant_id = ? ORDER BY created_at DESC LIMIT 1",
-                            (sp.id, tid),
-                        )
-                        last_ts = _iso_to_epoch(last["created_at"]) if last else 0.0
+                        last: Optional[Dict[str, Any]] = None
+                        last_ts = 0.0
+                        try:
+                            recent = await plane.history(sp.id, limit=1)
+                            if recent:
+                                m0 = recent[-1]
+                                last = {"content": m0.content, "role": m0.role, "created_at": m0.created_at}
+                                last_ts = _iso_to_epoch(m0.created_at) or 0.0
+                        except (ValueError, RuntimeError) as exc:
+                            logger.debug(f"sessions plane read skipped space={sp.id}: {exc}")
+                        if last is None:
+                            last = await space_store._fetchone(
+                                "SELECT content, role, created_at FROM space_messages "
+                                "WHERE space_id = ? AND tenant_id = ? ORDER BY created_at DESC LIMIT 1",
+                                (sp.id, tid),
+                            )
+                            last_ts = _iso_to_epoch(last["created_at"]) if last else 0.0
                         created = _iso_to_epoch(sp.created_at)
                         item = {
                             "id": f"space_{sp.id}",

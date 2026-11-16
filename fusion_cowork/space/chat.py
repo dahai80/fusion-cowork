@@ -24,6 +24,7 @@ from .permission import SpacePermission
 from .store import SpaceStore
 
 if TYPE_CHECKING:
+    from .kernel_plane import SpaceKernelPlane
     from .knowledge import SpaceKBService
 
 logger = logging.getLogger(__name__)
@@ -39,12 +40,19 @@ class SpaceChatService:
         permission: SpacePermission,
         event_emitter: Optional[EventEmitter] = None,
         kb_service: Optional[SpaceKBService] = None,
+        plane: Optional[SpaceKernelPlane] = None,
     ):
         self._store = store
         self._mlx = mlx_client
         self._perm = permission
         self._events = event_emitter or EventEmitter()
         self._kb_svc = kb_service
+        # issue #496: message plane on the kernel TeamMessage runtime —
+        # in-process TeamRuntime (roster = space members + agents). Own
+        # message storage retired; legacy rows stay readable (dual-read).
+        from .kernel_plane import SpaceKernelPlane
+
+        self._plane = plane or SpaceKernelPlane(store)
         # 111: single LLM admission path — lifecycle events + context
         # compaction. context_window 9000 tokens (warning at 6000 tokens =
         # ~24000 chars) matches the pre-existing _trim_context budget.
@@ -87,15 +95,17 @@ class SpaceChatService:
     ) -> SpaceMessage:
         if not await self._perm.check(space_id, user_id, "send_message"):
             raise PermissionError(f"用户 {user_id} 无权在空间 {space_id} 发送消息")
-        msg = SpaceMessage(
-            space_id=space_id,
-            user_id=user_id,
+        # issue #496: writes land on the kernel TeamMessage plane (member-
+        # validated, inbox-file-confirmed) — no space-internal message row.
+        msg = await self._plane.send(
+            space_id,
+            sender_id=user_id,
+            sender_is_agent=False,
             content=content,
             content_type=content_type,
             attachments=attachments or [],
             parent_msg_id=parent_msg_id,
         )
-        msg = await self._store.add_message(msg)
         await self._emit(space_id, "message", msg.to_dict())
         logger.info(f"SpaceChat.send_message space={space_id} user={user_id} msg={msg.id}")
         if agent_id:
@@ -113,16 +123,16 @@ class SpaceChatService:
     ) -> AsyncIterator[str]:
         if not await self._perm.check(space_id, user_id, "send_message"):
             raise PermissionError(f"用户 {user_id} 无权在空间 {space_id} 发送消息")
-        user_msg = SpaceMessage(
-            space_id=space_id,
-            user_id=user_id,
+        user_msg = await self._plane.send(
+            space_id,
+            sender_id=user_id,
+            sender_is_agent=False,
             content=content,
             attachments=attachments or [],
         )
-        user_msg = await self._store.add_message(user_msg)
         await self._emit(space_id, "message", user_msg.to_dict())
 
-        context = await self._store.get_messages(space_id, limit=100)
+        context = await self._plane.history(space_id, limit=100)
         messages = self._build_messages(context)
 
         instructions = await self._space_instructions(space_id)
@@ -168,26 +178,22 @@ class SpaceChatService:
             await self._emit(space_id, "error", {"agent_id": agent_id, "error": str(e), "partial": len(full_response)})
             partial = "".join(full_response)
             if partial:
-                interrupted = SpaceMessage(
-                    space_id=space_id,
-                    user_id="",
-                    agent_id=agent_id,
+                interrupted = await self._plane.send(
+                    space_id,
+                    sender_id=agent_id,
+                    sender_is_agent=True,
                     content=partial + "\n[响应中断]",
-                    role="assistant",
                 )
-                await self._store.add_message(interrupted)
                 await self._emit(space_id, "message_complete", interrupted.to_dict())
             raise
 
         complete = "".join(full_response)
-        assistant_msg = SpaceMessage(
-            space_id=space_id,
-            user_id="",
-            agent_id=agent_id,
+        assistant_msg = await self._plane.send(
+            space_id,
+            sender_id=agent_id,
+            sender_is_agent=True,
             content=complete,
-            role="assistant",
         )
-        assistant_msg = await self._store.add_message(assistant_msg)
         await self._emit(space_id, "message_complete", assistant_msg.to_dict())
         self._llm_funnel.post_llm(funnel_ctx, node_label="space_stream", model=model)
         logger.info(f"SpaceChat.stream_message space={space_id} agent={agent_id} len={len(complete)}")
@@ -200,7 +206,7 @@ class SpaceChatService:
         model: str = "",
     ) -> None:
         try:
-            context = await self._store.get_messages(space_id, limit=100)
+            context = await self._plane.history(space_id, limit=100)
             agent_def = await self._store.get_agent_def(space_id, agent_id)
             if not agent_def:
                 logger.warning(f"Agent {agent_id} not found in space {space_id}")
@@ -236,14 +242,12 @@ class SpaceChatService:
                 await self._emit(space_id, "stream", {"chunk": chunk})
 
             complete = "".join(full_response)
-            assistant_msg = SpaceMessage(
-                space_id=space_id,
-                user_id="",
-                agent_id=agent_id,
+            assistant_msg = await self._plane.send(
+                space_id,
+                sender_id=agent_id,
+                sender_is_agent=True,
                 content=complete,
-                role="assistant",
             )
-            assistant_msg = await self._store.add_message(assistant_msg)
             await self._emit(space_id, "message_complete", assistant_msg.to_dict())
             self._llm_funnel.post_llm(funnel_ctx, node_label="space_agent", model=model)
             logger.info(f"SpaceChat._agent_respond space={space_id} agent={agent_id}")
@@ -351,7 +355,7 @@ class SpaceChatService:
         space_id: str,
         limit: int = 100,
     ) -> List[SpaceMessage]:
-        return await self._store.get_messages(space_id, limit=limit)
+        return await self._plane.history(space_id, limit=limit)
 
     async def relay_agents(
         self,
@@ -369,12 +373,12 @@ class SpaceChatService:
         total_agents = sum(len(g) if isinstance(g, list) else 1 for g in agent_ids)
         if total_agents < 2:
             raise ValueError("relay_agents requires at least 2 agents")
-        user_msg = SpaceMessage(
-            space_id=space_id,
-            user_id=user_id,
+        user_msg = await self._plane.send(
+            space_id,
+            sender_id=user_id,
+            sender_is_agent=False,
             content=initial_message,
         )
-        user_msg = await self._store.add_message(user_msg)
         await self._emit(space_id, "message", user_msg.to_dict())
 
         # P1-3 (audit 0912): relay used to break on the first agent failure,
@@ -429,14 +433,12 @@ class SpaceChatService:
                         write_task_step(space_id, aid, "reply", reply)
                     except Exception:
                         pass
-                    assistant_msg = SpaceMessage(
-                        space_id=space_id,
-                        user_id="",
-                        agent_id=aid,
+                    assistant_msg = await self._plane.send(
+                        space_id,
+                        sender_id=aid,
+                        sender_is_agent=True,
                         content=reply,
-                        role="assistant",
                     )
-                    assistant_msg = await self._store.add_message(assistant_msg)
                     await self._emit(space_id, "message", assistant_msg.to_dict())
                     return {"agent_id": aid, "content": reply}
                 except Exception as e:
@@ -454,7 +456,7 @@ class SpaceChatService:
                     return {"agent_id": aid, "error": str(e)}
 
             # v2 P2: fetch the group's context once, share across members
-            group_context = await self._store.get_messages(space_id, limit=100)
+            group_context = await self._plane.history(space_id, limit=100)
             # 方案二 (audit v3): pull recent task_step events (tool outputs,
             # per-agent failures from earlier stages) into the shared context —
             # they never go through the chat table, so a restart wiped the
@@ -525,7 +527,16 @@ class SpaceChatService:
         limit: int = 100,
         offset: int = 0,
     ) -> List[SpaceMessage]:
-        return await self._store.get_messages(space_id, limit=limit, offset=offset)
+        # issue #497 hygiene applies upstream of this route; #496 dual-read:
+        # the kernel plane is the live store — "space-internal message store writes" are
+        # retired; pre-migration chat-table rows stay readable here (read-compat
+        # only, roadmap §7.3 transition).
+        plane_msgs = await self._plane.history(space_id, limit=limit + offset)
+        legacy = await self._store.get_messages(space_id, limit=limit + offset)
+        seen = {m.id for m in plane_msgs}
+        merged = plane_msgs + [m for m in legacy if m.id not in seen]
+        merged.sort(key=lambda m: (m.created_at, m.id))
+        return merged[offset : offset + limit]
 
     async def _emit(self, space_id: str, event_name: str, data: dict) -> None:
         event = WorkflowEvent(

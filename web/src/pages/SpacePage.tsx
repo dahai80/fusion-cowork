@@ -1,17 +1,12 @@
+import { ChatView } from '@fusion/chat';
 import { EmptyState, ErrorState, SkeletonLines } from '@fusion/web-ui';
 import { useAutoRetry } from '@fusion/web-ui';
-import { useEffect, useState } from 'react';
-import {
-    type ArtifactReview,
-    type DiffBlock,
-    type SpaceArtifact,
-    type SpaceInfo,
-    type SpaceMessage,
-    api,
-} from '../api';
+import { useEffect, useMemo, useState } from 'react';
+import { type ArtifactReview, type DiffBlock, type SpaceArtifact, type SpaceInfo, api } from '../api';
 import { useT } from '../i18n';
 import { preferredModel } from '../modelPref';
-import { sdk, streamSse } from '../sdk';
+import { sdk } from '../sdk';
+import { SpaceChatAdapter } from '../spaceChatAdapter';
 
 // W12/W13/W10: collaboration space surface — list + create (W12), chat with
 // 5s polling (W13; SSE stream exists server-side, polling survives gateway
@@ -141,65 +136,17 @@ export function SpacePage() {
 function SpaceDetail({ spaceId }: { spaceId: string }) {
     const t = useT();
     const [tab, setTab] = useState<Tab>('messages');
-    const [draft, setDraft] = useState('');
-    const [sending, setSending] = useState(false);
-    const [reloadKey, setReloadKey] = useState(0);
     const [artifactPreview, setArtifactPreview] = useState<SpaceArtifact | null>(null);
     // #149: 产物就地修订 — 预览内选中文本触发
     const [selText, setSelText] = useState('');
 
-    const msgs = useAutoRetry(() => api.spaceMessages(spaceId), [spaceId, reloadKey]);
     const members = useAutoRetry(() => api.spaceMembers(spaceId), [spaceId]);
-    const artifacts = useAutoRetry(() => api.spaceArtifacts(spaceId), [spaceId, reloadKey]);
+    const artifacts = useAutoRetry(() => api.spaceArtifacts(spaceId), [spaceId]);
 
-    // W13/B2: SSE 实时聊天; 连不上回落 5s 轮询
-    const [sseOk, setSseOk] = useState(false);
-    useEffect(() => {
-        const ac = new AbortController();
-        setSseOk(false);
-        streamSse(
-            `/api/space/spaces/${encodeURIComponent(spaceId)}/stream`,
-            (event) => {
-                if (event === 'ready') {
-                    setSseOk(true);
-                    return;
-                }
-                if (event.endsWith(':message')) {
-                    setReloadKey((k) => k + 1);
-                }
-            },
-            ac.signal
-        )
-            .then(() => setSseOk(false))
-            .catch((e) => {
-                if (!ac.signal.aborted) {
-                    console.warn('[cowork-web] space SSE unavailable, polling fallback', e);
-                    setSseOk(false);
-                }
-            });
-        return () => ac.abort();
-    }, [spaceId]);
-
-    useEffect(() => {
-        if (sseOk) return;
-        const timer = window.setInterval(() => setReloadKey((k) => k + 1), 5000);
-        return () => window.clearInterval(timer);
-    }, [sseOk]);
-
-    async function send() {
-        if (sending || !draft.trim()) return;
-        setSending(true);
-        try {
-            await api.sendSpaceMessage(spaceId, draft.trim(), preferredModel());
-            setDraft('');
-            setReloadKey((k) => k + 1);
-        } catch (e) {
-            console.error('[cowork-web] space send failed', e);
-            sdk.toast.show({ level: 'error', message: t('发送失败', 'Send failed') });
-        } finally {
-            setSending(false);
-        }
-    }
+    // issue #496: chat via the plane-agnostic @fusion/chat component — the
+    // adapter maps the space REST surface; the kernel TeamMessage runtime is
+    // the backend plane (mentions validated server-side by kernel members).
+    const chatAdapter = useMemo(() => new SpaceChatAdapter(spaceId, preferredModel()), [spaceId]);
 
     async function openArtifact(aid: string) {
         try {
@@ -258,47 +205,8 @@ function SpaceDetail({ spaceId }: { spaceId: string }) {
                 ))}
             </div>
             {tab === 'messages' ? (
-                <div>
-                    <div className="max-h-96 space-y-2 overflow-y-auto py-2">
-                        {(msgs.data ?? []).length === 0 ? (
-                            <EmptyState title={t('暂无消息', 'No messages')} />
-                        ) : (
-                            (msgs.data ?? []).map((m: SpaceMessage) => (
-                                <div key={m.id} className="rounded-md border border-border bg-bg p-2">
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-xs font-medium text-text-primary">{m.user_id}</span>
-                                        {m.created_at ? (
-                                            <span className="font-mono text-[10px] text-text-muted">
-                                                {new Date(m.created_at).toLocaleString()}
-                                            </span>
-                                        ) : null}
-                                    </div>
-                                    <div className="mt-1 whitespace-pre-wrap text-sm text-text-secondary">
-                                        {m.content}
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                    <div className="flex gap-2 pt-2">
-                        <input
-                            className="min-w-0 flex-1 rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
-                            placeholder={t('输入消息…', 'Type a message…')}
-                            value={draft}
-                            onChange={(e) => setDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter') void send();
-                            }}
-                        />
-                        <button
-                            type="button"
-                            className="rounded-md bg-brand px-3 py-1 text-sm text-white hover:opacity-90 disabled:opacity-50"
-                            disabled={sending || !draft.trim()}
-                            onClick={() => void send()}
-                        >
-                            {t('发送', 'Send')}
-                        </button>
-                    </div>
+                <div className="py-2" style={{ height: '26rem' }}>
+                    <ChatView adapter={chatAdapter} selfId="local_user" />
                 </div>
             ) : null}
             {tab === 'members' ? (
