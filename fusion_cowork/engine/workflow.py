@@ -2075,6 +2075,9 @@ class WorkflowEngine:
         if journal is not None:
             prior = journal.decision_for(exec_id, node.id)
             if prior is not None:
+                # issue #507: 重放即消费 — 该决定只对本轮闸门评估有效, 修订回路
+                # (issue #328) 对同一节点的下一次评估必须重新走新鲜审批
+                journal.consume_run_node(exec_id, node.id)
                 logger.info(
                     f"[{exec_id}] HITL durable replay: 节点 {node.id} 日志决定 "
                     f"approved={bool(prior.get('approved'))} (by {prior.get('decided_by') or '-'}), 跳过等待"
@@ -2183,11 +2186,16 @@ class WorkflowEngine:
                 if removed:
                     logger.info(f"[{exec_id}] HITL: 超时清理 {len(removed)} 条滞留待审批项")
             # issue #463: 超时自动拒绝也落账 — 重放语义与实时决定一致
+            # issue #507: 超时决定同样即时消费 — 修订回路重问闸门必须走新鲜审批
             if journal is not None:
                 try:
                     journal.resolve_run(exec_id, False, decided_by="timeout")
                 except Exception as e:
                     logger.warning(f"[{exec_id}] HITL journal timeout resolve failed (ignored): {e}")
+                try:
+                    journal.consume_run_node(exec_id, node.id)
+                except Exception as e:
+                    logger.warning(f"[{exec_id}] HITL journal timeout consume failed (ignored): {e}")
             logger.warning(f"[{exec_id}] HITL: 节点 '{node.name}' 审批等待超时 ({self._hitl_timeout:g}s), 自动拒绝")
             self._fire_hitl_email(exec_id, node, check_input, "resolved", "timeout_auto_denied")
             if self._hook_manager:
@@ -2203,6 +2211,13 @@ class WorkflowEngine:
                 )
             return False
         approved = self._hitl_decisions.pop(exec_id, None)
+        # issue #507: 决定即消费 — resolve_hitl 已落账 (resolve_run), 这里引擎采用决定;
+        # 不消费会让修订回路 (issue #328) 的下一次闸门评估重放旧决定, 直接拒绝不走审批
+        if journal is not None:
+            try:
+                journal.consume_run_node(exec_id, node.id)
+            except Exception as e:
+                logger.warning(f"[{exec_id}] HITL journal consume failed (ignored): {e}")
         # issue #303: 决定来源落到闸门 blocked 步骤 — 时间线/步骤抽屉可回答 "谁批准的"
         attribution = self._hitl_attributions.pop(exec_id, None)
         if attribution:
