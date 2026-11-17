@@ -176,9 +176,10 @@ class TestReplayStillWorksAfterRestart:
 
         eng._permission_manager.check = _fresh_check
         finder = eng._permission_manager.find_pending_by_execution
-        eng._permission_manager.find_pending_by_execution = (
-            lambda exec_id: {"action_id": "act-507-fresh", "execution_id": exec_id}
-        )
+        eng._permission_manager.find_pending_by_execution = lambda exec_id: {
+            "action_id": "act-507-fresh",
+            "execution_id": exec_id,
+        }
         try:
             task = asyncio.create_task(eng._hitl_await("run-507-replay", _wf({}), node, {}))
             await asyncio.sleep(0.1)
