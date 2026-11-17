@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.120
+version: 0.5.121
 updated: 2026-11-17
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,12 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.121 (issue #509 — NL generator strips hallucinated file paths)
+
+- **Deterministic path sanitize (#509, PR #512)**: the NL delegation generator could invent local paths the user never gave (e.g. `~/Documents/支出记录`), so the first run always failed on a nonexistent path. Post-parse sanitize now blanks any path-like param value (`~/`, `/`, `./`, `../` prefixed; `scheme://` URLs excepted) that does not appear in the user prompt or context, records it in `workflow_def["warnings"]`, and logs the removal; user/context-provided paths pass through untouched. `SYSTEM_PROMPT` forbids inventing paths (sanitize does not rely on prompt compliance)
+- **Preview surface**: `chat-delegate` plan carries `warnings`; DelegatePage renders an amber warning banner so blanked paths are visible and fillable before approval
+- Tests: `tests/test_issue_509_nl_path_hallucination.py` (10: blank+warning, user/context path kept, URL untouched, dot-relative checked, non-path params untouched, generator e2e via mocked mlx client, prompt rule)
 
 ## v0.5.120 (issue #507 — journal HITL decisions consumed on use)
 
