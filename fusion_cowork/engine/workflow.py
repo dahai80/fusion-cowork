@@ -797,6 +797,8 @@ class WorkflowEngine:
         self._hitl_attributions: Dict[str, Dict[str, Any]] = {}
         # issue #309: exec_id -> 逐项决定 items[] — 唤醒后作为 batch_verdict 并入被闸节点输入
         self._hitl_batch_verdicts: Dict[str, List[Dict[str, Any]]] = {}
+        # issue #508: exec_id -> 结构化人工回复 — 唤醒后作为 human_reply 并入被闸节点输入/输出
+        self._hitl_replies: Dict[str, Dict[str, Any]] = {}
         # issue #328: 修订回路 — 拒绝评审意见暂存 + 待回退修订请求 + 重跑意见注入 + 次数账本
         self._hitl_comments: Dict[str, str] = {}
         self._pending_revisions: Dict[str, Dict[str, Any]] = {}
@@ -804,6 +806,8 @@ class WorkflowEngine:
         self._revision_counts: Dict[str, Dict[str, int]] = {}
         # 正挂在 HITL 等待点的 run 集合 (与 W8 手动暂停区分)
         self._hitl_waiting: Set[str] = set()
+        # issue #508: exec_id -> 等待中的节点 id — awaiting_human 分支状态可见
+        self._hitl_waiting_node: Dict[str, str] = {}
         # W8/B1: 运行改向指令队列 — 节点边界应用 (set_params/skip_remaining/insert_node)
         self._directives: Dict[str, List[Dict[str, Any]]] = {}
         self._progress_callbacks: List[callable] = []
@@ -1292,9 +1296,11 @@ class WorkflowEngine:
             if hitl_residue:
                 logger.warning(f"[{exec_id}] run 终态清理 HITL 残留状态 (waiting/deadline)")
             self._hitl_waiting.discard(exec_id)
+            self._hitl_waiting_node.pop(exec_id, None)
             self._hitl_deadlines.pop(exec_id, None)
             self._hitl_attributions.pop(exec_id, None)
             self._hitl_batch_verdicts.pop(exec_id, None)
+            self._hitl_replies.pop(exec_id, None)
             # issue #328: 修订回路状态兜底清理
             self._hitl_comments.pop(exec_id, None)
             self._pending_revisions.pop(exec_id, None)
@@ -1520,6 +1526,12 @@ class WorkflowEngine:
                         check_input["batch_verdict"] = batch
                         rejected = sum(1 for item in batch if not item.get("approved"))
                         logger.info(f"[{exec_id}] HITL: 逐项决定并入节点输入: {len(batch)} 项, 拒绝 {rejected} 项")
+                    # issue #508: 结构化人工回复 — human_reply 并入被闸节点输入 (下游经闸门输出透传)
+                    human_reply = self._hitl_replies.pop(exec_id, None)
+                    if allowed and human_reply:
+                        node_input["human_reply"] = human_reply
+                        check_input["human_reply"] = human_reply
+                        logger.info(f"[{exec_id}] HITL: 结构化人工回复并入节点输入: {sorted(human_reply)}")
             if not allowed:
                 logger.warning(f"节点 '{node.name}' 被权限系统拒绝执行")
                 step = WorkflowStep(
@@ -1955,6 +1967,10 @@ class WorkflowEngine:
         # issue #181: 该 run 是否正挂在 HITL 审批等待点
         return execution_id in self._hitl_waiting
 
+    def hitl_waiting_node(self, execution_id: str) -> Optional[str]:
+        # issue #508: awaiting_human 分支状态 — 正等待人工决定的节点 id
+        return self._hitl_waiting_node.get(execution_id)
+
     def set_run_hitl_pause(self, execution_id: str, enabled: bool) -> None:
         # issue #260: per-run HITL 覆盖 — True/False 显式覆盖引擎全局闸门语义
         self._hitl_pause_overrides[execution_id] = bool(enabled)
@@ -1972,12 +1988,15 @@ class WorkflowEngine:
         attribution: Optional[Dict[str, Any]] = None,
         batch: Optional[List[Dict[str, Any]]] = None,
         comments: Optional[str] = None,
+        reply: Optional[Dict[str, Any]] = None,
     ) -> bool:
         # issue #303: attribution — 决定来源 {approval_id, decided_by, decided_at},
         # 随唤醒落到被闸节点的 blocked 步骤上, 时间线可回答 "谁批准的"
         # issue #309: batch — 逐项决定 items[] ({task_issue, approved, reason?});
         # 全批 = approved 语义不变, 混合 = run 继续 + batch_verdict 并入被闸节点输入,
         # 由下游节点/状态写承接 (部分完成可见)
+        # issue #508: reply — 结构化人工回复 (审批卡选项/webhook payload),
+        # 批准时作为 human_reply 并入被闸节点输入, 闸门输出透传给下游
         # issue #181: 审批路由回调 — 记录决定并唤醒暂停中的 run; cancel 共用同一事件
         # issue #187: once=True 一次性批准 — 不落规则, 唤醒后跳过权限复查直接放行本节点
         # issue #225: params — 审批卡 "编辑参数" 后的覆盖, 批准时并入被闸节点输入
@@ -2005,6 +2024,9 @@ class WorkflowEngine:
             self._hitl_attributions[execution_id] = dict(attribution)
         if isinstance(batch, list) and batch:
             self._hitl_batch_verdicts[execution_id] = [dict(x) for x in batch if isinstance(x, dict)]
+        # issue #508: 结构化人工回复暂存 — 唤醒后并入被闸节点输入
+        if isinstance(reply, dict) and reply and approved:
+            self._hitl_replies[execution_id] = dict(reply)
         # issue #328: 拒绝评审意见 — 修订回路重跑时并入产出节点输入
         if not approved and isinstance(comments, str) and comments.strip():
             self._hitl_comments[execution_id] = comments.strip()
@@ -2093,7 +2115,16 @@ class WorkflowEngine:
         # 通知审批人 (复用 NOTIFICATION hook), 待审批项本身已入 PermissionManager 队列
         # issue #191: 先置 _hitl_waiting 再发事件 — 事件回调里持久化才能看到 hitl_pending
         self._hitl_waiting.add(exec_id)
-        self._hitl_deadlines[exec_id] = time.time() + self._hitl_timeout
+        self._hitl_waiting_node[exec_id] = node.id
+        # issue #508: 节点级超时策略 — timeout_policy.timeout_s 覆盖引擎全局默认
+        policy = node.config.params.get("timeout_policy") if isinstance(node.config.params, dict) else None
+        policy_timeout_s = 0.0
+        if isinstance(policy, dict):
+            try:
+                policy_timeout_s = max(0.0, float(policy.get("timeout_s") or 0))
+            except (TypeError, ValueError):
+                policy_timeout_s = 0.0
+        self._hitl_deadlines[exec_id] = time.time() + (policy_timeout_s or self._hitl_timeout)
         # issue #463: 闸门入口 pending 落账 — SQLite 持久, 崩溃后审批队列可重建
         if journal is not None:
             entry = finder(exec_id) or {}
@@ -2177,7 +2208,12 @@ class WorkflowEngine:
                 f"(剩余 {max(self._hitl_deadlines.get(exec_id, 0) - time.time(), 0):.0f}s)"
             )
         self._hitl_waiting.discard(exec_id)
+        self._hitl_waiting_node.pop(exec_id, None)
         self._hitl_deadlines.pop(exec_id, None)
+        # issue #508: 节点级 on_timeout — "deny" 走通用拒绝路径 (修订回路照常登记),
+        # 默认/其他值保持 fail-fast 终态 (分支直接失败, 不进修订)
+        policy = node.config.params.get("timeout_policy") if isinstance(node.config.params, dict) else None
+        timeout_deny = bool(isinstance(policy, dict) and str(policy.get("on_timeout") or "") == "deny")
         if timed_out:
             # 清掉权限队列里的滞留待审批项, 防审批队列无限膨胀
             discard = getattr(self._permission_manager, "discard_pending_by_execution", None)
@@ -2209,8 +2245,17 @@ class WorkflowEngine:
                         "message": f"节点 '{node.name}' 审批等待超时, 已自动拒绝 (run={exec_id})",
                     },
                 )
-            return False
-        approved = self._hitl_decisions.pop(exec_id, None)
+            if not timeout_deny:
+                return False
+            # issue #508: on_timeout="deny" — 合成拒绝决定, 走下方通用拒绝处理
+            # (on_reject=revise 修订回路照常登记); journal 已落账并消费。
+            # HITL 等待借用了 W8 暂停事件并 clear, fail-fast 终态直接 break 无影响,
+            # 但 deny 修订回路要继续主循环 — 必须恢复事件, 否则挂在 W8 检查点
+            evt.set()
+            approved = False
+            timed_out = False
+        else:
+            approved = self._hitl_decisions.pop(exec_id, None)
         # issue #507: 决定即消费 — resolve_hitl 已落账 (resolve_run), 这里引擎采用决定;
         # 不消费会让修订回路 (issue #328) 的下一次闸门评估重放旧决定, 直接拒绝不走审批
         if journal is not None:

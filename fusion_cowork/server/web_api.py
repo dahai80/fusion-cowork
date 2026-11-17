@@ -2273,6 +2273,12 @@ def create_web_app(
                 deadline = deadline_getter(run_id) if callable(deadline_getter) else None
                 if deadline is not None:
                     record["hitl_deadline"] = deadline
+                # issue #508: awaiting_human 分支状态 — 谁在等人工决定
+                record["awaiting_human"] = True
+                waiting_node = getattr(engine, "hitl_waiting_node", None)
+                awaiting_node = waiting_node(run_id) if callable(waiting_node) else None
+                if awaiting_node:
+                    record["awaiting_node"] = awaiting_node
         return record
 
     # ── W10/B5 运行产物预览 (右栏, 实时随步骤输出刷新) ──
@@ -4680,6 +4686,8 @@ def create_web_app(
         if callable(details_getter):
             hitl_exec = (details_getter(action_id) or {}).get("execution_id") or None
         # issue #187: "Approve once" — 只出队该待审批项, 不落持久规则, 直接唤醒暂停中的 run
+        # issue #508: reply — 结构化人工回复, 随批准并入被闸节点输入 (下游经闸门输出透传)
+        reply = body.get("reply") if isinstance(body.get("reply"), dict) else None
         if body.get("once") and hitl_exec:
             releaser = getattr(permission_manager, "release_pending_once", None)
             released = releaser(action_id) if callable(releaser) else False
@@ -4696,13 +4704,16 @@ def create_web_app(
                         "decided_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     }
                     try:
-                        resolver(hitl_exec, True, once=True, params=edited, attribution=attribution)
+                        resolver(hitl_exec, True, once=True, params=edited, attribution=attribution, reply=reply)
                     except TypeError:
                         try:
-                            resolver(hitl_exec, True, once=True)
+                            resolver(hitl_exec, True, once=True, params=edited, attribution=attribution)
                         except TypeError:
-                            # 兼容无 once 参数的旧引擎 — 规则未落, 复查会拒绝但 run 被唤醒
-                            resolver(hitl_exec, True)
+                            try:
+                                resolver(hitl_exec, True, once=True)
+                            except TypeError:
+                                # 兼容无 once 参数的旧引擎 — 规则未落, 复查会拒绝但 run 被唤醒
+                                resolver(hitl_exec, True)
                 logger.info(f"HITL 一次性批准已唤醒 run: {hitl_exec} (action_id={action_id}, 不落规则)")
                 _schedule_hitl_audit(app, hitl_exec, action_id, True, "web")
                 return {"action_id": action_id, "approved": True, "confirmed": True, "once": True}
@@ -4743,6 +4754,7 @@ def create_web_app(
                             "decided_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                         },
                         comments=None if approved else reject_comment,
+                        reply=reply if approved else None,
                     )
                 except TypeError:
                     resolver(hitl_exec, approved)

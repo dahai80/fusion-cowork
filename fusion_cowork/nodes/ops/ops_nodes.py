@@ -786,6 +786,7 @@ class ApprovalGateNode(BaseNode):
     outputs = [
         {"key": "approved", "label": "审批结论", "type": "boolean"},
         {"key": "payload", "label": "透传内容", "type": "object"},
+        {"key": "human_reply", "label": "人工回复", "type": "object"},
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -799,6 +800,19 @@ class ApprovalGateNode(BaseNode):
                     "type": "boolean",
                     "default": True,
                     "description": "false = 免评审 (intake review_arch=false), 节点自动通过记录 auto_passed",
+                },
+                # issue #508: 节点级超时策略 — timeout_s 覆盖引擎默认, on_timeout 决定超时走法
+                "timeout_policy": {
+                    "type": "object",
+                    "description": "等待审批超时策略 {timeout_s: 秒, on_timeout: deny|fail}",
+                    "properties": {
+                        "timeout_s": {"type": "number", "description": "审批等待超时秒数 (覆盖引擎全局默认)"},
+                        "on_timeout": {
+                            "type": "string",
+                            "enum": ["deny", "fail"],
+                            "description": "deny = 合成拒绝走修订回路; fail (默认) = 分支直接失败终态",
+                        },
+                    },
                 },
             },
             "required": ["prompt"],
@@ -839,6 +853,11 @@ class ApprovalGateNode(BaseNode):
             rejected = []
             summary = f"人工批准: {prompt[:40]}"
             logger.info(f"approval_gate 通过: {prompt[:80]}")
+        # issue #508: 结构化人工回复透传 — 下游节点经闸门输出读取 human_reply
+        human_reply = inputs.get("human_reply") or {}
+        if isinstance(human_reply, dict) and human_reply:
+            summary += f" +回复({len(human_reply)}项)"
+            logger.info(f"approval_gate 人工回复透传: {sorted(human_reply)}")
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={
@@ -848,6 +867,7 @@ class ApprovalGateNode(BaseNode):
                 "details": details,
                 "batch_verdict": batch,
                 "rejected_items": rejected,
+                "human_reply": human_reply if isinstance(human_reply, dict) else {},
             },
             summary=summary,
         )
