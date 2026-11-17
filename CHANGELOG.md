@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.121
+version: 0.5.122
 updated: 2026-11-17
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,13 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.122 (issue #508 — approval checkpoint extensions)
+
+- **Structured human reply (#508, PR #514)**: `resolve_hitl(..., reply={...})` stashes the payload on approve; the engine merges it into the gated node input as `human_reply` (same seam as `edited_params` #225 / `batch_verdict` #309) and `approval_gate` passes it through to its output data so downstream nodes read the human's answer; web confirm route accepts `reply` on both the once-approve and confirm paths (TypeError fallback chains kept)
+- **Per-node timeout policy**: `approval_gate.timeout_policy.timeout_s` overrides the engine-global `FUSION_COWORK_HITL_TIMEOUT` deadline; `on_timeout: "deny"` synthesizes a deny decision routed through the common deny path (revision loop registers, journal settled + consumed), default stays fail-fast terminal; the W8 pause event — borrowed and cleared by the HITL wait — is restored on the deny path, otherwise the revision loop hangs at the W8 checkpoint
+- **Awaiting branch state**: `engine.hitl_waiting_node(run_id)` exposes which node waits on a human decision; run detail exposes `awaiting_human`/`awaiting_node`
+- Tests: `tests/test_issue_508_approval_checkpoint.py` (10: reply flow into gate input/output/downstream, reply ignored on deny, timeout override, timeout-deny revision re-ask, malformed policy fallback, awaiting state + run detail + web reply wiring, gate unit passthrough + schema)
 
 ## v0.5.121 (issue #509 — NL generator strips hallucinated file paths)
 
