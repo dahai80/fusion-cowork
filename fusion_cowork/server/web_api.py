@@ -2998,6 +2998,10 @@ def create_web_app(
             "description": record.get("description", ""),
             "steps": plan_steps,
         }
+        # issue #509: 幻觉路径提示 — 生成器剔除的未验证路径透传给预览卡
+        gen_warnings = workflow.get("warnings")
+        if isinstance(gen_warnings, list) and gen_warnings:
+            plan["warnings"] = [str(w) for w in gen_warnings]
 
         if simple:
             try:

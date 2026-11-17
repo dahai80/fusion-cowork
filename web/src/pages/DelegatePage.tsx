@@ -101,6 +101,15 @@ function ChatResultCard({
                     </div>
                 ))}
             </div>
+            {result.plan.warnings && result.plan.warnings.length > 0 ? (
+                <div className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5">
+                    {result.plan.warnings.map((w, i) => (
+                        <div key={i} className="text-xs text-amber-600 dark:text-amber-400">
+                            {w}
+                        </div>
+                    ))}
+                </div>
+            ) : null}
             {!run && result.mode === 'plan' ? (
                 <div className="mt-2 flex items-center justify-end gap-2">
                     <button
