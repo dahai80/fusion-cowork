@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 from .mlx_client import FusionMLXClient
@@ -108,6 +109,9 @@ SYSTEM_PROMPT = """你是一个 macOS 桌面自动化工作流生成器。将用
   ]
 }
 
+路径规则: 只能使用用户在需求里明确给出的路径。用户没有给出路径时, 对应参数
+填空字符串 "" 留待用户在参数面板填写, 严禁编造任何不存在的文件/目录路径。
+
 只返回 JSON，不要其他解释。"""
 
 
@@ -172,6 +176,52 @@ def _pick_chat_model(models: List[Dict[str, Any]]) -> str:
         if any(k in low for k in prefer_keywords):
             return mid
     return chat_candidates[0]
+
+
+_PATH_LIKE_RE = re.compile(r"^(?:~|/|\./|\.\./)[^\s]*$")
+
+
+def _sanitize_generated_paths(workflow_def: Dict[str, Any], user_input: str, context: Optional[Dict[str, Any]]) -> None:
+    """issue #509: 剔除 LLM 幻觉出的文件路径 (确定性兜底, 不依赖提示词遵从)。
+
+    参数值形如绝对/家目录/相对路径 (~开头、/开头、./ ../开头) 且未出现在
+    用户输入或上下文中 → 判为幻觉, 置空留待用户填写, 并写入 workflow_def
+    ["warnings"] 供前端预览卡提示。
+    """
+    import re as _re
+
+    haystack = user_input or ""
+    if context:
+        try:
+            haystack += " " + json.dumps(context, ensure_ascii=False)
+        except (TypeError, ValueError):
+            pass
+
+    warnings: List[str] = []
+    for node in workflow_def.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        params = (node.get("config") or {}).get("params")
+        if not isinstance(params, dict):
+            continue
+        for key, value in list(params.items()):
+            if not isinstance(value, str) or not _PATH_LIKE_RE.match(value.strip()):
+                continue
+            if value.strip() in haystack:
+                continue
+            # #509: URL/协议前缀不是本地路径, 不动
+            if _re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", value.strip()):
+                continue
+            params[key] = ""
+            msg = f"节点 '{node.get('id')}' 参数 '{key}' 的路径 '{value}' 未在需求中出现, 已置空待用户填写 (issue #509)"
+            warnings.append(msg)
+            logger.warning(f"NL 生成剔除疑似幻觉路径: node={node.get('id')} param={key} value={value}")
+    if warnings:
+        existing = workflow_def.get("warnings")
+        if isinstance(existing, list):
+            existing.extend(warnings)
+        else:
+            workflow_def["warnings"] = warnings
 
 
 class NLWorkflowGenerator:
@@ -284,6 +334,12 @@ class NLWorkflowGenerator:
                     workflow_def["nodes"] = kept
             except Exception as ve:
                 logger.debug(f"NL 节点名校验跳过 (NodeRegistry 未就绪): {ve}")
+
+            # issue #509: 幻觉路径确定性剔除 — 未在用户输入/上下文出现的路径参数置空
+            try:
+                _sanitize_generated_paths(workflow_def, user_input, context)
+            except Exception as se:
+                logger.warning(f"NL 路径净化跳过 (非阻断): {se}")
 
             logger.info(f"成功生成工作流: {workflow_def['name']} ({len(workflow_def['nodes'])} 个节点)")
             return workflow_def

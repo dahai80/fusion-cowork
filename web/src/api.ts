@@ -164,7 +164,12 @@ export interface ChatDelegateResult {
     mode: 'auto' | 'plan';
     workflow_id: string;
     run_id?: string;
-    plan: { name: string; description: string; steps: { node: string; display: string; label: string }[] };
+    plan: {
+        name: string;
+        description: string;
+        steps: { node: string; display: string; label: string }[];
+        warnings?: string[];
+    };
 }
 
 export interface FileReadResult {
