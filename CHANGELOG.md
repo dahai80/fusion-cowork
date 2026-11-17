@@ -7,8 +7,8 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.119
-updated: 2026-11-09
+version: 0.5.120
+updated: 2026-11-17
 owner: "@dahai"
 source_of_truth:
   - CHANGELOG.md
@@ -16,6 +16,12 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.120 (issue #507 — journal HITL decisions consumed on use)
+
+- **Regression fix (#507, PR #510)**: nightly-20261117 flagged cowork gate/revision tasks looping to `error_max_turns` (c12/c22/c23; degraded streak since 11-14). Root cause: the #463 durable replay (`ApprovalJournal.decision_for`, keyed `run_id`+`node_id`) re-applied the first deny when the #328 revision loop re-evaluated the same gate node — second ask auto-denied without waiting, run failed, fresh pending row dangled. Regression window matches #463 (v0.5.111, after the 11-13 floor runs)
+- **Fix**: journal decisions are consumed on use — new `ApprovalJournal.consume_run_node(run_id, node_id)` flips decided rows to `status='consumed'` (kept for audit, excluded from `decision_for`); `_hitl_await` consumes in all three adoption paths (durable replay, normal `resolve_hitl` decision, timeout auto-deny). Crash-restart replay contract kept: undecided-but-recorded decisions still replay exactly once
+- Tests: `tests/test_issue_507_journal_replay_revision.py` (4: revision loop survives a wired journal, normal/timeout decisions consumed, restart replay applies once then spent); `tests/test_issue_463_durable_hitl.py` updated to the consumed-on-use contract
 
 ## v0.5.119 (issue #496 — space chat on kernel TeamMessage plane)
 
