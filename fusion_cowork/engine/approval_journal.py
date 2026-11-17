@@ -137,6 +137,21 @@ class ApprovalJournal:
         ).fetchone()
         return dict(row) if row else None
 
+    def consume_run_node(self, run_id: str, node_id: str) -> int:
+        # issue #507: 决定消费 — 引擎实际采用某次决定 (含重放/超时) 时把该 (run, node)
+        # 的已决行翻成 'consumed', 修订回路对同一节点的下一次闸门评估不再重放旧决定
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE approval_journal SET status='consumed' "
+                "WHERE run_id=? AND node_id=? AND status IN ('approved','denied')",
+                (str(run_id or ""), str(node_id or "")),
+            )
+            self._conn.commit()
+            n = cur.rowcount
+        if n:
+            logger.info(f"审批日志: 决定已消费 run={run_id} node={node_id} x{n} (issue #507)")
+        return n
+
     def pending(self) -> List[Dict[str, Any]]:
         rows = self._conn.execute("SELECT * FROM approval_journal WHERE status='pending' ORDER BY ts ASC").fetchall()
         return [dict(r) for r in rows]

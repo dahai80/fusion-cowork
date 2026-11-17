@@ -116,10 +116,9 @@ class TestEngineJournalWiring:
         assert eng.resolve_hitl(exec_id, True, once=True, attribution={"decided_by": "alice"})
         execution = await asyncio.wait_for(task, timeout=5)
         assert execution.status.value == "success"
-        row = j.decision_for(exec_id, nid)
-        assert row is not None
-        assert row["approved"] == 1
-        assert row["decided_by"] == "alice"
+        # issue #507: 决定被引擎采用后即时消费 — decision_for 不再返回已用决定,
+        # 行保留为 status='consumed' (审计可查), 修订回路重问闸门不受重放污染
+        assert j.decision_for(exec_id, nid) is None
 
     async def test_timeout_denies_journal(self, tmp_path: Path, monkeypatch):
         pm = _pm(monkeypatch)
@@ -130,10 +129,8 @@ class TestEngineJournalWiring:
         wf, nid = _wf()
         execution = await asyncio.wait_for(eng.execute(wf, execution_id=exec_id), timeout=10)
         assert execution.status.value == "failed"
-        row = j.decision_for(exec_id, nid)
-        assert row is not None
-        assert row["approved"] == 0
-        assert row["decided_by"] == "timeout"
+        # issue #507: 超时自动拒绝同样即时消费
+        assert j.decision_for(exec_id, nid) is None
 
     async def test_replay_after_restart(self, tmp_path: Path, monkeypatch):
         # 重启语义: 同一 journal, 新引擎 (旧引擎决定已随进程消失, 只有日志活着) —
