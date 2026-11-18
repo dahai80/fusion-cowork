@@ -63,6 +63,20 @@ class BudgetTracker:
     def remaining_usd(self) -> float:
         return max(0.0, self._max_budget_usd - self._record.cost_usd)
 
+    def is_exceeded(self, graph_id: str = "") -> bool:
+        """Kernel funnel budget contract (fusion-harness funnels._budget_exceeded).
+
+        graph_id accepted for call-form parity (`is_exceeded(graph_id)`); the
+        tracker is session-scoped, so the graph dimension is not tracked here.
+        """
+        return self._enforce and self._record.cost_usd >= self._max_budget_usd
+
+    @property
+    def spent_tokens(self) -> int:
+        """Tokens consumed so far — funnel contract reads this via getattr
+        without calling it, so it must be an attribute, not a method."""
+        return self._record.total_tokens
+
     def record_usage(self, usage: Dict, model: str = "default") -> bool:
         """记录一次调用用量, 返回是否仍在预算内。
 

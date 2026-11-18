@@ -1721,7 +1721,7 @@ def create_web_app(
     if approval_journal is None:
         from ..engine.approval_journal import ApprovalJournal
 
-        approval_journal = ApprovalJournal()
+        approval_journal = ApprovalJournal(Path(store_root) / "approval_journal.db" if store_root else None)
         engine._approval_journal = approval_journal
         logger.info("issue #463 approval journal attached (durable HITL)")
     # issue #404: HITL email notification — enabled when SMTP_HOST is set;
