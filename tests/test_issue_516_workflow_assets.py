@@ -20,7 +20,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from fusion_cowork.engine.node import BaseNode, NodeCategory, NodeRegistry, NodeResult, NodeStatus, register_node
+from fusion_cowork.engine.node import BaseNode, NodeCategory, NodeResult, NodeStatus, register_node
 from fusion_cowork.engine.workflow import WorkflowEngine
 from fusion_cowork.server import web_api
 from fusion_cowork.server.workflow_assets import (
@@ -259,8 +259,6 @@ class TestWebAssetRoutes:
     def test_regression_gate_via_web_replay(self, client_516):
         client, _, _ = client_516
         wf_id = client.post("/api/workflows", json=_wf_body("hello"), headers=AUTH).json()["id"]
-        # record golden manually: digest of the echo node's output_data
-        golden_body = _wf_body("hello")
         client.put(f"/api/workflows/{wf_id}", json=_wf_body("hello-2"), headers=AUTH)
         # candidate identical to golden params replays to matching digests
         good = _wf_body("hello-2")
