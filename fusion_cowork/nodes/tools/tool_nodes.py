@@ -24,8 +24,19 @@ from ...engine.node import (
     coerce_params,
     register_node,
 )
+from ...security.kernel_sandbox import (
+    ExecutionTier,
+    blocked_result,
+    sandbox_result,
+)
 
 logger = logging.getLogger(__name__)
+
+# issue #524: tools each SandboxRunner implementation accepts. Anything
+# else is fail-closed refused (blocked=True) — a kernel SandboxPolicy
+# wired with these runners must never silently run an unmapped tool.
+_SANDBOXABLE_SHELL_TOOLS = frozenset({"shell_exec", "bash", "shell", "run_terminal"})
+_SANDBOXABLE_REPL_TOOLS = frozenset({"python_repl", "code_execute", "python"})
 
 
 def _kill_process_group(proc: subprocess.Popen) -> None:
@@ -326,6 +337,45 @@ class ShellExecNode(BaseNode):
     icon = "💻"
     default_label = "Shell 命令"
 
+    # issue #524: honest tier — subprocess + static danger checks +
+    # workspace fence, no seatbelt. Kernel SandboxRunner conformance
+    # (additive): run_sandboxed() reuses the node's own execute() path.
+    execution_tier = ExecutionTier.PROCESS
+
+    def describe_sandbox_policy(self) -> Dict[str, Any]:
+        return {
+            "runner": self.name,
+            "tier": self.execution_tier.value,
+            "checks": [
+                "static_danger_blacklist",
+                "shell_metachars",
+                "workspace_root_fence",
+                "scoped_folder_manager",
+                "process_group_killpg",
+            ],
+        }
+
+    async def run_sandboxed(self, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        if tool_name not in _SANDBOXABLE_SHELL_TOOLS:
+            return blocked_result(
+                tool_name, self.name, f"tool '{tool_name}' is not sandboxable by the shell_exec runner"
+            )
+        command = args.get("command") or args.get("cmd") or ""
+        if not isinstance(command, str) or not command.strip():
+            return blocked_result(tool_name, self.name, "missing non-empty 'command' string arg")
+        result = await self.execute({"command": command})
+        blocked = result.summary in ("沙箱拦截", "shell 元字符拒绝", "workspace root 围栏拦截", "沙箱拦截 workdir")
+        data = result.data or {}
+        return sandbox_result(
+            success=result.status == NodeStatus.SUCCESS,
+            stdout=str(data.get("stdout", "")),
+            stderr=str(data.get("stderr", "")),
+            return_code=data.get("return_code"),
+            blocked=blocked,
+            error=result.error or "",
+            extra={"tool": tool_name, "command": command},
+        )
+
     inputs = [
         {"key": "command", "label": "命令", "type": "string"},
     ]
@@ -516,6 +566,43 @@ class PythonREPLNode(BaseNode):
     icon = "🐍"
     default_label = "Python 执行"
 
+    # issue #524: honest tier — isolated subprocess + AST danger checks,
+    # no seatbelt. Kernel SandboxRunner conformance (additive).
+    execution_tier = ExecutionTier.PROCESS
+
+    def describe_sandbox_policy(self) -> Dict[str, Any]:
+        return {
+            "runner": self.name,
+            "tier": self.execution_tier.value,
+            "checks": [
+                "ast_danger_blacklist",
+                "variable_identifier_validation",
+                "subprocess_isolation",
+                "process_group_killpg",
+            ],
+        }
+
+    async def run_sandboxed(self, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        if tool_name not in _SANDBOXABLE_REPL_TOOLS:
+            return blocked_result(
+                tool_name, self.name, f"tool '{tool_name}' is not sandboxable by the python_repl runner"
+            )
+        code = args.get("code") or args.get("script") or ""
+        if not isinstance(code, str) or not code.strip():
+            return blocked_result(tool_name, self.name, "missing non-empty 'code' string arg")
+        result = await self.execute({"code": code})
+        data = result.data or {}
+        blocked = result.summary == "沙箱拦截"
+        return sandbox_result(
+            success=result.status == NodeStatus.SUCCESS,
+            stdout=str(data.get("result", "")),
+            stderr=str(data.get("stderr", "")),
+            return_code=0 if result.status == NodeStatus.SUCCESS else 1,
+            blocked=blocked,
+            error=result.error or "",
+            extra={"tool": tool_name, "result": data.get("result", ""), "type": data.get("type", "")},
+        )
+
     inputs = [
         {"key": "code", "label": "Python 代码", "type": "string"},
     ]
@@ -673,6 +760,81 @@ class PythonREPLNode(BaseNode):
                 error=f"Python REPL 异常: {e}",
                 summary="执行异常",
             )
+
+
+class PythonREPLCodeExecutor:
+    """issue #524: kernel CodeExecutor backend driving the python_repl
+    subprocess semantics. harness code_mode (CodeModeTurn) never runs
+    code itself — it calls this. Sync contract on purpose (matches the
+    kernel protocol): a fresh subprocess per script, namespace injected
+    as the exec globals, the code-mode `result` variable round-trips as
+    the return value. Raises on failure so CodeModeTurn feeds the
+    traceback back to the model for self-repair.
+    """
+
+    execution_tier = ExecutionTier.PROCESS
+
+    def __init__(self, timeout: float = 15.0):
+        self.timeout = timeout
+
+    def describe_sandbox_policy(self) -> Dict[str, Any]:
+        return {
+            "runner": "python_repl_code_executor",
+            "tier": self.execution_tier.value,
+            "checks": ["ast_danger_blacklist", "variable_identifier_validation", "subprocess_isolation"],
+        }
+
+    def execute(self, script: str, namespace: Dict[str, Any]) -> Any:
+        if not isinstance(script, str) or not script.strip():
+            raise ValueError("empty code-mode script")
+        safety_error = _check_python_code(script)
+        if safety_error:
+            raise RuntimeError(f"Safety check failed: {safety_error}")
+        ns = dict(namespace or {})
+        var_error = _validate_repl_variables(ns)
+        if var_error:
+            raise ValueError(var_error)
+        try:
+            ns_payload = json.dumps(ns)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"code-mode namespace not JSON-serializable: {e}") from e
+
+        wrapper = "\n".join(
+            [
+                "import contextlib, io, json, sys",
+                "_data = sys.stdin.read()",
+                "_nl = _data.find('\\n')",
+                "_ns = json.loads(_data[:_nl]) if _nl >= 0 else {}",
+                "_src = _data[_nl + 1:] if _nl >= 0 else ''",
+                "_buf = io.StringIO()",
+                "with contextlib.redirect_stdout(_buf):",
+                "    exec(compile(_src, '<code_mode>', 'exec'), _ns)",
+                "_out = _ns.get('result')",
+                "try:",
+                "    print(json.dumps({'ok': True, 'result': _out, 'stdout': _buf.getvalue()}))",
+                "except (TypeError, ValueError):",
+                "    print(json.dumps({'ok': True, 'result': repr(_out), 'stdout': _buf.getvalue()}))",
+            ]
+        )
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", wrapper],
+                input=f"{ns_payload}\n{script}",
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(f"Python REPL execution timed out ({self.timeout}s)") from e
+        if proc.returncode != 0:
+            raise RuntimeError((proc.stderr or "unknown REPL error").strip()[-2000:])
+        try:
+            payload = json.loads(proc.stdout)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"REPL returned non-JSON payload: {proc.stdout[:200]}") from e
+        if not payload.get("ok"):
+            raise RuntimeError(str(payload.get("error", "unknown REPL error")))
+        return payload.get("result")
 
 
 @register_node

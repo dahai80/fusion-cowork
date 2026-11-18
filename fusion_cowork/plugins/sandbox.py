@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import resource
+import shlex
 import signal
 import time
 import uuid
@@ -12,7 +13,14 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
+from ..security.kernel_sandbox import ExecutionTier, blocked_result, sandbox_result
+
 logger = logging.getLogger(__name__)
+
+# issue #524: tools the plugin sandbox runner accepts. Anything else is
+# fail-closed refused (blocked=True) — same contract as the tool-node
+# runners (nodes/tools/tool_nodes.py).
+_SANDBOXABLE_PLUGIN_TOOLS = frozenset({"plugin_run", "sandbox_exec", "run_terminal", "plugin"})
 
 # CR-23: 子进程仅继承安全环境变量子集, 不泄漏父进程敏感 (API key/token/凭据等)
 _SAFE_ENV_KEYS = frozenset(
@@ -120,6 +128,70 @@ class PluginSandbox:
     @property
     def limits(self) -> ResourceLimits:
         return self._limits
+
+    # issue #524: honest tier — rlimits + darwin seatbelt + heartbeat
+    # monitor = real sandbox enforcement. Kernel SandboxRunner
+    # conformance (additive): run_sandboxed() reuses execute() 1:1.
+    execution_tier = ExecutionTier.SANDBOX
+
+    def describe_sandbox_policy(self) -> Dict[str, Any]:
+        return {
+            "runner": "plugin_sandbox",
+            "tier": self.execution_tier.value,
+            "checks": [
+                "rlimit_cpu",
+                "rlimit_nproc",
+                "rlimit_fsize",
+                "rlimit_as_linux",
+                "seatbelt_profile_darwin",
+                "safe_env_subset",
+                "process_group_killpg",
+                "heartbeat_monitor",
+            ],
+            "limits": self._limits.to_dict(),
+        }
+
+    async def run_sandboxed(self, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        if tool_name not in _SANDBOXABLE_PLUGIN_TOOLS:
+            return blocked_result(
+                tool_name,
+                "plugin_sandbox",
+                f"tool '{tool_name}' is not sandboxable by the plugin_sandbox runner",
+            )
+        command = args.get("command")
+        if isinstance(command, str) and command.strip():
+            argv = shlex.split(command)
+        elif isinstance(command, list) and command and all(isinstance(p, str) for p in command):
+            argv = list(command)
+        else:
+            return blocked_result(
+                tool_name,
+                "plugin_sandbox",
+                "missing 'command' arg (non-empty string or list of strings)",
+            )
+        limits_override = ResourceLimits(**args["limits"]) if isinstance(args.get("limits"), dict) else None
+        result = await self.execute(
+            plugin_name=str(tool_name),
+            command=argv[0],
+            args=argv[1:],
+            env=args.get("env") if isinstance(args.get("env"), dict) else None,
+            stdin_data=str(args.get("stdin", "")),
+            limits=limits_override,
+        )
+        success = result.status == SandboxStatus.STOPPED and result.exit_code == 0
+        return sandbox_result(
+            success=success,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            return_code=result.exit_code,
+            blocked=result.status == SandboxStatus.VIOLATION,
+            error=result.error,
+            extra={
+                "tool": tool_name,
+                "sandbox_id": result.sandbox_id,
+                "status": result.status.value,
+            },
+        )
 
     def set_limits(self, limits: ResourceLimits) -> None:
         self._limits = limits
