@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.127
+version: 0.5.128
 updated: 2026-11-19
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,12 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.128 (issue #524 — kernel SandboxRunner/CodeExecutor conformance)
+
+- **K4 substrate conformance (#524, PR #536)**: cowork executors now satisfy the fusion-harness sandbox contracts — `PythonREPLNode` and `ShellExecNode` implement the kernel `SandboxRunner` protocol at the PROCESS tier (`prepare()` / `run()` / `teardown()` lifecycle, structured result), and `PluginSandbox` implements the SANDBOX tier via the shared helpers in `fusion_cowork/security/kernel_sandbox.py`
+- **Kernel CodeExecutor**: new `PythonREPLCodeExecutor` implements the kernel `CodeExecutor` protocol — synchronous subprocess execution with result-variable round-trip and stdout capture, so the kernel can execute Python through cowork's REPL contract
+- **No behavior change**: existing node execution paths, permission gating and HIGH_RISK classification untouched; the conformance layer is additive and verified by 41 new protocol conformance tests (`tests/test_issue_524_kernel_sandbox_conformance.py`)
 
 ## v0.5.127 (issue #523 — K4 :11442 product-level gate)
 
