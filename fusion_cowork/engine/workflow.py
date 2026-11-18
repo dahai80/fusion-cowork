@@ -1102,16 +1102,16 @@ class WorkflowEngine:
                 if order_idx >= len(order):
                     break
 
-                # HI-19: 预算检查 — enforce 且已超预算则中止
-                if self._budget_tracker is not None and self._budget_tracker._enforce:
-                    if self._budget_tracker._record.cost_usd >= self._budget_tracker._max_budget_usd:
-                        logger.warning(
-                            f"预算耗尽 ${self._budget_tracker._record.cost_usd:.4f} >= "
-                            f"${self._budget_tracker._max_budget_usd:.4f}, 中止执行 exec_id={exec_id}"
-                        )
-                        execution.status = WorkflowStatus.FAILED
-                        execution.error = "预算耗尽: 执行被中止"
-                        break
+                # HI-19: 预算检查 — enforce 且已超预算则中止 (kernel funnel 契约 is_exceeded)
+                if self._budget_tracker is not None and self._budget_tracker.is_exceeded():
+                    spent_usd = self._budget_tracker.record.cost_usd
+                    logger.warning(
+                        f"预算耗尽 ${spent_usd:.4f} >= "
+                        f"${self._budget_tracker.max_budget_usd:.4f}, 中止执行 exec_id={exec_id}"
+                    )
+                    execution.status = WorkflowStatus.FAILED
+                    execution.error = "预算耗尽: 执行被中止"
+                    break
 
                 # issue #189: ready-set 波次 — 前驱全部完成的节点同波执行。
                 # concurrency=1 时每波只取拓扑序首个, 与旧串行循环逐节点等价。
