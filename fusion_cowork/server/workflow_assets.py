@@ -46,8 +46,13 @@ def evaluate_acceptance(rules: Any, workflow: Dict[str, Any]) -> Tuple[bool, Lis
     node_names = [str(n.get("name") or "") for n in nodes if isinstance(n, dict)]
     for rule in rules:
         if not isinstance(rule, dict) or str(rule.get("type") or "") not in _ACCEPTANCE_RULE_TYPES:
-            results.append({"type": str((rule or {}).get("type") if isinstance(rule, dict) else rule), "ok": False,
-                            "detail": "unknown acceptance rule type"})
+            results.append(
+                {
+                    "type": str((rule or {}).get("type") if isinstance(rule, dict) else rule),
+                    "ok": False,
+                    "detail": "unknown acceptance rule type",
+                }
+            )
             continue
         rtype = str(rule["type"])
         ok, detail = True, ""
@@ -65,7 +70,10 @@ def evaluate_acceptance(rules: Any, workflow: Dict[str, Any]) -> Tuple[bool, Lis
             ok, detail = not missing, ("missing nodes: " + ", ".join(map(str, missing)) if missing else "all present")
         elif rtype == "forbidden_nodes":
             present = [n for n in (rule.get("names") or []) if str(n) in node_names]
-            ok, detail = not present, ("forbidden present: " + ", ".join(map(str, present)) if present else "none present")
+            ok, detail = (
+                not present,
+                ("forbidden present: " + ", ".join(map(str, present)) if present else "none present"),
+            )
         elif rtype == "required_params":
             node_id = str(rule.get("node") or "")
             target = next((n for n in nodes if isinstance(n, dict) and str(n.get("id") or "") == node_id), None)
@@ -74,8 +82,13 @@ def evaluate_acceptance(rules: Any, workflow: Dict[str, Any]) -> Tuple[bool, Lis
             else:
                 params = (target.get("config") or {}).get("params") or {}
                 missing = [p for p in (rule.get("params") or []) if str(p) not in params]
-                ok, detail = not missing, (
-                    f"node '{node_id}' missing params: " + ", ".join(map(str, missing)) if missing else "params present"
+                ok, detail = (
+                    not missing,
+                    (
+                        f"node '{node_id}' missing params: " + ", ".join(map(str, missing))
+                        if missing
+                        else "params present"
+                    ),
                 )
         results.append({"type": rtype, "ok": ok, "detail": detail})
     return all(r["ok"] for r in results), results
@@ -106,7 +119,8 @@ def diff_versions(old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
         "edges_added": edges_added,
         "edges_removed": edges_removed,
         "top_level_changed": sorted(
-            k for k in set(old) | set(new)
+            k
+            for k in set(old) | set(new)
             if k not in ("nodes", "edges") and canonical_digest(old.get(k)) != canonical_digest(new.get(k))
         ),
     }
@@ -244,8 +258,9 @@ class WorkflowAssetStore:
             golden = self.load_golden(workflow_id)
             cases = golden.get("cases") or []
             if not cases:
-                gate_results.append({"type": "regression", "ok": False,
-                                     "detail": "regression enabled but no golden cases recorded"})
+                gate_results.append(
+                    {"type": "regression", "ok": False, "detail": "regression enabled but no golden cases recorded"}
+                )
                 record["status"] = "rejected"
             elif replay_fn is None:
                 gate_results.append({"type": "regression", "ok": False, "detail": "no replay executor available"})
@@ -271,7 +286,10 @@ class WorkflowAssetStore:
                 "prev_digest": prev_digest,
                 "status": record["status"],
                 "changed": diff_versions(
-                    ((self._read_version(workflow_id, self._prev_active_version(existing)) or {}).get("workflow") or {}),
+                    (
+                        (self._read_version(workflow_id, self._prev_active_version(existing)) or {}).get("workflow")
+                        or {}
+                    ),
                     workflow,
                 )
                 if prev_digest
@@ -324,10 +342,18 @@ class WorkflowAssetStore:
         try:
             digests = replay_fn(workflow, case.get("inputs") or {})
         except Exception as e:
-            return {"type": "regression", "ok": False, "detail": f"replay error: {e}", "case_recorded_at": case.get("recorded_at")}
+            return {
+                "type": "regression",
+                "ok": False,
+                "detail": f"replay error: {e}",
+                "case_recorded_at": case.get("recorded_at"),
+            }
         golden_digests = case.get("node_digests") or {}
-        mismatches = [
-            nid for nid, gd in golden_digests.items() if digests.get(nid) != gd
-        ]
+        mismatches = [nid for nid, gd in golden_digests.items() if digests.get(nid) != gd]
         detail = "all node outputs match" if not mismatches else "output mismatch at: " + ", ".join(mismatches)
-        return {"type": "regression", "ok": not mismatches, "detail": detail, "case_recorded_at": case.get("recorded_at")}
+        return {
+            "type": "regression",
+            "ok": not mismatches,
+            "detail": detail,
+            "case_recorded_at": case.get("recorded_at"),
+        }

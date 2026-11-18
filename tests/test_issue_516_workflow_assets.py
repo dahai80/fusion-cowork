@@ -104,7 +104,10 @@ class TestAcceptanceRules:
 
 class TestDiffVersions:
     def test_node_and_edge_diff(self):
-        old = {"nodes": [{"id": "a", "name": "x"}, {"id": "b", "name": "y"}], "edges": [{"source_id": "a", "target_id": "b"}]}
+        old = {
+            "nodes": [{"id": "a", "name": "x"}, {"id": "b", "name": "y"}],
+            "edges": [{"source_id": "a", "target_id": "b"}],
+        }
         new = {"nodes": [{"id": "a", "name": "x"}, {"id": "c", "name": "z"}], "edges": []}
         d = diff_versions(old, new)
         assert d["nodes_removed"] == ["b"] and d["nodes_added"] == ["c"]
@@ -162,7 +165,9 @@ class TestWorkflowAssetStore:
 
         bad = _wf_body("changed")
         bad["regression"] = {"enabled": True}
-        rec = s.save("wf_e", bad, replay_fn=lambda wf, inputs: {"n1": canonical_digest({"echo": "changed-but-different"})})
+        rec = s.save(
+            "wf_e", bad, replay_fn=lambda wf, inputs: {"n1": canonical_digest({"echo": "changed-but-different"})}
+        )
         assert rec["status"] == "rejected"
         assert "output mismatch" in rec["gate_results"][-1]["detail"]
         assert s.current_version("wf_e") == 2, "rejected candidate must not become active"

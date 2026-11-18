@@ -2086,18 +2086,14 @@ def create_web_app(
     async def workflow_version_diff(workflow_id: str, v1: int, v2: int):
         result = asset_store.diff(workflow_id, v1, v2)
         if result is None:
-            raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"版本不存在: v{v1} 或 v{v2}"}
-            )
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"版本不存在: v{v1} 或 v{v2}"})
         return {"v1": v1, "v2": v2, "diff": result}
 
     @app.get("/api/workflows/{workflow_id}/versions/{version}")
     async def workflow_version_detail(workflow_id: str, version: int):
         rec = asset_store.get_version(workflow_id, version)
         if rec is None:
-            raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"版本不存在: v{version}"}
-            )
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"版本不存在: v{version}"})
         return rec
 
     @app.get("/api/workflows/{workflow_id}/audit")
