@@ -178,9 +178,11 @@ class TestDirectiveTrajectory:
         path = tmp_path / "sess-113.jsonl"
         assert path.exists()
         event = json.loads(path.read_text().strip().splitlines()[-1])
-        assert event["event"] == "directive"
-        assert event["execution_id"] == "exec-113"
-        assert event["data"]["action"] == "skip_remaining"
+        # issue #520: kernel record shape — semantic event in payload.legacy_event
+        assert event["event"] == "tool_call"
+        assert event["payload"]["legacy_event"] == "directive"
+        assert event["run_id"] == "exec-113"
+        assert event["payload"]["directive"]["action"] == "skip_remaining"
 
 
 class TestDirectiveRoute:

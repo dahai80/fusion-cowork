@@ -1,8 +1,13 @@
 """D1 轨迹飞轮 — 轨迹记录器。
 
-设计：
+设计 (issue #520, K3 closeout):
 - TrajectoryRecorder 注册到 HookManager，监听 14 种 HookEvent
-- 每个事件转为 TrajectoryEvent 结构化记录，append 到汇聚目录 jsonl
+- 每个事件经 kernel_record() 映射为 kernel `fusion_harness.trajectory`
+  TrajectoryRecord (唯一 schema；本地不再保留任何轨迹 schema)，append jsonl
+- cowork 语义事件名保留在 payload.legacy_event，与 kernel reader 的
+  legacy 适配约定一致；旧格式文件由 kernel TrajectoryReader 归一化读取
+- fusion-harness 缺席 ([plugins] extra 未装) 时记录功能整体禁用并
+  WARNING 一次 (fail-visible)，不落任何非 kernel 格式的行
 - WORKFLOW_END 时回填 sessions.steps_snapshot（含完整步骤快照）
 - NODE_ERROR 单独标注 is_error，供 D1 清洗流水线消费
 
@@ -11,11 +16,9 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import time
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +28,77 @@ from ..observability.trace import get_trace_id
 logger = logging.getLogger(__name__)
 
 DEFAULT_TRAJECTORY_DIR = str(Path.home() / ".fusion" / "trajectories" / "cowork")
+
+try:  # issue #520: kernel trajectory schema is the single source of truth
+    from fusion_harness.trajectory import TrajectoryRecord
+
+    _KERNEL_OK = True
+    _KERNEL_ERR = ""
+except ImportError as e:  # pragma: no cover - exercised only on bare installs
+    TrajectoryRecord = None  # type: ignore[assignment]
+    _KERNEL_OK = False
+    _KERNEL_ERR = str(e)
+    logger.warning(
+        "trajectory recording disabled: fusion-harness is missing (%s). "
+        "Install it with: pip install 'fusion-cowork[plugins]'",
+        e,
+    )
+
+# cowork semantic event -> kernel normative event (mirrors the kernel reader's
+# legacy table so writer and reader agree without a private import)
+_NORMATIVE_EVENT_MAP = {
+    "workflow_start": "start",
+    "session_start": "start",
+    "agent_start": "start",
+    "workflow_end": "end",
+    "workflow_cancel": "end",
+    "session_end": "end",
+    "agent_stop": "end",
+    "node_error": "error",
+    "pre_node_execute": "start",
+    "post_node_execute": "tool_result",
+    "permission_request": "tool_call",
+    "config_change": "tool_result",
+    "notification": "tool_result",
+    "pre_compact": "tool_result",
+    "directive": "tool_call",
+    "plan_retrospective": "tool_result",
+    "task_step": "tool_result",
+    "task_acceptance": "tool_result",
+}
+
+
+def kernel_record(
+    event: str,
+    run_id: str,
+    node_id: str = "",
+    payload: Optional[Dict[str, Any]] = None,
+    duration_ms: int = 0,
+    status: str = "",
+    ts_sec: float = 0.0,
+) -> TrajectoryRecord:
+    """Build one kernel TrajectoryRecord from a cowork semantic event.
+
+    The semantic event name is preserved in payload.legacy_event; the record
+    event is the nearest kernel normative event (unknown -> tool_result,
+    matching the kernel reader's default mapping).
+    """
+    if not _KERNEL_OK:
+        raise RuntimeError(
+            "fusion-harness trajectory schema unavailable — install it with: pip install 'fusion-cowork[plugins]'"
+        )
+    pl = dict(payload or {})
+    pl["legacy_event"] = event
+    ts = float(ts_sec or time.time())
+    return TrajectoryRecord(
+        run_id=str(run_id or "no_run"),
+        node_id=str(node_id or "workflow"),
+        ts=int(ts * 1000) if ts < 10**12 else int(ts),
+        event=_NORMATIVE_EVENT_MAP.get(event, "tool_result"),
+        payload=pl,
+        duration_ms=int(duration_ms or 0),
+        status=str(status or ""),
+    )
 
 
 def _json_safe(obj: Any) -> Any:
@@ -45,39 +119,18 @@ def _json_safe(obj: Any) -> Any:
     return str(obj)
 
 
-@dataclass
-class TrajectoryEvent:
-    ts: float
-    event: str
-    execution_id: str = ""
-    workflow_id: str = ""
-    workflow_name: str = ""
-    session_id: str = ""
-    # issue #464: OTel spine — 轨迹事件与 OTel 导出共用一个 trace_id
-    trace_id: str = ""
-    node_id: str = ""
-    node_name: str = ""
-    status: str = ""
-    error: Optional[str] = None
-    is_error: bool = False
-    data: Dict[str, Any] = field(default_factory=dict)
-
-    def to_jsonl(self) -> str:
-        return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True)
-
-
 class TrajectoryWriter:
-    """轨迹写入器 — 按会话 append 到汇聚目录 jsonl 文件。"""
+    """轨迹写入器 — 按 session (payload.session_id) append 到汇聚目录 jsonl。"""
 
     def __init__(self, trajectory_dir: str = DEFAULT_TRAJECTORY_DIR):
         self._dir = Path(trajectory_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         logger.debug(f"TrajectoryWriter 初始化: {self._dir}")
 
-    def write(self, evt: TrajectoryEvent) -> str:
-        session_id = evt.session_id or "no_session"
+    def write(self, record: TrajectoryRecord) -> str:
+        session_id = str((record.payload or {}).get("session_id") or "no_session")
         path = self._dir / f"{session_id}.jsonl"
-        line = evt.to_jsonl()
+        line = record.to_json()
         with open(path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
         # v4 方案①: size-based rotation + retention cleanup — the writer is
@@ -86,7 +139,7 @@ class TrajectoryWriter:
         # Best-effort: cleanup failures never break the actual write.
         self._rotate_if_oversized(path)
         self._cleanup_expired()
-        logger.debug(f"轨迹写入: {path.name} event={evt.event} node={evt.node_id}")
+        logger.debug(f"轨迹写入: {path.name} event={record.event} node={record.node_id}")
         return str(path)
 
     @staticmethod
@@ -208,6 +261,8 @@ class TrajectoryRecorder:
         return handler
 
     async def _on_hook(self, evt: HookEvent, ctx: HookContext) -> None:
+        if not _KERNEL_OK:
+            return  # bare install without [plugins]: recording disabled (warned at import)
         data = ctx.data or {}
         # CR-12: 每个执行独立状态槽, 按 execution_id 隔离 (并发执行互不覆盖)
         exec_id = data.get("execution_id", "")
@@ -258,20 +313,25 @@ class TrajectoryRecorder:
             )
         is_error = evt == HookEvent.NODE_ERROR
         safe_data = _json_safe(data)
-        traj = TrajectoryEvent(
-            ts=time.time(),
+        # issue #520: single kernel schema — semantic event name lands in
+        # payload.legacy_event, everything cowork-specific rides in payload
+        traj = kernel_record(
             event=evt.value,
-            execution_id=state["execution_id"],
-            workflow_id=state["workflow_id"],
-            workflow_name=state["workflow_name"],
-            session_id=self._session_id,
-            trace_id=get_trace_id(),
+            run_id=state["execution_id"] or self._session_id,
             node_id=node_id,
-            node_name=node_name,
+            payload={
+                "execution_id": state["execution_id"],
+                "workflow_id": state["workflow_id"],
+                "workflow_name": state["workflow_name"],
+                "session_id": self._session_id,
+                "trace_id": get_trace_id(),
+                "node_name": node_name,
+                "error": error if isinstance(error, str) else ("" if error is None else str(error)),
+                "is_error": is_error,
+                "data": safe_data,
+            },
+            duration_ms=int(float(execution_time or 0) * 1000),
             status=status if isinstance(status, str) else str(status),
-            error=error,
-            is_error=is_error,
-            data=safe_data,
         )
         try:
             self._writer.write(traj)
@@ -292,17 +352,20 @@ class TrajectoryRecorder:
 
     def record_directive(self, execution_id: str, directive: Dict[str, Any]) -> None:
         """W8/B1: 运行改向指令单独落轨迹, 供复盘/训练流水线消费。"""
+        if not _KERNEL_OK:
+            return  # bare install without [plugins]: recording disabled (warned at import)
         state = self._execs.get(execution_id) or {}
-        traj = TrajectoryEvent(
-            ts=time.time(),
+        traj = kernel_record(
             event="directive",
-            execution_id=execution_id,
-            workflow_id=state.get("workflow_id", ""),
-            workflow_name=state.get("workflow_name", ""),
-            session_id=self._session_id,
-            trace_id=get_trace_id(),
+            run_id=execution_id or self._session_id,
+            payload={
+                "workflow_id": state.get("workflow_id", ""),
+                "workflow_name": state.get("workflow_name", ""),
+                "session_id": self._session_id,
+                "trace_id": get_trace_id(),
+                "directive": _json_safe(dict(directive)),
+            },
             status="queued",
-            data=_json_safe(dict(directive)),
         )
         try:
             self._writer.write(traj)

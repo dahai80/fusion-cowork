@@ -333,7 +333,6 @@ _LAZY_IMPORTS: dict[str, str] = {
     "SandboxStatus": "fusion_cowork.plugins.sandbox",
     # D1 轨迹飞轮
     "TrajectoryRecorder": "fusion_cowork.trajectory",
-    "TrajectoryEvent": "fusion_cowork.trajectory",
     "TrajectoryWriter": "fusion_cowork.trajectory",
     "SpaceTrajectoryExporter": "fusion_cowork.trajectory",
     "SpaceMessageTrajectory": "fusion_cowork.trajectory",

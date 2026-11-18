@@ -4,17 +4,22 @@ Appends a plan terminal snapshot to the trajectory jsonl so every
 orchestrated run is reviewable afterwards: task tree with parent links,
 per-task status/error/acceptance verdict, and the honest plan outcome.
 Reuses TrajectoryWriter (zero new storage infrastructure).
+
+issue #520 (K3 closeout): records are kernel `fusion_harness.trajectory`
+TrajectoryRecord instances — the semantic event name (plan_retrospective /
+task_step / task_acceptance) is preserved in payload.legacy_event. Readers
+accept both the kernel line shape and the pre-#520 legacy lines so old
+jsonl pools stay queryable.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import time
 from pathlib import Path
 from typing import Any, Dict
 
-from ..trajectory.recorder import TrajectoryEvent, TrajectoryWriter
+from ..trajectory.recorder import DEFAULT_TRAJECTORY_DIR, TrajectoryWriter, kernel_record
 
 logger = logging.getLogger(__name__)
 
@@ -61,18 +66,16 @@ def write_plan_retrospective(plan, results: Dict[str, Any], elapsed: float) -> s
     task_timings = {
         t.task_id: round(t.completed_at - t.started_at, 3) for t in plan.tasks if t.completed_at and t.started_at
     }
-    evt = TrajectoryEvent(
-        ts=time.time(),
+    evt = kernel_record(
         event="plan_retrospective",
-        execution_id=plan.plan_id,
-        workflow_id=plan.plan_id,
-        workflow_name=plan.workflow_name,
+        run_id=plan.plan_id,
+        node_id="plan",
         status=plan.status,
-        is_error=plan.status in ("failed", "partial"),
-        data={
+        payload={
             "plan_id": plan.plan_id,
             "workflow_name": plan.workflow_name,
             "plan_status": plan.status,
+            "is_error": plan.status in ("failed", "partial"),
             "elapsed": round(elapsed, 3),
             "task_count": len(plan.tasks),
             "completed_tasks": completed,
@@ -96,6 +99,47 @@ def write_plan_retrospective(plan, results: Dict[str, Any], elapsed: float) -> s
     return path
 
 
+def _iter_lines(base: Path, after_ts: float):
+    """Yield (ts_sec, raw_dict) for every jsonl line, both kernel-shaped and
+    pre-#520 legacy lines; cold files skipped by mtime (v2 P2 polling)."""
+    for f in base.glob("*.jsonl"):
+        try:
+            if after_ts and f.stat().st_mtime <= after_ts:
+                continue
+            with open(f, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        raw = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    # kernel shape: ts in ms, semantic event in payload
+                    if "payload" in raw and "run_id" in raw:
+                        payload = raw.get("payload") or {}
+                        ts = raw.get("ts", 0)
+                        ts_sec = ts / 1000 if ts > 10**11 else ts
+                        semantic_event = payload.get("legacy_event") or raw.get("event", "")
+                        yield (
+                            ts_sec,
+                            {
+                                "event": semantic_event,
+                                "execution_id": raw.get("run_id", ""),
+                                "workflow_name": payload.get("workflow_name", ""),
+                                "status": raw.get("status", ""),
+                                "is_error": bool(payload.get("is_error")),
+                                "payload": payload,
+                                "data": payload.get("data") or payload,
+                            },
+                        )
+                    else:
+                        # legacy line: ts already seconds, data/workflow_name top-level
+                        yield raw.get("ts", 0), raw
+        except OSError:
+            continue
+
+
 def list_plan_retrospectives(
     limit: int = 20,
     trajectory_dir: str | None = None,
@@ -107,49 +151,30 @@ def list_plan_retrospectives(
     v2 P2: `after_ts` enables incremental polling — files whose mtime is
     older than after_ts are skipped entirely instead of re-parsing every
     jsonl line on each dashboard refresh."""
-    from ..trajectory.recorder import DEFAULT_TRAJECTORY_DIR
-
     base = Path(trajectory_dir or DEFAULT_TRAJECTORY_DIR)
     if not base.is_dir():
         return []
     rows = []
-    for f in base.glob("*.jsonl"):
-        try:
-            # v2 P2: skip cold files wholesale — a retrospective in this file
-            # can only be newer than the file's mtime, so files untouched
-            # since after_ts cannot contain new events.
-            if after_ts and f.stat().st_mtime <= after_ts:
-                continue
-            with open(f, encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        evt = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if evt.get("event") != "plan_retrospective":
-                        continue
-                    ts = evt.get("ts", 0)
-                    if after_ts and ts <= after_ts:
-                        continue
-                    rows.append(
-                        {
-                            "plan_id": evt.get("execution_id") or (evt.get("data") or {}).get("plan_id", ""),
-                            "workflow_name": evt.get("workflow_name", ""),
-                            "status": evt.get("status", ""),
-                            "ts": ts,
-                            "task_count": (evt.get("data") or {}).get("task_count", 0),
-                            "failed_tasks": (evt.get("data") or {}).get("failed_tasks", []),
-                            # 方案五 (audit v3): delivery-note fields for the GUI
-                            "task_timings": (evt.get("data") or {}).get("task_timings", {}),
-                            "side_effects": (evt.get("data") or {}).get("side_effects", []),
-                            "superseded_history": (evt.get("data") or {}).get("superseded_history", []),
-                        }
-                    )
-        except OSError:
+    for ts, evt in _iter_lines(base, after_ts):
+        if evt.get("event") != "plan_retrospective":
             continue
+        if after_ts and ts <= after_ts:
+            continue
+        data = evt.get("data") or {}
+        rows.append(
+            {
+                "plan_id": evt.get("execution_id") or data.get("plan_id", ""),
+                "workflow_name": evt.get("workflow_name", ""),
+                "status": evt.get("status", ""),
+                "ts": ts,
+                "task_count": data.get("task_count", 0),
+                "failed_tasks": data.get("failed_tasks", []),
+                # 方案五 (audit v3): delivery-note fields for the GUI
+                "task_timings": data.get("task_timings", {}),
+                "side_effects": data.get("side_effects", []),
+                "superseded_history": data.get("superseded_history", []),
+            }
+        )
     rows.sort(key=lambda r: r.get("ts", 0), reverse=True)
     return rows[: max(1, limit)]
 
@@ -164,15 +189,18 @@ def write_task_step(
     (tool output, error, retry trace) to the trajectory jsonl. Best-effort —
     a write failure must never break the relay chain."""
     try:
-        evt = TrajectoryEvent(
-            ts=time.time(),
+        evt = kernel_record(
             event="task_step",
-            execution_id=f"space:{space_id}",
-            workflow_id=space_id,
-            workflow_name="relay",
+            run_id=f"space:{space_id}",
+            node_id=f"agent:{agent_id}" if agent_id else "agent",
             status="running",
-            is_error=False,
-            data={"space_id": space_id, "agent_id": agent_id, "step": step, "content": content[:2000]},
+            payload={
+                "space_id": space_id,
+                "agent_id": agent_id,
+                "step": step,
+                "content": content[:2000],
+                "workflow_name": "relay",
+            },
         )
         TrajectoryWriter().write(evt)
     except Exception as e:
@@ -187,42 +215,25 @@ def read_task_steps(
     """方案二 (audit v3): read recent task_step events for a space (oldest
     first) so relay context can include intermediate outputs that never went
     through the chat table. Best-effort; returns [] on any failure."""
-    from ..trajectory.recorder import DEFAULT_TRAJECTORY_DIR
-
     base = Path(DEFAULT_TRAJECTORY_DIR)
     if not base.is_dir():
         return []
     rows = []
-    for f in base.glob("*.jsonl"):
-        try:
-            if after_ts and f.stat().st_mtime <= after_ts:
-                continue
-            with open(f, encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        evt = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if evt.get("event") != "task_step":
-                        continue
-                    ts = evt.get("ts", 0)
-                    if ts <= after_ts:
-                        continue
-                    data = evt.get("data") or {}
-                    if data.get("space_id") != space_id:
-                        continue
-                    rows.append(
-                        {
-                            "ts": ts,
-                            "agent_id": data.get("agent_id", ""),
-                            "step": data.get("step", ""),
-                            "content": data.get("content", ""),
-                        }
-                    )
-        except OSError:
+    for ts, evt in _iter_lines(base, after_ts):
+        if evt.get("event") != "task_step":
             continue
+        if ts <= after_ts:
+            continue
+        data = evt.get("data") or {}
+        if data.get("space_id") != space_id:
+            continue
+        rows.append(
+            {
+                "ts": ts,
+                "agent_id": data.get("agent_id", ""),
+                "step": data.get("step", ""),
+                "content": data.get("content", ""),
+            }
+        )
     rows.sort(key=lambda r: r.get("ts", 0))
     return rows[-max(1, limit) :]
