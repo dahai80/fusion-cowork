@@ -30,6 +30,7 @@ _NODE_MODULES = (
     "fusion_cowork.nodes.ecosystem.fanout_node",
     "fusion_cowork.nodes.ecosystem.ladder_node",
     "fusion_cowork.nodes.ecosystem.team_node",
+    "fusion_cowork.nodes.ecosystem.decision_gate_node",
     "fusion_cowork.nodes.ops.ops_nodes",
     "fusion_cowork.nodes.ops.match_node",
     "fusion_cowork.nodes.ops.demo_node",

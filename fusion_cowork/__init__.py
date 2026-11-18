@@ -128,6 +128,9 @@ NODE_NAME_ALIASES: dict[str, str] = {
     "Studio运行": "studio_run",
     # 团队互通 (agent-studio teams.*, issue #488)
     "团队调用": "team_call",
+    # 决策门 (fusion-mlx laya 决策头, issue #517)
+    "决策门": "decision_gate",
+    "智能决策": "decision_gate",
     "团队任务": "team_call",
     # 部署执行 (issue #489)
     "应用部署": "deploy_service",
