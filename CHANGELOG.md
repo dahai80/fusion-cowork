@@ -36,6 +36,13 @@ source_of_truth:
 - **ApprovalJournal store_root (#531 drive-by)**: the journal DB now honors `store_root` (`<store_root>/approval_journal.db`, same pattern as `run_states.db`) instead of always defaulting to the global `~/.fusion-cowork/web/approval_journal.db`; prod path unchanged, stale-row leakage into isolated tests fixed
 - **CI flake fix**: HITL email opt-in test replaces fixed sleeps with a poll loop (daemon-thread send timing under CI load on py3.13 shards)
 
+## v0.5.126 (issue #521 — drop-fallback ruling)
+
+- **Harness is mandatory (#521, PR #530)**: the 2026-11-18 drop-fallback ruling is implemented — `engine/hook_manager.py` and `engine/permission_manager.py` headers no longer describe themselves as "in-tree fallback copies used when fusion-harness is not installed"; hook_manager is the primary cowork hook implementation (semantics do not map 1:1 onto the kernel), permission_manager is the documented deliberate divergence (K1 keep)
+- **No degraded mode outside the engine package**: `trajectory/recorder.py` (#520) drops its soft-disable path — the kernel trajectory schema hard-imports via `_harness_guard`, identical fail-fast to the four engine shims
+- **Import-time assertion documented**: importing `fusion_cowork.engine` asserts harness availability (hooks/permission/compactor/funnels shims hard-import the kernel with the actionable install hint)
+- **Guard matrix extended**: `fusion_cowork.engine` and `fusion_cowork.trajectory.recorder` join the #196 subprocess guard tests — both fail fast with the install hint under a blocked kernel
+
 ## v0.5.125 (issue #520 — kernel trajectory schema)
 
 - **K3 closeout (#520, PR #528)**: cowork trajectory writers emit the kernel `fusion_harness.trajectory` TrajectoryRecord schema — the local `TrajectoryEvent` dataclass is removed, `fusion_cowork` now contains zero local trajectory schema; `~/.fusion/trajectories/cowork/` destination, rotation and retention behavior unchanged
