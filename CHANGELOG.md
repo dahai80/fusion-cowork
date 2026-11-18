@@ -7,8 +7,8 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.126
-updated: 2026-11-18
+version: 0.5.127
+updated: 2026-11-19
 owner: "@dahai"
 source_of_truth:
   - CHANGELOG.md
@@ -16,6 +16,12 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.127 (issue #523 — K4 :11442 product-level gate)
+
+- **K4 Phase A closeout (#523, PR #534)**: the roadmap's "grep `:11442` only product call sites remain" exit criterion is now a permanent CI gate — `tests/test_issue_523_product_level_11442.py` fails on any new `:11442` reference in `fusion_cowork/` unless the file is classified in `_CLASSIFIED_SITES` with a product-level rationale
+- **Classification durability**: each allowlisted site must keep its `# product-level call (roadmap §6)` in-code annotation, and pruned sites must be removed from the allowlist — the list mirrors reality, the 2026-11-18 audit's raw-grep false positives cannot recur
+- **Test-only change**: no product code touched; the 5 re-flagged sites verified product-level per the #494 Part C classification (agent-studio-side entities with no in-process kernel counterpart). Phase B (orchestrator kernel convergence) tracked in #533
 
 ## v0.5.126 (issue #522 — budget funnel duck-type)
 
