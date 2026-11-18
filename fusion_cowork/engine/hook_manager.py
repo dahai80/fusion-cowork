@@ -3,8 +3,13 @@
 节点执行前/后、工作流开始/结束、权限请求、配置变更、智能体启停、会话起止、
 压缩前、通知、节点错误、工作流取消等事件可被自定义处理器拦截。
 
-#109: in-tree fallback copy of fusion-cowork hooks. Used when fusion-harness
-is not installed; the shim in hooks.py routes to fusion_harness when available.
+#521 drop-fallback ruling (2026-11-18): this is the primary cowork hook
+implementation, NOT an in-tree fallback copy. fusion-harness is a mandatory
+install (unified venv, [plugins] extra) — missing harness is a startup
+error via the shims (hooks.py), never a degraded mode. Cowork hook semantics
+(priority ordering, HookContext mutation, fail-closed PRE_*) do not map 1:1
+onto the kernel, so this file stays the product implementation; kernel
+hook types (HookEngine/HookConfig/HookResult) come in through hooks.py.
 """
 
 from __future__ import annotations

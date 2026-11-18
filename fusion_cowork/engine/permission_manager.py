@@ -24,9 +24,14 @@ CR-16: check() 顺序 — approve 规则命中→allow (任意 level); deny→de
   kernel PendingApproval(id/action/resource/reason) 无卡片上下文且 resolve()
   自动落规则, 与 #340 闸门不落规则语义冲突 — parity 差异, 刻意不迁
 
-#109: in-tree fallback copy of fusion-cowork permission. Used when
-fusion-harness is not installed; the shim in permission.py routes to
-fusion_harness when available.
+#521 drop-fallback ruling (2026-11-18): this is the documented deliberate
+divergence (K1 keep), NOT an in-tree fallback copy. fusion-harness is a
+mandatory install (unified venv, [plugins] extra) — missing harness is a
+startup error via the shims (permission.py), never a degraded mode. Kernel
+permission types (PermissionEngine/PermissionRule/PermissionDecision/
+PermissionMode) and rule scope-matching semantics come in through
+permission.py; the CR-16 three-state check() orchestration and the
+rich-context approval queue stay here by design.
 """
 
 from __future__ import annotations

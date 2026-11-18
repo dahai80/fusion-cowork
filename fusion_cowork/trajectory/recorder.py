@@ -6,8 +6,8 @@
   TrajectoryRecord (唯一 schema；本地不再保留任何轨迹 schema)，append jsonl
 - cowork 语义事件名保留在 payload.legacy_event，与 kernel reader 的
   legacy 适配约定一致；旧格式文件由 kernel TrajectoryReader 归一化读取
-- fusion-harness 缺席 ([plugins] extra 未装) 时记录功能整体禁用并
-  WARNING 一次 (fail-visible)，不落任何非 kernel 格式的行
+- fusion-harness 必装 (#521 drop-fallback ruling)：缺包是 import 期
+  startup error（带可执行安装指引），不存在降级模式
 - WORKFLOW_END 时回填 sessions.steps_snapshot（含完整步骤快照）
 - NODE_ERROR 单独标注 is_error，供 D1 清洗流水线消费
 
@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..engine._harness_guard import harness_import_error
 from ..engine.hooks import HookContext, HookEvent, HookManager
 from ..observability.trace import get_trace_id
 
@@ -31,18 +32,8 @@ DEFAULT_TRAJECTORY_DIR = str(Path.home() / ".fusion" / "trajectories" / "cowork"
 
 try:  # issue #520: kernel trajectory schema is the single source of truth
     from fusion_harness.trajectory import TrajectoryRecord
-
-    _KERNEL_OK = True
-    _KERNEL_ERR = ""
-except ImportError as e:  # pragma: no cover - exercised only on bare installs
-    TrajectoryRecord = None  # type: ignore[assignment]
-    _KERNEL_OK = False
-    _KERNEL_ERR = str(e)
-    logger.warning(
-        "trajectory recording disabled: fusion-harness is missing (%s). "
-        "Install it with: pip install 'fusion-cowork[plugins]'",
-        e,
-    )
+except ImportError as exc:  # issue #521: mandatory dependency, fail fast
+    raise harness_import_error(exc) from exc
 
 # cowork semantic event -> kernel normative event (mirrors the kernel reader's
 # legacy table so writer and reader agree without a private import)
@@ -83,10 +74,6 @@ def kernel_record(
     event is the nearest kernel normative event (unknown -> tool_result,
     matching the kernel reader's default mapping).
     """
-    if not _KERNEL_OK:
-        raise RuntimeError(
-            "fusion-harness trajectory schema unavailable — install it with: pip install 'fusion-cowork[plugins]'"
-        )
     pl = dict(payload or {})
     pl["legacy_event"] = event
     ts = float(ts_sec or time.time())
@@ -261,8 +248,6 @@ class TrajectoryRecorder:
         return handler
 
     async def _on_hook(self, evt: HookEvent, ctx: HookContext) -> None:
-        if not _KERNEL_OK:
-            return  # bare install without [plugins]: recording disabled (warned at import)
         data = ctx.data or {}
         # CR-12: 每个执行独立状态槽, 按 execution_id 隔离 (并发执行互不覆盖)
         exec_id = data.get("execution_id", "")
@@ -352,8 +337,6 @@ class TrajectoryRecorder:
 
     def record_directive(self, execution_id: str, directive: Dict[str, Any]) -> None:
         """W8/B1: 运行改向指令单独落轨迹, 供复盘/训练流水线消费。"""
-        if not _KERNEL_OK:
-            return  # bare install without [plugins]: recording disabled (warned at import)
         state = self._execs.get(execution_id) or {}
         traj = kernel_record(
             event="directive",
