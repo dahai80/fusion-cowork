@@ -7,8 +7,8 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.122
-updated: 2026-11-17
+version: 0.5.123
+updated: 2026-11-18
 owner: "@dahai"
 source_of_truth:
   - CHANGELOG.md
@@ -16,6 +16,16 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.123 (issue #516 — workflow asset discipline)
+
+- **Versioned workflow assets (#516, PR #518)**: every `POST/PUT /api/workflows` save produces an immutable version (v1, v2, ...) with a canonical sha256 digest via the new `WorkflowAssetStore` (`fusion_cowork/server/workflow_assets.py`); a gate-rejected candidate never becomes the current definition (previous active version stays current), so a modified workflow without a passing gate cannot become active
+- **Machine-checkable acceptance gates**: `node_count` / `required_nodes` / `forbidden_nodes` / `required_params` rules evaluated at activation; unknown rule types fail closed; gate failure returns `409 asset_gate_rejected` with per-rule results
+- **Regression gate (opt-in `regression.enabled`)**: the candidate definition replays in an isolated thread against recorded golden executions (per-node output digests); mismatch, missing golden cases, replay error or timeout blocks activation
+- **Independent audit trail**: per-asset `audit.jsonl` records actor (masked caller key), timestamp, version, digest, prev digest, node-level diff and gate results — queryable via `GET /api/workflows/{id}/audit` without reading execution logs
+- **Run↔asset binding**: runs started by `workflow_id` record `workflow_version` + `workflow_digest`; successful runs are recorded as golden regression cases (`RunRegistry.asset_recorder` seam, mirroring `capability_recorder`)
+- **Query routes**: `GET /api/workflows/{id}/versions`, `/versions/diff?v1=&v2=`, `/versions/{n}`, `/audit`
+- Tests: `tests/test_issue_516_workflow_assets.py` (17 cases: digest stability, all four acceptance rule types + fail-closed, version activation/rejection, audit diff, regression accept/reject/replay-error, golden suite cap, web route flows incl. run version stamping)
 
 ## v0.5.122 (issue #508 — approval checkpoint extensions)
 
