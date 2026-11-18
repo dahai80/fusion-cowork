@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -449,6 +450,8 @@ class RunRegistry:
         self.push = None
         # issue #228: 能力用量入账回调 (未注入 = 不记账, 零行为变化)
         self.capability_recorder = None
+        # issue #516: golden run 录制回调 (未注入 = 不录制, 零行为变化)
+        self.asset_recorder = None
         # issue #461: 跨 run 并发闸门 — per-key 限额 + 可选全局上限 (env 未设 = 不设闸, 零行为变化)
         from ..engine.run_gate import RunGate
 
@@ -673,6 +676,8 @@ class RunRegistry:
         identity_token: str = "",
         concurrency_key: str = "",
         concurrency: int = 0,
+        workflow_version: int = 0,
+        workflow_digest: str = "",
     ) -> Dict[str, Any]:
         from ..engine import Workflow
 
@@ -714,6 +719,9 @@ class RunRegistry:
             # issue #461: 跨 run 并发闸 key + 同 run 波次并行度 (0 = 引擎默认)
             "concurrency_key": str(concurrency_key or ""),
             "concurrency": int(concurrency or 0),
+            # issue #516: run↔asset version 绑定 — 每个 run 可追溯到执行的资产版本
+            "workflow_version": int(workflow_version or 0),
+            "workflow_digest": str(workflow_digest or ""),
         }
         self._runs[run_id] = record
         self._last_event[run_id] = time.time()
@@ -868,6 +876,12 @@ class RunRegistry:
                     self.capability_recorder(record)
                 except Exception as e:
                     logger.warning(f"能力用量入账失败 (忽略) {run_id}: {e}")
+            # issue #516: 成功 run 录制为 golden 回归用例 (per-node 输出摘要)
+            if self.asset_recorder is not None and record.get("status") == "success" and record.get("workflow_id"):
+                try:
+                    self.asset_recorder(record)
+                except Exception as e:
+                    logger.warning(f"golden run 录制失败 (忽略) {run_id}: {e}")
             # W9: 成功完成的运行进入交付审查队列; 失败/取消不进入
             if record["status"] == "success" and record.get("review") is None:
                 record["review"] = {"status": "pending_review", "note": "", "reviewed_at": None}
@@ -1667,6 +1681,11 @@ def create_web_app(
     except Exception as e:
         logger.warning(f"插件加载失败 (忽略): {e}")
     store = WorkflowDefStore(root=store_root)
+    # issue #516: workflow asset discipline — versioned saves + machine-checkable
+    # acceptance gates + audit trail + golden regression suite per workflow id
+    from .workflow_assets import WorkflowAssetStore, canonical_digest
+
+    asset_store = WorkflowAssetStore(root=Path(store_root) / "assets" if store_root else None)
     # issue #485: seed templates as workflow definitions so fresh deploys can kick
     # off runs by workflow_id (e.g. product_lifecycle_agents) immediately
     try:
@@ -1740,6 +1759,7 @@ def create_web_app(
     else:
         artifact_svc, space_store = None, None
     app = FastAPI(title="Fusion-Cowork Web API", version="0.1.0")
+    app.state.asset_store = asset_store
     app.state.scheduler = scheduler
     app.state.nl_generator = nl_generator
     app.state.session_store = session_store
@@ -1786,6 +1806,69 @@ def create_web_app(
         record_run_usage(capability_store, record, **_gate_kwargs)
 
     runs.capability_recorder = _capability_recorder
+
+    def _asset_recorder(record: Dict[str, Any]) -> None:
+        # issue #516: successful run becomes a golden regression case
+        # (per-node output digests) for the workflow it executed
+        workflow_id = str(record.get("workflow_id") or "")
+        steps = record.get("steps") or []
+        digests = {
+            str(s.get("node_id")): canonical_digest(s.get("output_data") or {})
+            for s in steps
+            if isinstance(s, dict) and s.get("node_id")
+        }
+        asset_store.record_golden_case(workflow_id, record.get("message_input") or {}, digests)
+
+    runs.asset_recorder = _asset_recorder
+
+    def _asset_actor(request: Request) -> str:
+        # issue #516: audit actor = masked caller key (never persist the raw key)
+        try:
+            key = extract_caller_key(request.headers)
+        except Exception:
+            key = ""
+        return (key[:6] + "…") if key else "anonymous"
+
+    def _make_replay_fn(engine_factory: Any = None):
+        # issue #516: regression replay runs the candidate definition in an
+        # isolated thread + fresh event loop (route handlers sit in a running
+        # loop); per-node output digests are compared against golden cases
+        def replay(workflow_dict: Dict[str, Any], inputs: Dict[str, Any]) -> Dict[str, str]:
+            from ..engine import PermissionLevel, PermissionManager, Workflow, WorkflowEngine
+
+            outcome: Dict[str, Any] = {}
+
+            def runner() -> None:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    pm = PermissionManager(level=getattr(PermissionLevel, "AUTO", PermissionLevel.CONFIRM))
+                    eng = WorkflowEngine(permission_manager=pm, hitl_pause=False)
+                    wf = Workflow.from_dict(workflow_dict)
+                    exec_id = f"replay_{uuid.uuid4().hex[:8]}"
+                    execution = loop.run_until_complete(eng.execute(wf, execution_id=exec_id))
+                    outcome["digests"] = {
+                        str(s.node_id): canonical_digest(s.output_data or {}) for s in execution.steps if s.node_id
+                    }
+                    outcome["status"] = execution.status.value
+                except Exception as e:
+                    outcome["error"] = str(e)
+                finally:
+                    loop.close()
+
+            t = threading.Thread(target=runner, daemon=True)
+            t.start()
+            t.join(timeout=60)
+            if t.is_alive():
+                raise RuntimeError("regression replay timed out after 60s")
+            if "error" in outcome:
+                raise RuntimeError(f"regression replay failed: {outcome['error']}")
+            if outcome.get("status") != "success":
+                raise RuntimeError(f"regression replay did not succeed: {outcome.get('status')}")
+            return outcome["digests"]
+
+        return replay
+
     oauth_flow = OAuthFlow(transport=capabilities_transport)
 
     # issue #190: 团队消息消费栈 — 花名册 + durable 信箱 + 常驻消费池
@@ -1923,12 +2006,30 @@ def create_web_app(
         return {"workflows": items, "count": len(items)}
 
     @app.post("/api/workflows", status_code=201)
-    async def workflows_create(body: Dict[str, Any]):
+    async def workflows_create(request: Request, body: Dict[str, Any]):
         workflow_id = body.get("id") or f"wf_{uuid.uuid4().hex[:10]}"
+        # issue #516: every save is a versioned asset — gates evaluate before
+        # activation; a rejected candidate never becomes the current def
+        try:
+            asset_record = asset_store.save(workflow_id, body, actor=_asset_actor(request), replay_fn=_make_replay_fn())
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": str(e)}) from e
+        if asset_record.get("status") == "rejected":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "asset_gate_rejected",
+                    "message": "工作流资产门禁未通过, 未激活",
+                    "version": asset_record.get("version"),
+                    "gate_results": asset_record.get("gate_results", []),
+                },
+            )
         try:
             record = store.save(workflow_id, body)
         except ValueError as e:
             raise HTTPException(status_code=400, detail={"code": "bad_request", "message": str(e)}) from e
+        record["workflow_version"] = asset_record.get("version")
+        record["workflow_digest"] = asset_record.get("digest")
         return record
 
     @app.get("/api/workflows/{workflow_id}")
@@ -1941,12 +2042,30 @@ def create_web_app(
         return record
 
     @app.put("/api/workflows/{workflow_id}")
-    async def workflows_put(workflow_id: str, body: Dict[str, Any]):
+    async def workflows_put(request: Request, workflow_id: str, body: Dict[str, Any]):
         if not store.get(workflow_id):
             raise HTTPException(
                 status_code=404, detail={"code": "not_found", "message": f"工作流不存在: {workflow_id}"}
             )
-        return store.save(workflow_id, body)
+        # issue #516: update also flows through the asset gate
+        try:
+            asset_record = asset_store.save(workflow_id, body, actor=_asset_actor(request), replay_fn=_make_replay_fn())
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": str(e)}) from e
+        if asset_record.get("status") == "rejected":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "asset_gate_rejected",
+                    "message": "工作流资产门禁未通过, 未激活",
+                    "version": asset_record.get("version"),
+                    "gate_results": asset_record.get("gate_results", []),
+                },
+            )
+        record = store.save(workflow_id, body)
+        record["workflow_version"] = asset_record.get("version")
+        record["workflow_digest"] = asset_record.get("digest")
+        return record
 
     @app.delete("/api/workflows/{workflow_id}")
     async def workflows_delete(workflow_id: str):
@@ -1955,6 +2074,36 @@ def create_web_app(
                 status_code=404, detail={"code": "not_found", "message": f"工作流不存在: {workflow_id}"}
             )
         return {"deleted": True}
+
+    # ── issue #516: asset version / audit surface (独立于执行日志可查) ──
+
+    @app.get("/api/workflows/{workflow_id}/versions")
+    async def workflow_versions(workflow_id: str):
+        versions = asset_store.list_versions(workflow_id)
+        return {"versions": versions, "count": len(versions)}
+
+    @app.get("/api/workflows/{workflow_id}/versions/diff")
+    async def workflow_version_diff(workflow_id: str, v1: int, v2: int):
+        result = asset_store.diff(workflow_id, v1, v2)
+        if result is None:
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"版本不存在: v{v1} 或 v{v2}"}
+            )
+        return {"v1": v1, "v2": v2, "diff": result}
+
+    @app.get("/api/workflows/{workflow_id}/versions/{version}")
+    async def workflow_version_detail(workflow_id: str, version: int):
+        rec = asset_store.get_version(workflow_id, version)
+        if rec is None:
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"版本不存在: v{version}"}
+            )
+        return rec
+
+    @app.get("/api/workflows/{workflow_id}/audit")
+    async def workflow_asset_audit(workflow_id: str, limit: int = 100):
+        entries = asset_store.audit(workflow_id, limit=limit)
+        return {"audit": entries, "count": len(entries)}
 
     # ── issue #459: 入站触发器 — webhook/事件可新建 run (事件驱动链路起点) ──
 
@@ -2051,6 +2200,8 @@ def create_web_app(
     async def runs_create(request: Request, body: Dict[str, Any]):
         workflow_def = body.get("workflow") or {}
         workflow_id = body.get("workflow_id", "")
+        workflow_version = 0
+        workflow_digest = ""
         if not workflow_def and workflow_id:
             record = store.get(workflow_id)
             if not record:
@@ -2059,6 +2210,12 @@ def create_web_app(
                 )
             workflow_def = record.get("workflow") or {}
             workflow_name = record.get("name", workflow_id)
+            # issue #516: run↔asset version binding — every run records which
+            # asset version + digest actually executed
+            _asset = asset_store.get_active(workflow_id)
+            if _asset:
+                workflow_version = int(_asset.get("version") or 0)
+                workflow_digest = str(_asset.get("digest") or "")
         else:
             workflow_name = body.get("name", "")
             record = None
@@ -2158,6 +2315,8 @@ def create_web_app(
                 identity_token=identity_token,
                 concurrency_key=concurrency_key,
                 concurrency=concurrency,
+                workflow_version=workflow_version,
+                workflow_digest=workflow_digest,
             )
         except ValueError as exc:
             # issue #135 F-2: 坏边形状/含环等工作流定义错误 → 400 可读信息, 不 500
