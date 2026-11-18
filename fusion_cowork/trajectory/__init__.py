@@ -7,12 +7,11 @@
 随 HookManager.fire() 自动持久化。
 """
 
-from .recorder import TrajectoryEvent, TrajectoryRecorder, TrajectoryWriter
+from .recorder import TrajectoryRecorder, TrajectoryWriter
 from .space import SpaceMessageTrajectory, SpaceTrajectoryExporter
 
 __all__ = [
     "TrajectoryRecorder",
-    "TrajectoryEvent",
     "TrajectoryWriter",
     "SpaceTrajectoryExporter",
     "SpaceMessageTrajectory",

@@ -157,4 +157,4 @@ class TestTrajectoryTrace:
         tid = new_trace_id()
         with _trace(tid):
             await rec._on_hook(HookEvent.POST_NODE_EXECUTE, _Ctx())
-        assert captured and captured[0].trace_id == tid
+        assert captured and captured[0].payload["trace_id"] == tid

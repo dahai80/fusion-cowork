@@ -501,25 +501,25 @@ class AgentOrchestrator:
         # retrospective pool could not answer "which tasks did a human
         # accept/reject". Append a durable trajectory event (best-effort).
         try:
-            from ..trajectory.recorder import TrajectoryEvent, TrajectoryWriter
+            from ..trajectory.recorder import TrajectoryWriter, kernel_record
 
             TrajectoryWriter().write(
-                TrajectoryEvent(
-                    ts=time.time(),
+                kernel_record(
                     event="task_acceptance",
-                    execution_id=task_id,
-                    workflow_id=task_id,
-                    workflow_name=f"acceptance:{verdict}",
+                    run_id=task_id,
                     status=verdict,
-                    is_error=verdict == "rejected",
-                    data={
-                        "task_id": task_id,
-                        "agent_id": task.agent_id,
-                        "verdict": verdict,
-                        "comment": comment[:300],
-                        "acceptor": task.acceptor,
-                        "retry_count": task.retry_count,
-                        "task_status": task.status,
+                    payload={
+                        "workflow_name": f"acceptance:{verdict}",
+                        "is_error": verdict == "rejected",
+                        "data": {
+                            "task_id": task_id,
+                            "agent_id": task.agent_id,
+                            "verdict": verdict,
+                            "comment": comment[:300],
+                            "acceptor": task.acceptor,
+                            "retry_count": task.retry_count,
+                            "task_status": task.status,
+                        },
                     },
                 )
             )

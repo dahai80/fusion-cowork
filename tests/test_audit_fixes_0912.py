@@ -829,10 +829,12 @@ class TestPlanRetrospective:
             path = tw.write_plan_retrospective(P(), {"t1": {"status": "failed", "error": "boom"}}, 9.0)
         assert path == "/tmp/fake.jsonl"
         evt = captured["evt"]
-        assert evt.event == "plan_retrospective"
-        assert evt.status == "failed" and evt.is_error is True
-        assert evt.data["failed_tasks"] == ["t1"]
-        snap = evt.data["tasks"][0]
+        # issue #520: kernel record shape — semantic event in payload.legacy_event
+        assert evt.event == "tool_result"
+        assert evt.payload["legacy_event"] == "plan_retrospective"
+        assert evt.status == "failed" and evt.payload["is_error"] is True
+        assert evt.payload["failed_tasks"] == ["t1"]
+        snap = evt.payload["tasks"][0]
         assert snap["retry_count"] == 1 and snap["acceptance_status"] == "rejected"
         assert snap["elapsed"] == 9.0
 
@@ -1080,7 +1082,8 @@ class TestV2SchemeThree:
                 for line in open(fp, encoding="utf-8"):
                     if "task_acceptance" in line and t.task_id in line:
                         evt = _json.loads(line)
-                        found = evt["data"]["acceptor"] == "alice"
+                        # issue #520: kernel shape nests cowork data in payload
+                        found = evt["payload"]["data"]["acceptor"] == "alice"
         assert found, "acceptance verdict not persisted to trajectory"
         await orch.stop_runtimes()
 
@@ -1470,21 +1473,16 @@ class TestV4ResourceLifecycle:
     def test_scheme1_retention_and_rotation(self, tmp_path, monkeypatch):
         import time as _time
 
-        from fusion_cowork.trajectory.recorder import TrajectoryEvent, TrajectoryWriter
+        from fusion_cowork.trajectory.recorder import TrajectoryWriter, kernel_record
 
         monkeypatch.setenv("FUSION_TRAJECTORY_RETENTION_DAYS", "1")
         monkeypatch.setenv("FUSION_TRAJECTORY_MAX_MB", "1")
         w = TrajectoryWriter(trajectory_dir=str(tmp_path))
-        evt = lambda sid: TrajectoryEvent(  # noqa: E731
-            ts=_time.time(),
+        evt = lambda sid: kernel_record(  # noqa: E731
             event="task_step",
-            execution_id=sid,
-            workflow_id=sid,
-            workflow_name="t",
+            run_id=sid,
             status="running",
-            is_error=False,
-            data={"x": "y"},
-            session_id=sid,
+            payload={"session_id": sid, "workflow_name": "t", "data": {"x": "y"}},
         )
         old = w._dir / "old_session.jsonl"
         old.write_text("{}\n")
