@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.124
+version: 0.5.125
 updated: 2026-11-18
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,14 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.125 (issue #520 — kernel trajectory schema)
+
+- **K3 closeout (#520, PR #528)**: cowork trajectory writers emit the kernel `fusion_harness.trajectory` TrajectoryRecord schema — the local `TrajectoryEvent` dataclass is removed, `fusion_cowork` now contains zero local trajectory schema; `~/.fusion/trajectories/cowork/` destination, rotation and retention behavior unchanged
+- **Semantic event preservation**: every cowork event (14 HookEvent values + directive / plan_retrospective / task_step / task_acceptance) maps to the nearest kernel normative event with the semantic name kept in `payload.legacy_event`, mirroring the kernel reader's legacy convention
+- **Graceful degradation**: bare installs without the [plugins] extra disable trajectory recording with a one-time actionable WARNING instead of writing a non-kernel schema (issue #196 precedent)
+- **Reader back-compat**: plan retrospective / task step readers accept both kernel-shaped lines (ts ms) and pre-#520 legacy lines (ts seconds), ts normalized to seconds at the boundary so `after_ts` watermarks keep their unit
+- **Round trip verified**: cowork-written trajectories load via kernel `TrajectoryReader` (`test_kernel_roundtrip`); all trajectory tests migrated, full suite green
 
 ## v0.5.124 (issue #517 — decision_gate node)
 
