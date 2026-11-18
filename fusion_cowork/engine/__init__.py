@@ -14,6 +14,11 @@ V0.3 新增：
 
 V0.4 新增：
 - AST Diff 传输：compute_ast_diff, apply_ast_diff（迁移自 fusion-multi-node）
+
+#521 drop-fallback ruling: importing this package asserts fusion-harness
+availability — hooks/permission/compactor/funnels shims hard-import the
+kernel and fail with an actionable install hint. Missing harness is a
+startup error, never a degraded mode.
 """
 
 from .ast_diff import apply_ast_diff, compute_ast_diff

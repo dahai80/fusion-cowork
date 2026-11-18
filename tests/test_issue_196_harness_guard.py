@@ -17,6 +17,11 @@ SHIM_MODULES = [
     "fusion_cowork.engine.funnels",
     "fusion_cowork.engine.compactor",
     "fusion_cowork.engine.permission",
+    # issue #521: trajectory schema hard-imports the kernel too (drop-fallback
+    # ruling) — no soft-degradation mode may reintroduce a local schema
+    "fusion_cowork.trajectory.recorder",
+    # issue #521: the engine package itself asserts availability at import
+    "fusion_cowork.engine",
 ]
 
 
