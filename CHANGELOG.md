@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.123
+version: 0.5.124
 updated: 2026-11-18
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,15 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.124 (issue #517 — decision_gate node)
+
+- **Typed-decision lane (#517, PR #525)**: new ecosystem node `decision_gate` (aliases 决策门/智能决策) — short-state gating decisions (escalate-or-continue, retry-vs-fail, route selection) call the fusion-mlx decision head instead of burning a full LLM turn; `POST /v1/decisions` ({state, questions}) or `POST /v1/laya/decide` ({prompt, preset}), URL default fusion-mlx :11434 with `FUSION_MLX_DECISION_URL` override
+- **Conservative fallback**: `noul` / confidence below threshold / timeout / transport errors fall back to a single LLM turn (model param or `FUSION_MLX_MODEL`); `fallback_llm=false` or missing model fail visibly instead of guessing
+- **Self-heal auth**: stale legacy env key 401s trigger one retry with the settings.json backend key (issue #204 two-key model)
+- **Short-context constraint**: decision state compacted and hard-truncated to 900 chars (decision head max_len 1024)
+- **Savings ledger**: `decision_meta` records engine, route, latency_ms, fallback_reason, usage tokens and `tokens_saved_vs_llm_turn` (laya lane burns zero generation tokens; live P50 ~9ms warm vs multi-second LLM baseline)
+- Tests: `tests/test_issue_517_decision_gate.py` (14 cases: both routes, state truncation, all fallback triggers, visible failure modes, fenced-JSON LLM parse, alias/registry, DAG integration)
 
 ## v0.5.123 (issue #516 — workflow asset discipline)
 
