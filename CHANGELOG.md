@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.125
+version: 0.5.126
 updated: 2026-11-18
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,13 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.126 (issue #522 — budget funnel duck-type)
+
+- **BudgetTracker duck-type (#522, PR #531)**: `BudgetTracker` now satisfies the kernel funnel budget duck-type — public `is_exceeded(graph_id="")` (enforce-aware) and `spent_tokens` attribute matching `funnels._budget_exceeded` / budget-stage `getattr` consumers; USD cost dimension kept additive
+- **Private reach-through removed**: the workflow HI-19 budget check uses the public `is_exceeded()` / `record` / `max_budget_usd` accessors instead of `_record.cost_usd` / `_enforce` / `_max_budget_usd`; behavior unchanged
+- **ApprovalJournal store_root (#531 drive-by)**: the journal DB now honors `store_root` (`<store_root>/approval_journal.db`, same pattern as `run_states.db`) instead of always defaulting to the global `~/.fusion-cowork/web/approval_journal.db`; prod path unchanged, stale-row leakage into isolated tests fixed
+- **CI flake fix**: HITL email opt-in test replaces fixed sleeps with a poll loop (daemon-thread send timing under CI load on py3.13 shards)
 
 ## v0.5.125 (issue #520 — kernel trajectory schema)
 
