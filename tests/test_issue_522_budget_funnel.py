@@ -76,7 +76,9 @@ class TestHarnessFunnelConsumer:
         tracker = _tracker_with_cost(0.5, max_budget_usd=1.0)
         funnel = LLMFunnel(budget_ref=tracker)
         ctx = SimpleNamespace(session_id="", graph_id="g1")
-        proceed, reason, _ = await funnel.pre_llm(ctx, node_label="n1", model="m", messages=["hi"])
+        proceed, reason, _ = await funnel.pre_llm(
+            ctx, node_label="n1", model="m", messages=[{"role": "user", "content": "hi"}]
+        )
         assert proceed is True
         assert reason == ""
 
