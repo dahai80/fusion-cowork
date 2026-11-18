@@ -209,6 +209,7 @@ _LAZY_IMPORTS: dict[str, str] = {
     # 工具节点（新增）
     "ShellExecNode": "fusion_cowork.nodes.tools",
     "PythonREPLNode": "fusion_cowork.nodes.tools",
+    "PythonREPLCodeExecutor": "fusion_cowork.nodes.tools",
     "WebSearchNode": "fusion_cowork.nodes.tools",
     "FetchURLNode": "fusion_cowork.nodes.tools",
     "ApplyEditNode": "fusion_cowork.nodes.tools",
