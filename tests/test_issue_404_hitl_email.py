@@ -25,6 +25,15 @@ def _cfg(**over):
     return base
 
 
+def _wait_for(cond, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if cond():
+            return True
+        time.sleep(0.05)
+    return cond()
+
+
 @pytest.fixture
 def no_env(monkeypatch):
     for k in ("SMTP_HOST", "FUSION_COWORK_NOTIFY_EMAIL", "SMTP_NOTIFY_RESOLVED"):
@@ -115,12 +124,12 @@ class TestSend:
         calls = []
         n = HitlEmailNotifier(_cfg(), send_fn=lambda cfg, msg: calls.append(msg))
         n("run_x", "n", {}, "resolved", "approved")
-        time.sleep(0.3)
+        _wait_for(lambda: len(calls) > 0, 1.0)
         assert calls == []  # opt-in off
         monkeypatch.setenv("SMTP_NOTIFY_RESOLVED", "1")
         n("run_x", "n", {}, "resolved", "approved")
-        time.sleep(0.3)
-        assert len(calls) == 1
+        # fire-and-forget daemon thread: poll instead of fixed sleep (CI load, py3.13 shards)
+        assert _wait_for(lambda: len(calls) == 1, 5.0)
         assert "approved" in calls[0].get_content()
 
     def test_smtp_down_retries_then_warns_pipeline_continues(self, no_env, caplog, monkeypatch, recipient):
