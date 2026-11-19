@@ -1,3 +1,19 @@
+---
+doc_id: fusion-cowork/guide/mailbox-agent
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: guide
+title: {zh: "支持邮箱代理", en: "Support mailbox agent"}
+audience: engineer
+status: draft
+version: 0.5.133
+updated: 2026-11-19
+owner: "@dahai"
+source_of_truth:
+  - docs/mailbox-agent.md
+---
+
 # Support Mailbox Agent (issue #546, P0 observe-only)
 
 Support mailbox automation for `support@fusion-mlx.cn` per
