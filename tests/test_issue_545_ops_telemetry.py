@@ -63,6 +63,26 @@ class _OkProbe(BaseNode):
         return NodeResult(status=NodeStatus.SUCCESS, data={"tenant_secret": "s3cret"}, summary="done")
 
 
+def _stub_fusion_core(monkeypatch):
+    # CI environments do not install fusion-core; OpsEmitter is only imported
+    # when FUSION_OPS_DSN is set, so stub the module for wiring tests
+    import sys
+    import types
+
+    ops_mod = types.ModuleType("fusion_core.ops")
+
+    class _StubEmitter:
+        def __init__(self, dsn, source="unknown", **kwargs):
+            self._dsn = dsn
+            self._source = source
+
+    ops_mod.OpsEmitter = _StubEmitter
+    core_mod = types.ModuleType("fusion_core")
+    core_mod.ops = ops_mod
+    monkeypatch.setitem(sys.modules, "fusion_core", core_mod)
+    monkeypatch.setitem(sys.modules, "fusion_core.ops", ops_mod)
+
+
 @pytest.fixture
 def pm(monkeypatch):
     # probes stay LOW-risk: AUTO + high-risk = headless deny-fast (deny), and
@@ -120,6 +140,9 @@ class TestUnitHelpers:
         assert OpsTelemetry.from_env() is None
 
     def test_from_env_emitter_with_dsn(self, monkeypatch):
+        # CI does not install fusion-core — stub the module so the wiring test
+        # is env-independent; the real emitter contract is fusion-core's own suite
+        _stub_fusion_core(monkeypatch)
         monkeypatch.setenv("FUSION_OPS_DSN", "postgresql://ops:pw@127.0.0.1:5432/ops")
         t = OpsTelemetry.from_env()
         assert t is not None
@@ -225,6 +248,8 @@ class TestEngineEmission:
 
 class TestWebAppWiring:
     async def test_create_web_app_builds_telemetry_from_env(self, pm, monkeypatch, tmp_path):
+        # stub fusion_core (CI has no fusion-core installed) — wiring test only
+        _stub_fusion_core(monkeypatch)
         monkeypatch.setenv("FUSION_OPS_DSN", "postgresql://ops:pw@127.0.0.1:5432/ops")
         monkeypatch.delenv("FUSION_COWORK_WEB_API_KEY", raising=False)
         from fusion_cowork.server.web_api import create_web_app
