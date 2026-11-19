@@ -26,16 +26,23 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..observability.trace import set_trace_id
+from ._harness_guard import harness_import_error
 from .executors import NodeExecutionContext, executor_for_node, executor_names
 from .hooks import HookEvent
 from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus, _coerce_bool
 from .permission_manager import (
     HITL_GATE_TOOLS,
+    _sanitize_approval_params,
     reset_approval_context,
     reset_approval_evidence,
     set_approval_context,
     set_approval_evidence,
 )
+
+try:  # issue #527: HITL 审批队列走共享内核 HumanGate 契约 (fusion-harness #66)
+    from fusion_harness import HumanGate
+except ImportError as exc:
+    raise harness_import_error(exc) from exc
 
 logger = logging.getLogger(__name__)
 
@@ -759,6 +766,7 @@ class WorkflowEngine:
         node_timeout_s: float | None = None,
         approval_journal=None,
         kernel_checkpoints=None,
+        hitl_gate=None,
     ):
         self._executions: Dict[str, WorkflowExecution] = {}
         self._cancel_flags: Dict[str, bool] = {}
@@ -820,6 +828,15 @@ class WorkflowEngine:
         # 未注入则零行为变化; 注入后每个节点执行前落 pre-state 检查点,
         # 成功后记回执, 同 run_id 重派发时已提交节点凭回执重放不重执行
         self._kernel_checkpoints = kernel_checkpoints
+        # issue #527: HITL 审批队列走共享内核 HumanGate (fusion-harness #66) —
+        # park 点 ask(policy="block", ttl_s) + wait(), 审批侧 resolve() 单赢家,
+        # ttl 到期惰性过期; 审批路由策略 (guard/闸门工具/journal/once) 仍全部在 cowork。
+        # 注入 hitl_gate 可替换 (测试); 未注入则首次 park 时懒构建
+        # (FUSION_COWORK_HITL_GATE_DIR, 兜底 ~/.fusion-cowork/hitl_gate) —
+        # 每引擎构造都读盘队列开销大, 不进 HITL 的 run 零成本
+        self._hitl_gate = hitl_gate
+        # exec_id -> 当前 park 的内核问题 id — resolve 单赢家 + resume/cancel 桥接用
+        self._hitl_questions: Dict[str, str] = {}
         self._trajectory_recorder = trajectory_recorder
         self._event_emitter = event_emitter
         # HI-19: 预算追踪 — 在节点循环顶部检查, 超预算且 enforce 则中止执行
@@ -1298,6 +1315,8 @@ class WorkflowEngine:
             self._hitl_waiting.discard(exec_id)
             self._hitl_waiting_node.pop(exec_id, None)
             self._hitl_deadlines.pop(exec_id, None)
+            # issue #527: run 终态兜底取消内核 HumanGate 问题 (旁路漏清防线)
+            self._hitl_gate_cancel(exec_id)
             self._hitl_attributions.pop(exec_id, None)
             self._hitl_batch_verdicts.pop(exec_id, None)
             self._hitl_replies.pop(exec_id, None)
@@ -1921,6 +1940,8 @@ class WorkflowEngine:
             evt = self._pause_events.get(execution_id)
             if evt is not None:
                 evt.set()
+            # issue #527: 取消桥接内核 HumanGate — 等待中的 wait() 立刻返回
+            self._hitl_gate_cancel(execution_id)
             return True
         return False
 
@@ -1939,6 +1960,9 @@ class WorkflowEngine:
         if evt is None or evt.is_set():
             return False
         evt.set()
+        # issue #527: resume 桥接 — 取消当前内核问题, park 点重问继续等决定
+        # (#445 语义: resume 不合成拒绝, 只重挂起)
+        self._hitl_gate_cancel(execution_id)
         logger.info(f"引擎恢复执行: {execution_id}")
         return True
 
@@ -2012,6 +2036,31 @@ class WorkflowEngine:
                 )
             except Exception as e:
                 logger.warning(f"HITL journal resolve failed (ignored): exec={execution_id} err={e}")
+        # issue #527: 审批侧走内核 resolve() — 单赢家: 并发/重复确认只有第一个生效,
+        # 后来者 resolved=False (answered/cancelled/expired), 不再覆盖已有决定。
+        # 决定内容整体作为 answer 存档, cowork 决定字典仍是路由事实源
+        qid = self._hitl_questions.get(execution_id)
+        if qid and self._hitl_gate is not None:
+            answer = {
+                "approved": bool(approved),
+                "once": bool(once),
+                "params": params if isinstance(params, dict) else {},
+                "batch": batch if isinstance(batch, list) else [],
+                "reply": reply if isinstance(reply, dict) else {},
+                "comments": str(comments or ""),
+                "attribution": attribution if isinstance(attribution, dict) else {},
+            }
+            try:
+                res = self._hitl_gate.resolve(qid, answer)
+            except Exception as e:
+                logger.warning(f"HITL kernel resolve failed (degrade open): exec={execution_id} err={e}")
+                res = {"resolved": True}
+            if not res.get("resolved"):
+                logger.warning(
+                    f"HITL resolve single-winner rejected: exec={execution_id} "
+                    f"question={qid} reason={res.get('reason')}"
+                )
+                return False
         evt = self._pause_events.get(execution_id)
         if evt is None:
             return False
@@ -2090,6 +2139,46 @@ class WorkflowEngine:
         except Exception as e:
             logger.warning(f"[{exec_id}] HITL email notify failed (ignored): {e}")
 
+    def _hitl_gate_ask(self, exec_id: str, node: BaseNode, check_input: Dict[str, Any], ttl_s: float) -> str:
+        # issue #527: park 点入内核 HumanGate — block 策略 + ttl 到期惰性过期;
+        # payload 走审批卡同一套脱敏 (_sanitize_approval_params), 落盘队列不含明文敏感值
+        if self._hitl_gate is None:
+            gate_dir = os.environ.get("FUSION_COWORK_HITL_GATE_DIR", "").strip()
+            if not gate_dir:
+                gate_dir = os.path.join(os.path.expanduser("~"), ".fusion-cowork", "hitl_gate")
+            self._hitl_gate = HumanGate(gate_dir)
+        if self._hitl_gate is None:
+            return ""
+        try:
+            hq = self._hitl_gate.ask(
+                session_id=exec_id,
+                question=f"node '{node.name}' awaits human approval (run {exec_id})",
+                payload={
+                    "node_id": node.id,
+                    "tool_name": node.name,
+                    "input_data": _sanitize_approval_params(check_input),
+                },
+                policy="block",
+                requester="workflow_engine",
+                ttl_s=float(ttl_s) if ttl_s and float(ttl_s) > 0 else None,
+            )
+        except Exception as e:
+            logger.warning(f"[{exec_id}] kernel HumanGate ask failed (degrade to local wait): {e}")
+            return ""
+        self._hitl_questions[exec_id] = hq.id
+        logger.info(f"[{exec_id}] HITL kernel question queued id={hq.id} ttl={ttl_s:g}s")
+        return hq.id
+
+    def _hitl_gate_cancel(self, exec_id: str) -> None:
+        # issue #527: 取消/终态桥接 — 内核 wait() 立刻返回 None, park 点据此重问或退出
+        qid = self._hitl_questions.pop(exec_id, None)
+        if not qid or self._hitl_gate is None:
+            return
+        try:
+            self._hitl_gate.cancel(qid)
+        except Exception as e:
+            logger.debug(f"[{exec_id}] kernel HumanGate cancel failed (ignored): {e}")
+
     async def _hitl_await(self, exec_id: str, workflow: Workflow, node: BaseNode, check_input: Dict[str, Any]) -> bool:
         # issue #463: durable HITL — 崩溃重启后闸门重入, 日志里已有决定直接重放
         # (先于本地待审批空判: 重启后 PermissionManager 队列为空, 决定只能来自日志)
@@ -2125,6 +2214,10 @@ class WorkflowEngine:
             except (TypeError, ValueError):
                 policy_timeout_s = 0.0
         self._hitl_deadlines[exec_id] = time.time() + (policy_timeout_s or self._hitl_timeout)
+        # issue #527: park 点走共享内核 HumanGate — ask(policy="block", ttl_s) 入队,
+        # 审批侧 resolve() 单赢家; 等待唤醒仍桥接 W8 暂停事件 (resume/cancel 共用,
+        # #445/#187 语义不变: resume 不合成决定, 只重建问题继续等)
+        question_id = self._hitl_gate_ask(exec_id, node, check_input, policy_timeout_s or self._hitl_timeout)
         # issue #463: 闸门入口 pending 落账 — SQLite 持久, 崩溃后审批队列可重建
         if journal is not None:
             entry = finder(exec_id) or {}
@@ -2195,7 +2288,31 @@ class WorkflowEngine:
                 if remaining <= 0:
                     timed_out = True
                     break
-                await asyncio.wait_for(evt.wait(), timeout=remaining)
+                if question_id:
+                    # issue #527: 内核 wait() 即 park 点 — resolve 唤醒返回回复;
+                    # None = resume/cancel 桥接取消或 ttl 过期 — 检查决定/取消后重问继续等
+                    reply = None
+                    try:
+                        reply = await self._hitl_gate.wait(question_id, timeout=remaining)
+                    except Exception as e:
+                        logger.warning(f"[{exec_id}] kernel HumanGate wait failed (degrade to evt wait): {e}")
+                        question_id = ""
+                    if question_id and not isinstance(reply, dict):
+                        if exec_id in self._hitl_decisions or self._cancel_flags.get(exec_id):
+                            break
+                        question_id = self._hitl_gate_ask(exec_id, node, check_input, remaining)
+                        continue
+                    if isinstance(reply, dict) and exec_id not in self._hitl_decisions:
+                        # issue #527: 决定经内核侧直接 resolve (旁路 resolve_hitl) — 采纳 answer;
+                        # 不采纳则 wait 每轮立即返回同一回复, 循环空转。同 #453 不变量:
+                        # break 前保持暂停事件 set, 节点间 W8 检查点不被误挂
+                        self._hitl_decisions[exec_id] = bool(reply.get("approved"))
+                        if reply.get("once"):
+                            self._hitl_once_grants.add(exec_id)
+                        evt.set()
+                        logger.info(f"[{exec_id}] HITL kernel reply adopted: approved={bool(reply.get('approved'))}")
+                if not question_id:
+                    await asyncio.wait_for(evt.wait(), timeout=remaining)
             except TimeoutError:
                 timed_out = True
                 break
@@ -2210,6 +2327,8 @@ class WorkflowEngine:
         self._hitl_waiting.discard(exec_id)
         self._hitl_waiting_node.pop(exec_id, None)
         self._hitl_deadlines.pop(exec_id, None)
+        # issue #527: park 退出收尾 — 内核问题随等待结束出队 (超时已 ttl 过期, cancel 兜底)
+        self._hitl_gate_cancel(exec_id)
         # issue #508: 节点级 on_timeout — "deny" 走通用拒绝路径 (修订回路照常登记),
         # 默认/其他值保持 fail-fast 终态 (分支直接失败, 不进修订)
         policy = node.config.params.get("timeout_policy") if isinstance(node.config.params, dict) else None

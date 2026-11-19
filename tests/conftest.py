@@ -9,6 +9,10 @@ from fusion_cowork import config_center as _cc_mod
 # HITL 专属测试文件在自己的 fixture 里 monkeypatch.delenv 恢复默认 ON 语义
 os.environ.setdefault("FUSION_COWORK_HITL_PAUSE", "0")
 
+# issue #527: 引擎 HITL 队列走内核 HumanGate (持久 JSON 队列) — 套件级指向临时目录,
+# 不读写真机 ~/.fusion-cowork/hitl_gate
+os.environ.setdefault("FUSION_COWORK_HITL_GATE_DIR", tempfile.mkdtemp(prefix="fc_hitl_gate_"))
+
 # issue #429: CI 按 pytest-split 分片跑 — 分片不再保证含有 import_all_nodes()
 # 的测试文件被收集, 节点注册表断言 (72 节点等) 需要套件级完整注册
 from fusion_cowork.nodes import import_all_nodes
