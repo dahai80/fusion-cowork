@@ -2196,14 +2196,25 @@ class WorkflowEngine:
         except Exception as e:
             logger.warning(f"[{exec_id}] HITL email notify failed (ignored): {e}")
 
+    def _build_kernel_gate(self):
+        # issue #558 (#125): wire cowork's kernel CheckpointStore as HumanGate
+        # checkpoint_ref when kernel checkpoints are on — pending HITL questions
+        # mirror as `awaiting_human` checkpoint entries and survive restarts.
+        # Unwired binder = plain gate (JSON queue only), zero behavior change.
+        if self._hitl_gate is not None:
+            return self._hitl_gate
+        gate_dir = os.environ.get("FUSION_COWORK_HITL_GATE_DIR", "").strip()
+        if not gate_dir:
+            gate_dir = os.path.join(os.path.expanduser("~"), ".fusion-cowork", "hitl_gate")
+        checkpoint_ref = self._kernel_checkpoints.store if self._kernel_checkpoints is not None else None
+        self._hitl_gate = HumanGate(gate_dir, checkpoint_ref=checkpoint_ref)
+        return self._hitl_gate
+
     def _hitl_gate_ask(self, exec_id: str, node: BaseNode, check_input: Dict[str, Any], ttl_s: float) -> str:
         # issue #527: park 点入内核 HumanGate — block 策略 + ttl 到期惰性过期;
         # payload 走审批卡同一套脱敏 (_sanitize_approval_params), 落盘队列不含明文敏感值
         if self._hitl_gate is None:
-            gate_dir = os.environ.get("FUSION_COWORK_HITL_GATE_DIR", "").strip()
-            if not gate_dir:
-                gate_dir = os.path.join(os.path.expanduser("~"), ".fusion-cowork", "hitl_gate")
-            self._hitl_gate = HumanGate(gate_dir)
+            self._build_kernel_gate()
         if self._hitl_gate is None:
             return ""
         try:
@@ -2239,10 +2250,7 @@ class WorkflowEngine:
     def _ensure_kernel_gate(self):
         # issue #554: 与 _hitl_gate_ask 同一懒构建路径 — token 签发复用共享 HumanGate
         if self._hitl_gate is None:
-            gate_dir = os.environ.get("FUSION_COWORK_HITL_GATE_DIR", "").strip()
-            if not gate_dir:
-                gate_dir = os.path.join(os.path.expanduser("~"), ".fusion-cowork", "hitl_gate")
-            self._hitl_gate = HumanGate(gate_dir)
+            self._build_kernel_gate()
         return self._hitl_gate
 
     def _record_destructive_grant(self, exec_id: str, node: BaseNode) -> None:
