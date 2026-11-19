@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
+from .task_lifecycle import claim_task, transition_task
+
 logger = logging.getLogger(__name__)
 
 # v2 方案一: single source of truth for executor-reported failure — no_executor
@@ -330,7 +332,12 @@ class AgentOrchestrator:
 
     async def _run_submitted_task(self, task: AgentTask) -> None:
         """执行提交的任务 — HI-18: CancelledError 单独捕获, finally 置终态 + completed_at。"""
-        task.status = "running"
+        # issue #533 item 4: kernel claim semantics (compare-and-set) + guarded
+        # transitions — status writes go through the kernel-derived lifecycle
+        if not claim_task(task, task.agent_id):
+            logger.warning(f"[{task.task_id}] task claim lost, skip duplicate execution")
+            return
+        transition_task(task, "running")
         task.started_at = time.time()
         # issue #120: task-scoped logs — 与引擎 step 日志同一 grep 约定
         logger.info(f"[{task.task_id}] task start: agent={task.agent_id} desc={task.description[:80]}")
@@ -366,10 +373,10 @@ class AgentOrchestrator:
                 _err = result.get("error")
                 _failed = result.get("status") in FAILED_STATUSES or _err
                 if _failed:
-                    task.status = "failed"
+                    transition_task(task, "failed")
                     task.error = str(_err or result.get("status") or "executor reported failure")
                 else:
-                    task.status = "completed"
+                    transition_task(task, "completed")
             else:
                 node_executor = self._executors.get("executor_node")
                 if node_executor:
@@ -381,32 +388,32 @@ class AgentOrchestrator:
                     _err = result.get("error")
                     _failed = result.get("status") in FAILED_STATUSES or _err
                     if _failed:
-                        task.status = "failed"
+                        transition_task(task, "failed")
                         task.error = str(_err or result.get("status") or "executor reported failure")
                     else:
-                        task.status = "completed"
+                        transition_task(task, "completed")
                 else:
                     task.error = f"无可用执行器: agent_id={task.agent_id}"
                     task.output_data = {"status": "no_executor", "agent_id": task.agent_id, "input": task.input_data}
-                    task.status = "failed"
+                    transition_task(task, "failed")
                     logger.error(f"任务无执行器且无降级路径: {task.task_id} agent_id={task.agent_id}")
         except asyncio.CancelledError:
             # HI-18: CancelledError 是 BaseException, 旧 except Exception 不接 → status 卡 running
             # P2-3 (audit 0912): don't downgrade an already-terminal status set
             # by a racing cancel_task()/completion — first terminal write wins.
             if task.status not in ("completed", "failed", "cancelled"):
-                task.status = "cancelled"
+                transition_task(task, "cancelled")
                 task.error = "用户取消"
             logger.info(f"提交任务被取消: {task.task_id}")
             raise
         except TimeoutError:
             # R-2: wait_for 超时 → executor 协程已取消, 置终态避免卡 running
-            task.status = "failed"
+            transition_task(task, "failed")
             task.error = f"任务超时 ({self._task_timeout}s)"
             logger.warning(f"提交任务超时: {task.task_id} ({self._task_timeout}s)")
         except Exception as e:
             task.error = str(e)
-            task.status = "failed"
+            transition_task(task, "failed")
             logger.error(f"提交任务执行异常: {e}")
         finally:
             task.completed_at = time.time()
@@ -439,7 +446,7 @@ class AgentOrchestrator:
         if handle is not None and not handle.done():
             handle.cancel()
             logger.info(f"任务协程已请求取消: {task_id}")
-        task.status = "cancelled"
+        transition_task(task, "cancelled")
         task.error = "用户取消"
         task.completed_at = time.time()
         logger.info(f"任务已取消: {task_id}")
@@ -529,7 +536,8 @@ class AgentOrchestrator:
             logger.info(f"任务验收通过: {task_id} acceptor={task.acceptor}")
             return {"task_id": task_id, "acceptance_status": "accepted", "status": task.status}
         # rejected -> reopen for rework
-        task.status = "pending"
+        transition_task(task, "pending")
+        task._claimed_by = ""  # rework: release the claim for the re-run
         task.retry_count += 1
         task.completed_at = 0.0
         # v2 P2: reset started_at too — dashboard elapsed = completed_at -
@@ -548,6 +556,11 @@ class AgentOrchestrator:
         task = self.get_task(task_id)
         if not task or task.status not in ("pending", "failed"):
             return False
+        if task.status == "failed":
+            # #533 item 4: guarded lifecycle — rework goes through the
+            # failed -> pending reopen edge before running
+            transition_task(task, "pending")
+            task._claimed_by = ""
         handle = asyncio.create_task(self._run_submitted_task(task))
         self._task_handles[task.task_id] = handle
         self._bg_tasks.add(handle)
@@ -643,6 +656,16 @@ class AgentOrchestrator:
 
         # 拓扑排序执行
         executed = set()
+        # issue #533 item 4: re-invoked plans (standard_pipeline calls
+        # execute_plan once per planner attempt) must not re-execute terminal
+        # tasks — the guarded lifecycle forbids completed -> running. Seed
+        # results from recorded outputs so downstream deps and the planner
+        # retry loop still see prior-stage content.
+        for t in plan.tasks:
+            if t.status in ("completed", "failed", "cancelled", "skipped"):
+                executed.add(t.task_id)
+                if t.status == "completed" and t.output_data:
+                    results[t.task_id] = t.output_data
         while len(executed) < len(plan.tasks):
             # 找出可执行的任务 — prerequisites must have executed successfully
             ready = []
@@ -675,7 +698,7 @@ class AgentOrchestrator:
                 ):
                     for t in plan.tasks:
                         if t.acceptance_status == "rejected" and t.status == "pending":
-                            t.status = "failed"
+                            transition_task(t, "failed")
                             t.error = "milestone acceptance rejected"
                             results[t.task_id] = {"status": "failed", "error": t.error}
                     await asyncio.sleep(2)
@@ -692,7 +715,7 @@ class AgentOrchestrator:
                     for tid, deps in blocked_by_failure.items():
                         t = next((x for x in plan.tasks if x.task_id == tid), None)
                         if t is not None:
-                            t.status = "skipped"
+                            transition_task(t, "skipped")
                             t.error = f"skipped: upstream failed {deps}"
                             results[tid] = {"status": "skipped", "error": t.error}
                             executed.add(tid)
@@ -741,17 +764,17 @@ class AgentOrchestrator:
                 executed.add(task.task_id)
                 if isinstance(result, Exception):
                     results[task.task_id] = {"error": str(result)}
-                    task.status = "failed"
+                    transition_task(task, "failed")
                     task.error = str(result)
                 elif isinstance(result, dict) and (result.get("error") or result.get("status") in FAILED_STATUSES):
                     # A-4: executor-reported failure is a failed task (was "completed")
                     results[task.task_id] = result
-                    task.status = "failed"
+                    transition_task(task, "failed")
                     task.error = str(result.get("error") or result.get("status"))
                     task.completed_at = time.time()
                 else:
                     results[task.task_id] = result
-                    task.status = "completed"
+                    transition_task(task, "completed")
                     task.output_data = result or {}
                     task.completed_at = time.time()
 
@@ -789,7 +812,10 @@ class AgentOrchestrator:
         if not agent:
             return {"error": f"Agent 不存在: {task.agent_id}"}
 
-        task.status = "running"
+        if not claim_task(task, task.agent_id):
+            logger.warning(f"[{task.task_id}] task claim lost, skip duplicate execution")
+            return {"error": "task already claimed"}
+        transition_task(task, "running")
         task.started_at = time.time()
         executor = self._executors.get(task.agent_id)
         # v2 方案二 (P1-3): same presence sync as the submit path — plan-path
@@ -814,12 +840,12 @@ class AgentOrchestrator:
                         result = await asyncio.wait_for(result, timeout=self._task_timeout)
                     return result if isinstance(result, dict) else {"result": result}
                 except TimeoutError:
-                    task.status = "failed"
+                    transition_task(task, "failed")
                     task.error = f"任务超时 ({self._task_timeout}s)"
                     logger.warning(f"任务超时: {task.task_id} ({self._task_timeout}s)")
                     return {"error": task.error}
                 except Exception as e:
-                    task.status = "failed"
+                    transition_task(task, "failed")
                     task.error = str(e)
                     return {"error": str(e)}
             # 无执行器时尝试默认执行器
@@ -834,12 +860,12 @@ class AgentOrchestrator:
                         result = await asyncio.wait_for(result, timeout=self._task_timeout)
                     return result if isinstance(result, dict) else {"result": result}
                 except TimeoutError:
-                    task.status = "failed"
+                    transition_task(task, "failed")
                     task.error = f"降级任务超时 ({self._task_timeout}s)"
                     logger.warning(f"降级任务超时: {task.task_id} ({self._task_timeout}s)")
                     return {"error": task.error}
                 except Exception as e:
-                    task.status = "failed"
+                    transition_task(task, "failed")
                     task.error = str(e)
                     return {"error": str(e)}
             # 兜底: 标记为无执行器
