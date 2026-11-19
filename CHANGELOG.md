@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.131
+version: 0.5.132
 updated: 2026-11-19
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,10 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.132 (issue #545 — DAG run/node telemetry, flywheel Loop D foundation)
+
+- **#545 (PR #552)**: workflow engine emits DAG execution telemetry into `fusion_ops.ops_events` via `fusion_core.ops.OpsEmitter` — `dag_run_started`/`dag_run_finished` (outcome, total `latency_ms`, definition hash) + `dag_node_started`/`dag_node_finished` (node type, `duration_ms`, attempt count). Stable failure signature `node_type:ErrorClass` (no message text) = mined_issues cluster key; repeated failing nodes group across runs. Node inputs/outputs never emitted (tenant data red line); only sha256 of canonical definition (node types + edge topology, instance-id free). Opt-in `FUSION_OPS_DSN` (unset = zero behavior change); emit never blocks (drop + counter). Pin suite `tests/test_issue_545_ops_telemetry.py` (19 cases).
 
 ## v0.5.131 (issues #549/#544 — runs API HITL marker hygiene + IDOR regression matrix)
 
