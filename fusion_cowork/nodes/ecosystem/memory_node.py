@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any, Dict, List
@@ -259,7 +260,33 @@ class MemoryRetrieveNode(BaseNode):
                 )
             blocks = result.get("blocks", []) if isinstance(result, dict) else []
             total_tokens = result.get("total_tokens", 0) if isinstance(result, dict) else 0
-            logger.info(f"MemoryRetrieveNode retrieve ok: {len(blocks)} blocks, {total_tokens} tokens")
+            # issue #554: 记忆块载入 run 前 artifact_scan — 注入/凭据规则命中的块
+            # 剔除并隔离 (不进下游 SharedContext), 其余照常注入
+            quarantined = 0
+            try:
+                from ...engine.kernel_gates import get_quarantine, scan_or_quarantine
+
+                kept = []
+                for block in blocks:
+                    text = json.dumps(block, ensure_ascii=False) if not isinstance(block, str) else block
+                    clean, report = scan_or_quarantine(
+                        text, source=f"memory:{text[:40]!r}", kind="memory"
+                    )
+                    if clean:
+                        kept.append(block)
+                    else:
+                        quarantined += 1
+                        get_quarantine().add(report, preview=text[:200])
+                if quarantined:
+                    blocks = kept
+                    total_tokens = max(0, total_tokens - quarantined)
+                    logger.warning(f"MemoryRetrieveNode 隔离 {quarantined} 个未通过扫描的记忆块")
+            except Exception as e:
+                # 扫描基础设施异常不阻断检索 — 记日志保守放行 (fail-open 只限基础设施故障)
+                logger.warning(f"MemoryRetrieveNode artifact scan failed (pass-through): {e}")
+            logger.info(
+                f"MemoryRetrieveNode retrieve ok: {len(blocks)} blocks, {total_tokens} tokens, quarantined={quarantined}"
+            )
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={
@@ -267,7 +294,8 @@ class MemoryRetrieveNode(BaseNode):
                     "total_tokens": total_tokens,
                     "block_count": len(blocks),
                 },
-                summary=f"召回 {len(blocks)} 块记忆 ({total_tokens} tokens)",
+                summary=f"召回 {len(blocks)} 块记忆 ({total_tokens} tokens)"
+                + (f", 隔离 {quarantined}" if quarantined else ""),
             )
         except Exception as e:
             logger.exception("MemoryRetrieveNode 执行异常")

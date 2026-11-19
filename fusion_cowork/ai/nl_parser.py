@@ -14,6 +14,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from ..engine.kernel_gates import JSONRepairError, parse_llm_json
 from .mlx_client import FusionMLXClient
 
 logger = logging.getLogger(__name__)
@@ -307,7 +308,8 @@ class NLWorkflowGenerator:
         # 提取 JSON（字符串感知的花括号配平，处理围栏/前置/尾随噪声）
         try:
             json_str = extract_json_object(content)
-            workflow_def = json.loads(json_str)
+            # issue #554: 修复梯兜住围栏/尾逗号/截断形态 — 全败仍走原 fallback
+            workflow_def = parse_llm_json(json_str, context="nl_generate")
 
             # 确保必有字段
             workflow_def.setdefault("name", "AI 生成的工作流")
@@ -344,7 +346,7 @@ class NLWorkflowGenerator:
             logger.info(f"成功生成工作流: {workflow_def['name']} ({len(workflow_def['nodes'])} 个节点)")
             return workflow_def
 
-        except (json.JSONDecodeError, WorkflowParseError) as e:
+        except (JSONRepairError, WorkflowParseError) as e:
             logger.error(f"解析 LLM 输出为 JSON 失败: {e}")
             logger.debug(f"LLM 原始输出: {content}")
             if raise_on_parse_error:
@@ -396,7 +398,8 @@ class NLWorkflowGenerator:
             content = content.split("```")[1].split("```")[0].strip()
 
         try:
-            return json.loads(content)
-        except json.JSONDecodeError:
+            # issue #554: LLM 输出 JSON 修复梯 (内核 json_repair) 替换裸 json.loads
+            return parse_llm_json(content, context="template_recommend")
+        except JSONRepairError:
             logger.warning(f"模板推荐解析失败: {content[:200]}")
             return []
