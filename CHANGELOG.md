@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.130
+version: 0.5.131
 updated: 2026-11-19
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,11 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.131 (issues #549/#544 — runs API HITL marker hygiene + IDOR regression matrix)
+
+- **#549 (PR #550)**: `runs_get` mutated the shared run-registry record dict on mid-run GETs (`hitl_pending`/`hitl_deadline`/`awaiting_human`/`awaiting_node`); those keys survived into terminal responses so a successful run kept reporting `hitl_pending: true`. Terminal responses now pop all four markers. Pin suite `tests/test_issue_549_stale_hitl.py`.
+- **#544 (PR #550)**: IDOR regression matrix for the module api-key chain — `tests/test_issue_544_idor_matrix.py` covers workflows/runs/artifacts/run events/scheduler tasks x foreign api-key / foreign user JWT / no auth / revoked api-key; every cell must be 401/403/404, never 2xx with foreign data. Auth stays centralized in `_auth_middleware` (single module key = admin, no per-endpoint bypass surface).
 
 ## v0.5.130 (issue #527 — HITL approval gate on the shared kernel HumanGate contract)
 
