@@ -13,7 +13,12 @@ from __future__ import annotations
 import logging
 
 import pytest
-from fusion_harness import Deadline, DeadlineExceeded, RetryPolicy, TransientError, run_with_retry
+
+try:
+    from fusion_harness import Deadline, DeadlineExceeded, RetryPolicy, TransientError, run_with_retry
+except ImportError:
+    # harness 0.26 demoted zero-consumer root exports (harness 1c779ef) — canonical home is the module
+    from fusion_harness.policies import Deadline, DeadlineExceeded, RetryPolicy, TransientError, run_with_retry
 
 pytestmark = [pytest.mark.chaos]
 

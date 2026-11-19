@@ -67,6 +67,13 @@ class KernelCheckpointBinder:
         self._receipts = ReceiptCache(db_path=db_path, **kwargs)
         logger.info("kernel checkpoint binder ready db=%s", db_path)
 
+    @property
+    def store(self):
+        # issue #558 (#125): expose the kernel CheckpointStore so the engine can
+        # wire it as HumanGate(checkpoint_ref=...) — pending HITL questions are
+        # mirrored as `awaiting_human` checkpoint entries and survive restarts
+        return self._store
+
     @staticmethod
     def _receipt_key(run_id: str, node_id: str) -> str:
         return f"{run_id}:{node_id}"

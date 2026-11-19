@@ -32,6 +32,7 @@ import logging
 import os
 import re
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 from fusion_harness.team import TeamDefError, TeamDefinition, TeamMember
@@ -67,6 +68,7 @@ class SpaceKernelPlane:
         self._runtimes: Dict[str, TeamRuntime] = {}
         self._fingerprints: Dict[str, str] = {}
         self._roster_cache: Dict[str, List[str]] = {}
+        self._fanout_warnings: Dict[str, List[str]] = {}
 
     def _state_dir(self, space_id: str) -> str:
         if self._state_root:
@@ -100,6 +102,21 @@ class SpaceKernelPlane:
             raise ValueError(f"space {space_id} roster rejected by kernel: {exc}") from exc
         state_dir = self._state_dir(space_id)
         runtime = TeamRuntime(definition, state_dir=state_dir)
+        # issue #558 (P-series #124): non-fatal fan-out guidance at spawn time —
+        # member counts outside the FANOUT_* bands log a warning (token
+        # multiplier cost) but never block; latest warnings kept per space
+        try:
+            from fusion_harness import fanout_warnings
+
+            warnings = fanout_warnings(SimpleNamespace(concurrency=len(kmembers)))
+            if warnings:
+                self._fanout_warnings[space_id] = warnings
+                for w in warnings:
+                    logger.warning(f"SpaceKernelPlane fanout space={space_id}: {w}")
+            else:
+                self._fanout_warnings.pop(space_id, None)
+        except ImportError:
+            pass
         self._restore_inboxes(runtime, member_ids, state_dir)
         self._runtimes[space_id] = runtime
         self._fingerprints[space_id] = fp
