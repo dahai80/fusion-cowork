@@ -2434,6 +2434,13 @@ def create_web_app(
                 awaiting_node = waiting_node(run_id) if callable(waiting_node) else None
                 if awaiting_node:
                     record["awaiting_node"] = awaiting_node
+        else:
+            # issue #549: 终态 run 清掉 mid-run GET 写入的 HITL 标记 — record 是
+            # 注册表共享 dict, 运行期写入的键不清理会残留到终态响应
+            record.pop("hitl_pending", None)
+            record.pop("hitl_deadline", None)
+            record.pop("awaiting_human", None)
+            record.pop("awaiting_node", None)
         return record
 
     # ── W10/B5 运行产物预览 (右栏, 实时随步骤输出刷新) ──
