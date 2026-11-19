@@ -159,6 +159,10 @@ fusion-cowork desk rpc
 | `FUSION_MLX_PORT` | `11432` | fusion-mlx port (composed with `FUSION_MLX_HOST`; used only when `FUSION_MLX_URL` unset) |
 | `FUSION_MLX_MODEL` | _(unset)_ | default chat model for NL workflow generation (`NLWorkflowGenerator`). Pin a chat-capable model id to avoid picking `image_gen`/`video_gen` models (issue #85) |
 | `FUSION_RAG_URL` | `http://localhost:11436` | fusion-rag (fusion-kb) base URL |
+| `FUSION_OPS_DSN` | _(unset)_ | opt-in: Postgres DSN for `fusion_ops.ops_events` DAG telemetry (issue #545, flywheel Loop D) and best-effort `fusion_ops.feedback` mirroring. Unset = telemetry off, zero behavior change |
+| `FUSION_MAILBOX_ENABLED` | _(unset)_ | opt-in: set `1` to run the support mailbox agent (issue #546, P0 observe-only — poll → classify → feedback rows + daily digest, zero outbound actions) |
+| `FUSION_MAILBOX_IMAP_HOST` / `_PORT` / `_USER` / `_PASS` / `_FOLDER` | _(unset)_ | IMAP credentials for the mailbox agent — injected via fusion-sv env only, never in the repo. All three of HOST/USER/PASS required |
+| `FUSION_MAILBOX_MODEL` | `qwen3.5-9b` | local mlx model used for mail classification |
 | `FUSION_IDENTITY_ENABLED` | _(unset)_ | opt-in: set `1` to activate fusion-identity as sole JWT issuer + tenant registry (issue #88). Default OFF = zero behavior change (local JWT/static-token dev path unchanged) |
 | `FUSION_IDENTITY_URL` | `http://127.0.0.1:11470` | fusion-identity service base URL (only used when `FUSION_IDENTITY_ENABLED=1`) |
 | `FUSION_IDENTITY_SERVICE_TOKEN` | _(unset)_ | service token sent as `Authorization: Bearer` to fusion-identity `/verify`. Required when enabled (else identity client stays None) |

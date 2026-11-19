@@ -3514,6 +3514,42 @@ def serve(host: str, port: int, json_log: bool, metrics_port: int):
         console.print_info("服务已停止")
 
 
+@cli.group()
+def mailbox():
+    """Support mailbox agent (IMAP poller + classify, issue #546)."""
+
+
+@mailbox.command("serve")
+@click.option("--interval", "-i", default=300, type=int, help="轮询间隔秒数 (默认 300)")
+def mailbox_serve(interval):
+    """Run the support mailbox agent loop (P0 observe-only)."""
+
+    async def _serve():
+        from .mailbox.service import MailboxAgent
+
+        agent = MailboxAgent.from_env()
+        if agent is None:
+            console.print_error(
+                "mailbox agent disabled: set FUSION_MAILBOX_ENABLED=1 and "
+                "FUSION_MAILBOX_IMAP_HOST/USER/PASS (fusion-sv env injection)"
+            )
+            return
+        agent._poll_interval_s = interval
+        await agent.start()
+        console.print_success("mailbox agent started (P0 observe-only, Ctrl-C to stop)")
+        try:
+            await agent._task
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            pass
+        finally:
+            await agent.stop()
+
+    try:
+        asyncio.run(_serve())
+    except KeyboardInterrupt:
+        console.print_info("mailbox agent stopped")
+
+
 def main():
     """Fusion-Cowork 主入口。"""
     cli()
