@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.128
+version: 0.5.129
 updated: 2026-11-19
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,15 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.129 (issue #533 — K4 Phase B: orchestrator kernel convergence)
+
+- #533 item 1 (#539): `orchestrator/comm.py` MessageBus ruled **kernel-verified DIVERGENT-BY-DESIGN** — kernel mailbox is member-scoped (closed `MSG_TYPES`, durable state_dir persistence); cowork bus stays the open in-process pub/sub transport (arbitrary topics/payloads, `*` broadcast, E-6 `MessageDeliveryError` + dropped audit). Pin suite `tests/test_issue_533_comm_bus.py`.
+- #533 item 2 (#540): `orchestrator/role_registry.py` — `BusinessRole` composes a kernel `TeamMember`; `role_id`/`executor`/`duties` become derived properties (single member-spec representation); registry stays authoritative for cowork-only `acceptor`/`deliverables`. Pin suite `tests/test_issue_533_role_registry.py`.
+- #533 item 3 (#541): `orchestrator/runner_pool.py` — the #494 Part B `run_member` divergence explicitly re-ratified against the kernel roadmap 裁决: kernel `run_member` = LLM-subagent mechanism (space plane #496, `teams.run_member` node); RunnerPool = workflow dispatch with durable at-least-once mailbox semantics. Pin suite `tests/test_issue_533_runner_pool.py`.
+- #533 item 4 (#542): task lifecycle converged onto the kernel `TeamTask` state machine — new `orchestrator/task_lifecycle.py` derives `TASK_TRANSITIONS` from the kernel table (+ documented failed/skipped/rework extensions), all AgentTask status writes guarded (`TaskTransitionError` on illegal), kernel-style compare-and-set `claim_task` wired into both execution entries. Fixes silent re-execution of the completed planner task across `execute_plan` re-invocations. Pin suite `tests/test_issue_533_task_lifecycle.py`.
+- #533 item 5: `orchestrator/trajectory_writer.py` verified unchanged (kernel trajectory schema wiring from #520 intact).
+- Hard gates held throughout: audit suites (`test_audit_fixes_0912.py`, `test_stage6_medium_low.py`, `test_concurrency_stage4.py`) green unmodified; no web_api/desk_rpc/cli behavior change.
 
 ## v0.5.128 (issue #524 — kernel SandboxRunner/CodeExecutor conformance)
 
