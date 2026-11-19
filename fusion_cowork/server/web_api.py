@@ -1712,10 +1712,23 @@ def create_web_app(
         from ..engine.events import EventEmitter
 
         emitter = EventEmitter()
-        engine = WorkflowEngine(permission_manager=permission_manager, event_emitter=emitter)
+        # issue #545: ops telemetry — opt-in via FUSION_OPS_DSN (unset = None = zero behavior change)
+        from ..observability.ops_telemetry import OpsTelemetry
+
+        engine = WorkflowEngine(
+            permission_manager=permission_manager,
+            event_emitter=emitter,
+            ops_telemetry=OpsTelemetry.from_env(),
+        )
     else:
         permission_manager = getattr(engine, "_permission_manager", None) or permission_manager
         emitter = getattr(engine, "_event_emitter", None)
+    # issue #545: injected engines may carry their own telemetry (test seam);
+    # otherwise build from env here (mirrors the #463 approval-journal injection)
+    if getattr(engine, "_ops_telemetry", None) is None:
+        from ..observability.ops_telemetry import OpsTelemetry
+
+        engine._ops_telemetry = OpsTelemetry.from_env()
     # issue #463: durable HITL — 审批日志注入引擎 (引擎已带则不覆盖, 测试可注入临时库)
     approval_journal = getattr(engine, "_approval_journal", None)
     if approval_journal is None:
@@ -1759,6 +1772,8 @@ def create_web_app(
     else:
         artifact_svc, space_store = None, None
     app = FastAPI(title="Fusion-Cowork Web API", version="0.1.0")
+    # issue #545: telemetry surfaced on app.state for startup/shutdown lifecycle
+    app.state.ops_telemetry = getattr(engine, "_ops_telemetry", None)
     app.state.asset_store = asset_store
     app.state.scheduler = scheduler
     app.state.nl_generator = nl_generator
@@ -1963,6 +1978,20 @@ def create_web_app(
     @app.on_event("shutdown")
     async def _stop_team_pool():
         await app.state.runner_pool.stop()
+
+    # issue #545: ops telemetry lifecycle — start the batched OpsEmitter worker on
+    # serve, drain + flush on shutdown; absent (no FUSION_OPS_DSN) = no-op
+    @app.on_event("startup")
+    async def _start_ops_telemetry():
+        telemetry = getattr(app.state, "ops_telemetry", None)
+        if telemetry is not None:
+            await telemetry.start()
+
+    @app.on_event("shutdown")
+    async def _stop_ops_telemetry():
+        telemetry = getattr(app.state, "ops_telemetry", None)
+        if telemetry is not None:
+            await telemetry.stop()
 
     @app.middleware("http")
     async def _auth_middleware(request: Request, call_next):
