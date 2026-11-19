@@ -87,18 +87,18 @@ def build_sandbox_policy() -> SandboxPolicy:
         runner = SandboxExecRunner()
     if tiers:
         logger.info(f"sandbox policy wired: tiers={sorted(tiers)} runner={'yes' if runner else 'none (fail-closed)'}")
-    return SandboxPolicy(runner=runner, tool_tiers=tiers)
+    # risk_threshold=inf — 权限闸门只认显式 tier 映射 (opt-in); 内核按风险分自动
+    # 升 SANDBOX 的默认语义会让未配置的高风险工具 (shell_exec rm -rf 等) 在
+    # guard 委托之前被 fail-closed 拦掉, 破坏 #73 既有行为
+    return SandboxPolicy(runner=runner, tool_tiers=tiers, risk_threshold=float("inf"))
 
 
 def sandbox_block_reason(policy: SandboxPolicy, tool_name: str, params: Dict[str, Any]) -> str:
     # SANDBOX tier + 无 runner = BLOCKED (fail-closed, 审批也救不回); 其余放行 ""
-    try:
-        from fusion_harness import permissions as _perm
-
-        risk = _perm.score_tool_risk(tool_name, params)
-    except Exception:
-        risk = (0.0, "")
-    decision = policy.decide(tool_name, params, risk)
+    # 风险分/band 不参与 — 权限闸门只认显式 tier 映射 (opt-in); 内核按风险自动
+    # 升 SANDBOX 的默认语义会把未配置的高风险工具 (shell_exec rm -rf 等) 在
+    # #73 guard 委托之前 fail-closed 拦掉, 破坏既有行为
+    decision = policy.decide(tool_name, params, (0.0, ""))
     if decision.tier is ExecutionTier.BLOCKED:
         return decision.reason or "sandbox tier required but no runner wired"
     return ""

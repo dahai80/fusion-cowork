@@ -849,10 +849,6 @@ class WorkflowEngine:
         # exec_id -> token (执行器可 redeem 核验, 重放拒绝); gate 懒构建
         self._approval_gate = None
         self._approval_tokens: Dict[str, str] = {}
-        # issue #554: kernel destructive_gate — 审批通过后签发单次兑换 token;
-        # exec_id -> token (执行器可 redeem 核验, 重放拒绝); gate 懒构建
-        self._approval_gate = None
-        self._approval_tokens: Dict[str, str] = {}
         self._trajectory_recorder = trajectory_recorder
         self._event_emitter = event_emitter
         # HI-19: 预算追踪 — 在节点循环顶部检查, 超预算且 enforce 则中止执行
@@ -1347,8 +1343,6 @@ class WorkflowEngine:
             self._hitl_gate_cancel(exec_id)
             # issue #554: 终态兜底清 token 记录
             self._approval_tokens.pop(exec_id, None)
-            # issue #554: 终态兜底清 token 记录
-            self._approval_tokens.pop(exec_id, None)
             self._hitl_attributions.pop(exec_id, None)
             self._hitl_batch_verdicts.pop(exec_id, None)
             self._hitl_replies.pop(exec_id, None)
@@ -1583,10 +1577,6 @@ class WorkflowEngine:
                         node_input["human_reply"] = human_reply
                         check_input["human_reply"] = human_reply
                         logger.info(f"[{exec_id}] HITL: 结构化人工回复并入节点输入: {sorted(human_reply)}")
-                    # issue #554: kernel destructive grant — 内核分类为破坏性的节点获批后
-                    # 签发单次兑换 approval token (幂等签发/redeem 单次/重放拒绝)
-                    if allowed and classify_destructive(node.name, check_input)[0]:
-                        self._record_destructive_grant(exec_id, node)
                     # issue #554: kernel destructive grant — 内核分类为破坏性的节点获批后
                     # 签发单次兑换 approval token (幂等签发/redeem 单次/重放拒绝)
                     if allowed and classify_destructive(node.name, check_input)[0]:
@@ -2262,30 +2252,7 @@ class WorkflowEngine:
             gate = self._ensure_kernel_gate()
             if self._approval_gate is None:
                 self._approval_gate = build_approval_gate(gate, self._permission_manager)
-            call_id = f"{exec_id}:{node.id}"
-            token = self._approval_gate.issue_token(call_id)
-            self._approval_tokens[exec_id] = token
-            logger.info(f"[{exec_id}] destructive grant token issued call={call_id} node={node.name}")
-        except Exception as e:
-            logger.warning(f"[{exec_id}] destructive grant token issuance failed (approval stands): {e}")
-
-    def _ensure_kernel_gate(self):
-        # issue #554: 与 _hitl_gate_ask 同一懒构建路径 — token 签发复用共享 HumanGate
-        if self._hitl_gate is None:
-            gate_dir = os.environ.get("FUSION_COWORK_HITL_GATE_DIR", "").strip()
-            if not gate_dir:
-                gate_dir = os.path.join(os.path.expanduser("~"), ".fusion-cowork", "hitl_gate")
-            self._hitl_gate = HumanGate(gate_dir)
-        return self._hitl_gate
-
-    def _record_destructive_grant(self, exec_id: str, node: BaseNode) -> None:
-        # issue #554: ApprovalGate 契约 — 幂等签发 (同 call_id 同 token), redeem 单次,
-        # 重放拒绝; token 记录在 run 侧供执行器核验, 签发失败不影响已获批的执行
-        try:
-            gate = self._ensure_kernel_gate()
-            if self._approval_gate is None:
-                self._approval_gate = build_approval_gate(gate, self._permission_manager)
-            call_id = f"{exec_id}:{node.id}"
+            call_id = f"{exec_id}:{node.name}"
             token = self._approval_gate.issue_token(call_id)
             self._approval_tokens[exec_id] = token
             logger.info(f"[{exec_id}] destructive grant token issued call={call_id} node={node.name}")

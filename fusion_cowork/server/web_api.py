@@ -558,6 +558,8 @@ class RunRegistry:
             "user_correction": bool(getattr(s, "user_correction", False)),
             # issue #460: 会话级检查点 — 步级会话归因 (旧快照/老引擎为 None)
             "session_id": getattr(s, "session_id", None),
+            # issue #554: 该步 LLM JSON 修复梯触发次数 (0 = 无修复)
+            "json_repairs": int(getattr(s, "json_repairs", 0) or 0),
         }
 
     def list(self, space_id: str = "") -> List[Dict[str, Any]]:

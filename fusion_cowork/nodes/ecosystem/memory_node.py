@@ -269,9 +269,7 @@ class MemoryRetrieveNode(BaseNode):
                 kept = []
                 for block in blocks:
                     text = json.dumps(block, ensure_ascii=False) if not isinstance(block, str) else block
-                    clean, report = scan_or_quarantine(
-                        text, source=f"memory:{text[:40]!r}", kind="memory"
-                    )
+                    clean, report = scan_or_quarantine(text, source=f"memory:{text[:40]!r}", kind="memory")
                     if clean:
                         kept.append(block)
                     else:

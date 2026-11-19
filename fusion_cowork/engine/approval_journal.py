@@ -144,7 +144,9 @@ class ApprovalJournal:
             from .kernel_gates import get_quarantine, scan_or_quarantine
 
             params_raw = entry.get("params") or "{}"
-            clean, report = scan_or_quarantine(str(params_raw), source=f"journal:{entry.get('action_id', '')}", kind="journal")
+            clean, report = scan_or_quarantine(
+                str(params_raw), source=f"journal:{entry.get('action_id', '')}", kind="journal"
+            )
             if not clean:
                 get_quarantine().add(report, preview=str(params_raw)[:200])
                 logger.warning(

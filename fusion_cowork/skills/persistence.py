@@ -123,9 +123,7 @@ def list_skill_packs(skills_dir: Path = None) -> List[SkillPack]:
             )
             if not clean:
                 get_quarantine().add(report, preview=json.dumps(data, ensure_ascii=False)[:200])
-                logger.warning(
-                    f"skill 包扫描未通过, 已隔离跳过 {pdir.name}: rules={report.rule_names()}"
-                )
+                logger.warning(f"skill 包扫描未通过, 已隔离跳过 {pdir.name}: rules={report.rule_names()}")
                 continue
             packs.append(SkillPack.from_manifest(data))
         except (json.JSONDecodeError, KeyError) as e:
