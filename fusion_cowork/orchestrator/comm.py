@@ -4,6 +4,23 @@
 - 点对点消息 (send)
 - 主题广播 (publish/subscribe)
 - 任务状态事件
+
+#533 K4 Phase B item-1 ruling (2026-11-19): kernel-verified DIVERGENT-BY-DESIGN.
+This bus is intentionally NOT mapped onto kernel TeamRuntime.send/inbox:
+- kernel mailbox is member-scoped — sender/recipient/mentions must exist in
+  the TeamDefinition, message type is a closed set (MSG_TYPES = text,
+  plan_approval, shutdown_request, shutdown_response), body is a plain str,
+  delivery is a durable state_dir file write with a {"delivered": bool} flag;
+- cowork bus is an open in-process transport: arbitrary topic strings,
+  arbitrary dict payloads, publisher need not be a team member (orchestrator
+  executors/coordinator publish lifecycle events), "*" broadcast fan-out,
+  asyncio.Queue semantics with E-6 MessageDeliveryError + dropped-message
+  audit (get_dropped).
+Mapping would force non-member system components through member validation
+and flatten structured payloads to string bodies — product semantics lost.
+Kernel TeamRuntime remains the substrate for space team runs (space plane,
+#496) and task lifecycle convergence (#533 item 4); this bus stays the DAG
+orchestrator's internal transport.
 """
 
 from __future__ import annotations
