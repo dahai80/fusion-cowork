@@ -5,36 +5,67 @@ duties / deliverables / default acceptor / executor mapping. The planner
 prompt, the schema validator whitelist, and acceptance auto-bind all read
 from this single source — previously the executor enum was duplicated in
 three places (prompt text, validator, role_map) with silent-drift risk.
+
+#533 K4 Phase B item-2 ruling (2026-11-19): single representation for
+member specs. BusinessRole COMPOSES a kernel TeamMember — role_id /
+executor / duties are derived properties of role.member (name/role/skills),
+not parallel fields. The registry stays authoritative for the cowork-only
+business semantics kernel TeamMember does not model (display_name,
+deliverables, acceptor). to_team_member() is no longer a field-by-field
+export: it returns the composed member itself, so the kernel type IS the
+member spec and dual-representation drift is structurally impossible.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, List
 
-# issue #494 (K4): kernel team convergence boundary. BusinessRole specs export
-# to kernel fusion_harness.team types so kernel-side consumers (TeamRuntime,
-# team diagnostics) can consume cowork role catalogs without re-defining them.
-# The cowork registry stays authoritative: BusinessRole carries planner-facing
-# business semantics (duties/deliverables/acceptor, Chinese-language catalog)
-# that kernel TeamMember does not model — mapping is additive export, not a
-# replacement (kernel TeamMember(name, role, skills, tool_allowlist,
-# permission_mode, budget_tokens, max_concurrency) has no acceptor/deliverables).
+from ..engine._harness_guard import harness_import_error
+
+try:  # issue #533 item 2: kernel TeamMember is the single member-spec type
+    from fusion_harness.team import TeamMember
+except ImportError as exc:  # issue #521: mandatory dependency, fail fast
+    raise harness_import_error(exc) from exc
 
 # The physical executor ids (execution layer, unchanged by business roles)
 EXECUTOR_ROLES = ("executor_node", "executor_workflow", "executor_mlx", "executor_shell")
 
 
-@dataclass
 class BusinessRole:
-    """A business role: what it does, what it delivers, who accepts."""
+    """A business role: what it does, what it delivers, who accepts.
 
-    role_id: str
-    display_name: str
-    executor: str  # one of EXECUTOR_ROLES
-    duties: list = field(default_factory=list)
-    deliverables: str = ""
-    acceptor: str = ""  # default acceptor for accountability auto-bind
+    Member identity (role_id/executor/duties) lives in the composed kernel
+    TeamMember; acceptor/deliverables/display_name stay cowork-only.
+    """
+
+    def __init__(
+        self,
+        role_id: str,
+        display_name: str,
+        executor: str,
+        duties: List[str] = None,
+        deliverables: str = "",
+        acceptor: str = "",
+        member: TeamMember = None,
+    ):
+        if member is None:
+            member = TeamMember(name=role_id, role=executor, skills=list(duties or []))
+        self.member = member
+        self.display_name = display_name
+        self.deliverables = deliverables
+        self.acceptor = acceptor
+
+    @property
+    def role_id(self) -> str:
+        return self.member.name
+
+    @property
+    def executor(self) -> str:
+        return self.member.role
+
+    @property
+    def duties(self) -> List[str]:
+        return self.member.skills
 
 
 class RoleRegistry:
@@ -80,12 +111,10 @@ class RoleRegistry:
         return TeamDefinition(name=name, namespace_key=namespace_key, members=members)
 
 
-def to_team_member(role: BusinessRole) -> Any:
-    # BusinessRole -> kernel TeamMember (issue #494). duties map to skills;
-    # acceptor/deliverables have no kernel counterpart and stay cowork-only.
-    from fusion_harness.team import TeamMember
-
-    return TeamMember(name=role.role_id, role=role.executor, skills=list(role.duties or []))
+def to_team_member(role: BusinessRole) -> TeamMember:
+    # issue #533 item 2: no export mapping anymore — the composed kernel
+    # TeamMember IS the member spec. Kept as a function for API compat.
+    return role.member
 
 
 def seed_default_roles(registry: RoleRegistry) -> None:
