@@ -25,6 +25,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from ..observability.ops_telemetry import failure_signature, workflow_definition_hash
 from ..observability.trace import set_trace_id
 from ._harness_guard import harness_import_error
 from .executors import NodeExecutionContext, executor_for_node, executor_names
@@ -767,6 +768,7 @@ class WorkflowEngine:
         approval_journal=None,
         kernel_checkpoints=None,
         hitl_gate=None,
+        ops_telemetry=None,
     ):
         self._executions: Dict[str, WorkflowExecution] = {}
         self._cancel_flags: Dict[str, bool] = {}
@@ -835,6 +837,9 @@ class WorkflowEngine:
         # (FUSION_COWORK_HITL_GATE_DIR, 兜底 ~/.fusion-cowork/hitl_gate) —
         # 每引擎构造都读盘队列开销大, 不进 HITL 的 run 零成本
         self._hitl_gate = hitl_gate
+        # issue #545: DAG run/node telemetry (flywheel Loop D) — None = 关闭零成本;
+        # 注入 OpsTelemetry (create_web_app 按 FUSION_OPS_DSN 装配)
+        self._ops_telemetry = ops_telemetry
         # exec_id -> 当前 park 的内核问题 id — resolve 单赢家 + resume/cancel 桥接用
         self._hitl_questions: Dict[str, str] = {}
         self._trajectory_recorder = trajectory_recorder
@@ -944,6 +949,10 @@ class WorkflowEngine:
             f"hitl_mode={hitl_mode} hitl_timeout={self._hitl_timeout:g}s "
             f"concurrency={effective_concurrency} executors={execution.executors}"
         )
+        # issue #545: Loop D 遥测 — 只发定义哈希/计数, 不发节点输入输出 (租户数据红线)
+        _wf_hash = workflow_definition_hash(workflow)
+        if self._ops_telemetry is not None:
+            await self._ops_telemetry.run_started(exec_id, _wf_hash, len(workflow.nodes), hitl_mode=hitl_mode)
 
         # Session: auto-create — issue #460: resume 快照带 session_id 时采纳原会话
         # (会话续用不新建, agent 座位的多轮历史得以延续; 旧快照无该字段 = 新建不变)
@@ -1283,6 +1292,14 @@ class WorkflowEngine:
                 f"total={execution.total_time:.3f}s steps={len(execution.steps)} "
                 f"concurrency={execution.concurrency} executors={execution.executors}"
             )
+            # issue #545: run 终态遥测 — outcome + 总时长
+            if self._ops_telemetry is not None:
+                await self._ops_telemetry.run_finished(
+                    exec_id,
+                    execution.status.value,
+                    int(execution.total_time * 1000),
+                    workflow_hash=_wf_hash,
+                )
 
             # 生成摘要
             success_count = sum(1 for s in execution.steps if s.status == NodeStatus.SUCCESS)
@@ -1651,6 +1668,9 @@ class WorkflowEngine:
 
         # issue #120: run-scoped step start — INFO
         logger.info(f"[{exec_id}] step start: node={node.name} node_id={node_id} executor={executor.name}")
+        # issue #545: node_started 遥测 — node type + run 归因
+        if self._ops_telemetry is not None:
+            await self._ops_telemetry.node_started(exec_id, node_id, node.name)
 
         # 执行节点 — CR-11: 状态只存 WorkflowStep, 不在共享 BaseNode 上写
         # (并发执行同一 Workflow 时原地改 node.status/result 会互相覆盖)
@@ -1691,6 +1711,7 @@ class WorkflowEngine:
             # issue #182: 每次尝试的错误留痕, 成功后写入 step.attempt_errors 供 API 观测
             attempt_errors: List[str] = []
             final_attempt = 1
+            _err_class = ""
             try:
                 for attempt in range(max_retries + 1):
                     final_attempt = attempt + 1
@@ -1719,6 +1740,7 @@ class WorkflowEngine:
                             _current_engine.reset(engine_token)
                         if result.status == NodeStatus.FAILED:
                             err_txt = result.error or "业务失败"
+                            _err_class = "BusinessFailure"
                             attempt_errors.append(err_txt)
                             if retry_business and attempt < max_retries:
                                 logger.warning(
@@ -1730,8 +1752,10 @@ class WorkflowEngine:
                             # 业务失败但未 opt-in / 重试耗尽
                             break
                         # 成功
+                        _err_class = ""
                         break
                     except TimeoutError as te:
+                        _err_class = "TimeoutError"
                         last_err = f"节点 '{node.name}' 超时 (timeout={timeout}s): {te}"
                         attempt_errors.append(last_err)
                         logger.warning(f"{last_err} attempt={attempt + 1}/{max_retries + 1}")
@@ -1739,6 +1763,7 @@ class WorkflowEngine:
                     except asyncio.CancelledError:
                         raise
                     except Exception as ne:
+                        _err_class = type(ne).__name__
                         last_err = str(ne)
                         attempt_errors.append(f"异常: {last_err}")
                         logger.warning(f"节点 '{node.name}' 异常 attempt={attempt + 1}/{max_retries + 1}: {ne}")
@@ -1781,6 +1806,19 @@ class WorkflowEngine:
             step.tokens = _extract_tokens(step.output_data)
             step.error = result.error
             step.summary = result.summary
+            # issue #545: node_finished 遥测 — 时长/尝试次数/稳定失败签名
+            # (error class + node type = mined_issues 聚类键; 不带报错文本)
+            if self._ops_telemetry is not None:
+                _sig = failure_signature(node.name, _err_class) if result.status == NodeStatus.FAILED else ""
+                await self._ops_telemetry.node_finished(
+                    exec_id,
+                    node_id,
+                    node.name,
+                    result.status.value,
+                    int(step.execution_time * 1000),
+                    attempts=final_attempt,
+                    failure_sig=_sig,
+                )
 
             # Hook: POST_NODE_EXECUTE
             if self._hook_manager:
