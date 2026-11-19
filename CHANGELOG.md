@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.129
+version: 0.5.130
 updated: 2026-11-19
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,15 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.130 (issue #527 — HITL approval gate on the shared kernel HumanGate contract)
+
+- **Kernel queue wiring (#527, PR #547)**: the workflow-engine HITL park point now asks a `fusion_harness.HumanGate` question — `ask(session_id=run_id, policy="block", ttl_s=<engine deadline>, requester="workflow_engine", payload=sanitized gate input)` — and the parked loop blocks on kernel `wait()`; the approval queue is the shared kernel contract, not a cowork-local mechanism
+- **Single-winner approver side**: `resolve_hitl` routes through kernel `resolve()` — concurrent/duplicate confirms get `resolved=False` (reason answered/cancelled/expired) instead of silently overwriting the recorded decision; out-of-band kernel resolves are adopted by the engine (approved/once) with the #453 pause-event invariant preserved
+- **ttl expiry replaces ad-hoc pending accumulation**: `ttl_s` carries the deadline into the kernel queue (lazy expiry); engine timeout auto-deny, `hitl_timeout` hook and `COMPLETED_WITH_DENIALS` terminal semantics unchanged (#187)
+- **Approval-routing policy stays cowork**: guard verdicts, HITL_GATE_TOOLS one-shot gate decisions, approval journal replay (#463/#507), once-grants, param overrides, batch verdicts, revision loop — untouched; kernel contract is queue semantics only, as specified in #527
+- **W8 bridges**: engine resume/cancel cancel the pending kernel question so the parked wait wakes and re-asks without synthesizing a decision (#445 semantics)
+- **Seam**: `WorkflowEngine(hitl_gate=...)` injection + `FUSION_COWORK_HITL_GATE_DIR` (default `~/.fusion-cowork/hitl_gate`; test conftest pins the suite to a tmp dir); verified by `tests/test_issue_527_hitl_humangate.py` (8 cases) plus the full HITL regression batch
 
 ## v0.5.129 (issue #533 — K4 Phase B: orchestrator kernel convergence)
 
