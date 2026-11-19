@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.132
+version: 0.5.133
 updated: 2026-11-19
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,15 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.133 (issue #554 — kernel destructive_gate + artifact_scan + json_repair wiring)
+
+- **#554 (PR #556)**: adoption-audit mechanisms from fusion-harness v0.20–0.22 now wired into cowork node execution and load paths, via thin adapter `engine/kernel_gates.py` (decision semantics stay in the kernel; cowork keeps consumer wiring):
+  - **destructive_gate**: `ApprovalGate.classify` (kernel table + name tokens delete/remove/drop/purge/...) runs in `PermissionManager.check` for non-HIGH-RISK names — destructive classification routes into the existing `_check_high_risk_guard` HITL park; approval mints a single-redemption kernel token (`apt_...`, idempotent issue, replay rejected) recorded in run state. Zero behavior change by default: every existing node the kernel classifies destructive is already in `HIGH_RISK_NODES`/`HITL_GATE_TOOLS` (asserted by test). `KernelPermissionBridge` forwards explicit cowork deny rules as kernel `permission_engine` denies before the human gate.
+  - **sandbox fail-closed**: `FUSION_COWORK_SANDBOX_TOOLS` (comma-separated node names) maps tools to kernel `ExecutionTier.SANDBOX`; with no runner wired (`FUSION_COWORK_SANDBOX_RUNNER=1` opts in to the reference macOS `sandbox-exec` runner) the check denies before approve rules — approvals cannot bypass. Unset = no tier mapping, zero behavior change. Explicit env mapping only — risk-score auto-tier was rejected to keep the #73 guard path intact.
+  - **artifact_scan**: skill-pack load (`skills/persistence.list_skill_packs`), memory-retrieve blocks (`MemoryRetrieveNode`), and approval-journal decision replay scan text through kernel `scan_artifact` (prompt-injection/credential-leak rules); hits are quarantined (`ArtifactQuarantine`, path `FUSION_COWORK_ARTIFACT_QUARANTINE`, default `~/.fusion-cowork/web/artifact_quarantine.json`) and skipped/fail-closed rather than loaded or replayed.
+  - **json_repair**: LLM output parsing in AI nodes (classify/summarize/rename) and `NLWorkflowGenerator` routes through `parse_llm_json` — strict parse first, then the kernel deterministic repair ladder (fences/balanced extract/quotes/trailing commas/truncated close); unrepaired input raises typed `JSONRepairError` (existing fallbacks unchanged). Repair count is tracked per node step (contextvar bucket) and emitted in `dag_node_finished` telemetry payload + run-API step dict (`json_repairs`).
+  - Pin suite `tests/test_issue_554_kernel_wiring.py` (25 cases): classification + zero-new-gate invariant, park→approve token grant / deny→FAILED, sandbox fail-closed with approval, bridge deny-before-human, poisoned skill pack + journal replay isolation, repair ladder + telemetry count.
 
 ## v0.5.132 (issue #545 — DAG run/node telemetry, flywheel Loop D foundation)
 

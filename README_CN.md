@@ -159,6 +159,9 @@ fusion-cowork desk rpc
 | `FUSION_MAILBOX_ENABLED` | _(未设)_ | 可选：设 `1` 启动支持邮箱代理（issue #546，P0 仅观察 —— 拉取 → 分类 → feedback 行 + 每日摘要，零对外动作） |
 | `FUSION_MAILBOX_IMAP_HOST` / `_PORT` / `_USER` / `_PASS` / `_FOLDER` | _(未设)_ | 邮箱代理 IMAP 凭据 —— 仅经 fusion-sv 环境注入，严禁入仓。HOST/USER/PASS 三项必填 |
 | `FUSION_MAILBOX_MODEL` | `qwen3.5-9b` | 邮件分类使用的本地 mlx 模型 |
+| `FUSION_COWORK_SANDBOX_TOOLS` | _(未设)_ | 可选：逗号分隔的节点名列表，映射到内核 SANDBOX 执行层（issue #554）。未接沙箱 runner（`FUSION_COWORK_SANDBOX_RUNNER` 未设）时这些工具 fail-closed 拒绝——审批也救不回。未设 = 无 tier 映射，行为零变化 |
+| `FUSION_COWORK_SANDBOX_RUNNER` | _(未设)_ | 设 `1` 接入参考的 macOS `sandbox-exec` runner（供 SANDBOX 层工具使用） |
+| `FUSION_COWORK_ARTIFACT_QUARANTINE` | `~/.fusion-cowork/web/artifact_quarantine.json` | 产物扫描隔离区持久化路径（issue #554）：skill 包载入、memory_retrieve 块、审批日志重放命中注入/凭据规则即隔离并跳过 |
 | `DATABASE_URL` | _(未设)_ | **规范 Postgres DSN** (issue #221, 规范 DB-3) —— 如 `postgresql://127.0.0.1:5432/fusion_cowork`。设置后 `SpaceStore`/`SessionStore`（及 `db migrate/backup/restore`）走共享 PostgreSQL 后端;未设则内嵌 SQLite。旧名 `FUSION_PG_DSN` 仍兼容（优先级更低） |
 | `REDIS_URL` | _(未设)_ | **预留**（规范 DB-7）—— 如 `redis://127.0.0.1:6379/1`。fusion-cowork 目前无 Redis 依赖;登记此约定,后续 cache/pubsub 接入统一走共享单实例 |
 

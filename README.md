@@ -163,6 +163,9 @@ fusion-cowork desk rpc
 | `FUSION_MAILBOX_ENABLED` | _(unset)_ | opt-in: set `1` to run the support mailbox agent (issue #546, P0 observe-only — poll → classify → feedback rows + daily digest, zero outbound actions) |
 | `FUSION_MAILBOX_IMAP_HOST` / `_PORT` / `_USER` / `_PASS` / `_FOLDER` | _(unset)_ | IMAP credentials for the mailbox agent — injected via fusion-sv env only, never in the repo. All three of HOST/USER/PASS required |
 | `FUSION_MAILBOX_MODEL` | `qwen3.5-9b` | local mlx model used for mail classification |
+| `FUSION_COWORK_SANDBOX_TOOLS` | _(unset)_ | opt-in: comma-separated node names mapped to the kernel SANDBOX execution tier (issue #554). With no sandbox runner wired (`FUSION_COWORK_SANDBOX_RUNNER` unset) these tools are fail-closed denied — approvals cannot bypass. Unset = no tier mapping, zero behavior change |
+| `FUSION_COWORK_SANDBOX_RUNNER` | _(unset)_ | set `1` to wire the reference macOS `sandbox-exec` runner for SANDBOX-tier tools |
+| `FUSION_COWORK_ARTIFACT_QUARANTINE` | `~/.fusion-cowork/web/artifact_quarantine.json` | persistence path for the artifact-scan quarantine (issue #554): skill-pack loads, memory-retrieve blocks, and approval-journal replays that hit prompt-injection/credential rules are quarantined and skipped |
 | `FUSION_IDENTITY_ENABLED` | _(unset)_ | opt-in: set `1` to activate fusion-identity as sole JWT issuer + tenant registry (issue #88). Default OFF = zero behavior change (local JWT/static-token dev path unchanged) |
 | `FUSION_IDENTITY_URL` | `http://127.0.0.1:11470` | fusion-identity service base URL (only used when `FUSION_IDENTITY_ENABLED=1`) |
 | `FUSION_IDENTITY_SERVICE_TOKEN` | _(unset)_ | service token sent as `Authorization: Bearer` to fusion-identity `/verify`. Required when enabled (else identity client stays None) |
