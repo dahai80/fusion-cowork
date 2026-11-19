@@ -155,6 +155,10 @@ fusion-cowork desk rpc
 | `FUSION_MLX_URL` | `http://localhost:11432/v1` | fusion-mlx 基础 URL (经 fusion-gateway netlayer) |
 | `FUSION_MLX_MODEL` | _(未设)_ | NL 工作流生成 (`NLWorkflowGenerator`) 默认 chat 模型。显式指定一个支持 chat 的模型 id,避免误选 `image_gen`/`video_gen` 模型 (issue #85) |
 | `FUSION_RAG_URL` | `http://localhost:11436` | fusion-rag (fusion-kb) 基础 URL |
+| `FUSION_OPS_DSN` | _(未设)_ | 可选：`fusion_ops.ops_events` DAG 遥测（issue #545，飞轮 Loop D）与 `fusion_ops.feedback` 尽力镜像的 Postgres DSN。未设 = 遥测关闭，行为零变化 |
+| `FUSION_MAILBOX_ENABLED` | _(未设)_ | 可选：设 `1` 启动支持邮箱代理（issue #546，P0 仅观察 —— 拉取 → 分类 → feedback 行 + 每日摘要，零对外动作） |
+| `FUSION_MAILBOX_IMAP_HOST` / `_PORT` / `_USER` / `_PASS` / `_FOLDER` | _(未设)_ | 邮箱代理 IMAP 凭据 —— 仅经 fusion-sv 环境注入，严禁入仓。HOST/USER/PASS 三项必填 |
+| `FUSION_MAILBOX_MODEL` | `qwen3.5-9b` | 邮件分类使用的本地 mlx 模型 |
 | `DATABASE_URL` | _(未设)_ | **规范 Postgres DSN** (issue #221, 规范 DB-3) —— 如 `postgresql://127.0.0.1:5432/fusion_cowork`。设置后 `SpaceStore`/`SessionStore`（及 `db migrate/backup/restore`）走共享 PostgreSQL 后端;未设则内嵌 SQLite。旧名 `FUSION_PG_DSN` 仍兼容（优先级更低） |
 | `REDIS_URL` | _(未设)_ | **预留**（规范 DB-7）—— 如 `redis://127.0.0.1:6379/1`。fusion-cowork 目前无 Redis 依赖;登记此约定,后续 cache/pubsub 接入统一走共享单实例 |
 

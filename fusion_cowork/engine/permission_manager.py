@@ -406,7 +406,20 @@ class PermissionManager:
         if tool_name in HIGH_RISK_NODES:
             return await self._check_high_risk_guard(tool_name, action, params)
 
-        # 非高风险且无匹配规则 → 放行 (CONFIRM/MANUAL 亦放行低风险)
+        # 非高风险且无匹配规则 → 内核闸门复核 (issue #554) 后放行:
+        # - SANDBOX 层无 runner = fail-closed 拒绝 (审批也救不回 — 隔离是执行前提)
+        # - 内核 destructive 分类命中 (分类表/名称 token) → 走同一高风险审批路径
+        #   (pending 入队 → HITL park), 审批后由引擎签发单次兑换 approval token
+        from .kernel_gates import build_sandbox_policy, classify_destructive, sandbox_block_reason
+
+        reason = sandbox_block_reason(build_sandbox_policy(), tool_name, params or {})
+        if reason:
+            logger.warning(f"kernel sandbox fail-closed: {tool_name} — {reason}")
+            return False
+        destructive, why = classify_destructive(tool_name, params)
+        if destructive:
+            logger.info(f"kernel destructive_gate: {tool_name} classified destructive ({why}), routes to approval")
+            return await self._check_high_risk_guard(tool_name, action, params)
         return True
 
     async def _check_high_risk_guard(self, tool_name: str, action: str, params: Dict[str, Any] = None) -> bool:

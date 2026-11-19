@@ -1993,6 +1993,23 @@ def create_web_app(
         if telemetry is not None:
             await telemetry.stop()
 
+    # issue #546: support mailbox agent — P0 observe-only, opt-in via
+    # FUSION_MAILBOX_ENABLED=1 + IMAP env (fusion-sv T2 injection); unset = no-op
+    @app.on_event("startup")
+    async def _start_mailbox_agent():
+        from ..mailbox.service import MailboxAgent
+
+        agent = MailboxAgent.from_env()
+        app.state.mailbox_agent = agent
+        if agent is not None:
+            await agent.start()
+
+    @app.on_event("shutdown")
+    async def _stop_mailbox_agent():
+        agent = getattr(app.state, "mailbox_agent", None)
+        if agent is not None:
+            await agent.stop()
+
     @app.middleware("http")
     async def _auth_middleware(request: Request, call_next):
         if request.url.path in ("/health",) or request.url.path.startswith("/ws/"):
