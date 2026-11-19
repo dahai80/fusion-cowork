@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.133
+version: 0.5.134
 updated: 2026-11-19
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,14 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.134 (issue #558 — P-series kernel knobs, slice 1: durable HITL + fanout)
+
+- **#558 (PR #559)**: adopts fusion-harness P-series knobs items 1+5 (0.25.0-capable); items 2-4 (phase_evaluator / handoff attribution / duplicate_threshold) wait on harness 0.26.0 PyPI release (dahai80/fusion-harness#140):
+  - **#125 durable HITL pauses**: `WorkflowEngine` builds its lazy kernel `HumanGate` with `checkpoint_ref=KernelCheckpointBinder.store` when kernel checkpoints are wired — pending HITL questions mirror as `awaiting_human` checkpoint entries (session = run id) and update on resolve, so approvals survive process restarts and can be re-delivered after a DAG restart. Unwired binder = plain gate (JSON queue only), zero behavior change. New `KernelCheckpointBinder.store` accessor; gate construction deduped into `_build_kernel_gate` (shared by `_hitl_gate_ask` + `_ensure_kernel_gate`).
+  - **#124 fan-out ladder**: `SpaceKernelPlane` evaluates roster size against kernel `FANOUT_*` bands at runtime spawn — non-fatal warnings logged + surfaced per space on `plane._fanout_warnings`, cleared when the roster returns in-band.
+  - Housekeeping: chaos s3 test falls back to `fusion_harness.policies` for `Deadline`/`RetryPolicy` (demoted from harness root exports in 1c779ef).
+  - Pin suite `tests/test_issue_558_p_series.py` (9 cases).
 
 ## v0.5.133 (issue #554 — kernel destructive_gate + artifact_scan + json_repair wiring)
 
