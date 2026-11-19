@@ -379,6 +379,15 @@ class PermissionManager:
             logger.info(f"权限被 Hook 批准: {tool_name}")
             return True
 
+        # issue #554: SANDBOX 层无 runner = fail-closed, 审批 (规则/Hook) 也救不回 —
+        # 隔离是执行前提, 放在一切放行路径之前 (未配置 SANDBOX_TOOLS 时零行为变化)
+        from .kernel_gates import build_sandbox_policy, sandbox_block_reason
+
+        _sb_reason = sandbox_block_reason(build_sandbox_policy(), tool_name, params or {})
+        if _sb_reason:
+            logger.warning(f"kernel sandbox fail-closed: {tool_name} — {_sb_reason}")
+            return False
+
         # CR-16: approve 规则命中→allow (任意 level); deny 已在上一步处理
         # issue #340: 闸门工具同样不吃 approve 规则 — 持久放行 = 永久跳过人工闸门
         if tool_name not in HITL_GATE_TOOLS:
@@ -407,15 +416,11 @@ class PermissionManager:
             return await self._check_high_risk_guard(tool_name, action, params)
 
         # 非高风险且无匹配规则 → 内核闸门复核 (issue #554) 后放行:
-        # - SANDBOX 层无 runner = fail-closed 拒绝 (审批也救不回 — 隔离是执行前提)
+        # - SANDBOX fail-closed 已在放行路径之前统一拦截 (此处不再重复)
         # - 内核 destructive 分类命中 (分类表/名称 token) → 走同一高风险审批路径
         #   (pending 入队 → HITL park), 审批后由引擎签发单次兑换 approval token
-        from .kernel_gates import build_sandbox_policy, classify_destructive, sandbox_block_reason
+        from .kernel_gates import classify_destructive
 
-        reason = sandbox_block_reason(build_sandbox_policy(), tool_name, params or {})
-        if reason:
-            logger.warning(f"kernel sandbox fail-closed: {tool_name} — {reason}")
-            return False
         destructive, why = classify_destructive(tool_name, params)
         if destructive:
             logger.info(f"kernel destructive_gate: {tool_name} classified destructive ({why}), routes to approval")

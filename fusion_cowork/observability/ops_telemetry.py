@@ -148,18 +148,22 @@ class OpsTelemetry:
         duration_ms: int,
         attempts: int = 1,
         failure_sig: str = "",
+        json_repairs: int = 0,
     ) -> None:
+        payload: Dict[str, Any] = {
+            "run_id": run_id,
+            "node_id": node_id,
+            "node_type": node_type,
+            "attempts": attempts,
+            "failure_signature": failure_sig,
+        }
+        if json_repairs > 0:  # issue #554: LLM JSON 修复梯触发次数 (0 不落盘)
+            payload["json_repairs"] = json_repairs
         await self._emit(
             {
                 "event_type": "dag_node_finished",
                 "latency_ms": max(0, int(duration_ms)),
                 "status": status,
-                "payload": {
-                    "run_id": run_id,
-                    "node_id": node_id,
-                    "node_type": node_type,
-                    "attempts": attempts,
-                    "failure_signature": failure_sig,
-                },
+                "payload": payload,
             }
         )

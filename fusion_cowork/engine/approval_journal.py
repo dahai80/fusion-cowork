@@ -135,7 +135,27 @@ class ApprovalJournal:
             "ORDER BY decided_at DESC LIMIT 1",
             (str(run_id or ""), str(node_id or "")),
         ).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        # issue #554: 恢复路径同一扫描 — 持久化的待审批 params 重放进 run 前过
+        # artifact_scan, 命中注入/凭据规则的决定视为无效 (不重放, 入隔离区)
+        entry = dict(row)
+        try:
+            from .kernel_gates import get_quarantine, scan_or_quarantine
+
+            params_raw = entry.get("params") or "{}"
+            clean, report = scan_or_quarantine(
+                str(params_raw), source=f"journal:{entry.get('action_id', '')}", kind="journal"
+            )
+            if not clean:
+                get_quarantine().add(report, preview=str(params_raw)[:200])
+                logger.warning(
+                    f"approval journal decision quarantined action={entry.get('action_id')} rules={report.rule_names()}"
+                )
+                return None
+        except Exception as e:
+            logger.warning(f"approval journal scan failed (decision stands): {e}")
+        return entry
 
     def consume_run_node(self, run_id: str, node_id: str) -> int:
         # issue #507: 决定消费 — 引擎实际采用某次决定 (含重放/超时) 时把该 (run, node)

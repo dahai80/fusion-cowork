@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ...ai.mlx_client import FusionMLXClient
+from ...engine.kernel_gates import JSONRepairError, parse_llm_json
 from ...engine.node import (
     BaseNode,
     NodeCategory,
@@ -204,13 +205,14 @@ class AIClassifyNode(BaseNode):
             content = content.split("```")[1].split("```")[0].strip()
 
         try:
-            results = json.loads(content)
+            # issue #554: LLM 输出 JSON 修复梯 (内核 json_repair) 替换裸 json.loads
+            results = parse_llm_json(content, context="file_classify")
             if isinstance(results, dict):
                 results = results.get("results", results.get("files", [results]))
             if not isinstance(results, list):
                 results = [results]
             return results
-        except json.JSONDecodeError:
+        except JSONRepairError:
             logger.warning(f"分类结果解析失败，使用文件名兜底: {content[:200]}")
             return [
                 {
@@ -391,11 +393,12 @@ class AISummarizeNode(BaseNode):
         elif "```" in content:
             content = content.split("```")[1].split("```")[0].strip()
         try:
-            result = json.loads(content)
+            # issue #554: LLM 输出 JSON 修复梯 (内核 json_repair) 替换裸 json.loads
+            result = parse_llm_json(content, context="file_summarize")
             result.setdefault("file_name", path.name)
             result.setdefault("file_path", str(path))
             return result
-        except json.JSONDecodeError:
+        except JSONRepairError:
             return {
                 "file_name": path.name,
                 "file_path": str(path),
@@ -541,13 +544,14 @@ class AIGenerateNameNode(BaseNode):
         elif "```" in content:
             content = content.split("```")[1].split("```")[0].strip()
         try:
-            results = json.loads(content)
+            # issue #554: LLM 输出 JSON 修复梯 (内核 json_repair) 替换裸 json.loads
+            results = parse_llm_json(content, context="file_rename")
             if isinstance(results, dict):
                 results = results.get("results", results.get("files", [results]))
             if not isinstance(results, list):
                 results = [results]
             return results
-        except json.JSONDecodeError:
+        except JSONRepairError:
             return self._fallback_rename(files)
 
     def _fallback_rename(self, files: list) -> list:

@@ -35,8 +35,10 @@ except ImportError as exc:
     raise harness_import_error(exc) from exc
 
 # 修复计数 — engine 在节点执行前 reset, 节点内的 parse_llm_json 递增;
-# 计数随 node_finished 遥测上报 (issue #554: repairs in run telemetry)
-json_repairs_in_step: ContextVar = ContextVar("json_repairs_in_step", default=0)
+# 计数随 node_finished 遥测上报 (issue #554: repairs in run telemetry)。
+# ContextVar 持可变 list (asyncio.wait_for 建 task 复制 context — int set 不回传,
+# 共享 list 原地 += 父协程可见); 未 set = 节点上下文外, 递增为 no-op
+json_repairs_in_step: ContextVar = ContextVar("json_repairs_in_step")
 
 
 class KernelPermissionBridge:
@@ -85,21 +87,35 @@ def build_sandbox_policy() -> SandboxPolicy:
         runner = SandboxExecRunner()
     if tiers:
         logger.info(f"sandbox policy wired: tiers={sorted(tiers)} runner={'yes' if runner else 'none (fail-closed)'}")
-    return SandboxPolicy(runner=runner, tool_tiers=tiers)
+    # risk_threshold=inf — 权限闸门只认显式 tier 映射 (opt-in); 内核按风险分自动
+    # 升 SANDBOX 的默认语义会让未配置的高风险工具 (shell_exec rm -rf 等) 在
+    # guard 委托之前被 fail-closed 拦掉, 破坏 #73 既有行为
+    return SandboxPolicy(runner=runner, tool_tiers=tiers, risk_threshold=float("inf"))
 
 
 def sandbox_block_reason(policy: SandboxPolicy, tool_name: str, params: Dict[str, Any]) -> str:
     # SANDBOX tier + 无 runner = BLOCKED (fail-closed, 审批也救不回); 其余放行 ""
-    try:
-        from fusion_harness import permissions as _perm
-
-        risk = _perm.score_tool_risk(tool_name, params)
-    except Exception:
-        risk = (0.0, "")
-    decision = policy.decide(tool_name, params, risk)
+    # 风险分/band 不参与 — 权限闸门只认显式 tier 映射 (opt-in); 内核按风险自动
+    # 升 SANDBOX 的默认语义会把未配置的高风险工具 (shell_exec rm -rf 等) 在
+    # #73 guard 委托之前 fail-closed 拦掉, 破坏既有行为
+    decision = policy.decide(tool_name, params, (0.0, ""))
     if decision.tier is ExecutionTier.BLOCKED:
         return decision.reason or "sandbox tier required but no runner wired"
     return ""
+
+
+_artifact_quarantine: Optional[ArtifactQuarantine] = None
+
+
+def get_quarantine() -> ArtifactQuarantine:
+    # 进程级隔离区单例 — 载入扫描命中的产物记录在此 (持久 JSON, 人工复核入口)
+    global _artifact_quarantine
+    if _artifact_quarantine is None:
+        path = os.environ.get("FUSION_COWORK_ARTIFACT_QUARANTINE", "").strip()
+        if not path:
+            path = os.path.join(os.path.expanduser("~"), ".fusion-cowork", "web", "artifact_quarantine.json")
+        _artifact_quarantine = ArtifactQuarantine(path=path)
+    return _artifact_quarantine
 
 
 def scan_or_quarantine(
@@ -128,7 +144,9 @@ def parse_llm_json(text: str, context: str = "") -> Any:
         except ValueError:
             pass
     value = parse_repair(text)
-    json_repairs_in_step.set(json_repairs_in_step.get() + 1)
+    bucket = json_repairs_in_step.get(None)
+    if bucket is not None:
+        bucket[0] += 1
     logger.info(f"json repair ladder applied ({context or 'unknown'}): input={str(text)[:120]!r}")
     return value
 
@@ -139,6 +157,7 @@ __all__ = [
     "build_approval_gate",
     "build_sandbox_policy",
     "classify_destructive",
+    "get_quarantine",
     "json_repairs_in_step",
     "parse_llm_json",
     "sandbox_block_reason",

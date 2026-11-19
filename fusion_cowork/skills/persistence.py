@@ -114,6 +114,17 @@ def list_skill_packs(skills_dir: Path = None) -> List[SkillPack]:
             continue
         try:
             data = json.loads(manifest.read_text(encoding="utf-8"))
+            # issue #554: skill 载入前 artifact_scan — 注入指令/凭据泄漏规则命中即
+            # 隔离 + 跳过 (不进 SkillRegistry, 不进 MCP skill 列表)
+            from ..engine.kernel_gates import get_quarantine, scan_or_quarantine
+
+            clean, report = scan_or_quarantine(
+                manifest.read_text(encoding="utf-8"), source=f"skill:{pdir.name}", kind="skill"
+            )
+            if not clean:
+                get_quarantine().add(report, preview=json.dumps(data, ensure_ascii=False)[:200])
+                logger.warning(f"skill 包扫描未通过, 已隔离跳过 {pdir.name}: rules={report.rule_names()}")
+                continue
             packs.append(SkillPack.from_manifest(data))
         except (json.JSONDecodeError, KeyError) as e:
             logger.warning(f"skill 包解析失败 {pdir.name}: {e}")

@@ -30,6 +30,7 @@ from ..observability.trace import set_trace_id
 from ._harness_guard import harness_import_error
 from .executors import NodeExecutionContext, executor_for_node, executor_names
 from .hooks import HookEvent
+from .kernel_gates import build_approval_gate, classify_destructive, json_repairs_in_step
 from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus, _coerce_bool
 from .permission_manager import (
     HITL_GATE_TOOLS,
@@ -369,6 +370,8 @@ class WorkflowStep:
     # issue #460: 会话级检查点 — 该步所属 run 会话 id, 随快照持久;
     # resume 采纳后 agent 座位节点可续用原会话 (旧快照无此字段 = 行为不变)
     session_id: Optional[str] = None
+    # issue #554: 该步内 LLM JSON 修复梯触发次数 (0 = 无修复), 随遥测/run API 观测
+    json_repairs: int = 0
 
 
 @dataclass
@@ -842,6 +845,10 @@ class WorkflowEngine:
         self._ops_telemetry = ops_telemetry
         # exec_id -> 当前 park 的内核问题 id — resolve 单赢家 + resume/cancel 桥接用
         self._hitl_questions: Dict[str, str] = {}
+        # issue #554: kernel destructive_gate — 审批通过后签发单次兑换 token;
+        # exec_id -> token (执行器可 redeem 核验, 重放拒绝); gate 懒构建
+        self._approval_gate = None
+        self._approval_tokens: Dict[str, str] = {}
         self._trajectory_recorder = trajectory_recorder
         self._event_emitter = event_emitter
         # HI-19: 预算追踪 — 在节点循环顶部检查, 超预算且 enforce 则中止执行
@@ -1334,6 +1341,8 @@ class WorkflowEngine:
             self._hitl_deadlines.pop(exec_id, None)
             # issue #527: run 终态兜底取消内核 HumanGate 问题 (旁路漏清防线)
             self._hitl_gate_cancel(exec_id)
+            # issue #554: 终态兜底清 token 记录
+            self._approval_tokens.pop(exec_id, None)
             self._hitl_attributions.pop(exec_id, None)
             self._hitl_batch_verdicts.pop(exec_id, None)
             self._hitl_replies.pop(exec_id, None)
@@ -1568,6 +1577,10 @@ class WorkflowEngine:
                         node_input["human_reply"] = human_reply
                         check_input["human_reply"] = human_reply
                         logger.info(f"[{exec_id}] HITL: 结构化人工回复并入节点输入: {sorted(human_reply)}")
+                    # issue #554: kernel destructive grant — 内核分类为破坏性的节点获批后
+                    # 签发单次兑换 approval token (幂等签发/redeem 单次/重放拒绝)
+                    if allowed and classify_destructive(node.name, check_input)[0]:
+                        self._record_destructive_grant(exec_id, node)
             if not allowed:
                 logger.warning(f"节点 '{node.name}' 被权限系统拒绝执行")
                 step = WorkflowStep(
@@ -1671,6 +1684,8 @@ class WorkflowEngine:
         # issue #545: node_started 遥测 — node type + run 归因
         if self._ops_telemetry is not None:
             await self._ops_telemetry.node_started(exec_id, node_id, node.name)
+        # issue #554: 节点内 LLM JSON 修复计数 — 节点执行前清零, 完成后随遥测上报
+        repair_token = json_repairs_in_step.set([0])
 
         # 执行节点 — CR-11: 状态只存 WorkflowStep, 不在共享 BaseNode 上写
         # (并发执行同一 Workflow 时原地改 node.status/result 会互相覆盖)
@@ -1806,6 +1821,9 @@ class WorkflowEngine:
             step.tokens = _extract_tokens(step.output_data)
             step.error = result.error
             step.summary = result.summary
+            # issue #554: 修复计数回收 — 读 list 计数落 step, 随后恢复外层 context
+            step.json_repairs = json_repairs_in_step.get()[0]
+            json_repairs_in_step.reset(repair_token)
             # issue #545: node_finished 遥测 — 时长/尝试次数/稳定失败签名
             # (error class + node type = mined_issues 聚类键; 不带报错文本)
             if self._ops_telemetry is not None:
@@ -1818,6 +1836,7 @@ class WorkflowEngine:
                     int(step.execution_time * 1000),
                     attempts=final_attempt,
                     failure_sig=_sig,
+                    json_repairs=step.json_repairs,
                 )
 
             # Hook: POST_NODE_EXECUTE
@@ -2216,6 +2235,29 @@ class WorkflowEngine:
             self._hitl_gate.cancel(qid)
         except Exception as e:
             logger.debug(f"[{exec_id}] kernel HumanGate cancel failed (ignored): {e}")
+
+    def _ensure_kernel_gate(self):
+        # issue #554: 与 _hitl_gate_ask 同一懒构建路径 — token 签发复用共享 HumanGate
+        if self._hitl_gate is None:
+            gate_dir = os.environ.get("FUSION_COWORK_HITL_GATE_DIR", "").strip()
+            if not gate_dir:
+                gate_dir = os.path.join(os.path.expanduser("~"), ".fusion-cowork", "hitl_gate")
+            self._hitl_gate = HumanGate(gate_dir)
+        return self._hitl_gate
+
+    def _record_destructive_grant(self, exec_id: str, node: BaseNode) -> None:
+        # issue #554: ApprovalGate 契约 — 幂等签发 (同 call_id 同 token), redeem 单次,
+        # 重放拒绝; token 记录在 run 侧供执行器核验, 签发失败不影响已获批的执行
+        try:
+            gate = self._ensure_kernel_gate()
+            if self._approval_gate is None:
+                self._approval_gate = build_approval_gate(gate, self._permission_manager)
+            call_id = f"{exec_id}:{node.name}"
+            token = self._approval_gate.issue_token(call_id)
+            self._approval_tokens[exec_id] = token
+            logger.info(f"[{exec_id}] destructive grant token issued call={call_id} node={node.name}")
+        except Exception as e:
+            logger.warning(f"[{exec_id}] destructive grant token issuance failed (approval stands): {e}")
 
     async def _hitl_await(self, exec_id: str, workflow: Workflow, node: BaseNode, check_input: Dict[str, Any]) -> bool:
         # issue #463: durable HITL — 崩溃重启后闸门重入, 日志里已有决定直接重放
