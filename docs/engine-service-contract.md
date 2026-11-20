@@ -1,3 +1,19 @@
+---
+doc_id: fusion-cowork/engine-service-contract
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: guide
+title: {zh: "引擎服务调用契约", en: "Engine service contract (storefront bff)"}
+audience: engineer
+status: draft
+version: 0.5.136
+updated: 2026-11-20
+owner: "@dahai"
+source_of_truth:
+  - docs/engine-service-contract.md
+---
+
 # Engine Service Contract (storefront bff → fusion-cowork)
 
 Issue #565. How the fusion-site storefront bff (bench-site) triggers the
