@@ -178,3 +178,126 @@ class TestItem5FanoutWarnings:
         counts["n"] = 4
         await plane._ensure_runtime("s1")
         assert plane._fanout_warnings.get("s1") is None
+
+
+class TestItem2PhaseEvaluator:
+    def test_empty_results_blocked(self):
+        from fusion_cowork.nodes.ecosystem.ladder_node import _ladder_phase_evaluator
+
+        assert _ladder_phase_evaluator([]) == {"ok": False, "reason": "empty phase results"}
+        assert _ladder_phase_evaluator(None)["ok"] is False
+
+    def test_all_failed_blocked(self):
+        from types import SimpleNamespace
+
+        from fusion_cowork.nodes.ecosystem.ladder_node import _ladder_phase_evaluator
+
+        results = [SimpleNamespace(status="failed"), SimpleNamespace(status="failed")]
+        verdict = _ladder_phase_evaluator(results)
+        assert verdict["ok"] is False
+        assert "all 2 members failed" in verdict["reason"]
+
+    def test_partial_failure_ok(self):
+        from types import SimpleNamespace
+
+        from fusion_cowork.nodes.ecosystem.ladder_node import _ladder_phase_evaluator
+
+        results = [SimpleNamespace(status="completed"), SimpleNamespace(status="failed")]
+        assert _ladder_phase_evaluator(results)["ok"] is True
+
+    def test_blocked_count(self):
+        from types import SimpleNamespace
+
+        from fusion_cowork.nodes.ecosystem.ladder_node import _count_blocked
+
+        results = [SimpleNamespace(status="blocked"), SimpleNamespace(status="completed")]
+        assert _count_blocked(results) == 1
+
+    def test_schema_declares_opt_in_param(self):
+        node = NodeRegistry.create("workflow_ladder")
+        assert node is not None
+        schema = node.get_params_schema()
+        prop = schema["properties"]["phase_evaluator"]
+        assert prop["default"] is False
+
+
+class TestItem3HandoffAttribution:
+    def _record(self, steps):
+        return {"run_id": "run-558", "status": "failed", "steps": steps}
+
+    def test_handoff_candidate_found(self):
+        from fusion_cowork.server.web_api import _failure_attribution
+
+        record = self._record(
+            [
+                {"node_name": "fetch_data", "status": "success", "summary": "ok", "error": ""},
+                {"node_name": "transform", "status": "failed", "summary": "", "error": "timeout exception"},
+                {"node_name": "load", "status": "failed", "summary": "", "error": "fail: missing input"},
+            ]
+        )
+        attribution = _failure_attribution("run-558", record)
+        assert attribution is not None
+        assert attribution["handoff_candidates"]
+        cand = attribution["handoff_candidates"][0]
+        assert cand["from_node"] != cand["to_node"]
+        assert cand["to_node"] in ("transform", "load")
+
+    def test_no_failure_no_candidates(self):
+        from fusion_cowork.server.web_api import _failure_attribution
+
+        record = self._record(
+            [
+                {"node_name": "a", "status": "success", "summary": "fine", "error": ""},
+                {"node_name": "b", "status": "success", "summary": "fine", "error": ""},
+            ]
+        )
+        assert _failure_attribution("run-558", record) is None
+
+    def test_empty_steps_none(self):
+        from fusion_cowork.server.web_api import _failure_attribution
+
+        assert _failure_attribution("run-558", self._record([])) is None
+
+    def test_never_raises_on_garbage(self):
+        from fusion_cowork.server.web_api import _failure_attribution
+
+        assert _failure_attribution("run-558", {"steps": "garbage"}) is None
+
+
+class TestItem4DuplicateThreshold:
+    def test_env_parsing(self, monkeypatch):
+        from fusion_cowork.space.kernel_plane import _duplicate_threshold
+
+        monkeypatch.delenv("FUSION_COWORK_TEAM_DUPLICATE_THRESHOLD", raising=False)
+        assert _duplicate_threshold() is None
+        monkeypatch.setenv("FUSION_COWORK_TEAM_DUPLICATE_THRESHOLD", "3")
+        assert _duplicate_threshold() == 3
+        monkeypatch.setenv("FUSION_COWORK_TEAM_DUPLICATE_THRESHOLD", "1")
+        assert _duplicate_threshold() is None
+        monkeypatch.setenv("FUSION_COWORK_TEAM_DUPLICATE_THRESHOLD", "abc")
+        assert _duplicate_threshold() is None
+
+    async def test_runtime_wired_when_env_set(self, monkeypatch, tmp_path):
+        async def _roster(self, space_id):
+            return ["u1", "u2"]
+
+        from fusion_cowork.space import kernel_plane as kp
+
+        monkeypatch.setattr(SpaceKernelPlane, "_roster", _roster)
+        monkeypatch.setattr(kp, "_kernel_name", lambda mid: f"k-{mid}")
+        monkeypatch.setenv("FUSION_COWORK_TEAM_DUPLICATE_THRESHOLD", "3")
+        plane = SpaceKernelPlane(object(), state_root=str(tmp_path / "st"))
+        runtime = await plane._ensure_runtime("s1")
+        assert runtime.duplicate_threshold == 3
+        assert runtime.bus is not None
+
+    def test_event_bus_capture_bounded(self):
+        from fusion_cowork.space.kernel_plane import _PlaneEventBus
+
+        sink = {}
+        bus = _PlaneEventBus("s1", sink, max_events=3)
+        for i in range(5):
+            bus.emit("team", "team_duplicate_work", {"n": i})
+        bucket = sink["s1"]
+        assert len(bucket) == 3
+        assert bucket[-1]["payload"]["n"] == 4

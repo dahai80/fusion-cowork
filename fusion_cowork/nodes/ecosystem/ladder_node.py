@@ -42,6 +42,24 @@ def _load_runner() -> Any:
     return SubagentRunner()
 
 
+def _ladder_phase_evaluator(results: Any) -> Dict[str, Any]:
+    # issue #558 (#133): deterministic phase check — empty results or an
+    # all-failed phase blocks the phase (kernel then marks surviving members
+    # "blocked" and emits team_evaluator_block); partial failure stays ok so
+    # allow_partial semantics remain consumer-side
+    results = list(results or [])
+    if not results:
+        return {"ok": False, "reason": "empty phase results"}
+    failed = [r for r in results if getattr(r, "status", "") == "failed"]
+    if len(failed) == len(results):
+        return {"ok": False, "reason": f"all {len(results)} members failed"}
+    return {"ok": True, "reason": ""}
+
+
+def _count_blocked(results: Any) -> int:
+    return sum(1 for r in (results or []) if getattr(r, "status", "") == "blocked")
+
+
 @register_node
 class WorkflowLadderNode(BaseNode):
     """阶梯编排 — 多阶段 worker 梯队 (fusion-harness ParallelTeam 原语)。
@@ -77,6 +95,11 @@ class WorkflowLadderNode(BaseNode):
                     "permission_mode?, budget_tokens?, max_turns?, worker_node?, worker_params?}]}]",
                 },
                 "allow_partial": {"type": "boolean", "description": "阶段内部分失败不整体 FAILED", "default": False},
+                "phase_evaluator": {
+                    "type": "boolean",
+                    "description": "阶段评估器 (#558/#133) — 空结果/全失败阶段 fail-safe 拦截, 幸存成员标记 blocked",
+                    "default": False,
+                },
                 "propagate_context": {"type": "boolean", "description": "上阶段摘要注入下阶段 prompt", "default": True},
                 "timeout": {
                     "type": "number",
@@ -105,7 +128,12 @@ class WorkflowLadderNode(BaseNode):
             timeout = _DEFAULT_STAGE_TIMEOUT
         allow_partial = bool(params.get("allow_partial", False))
         propagate = bool(params.get("propagate_context", True))
-        team = ParallelTeam(runner)
+        # issue #558 (#133): opt-in phase evaluator — cheap deterministic checks
+        # between member phases (empty results / all-failed phase), rate-limiting
+        # error compounding down the ladder; kernel marks surviving members
+        # "blocked" and emits team_evaluator_block (fail-safe, never re-raised)
+        evaluator = _ladder_phase_evaluator if bool(params.get("phase_evaluator", False)) else None
+        team = ParallelTeam(runner, phase_evaluator=evaluator)
 
         async def agent_fn(spec: Any, session: Any) -> str:
             session.record_turn()
@@ -203,7 +231,16 @@ class WorkflowLadderNode(BaseNode):
             ]
             failed = [r for r in workers_out if r["status"] != "completed"]
             failed_total += len(failed)
-            stage_reports.append({"name": stage_name, "results": workers_out, "failed": len(failed)})
+            # issue #558 (#133): evaluator-blocked survivors — honest counters in
+            # the stage report + a loud log line (kernel emitted team_evaluator_block)
+            blocked = _count_blocked(raw)
+            if blocked:
+                logger.error(
+                    f"workflow_ladder stage '{stage_name}' phase evaluator blocked: {blocked}/{len(raw)} members marked blocked"
+                )
+            stage_reports.append(
+                {"name": stage_name, "results": workers_out, "failed": len(failed), "blocked": blocked}
+            )
             if failed and not allow_partial:
                 names = ",".join(r["name"] for r in failed)
                 logger.error(f"workflow_ladder stage '{stage_name}' 失败: {names}")
