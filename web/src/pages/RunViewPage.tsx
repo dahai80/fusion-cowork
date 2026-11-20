@@ -462,6 +462,23 @@ export function RunViewPage({ runId }: { runId: string }) {
                 ) : null}
             </div>
             {record.error ? <div className="text-xs text-error">{record.error}</div> : null}
+            {record.failure_attribution?.handoff_candidates?.length ? (
+                <div className="rounded-md border border-border bg-bg-surface px-3 py-2 text-xs">
+                    <div className="text-[10px] font-medium text-text-muted">
+                        {t('失败归因 · 边级候选 (kernel 确定性启发)', 'Failure attribution · handoff candidates (kernel heuristics)')}
+                    </div>
+                    <ul className="mt-1 space-y-0.5">
+                        {record.failure_attribution.handoff_candidates.slice(0, 5).map((c, i) => (
+                            <li key={i} className="text-text-secondary">
+                                <span className="font-mono text-text-primary">{c.from_node}</span>
+                                {' → '}
+                                <span className="font-mono text-error">{c.to_node}</span>
+                                <span className="text-text-muted"> · {c.reason}</span>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            ) : null}
             {record.result?.summary ? <div className="text-xs text-text-secondary">{record.result.summary}</div> : null}
 
             {/* 首次教育提示 (可关) */}

@@ -433,6 +433,50 @@ def _spend_usd(total_tokens: int) -> float:
     return round(total_tokens / 1_000_000 * price, 6)
 
 
+def _failure_attribution(run_id: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    # issue #558 (#132): edge-level (A caused B) handoff candidates for failed
+    # runs — kernel FailureAnalyzer deterministic keyword heuristics (pinpointer
+    # None = no model call, no replay); steps map to trajectory records
+    # (event="error" on failed steps / error text, else "tool_call"); additive
+    # response key only, any failure here degrades to "absent" (never raises).
+    try:
+        from types import SimpleNamespace
+
+        from fusion_harness import FailureAnalyzer
+
+        recs = []
+        for idx, s in enumerate(record.get("steps") or []):
+            err = str(s.get("error") or "")
+            status = str(s.get("status") or "")
+            text = " ".join(str(x) for x in (s.get("summary") or "", err) if x)
+            recs.append(
+                SimpleNamespace(
+                    run_id=run_id,
+                    ts=idx,
+                    node_id=str(s.get("node_name") or s.get("node_id") or "workflow"),
+                    # only failed steps carry "error" events — successful steps stay
+                    # eventless so the kernel's repeated-tool-call heuristic does not
+                    # fire on identical-looking DAG step payloads
+                    event="error" if (err or status in ("failed", "denied", "blocked")) else "",
+                    payload={"error": err, "status": status, "message": text[:200]},
+                )
+            )
+        if not recs:
+            return None
+        report = FailureAnalyzer().analyze(recs)
+        run_report = next(iter((report.get("runs") or {}).values()), None)
+        if not run_report or not run_report.get("handoff_candidates"):
+            return None
+        return {
+            "handoff_candidates": run_report.get("handoff_candidates") or [],
+            "decisive_moment": run_report.get("decisive_moment") or {},
+            "responsible_agent": run_report.get("responsible_agent") or "",
+        }
+    except Exception as exc:
+        logger.warning(f"failure attribution skipped run={run_id}: {exc}")
+        return None
+
+
 class RunRegistry:
     def __init__(self, engine: Any, event_emitter: Any = None, run_store: Any = None):
         self._engine = engine
@@ -2467,6 +2511,14 @@ def create_web_app(
         if record.get("steps"):
             record["tokens"] = _token_rollup(record["steps"])
             record["spend_usd"] = _spend_usd(record["tokens"]["total_tokens"])
+        # issue #558 (#132): 终态失败 run 附带边级 handoff 候选 — kernel
+        # FailureAnalyzer 确定性启发 (无模型调用), 纯增量字段, 失败不冲击接口
+        if record.get("status") == "failed":
+            attribution = _failure_attribution(run_id, record)
+            if attribution is not None:
+                record["failure_attribution"] = attribution
+            else:
+                record.pop("failure_attribution", None)
         # issue #181: HITL 等待中标记 — 前端提示"等待人工审批"而非卡死
         # issue #187: 附带截止时间 — 审批卡倒计时; 状态服务端持久, 页面刷新不丢
         if record.get("status") == "running":

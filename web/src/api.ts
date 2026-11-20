@@ -134,6 +134,12 @@ export interface RunRecord extends RunListItem {
     workflow_def?: RunWorkflowDef | null;
     directives?: { action: string; payload?: Record<string, unknown>; at?: number }[];
     paused_reason?: string;
+    // issue #558 (#132): 边级失败归因候选 (仅终态失败 run 附带)
+    failure_attribution?: {
+        handoff_candidates?: { from_node: string; to_node: string; step: number; distance: number; reason: string }[];
+        decisive_moment?: Record<string, unknown>;
+        responsible_agent?: string;
+    };
 }
 
 // issue #233: artifact 卡片 — fusion-artifacts-engine v0.6.0 卡片契约

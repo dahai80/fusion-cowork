@@ -51,6 +51,44 @@ def _kernel_name(member_id: str) -> str:
     return "m_" + hashlib.sha1(member_id.encode("utf-8")).hexdigest()[:8]
 
 
+def _duplicate_threshold() -> Optional[int]:
+    # issue #558 (#134): FUSION_COWORK_TEAM_DUPLICATE_THRESHOLD — int >= 2
+    # enables kernel duplicate-work detection; unset/invalid = off (None)
+    raw = os.environ.get("FUSION_COWORK_TEAM_DUPLICATE_THRESHOLD", "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(f"invalid FUSION_COWORK_TEAM_DUPLICATE_THRESHOLD={raw!r} — duplicate detection off")
+        return None
+    if value < 2:
+        logger.warning("FUSION_COWORK_TEAM_DUPLICATE_THRESHOLD must be >= 2 — duplicate detection off")
+        return None
+    return value
+
+
+class _PlaneEventBus:
+    # Minimal LifecycleBus-shaped sink: captures kernel team events (e.g.
+    # team_duplicate_work) per space; capture failure never breaks the emitter
+    def __init__(self, space_id: str, sink: Dict[str, List[Dict[str, Any]]], max_events: int = 100):
+        self._space_id = space_id
+        self._sink = sink
+        self._max = max_events
+
+    def emit(self, source: str, event: str, payload: Dict[str, Any], session_id: str = "") -> None:
+        try:
+            bucket = self._sink.setdefault(self._space_id, [])
+            bucket.append({"event": event, "payload": payload, "ts": datetime.now().isoformat()})
+            del bucket[: max(0, len(bucket) - self._max)]
+            if event == "team_duplicate_work":
+                logger.warning(
+                    f"SpaceKernelPlane duplicate work space={self._space_id} members={payload.get('members')} key={str(payload.get('key'))[:120]}"
+                )
+        except Exception as exc:
+            logger.debug(f"SpaceKernelPlane event capture failed space={self._space_id}: {exc}")
+
+
 def _parse_mentions(content: str) -> List[str]:
     seen: List[str] = []
     for tok in _MENTION_RE.findall(content or ""):
@@ -69,6 +107,7 @@ class SpaceKernelPlane:
         self._fingerprints: Dict[str, str] = {}
         self._roster_cache: Dict[str, List[str]] = {}
         self._fanout_warnings: Dict[str, List[str]] = {}
+        self._duplicate_events: Dict[str, List[Dict[str, Any]]] = {}
 
     def _state_dir(self, space_id: str) -> str:
         if self._state_root:
@@ -101,7 +140,13 @@ class SpaceKernelPlane:
         except TeamDefError as exc:
             raise ValueError(f"space {space_id} roster rejected by kernel: {exc}") from exc
         state_dir = self._state_dir(space_id)
-        runtime = TeamRuntime(definition, state_dir=state_dir)
+        # issue #558 (#134): opt-in duplicate-work detection — env threshold
+        # (int >= 2) wires TeamRuntime duplicate_threshold; detected repeats of
+        # identical (tool, args) across members emit team_duplicate_work events
+        # captured on the plane per space (None = off, zero behavior change)
+        threshold = _duplicate_threshold()
+        bus = _PlaneEventBus(space_id, self._duplicate_events) if threshold is not None else None
+        runtime = TeamRuntime(definition, state_dir=state_dir, duplicate_threshold=threshold, bus=bus)
         # issue #558 (P-series #124): non-fatal fan-out guidance at spawn time —
         # member counts outside the FANOUT_* bands log a warning (token
         # multiplier cost) but never block; latest warnings kept per space
