@@ -44,9 +44,15 @@ def _module_key() -> str:
         return ""
 
 
+def _service_key() -> str:
+    # issue #565: dedicated service-to-service credential for storefront bff
+    # engine calls (NOT a user key) — provisioned via env/secret per node
+    return os.environ.get("FUSION_COWORK_SERVICE_KEY", "")
+
+
 def _accepted_keys() -> List[str]:
     # 双活窗口: env 静态密钥与网关签发密钥同时有效 (24h grace 对齐 gateway K1)。
-    keys = [k for k in (_api_key(), _module_key()) if k]
+    keys = [k for k in (_api_key(), _module_key(), _service_key()) if k]
     return list(dict.fromkeys(keys))
 
 
@@ -62,6 +68,10 @@ def check_static_key(key: str) -> Optional[Dict[str, Any]]:
         return {"valid": True, "key_id": "static-env", "permissions": ["admin"]}
     if key == _module_key():
         return {"valid": True, "key_id": "module-issued", "permissions": ["admin"]}
+    if key == _service_key():
+        # issue #565: service credential — scoped to the run lifecycle
+        # endpoints (scope enforced by the auth middleware, not here)
+        return {"valid": True, "key_id": "service", "permissions": ["runs"]}
     return None
 
 
@@ -2068,11 +2078,21 @@ def create_web_app(
         if not auth_configured():
             return await call_next(request)
         key = extract_caller_key(request.headers)
-        if not check_static_key(key):
+        key_info = check_static_key(key)
+        if not key_info:
             logger.warning(f"web API 鉴权拒绝: {request.url.path} (key {'缺失' if not key else '无效'})")
             return JSONResponse(
                 status_code=401,
                 content={"error": {"code": "unauthorized", "message": "missing or invalid api key"}},
+            )
+        # issue #565: service credential scope — the storefront bff key may only
+        # drive the run lifecycle endpoints (create/poll/retry); everything else
+        # (workflows CRUD, spaces, approvals, admin) stays user-key territory
+        if key_info.get("key_id") == "service" and not request.url.path.startswith("/api/runs"):
+            logger.warning(f"web API service key out of scope: {request.url.path}")
+            return JSONResponse(
+                status_code=403,
+                content={"error": {"code": "forbidden", "message": "service key is scoped to /api/runs endpoints"}},
             )
         return await call_next(request)
 
