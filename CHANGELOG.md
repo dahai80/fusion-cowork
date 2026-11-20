@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.136
+version: 0.5.137
 updated: 2026-11-20
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,10 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.137 (issue #565 — service credential path for storefront bff engine calls)
+
+- **#565 (PR #567)**: dedicated service-to-service key for the fusion-site storefront bff calling the engine web API — `FUSION_COWORK_SERVICE_KEY` (both sides' env) accepted alongside the static env key + gateway-issued `fm-` module key (`check_static_key` key_id `"service"`, permissions `["runs"]`, counts toward `auth_configured()`); scope enforced in `_auth_middleware` — service key valid only on `/api/runs*` (create/poll/resume-from/cancel/directive), any other `/api/*` path returns `403 {"error":{"code":"forbidden"}}`; user keys unchanged (full reach), `/health` stays open. New `docs/engine-service-contract.md` — credential provisioning, endpoint map (POST /api/runs with seeded `workflow_id` e.g. `product_lifecycle_agents` + `inputs`, GET poll with per-step evidence, resume-from body `{"node_id": ...}`), minimal httpx bff flow, failure semantics (401/403/HITL pause/crashed-run recovery). `docs/api-reference.md` resume-from body corrected `step_id` → `node_id`. Tests `tests/test_issue_565_service_key.py` (13 cases: key ids, absent env, auth_configured, run create/poll 202/200, out-of-scope 403 matrix, resume-from route in scope, invalid 401, user-key no-regression, /health open).
 
 ## v0.5.136 (issue #563 — kernel vocabulary wiring: HITL marker re-delivery + model_tier + fan-out bounds)
 
