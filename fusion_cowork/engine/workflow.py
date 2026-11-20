@@ -42,7 +42,7 @@ from .permission_manager import (
 )
 
 try:  # issue #527: HITL 审批队列走共享内核 HumanGate 契约 (fusion-harness #66)
-    from fusion_harness import HumanGate
+    from fusion_harness import AWAITING_HUMAN_MARKER, HumanGate
 except ImportError as exc:
     raise harness_import_error(exc) from exc
 
@@ -2210,6 +2210,65 @@ class WorkflowEngine:
         self._hitl_gate = HumanGate(gate_dir, checkpoint_ref=checkpoint_ref)
         return self._hitl_gate
 
+    def _hitl_gate_reuse(self, exec_id: str, node: BaseNode) -> str:
+        # issue #563 (#125 companion): restart re-delivery — after a SIGKILL the
+        # kernel HumanGate queue keeps the pending question (session=run id) on
+        # disk; when the run is resumed and re-parks at the same gated node,
+        # REBIND that original question instead of asking a duplicate (two
+        # pending questions for one approval = resolve single-winner confusion).
+        # Strict match: same session + still pending + same node payload.
+        if self._hitl_gate is None:
+            return ""
+        try:
+            for q in self._hitl_gate.pending(session_id=exec_id):
+                payload = q.payload if isinstance(q.payload, dict) else {}
+                if str(payload.get("node_id") or "") == str(node.id):
+                    self._hitl_questions[exec_id] = q.id
+                    logger.info(f"[{exec_id}] HITL kernel question re-delivered id={q.id} node={node.id}")
+                    return q.id
+        except Exception as e:
+            logger.warning(f"[{exec_id}] kernel HumanGate reuse check failed (ask fresh): {e}")
+        return ""
+
+    def hitl_recover(self, execution_id: str) -> Optional[Dict[str, Any]]:
+        # issue #563: restart surface — a crashed/parked run's pending kernel
+        # question survives on disk; report it (question + awaiting_human
+        # checkpoint marker verification) so ops/UI can see the run is waiting
+        # on a human even though this engine process holds no in-memory state.
+        # Read-only: does not mutate run state or the gate queue.
+        if self._hitl_gate is None:
+            self._build_kernel_gate()
+        gate = self._hitl_gate
+        if gate is None:
+            return None
+        try:
+            pending = gate.pending(session_id=execution_id)
+        except Exception as e:
+            logger.warning(f"[{execution_id}] HITL recover scan failed: {e}")
+            return None
+        if not pending:
+            return None
+        q = pending[0]
+        payload = q.payload if isinstance(q.payload, dict) else {}
+        marker_verified: Optional[bool] = None
+        if self._kernel_checkpoints is not None:
+            try:
+                state = self._kernel_checkpoints.store.latest(execution_id)
+                awaiting = state.metadata.get("awaiting_human") if state is not None else None
+                marker_verified = bool(
+                    state is not None and state.permission_mode == AWAITING_HUMAN_MARKER and awaiting
+                )
+            except Exception as e:
+                logger.warning(f"[{execution_id}] HITL recover marker check failed: {e}")
+                marker_verified = False
+        return {
+            "question_id": q.id,
+            "node_id": str(payload.get("node_id") or ""),
+            "tool_name": str(payload.get("tool_name") or ""),
+            "policy": str(getattr(q, "policy", "")),
+            "marker_verified": marker_verified,
+        }
+
     def _hitl_gate_ask(self, exec_id: str, node: BaseNode, check_input: Dict[str, Any], ttl_s: float) -> str:
         # issue #527: park 点入内核 HumanGate — block 策略 + ttl 到期惰性过期;
         # payload 走审批卡同一套脱敏 (_sanitize_approval_params), 落盘队列不含明文敏感值
@@ -2305,7 +2364,9 @@ class WorkflowEngine:
         # issue #527: park 点走共享内核 HumanGate — ask(policy="block", ttl_s) 入队,
         # 审批侧 resolve() 单赢家; 等待唤醒仍桥接 W8 暂停事件 (resume/cancel 共用,
         # #445/#187 语义不变: resume 不合成决定, 只重建问题继续等)
-        question_id = self._hitl_gate_ask(exec_id, node, check_input, policy_timeout_s or self._hitl_timeout)
+        question_id = self._hitl_gate_reuse(exec_id, node) or self._hitl_gate_ask(
+            exec_id, node, check_input, policy_timeout_s or self._hitl_timeout
+        )
         # issue #463: 闸门入口 pending 落账 — SQLite 持久, 崩溃后审批队列可重建
         if journal is not None:
             entry = finder(exec_id) or {}

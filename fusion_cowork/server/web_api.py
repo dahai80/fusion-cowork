@@ -2523,6 +2523,19 @@ def create_web_app(
         # issue #187: 附带截止时间 — 审批卡倒计时; 状态服务端持久, 页面刷新不丢
         if record.get("status") == "running":
             record["hitl_pending"] = engine.hitl_pending(run_id)
+            if not record["hitl_pending"]:
+                # issue #563: restart re-delivery surface — engine memory is empty
+                # after a crash, but the kernel gate queue may still hold the run's
+                # pending question; expose it read-only (marker verified against
+                # the checkpoint store when wired)
+                recover_getter = getattr(engine, "hitl_recover", None)
+                recovered = recover_getter(run_id) if callable(recover_getter) else None
+                if recovered is not None:
+                    record["hitl_recover"] = recovered
+                else:
+                    record.pop("hitl_recover", None)
+            else:
+                record.pop("hitl_recover", None)
             if record["hitl_pending"]:
                 deadline_getter = getattr(engine, "hitl_deadline", None)
                 deadline = deadline_getter(run_id) if callable(deadline_getter) else None
@@ -2539,6 +2552,7 @@ def create_web_app(
             # 注册表共享 dict, 运行期写入的键不清理会残留到终态响应
             record.pop("hitl_pending", None)
             record.pop("hitl_deadline", None)
+            record.pop("hitl_recover", None)
             record.pop("awaiting_human", None)
             record.pop("awaiting_node", None)
         return record

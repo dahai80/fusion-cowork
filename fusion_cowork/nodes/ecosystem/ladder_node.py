@@ -60,6 +60,36 @@ def _count_blocked(results: Any) -> int:
     return sum(1 for r in (results or []) if getattr(r, "status", "") == "blocked")
 
 
+def _validate_model_tier(raw: Any) -> str:
+    # issue #563 (#141): optional per-worker model_tier hint — validated
+    # client-side against the kernel vocabulary BEFORE dispatch (typed error,
+    # no partial fan-out); "" = kernel policy default, cowork never guesses
+    from fusion_harness import VALID_MODEL_TIERS
+
+    tier = str(raw or "").strip()
+    if tier and tier not in VALID_MODEL_TIERS:
+        raise ValueError(
+            f"unknown model tier {tier!r} (valid: {', '.join(t for t in VALID_MODEL_TIERS if t)}, or empty)"
+        )
+    return tier
+
+
+def _stage_fanout_warnings(workers: list) -> List[str]:
+    # issue #563 (#124): pre-dispatch fan-out guidance on the node level —
+    # above the complex band surfaces the kernel token-multiplier warning in
+    # the result (kernel fanout_warnings wording, single source); above the
+    # hard max the kernel validate_brief would reject, so fail fast here with
+    # a typed error instead of mid-stage
+    from types import SimpleNamespace
+
+    from fusion_harness import FANOUT_HARD_MAX, fanout_warnings
+
+    n = len(workers)
+    if n > FANOUT_HARD_MAX:
+        raise ValueError(f"stage concurrency {n} exceeds fan-out hard max {FANOUT_HARD_MAX} — split the stage")
+    return fanout_warnings(SimpleNamespace(concurrency=n))
+
+
 @register_node
 class WorkflowLadderNode(BaseNode):
     """阶梯编排 — 多阶段 worker 梯队 (fusion-harness ParallelTeam 原语)。
@@ -92,7 +122,8 @@ class WorkflowLadderNode(BaseNode):
                 "stages": {
                     "type": "array",
                     "description": "阶段列表 [{name, workers: [{name, prompt, tool_allowlist?, "
-                    "permission_mode?, budget_tokens?, max_turns?, worker_node?, worker_params?}]}]",
+                    "permission_mode?, budget_tokens?, max_turns?, worker_node?, worker_params?, "
+                    "model_tier? (cheap|strong|空)}]}] — 单阶段 worker 数 >20 拒绝派发, >15 附 token 倍增警告",
                 },
                 "allow_partial": {"type": "boolean", "description": "阶段内部分失败不整体 FAILED", "default": False},
                 "phase_evaluator": {
@@ -121,6 +152,32 @@ class WorkflowLadderNode(BaseNode):
             return NodeResult(status=NodeStatus.FAILED, error=str(e))
 
         from fusion_harness import ParallelTeam, SubagentSpec
+
+        # issue #563: upfront spec validation — model_tier vocabulary + fan-out
+        # bounds checked for EVERY stage before any dispatch (typed errors, no
+        # partial fan-out left behind when a later stage's spec is invalid)
+        for idx, stage in enumerate(stages, start=1):
+            if not isinstance(stage, dict):
+                return NodeResult(status=NodeStatus.FAILED, error=f"workflow_ladder 第 {idx} 阶段必须是对象")
+            stage_name = str(stage.get("name") or f"stage-{idx}")
+            workers = stage.get("workers")
+            if not isinstance(workers, list) or not workers:
+                return NodeResult(status=NodeStatus.FAILED, error=f"workflow_ladder 阶段 '{stage_name}' 缺 workers")
+            for w in workers:
+                if not isinstance(w, dict):
+                    return NodeResult(
+                        status=NodeStatus.FAILED, error=f"workflow_ladder 阶段 '{stage_name}' worker 必须是对象"
+                    )
+                try:
+                    _validate_model_tier(w.get("model_tier"))
+                except ValueError as e:
+                    logger.error(f"workflow_ladder stage '{stage_name}' invalid model_tier: {e}")
+                    return NodeResult(status=NodeStatus.FAILED, error=f"workflow_ladder 阶段 '{stage_name}': {e}")
+            try:
+                _stage_fanout_warnings(workers)
+            except ValueError as e:
+                logger.error(f"workflow_ladder stage '{stage_name}' fan-out bound: {e}")
+                return NodeResult(status=NodeStatus.FAILED, error=f"workflow_ladder 阶段 '{stage_name}': {e}")
 
         try:
             timeout = float(params.get("timeout", _DEFAULT_STAGE_TIMEOUT) or 0)
@@ -165,6 +222,11 @@ class WorkflowLadderNode(BaseNode):
             if not isinstance(workers, list) or not workers:
                 return NodeResult(status=NodeStatus.FAILED, error=f"workflow_ladder 阶段 '{stage_name}' 缺 workers")
             total += len(workers)
+            # issue #563: pre-dispatch fan-out guidance — validation already ran
+            # upfront, so this cannot raise; warnings ride the stage report
+            stage_warnings = _stage_fanout_warnings(workers)
+            for w_text in stage_warnings:
+                logger.warning(f"workflow_ladder stage '{stage_name}': {w_text}")
             logger.info(
                 f"workflow_ladder stage '{stage_name}' 开始: workers={len(workers)} (stage {idx}/{len(stages)})"
             )
@@ -182,6 +244,7 @@ class WorkflowLadderNode(BaseNode):
                         status=NodeStatus.FAILED,
                         error=f"workflow_ladder 阶段 '{stage_name}' worker '{name}' 缺 prompt",
                     )
+                tier = _validate_model_tier(w.get("model_tier"))
                 if prior_summaries and propagate:
                     prompt = f"{prompt}\n\nPrior stage results (ladder context):\n{prior_summaries}"
                 specs.append(
@@ -195,6 +258,7 @@ class WorkflowLadderNode(BaseNode):
                         metadata={
                             "worker_node": w.get("worker_node") or "",
                             "worker_params": dict(w.get("worker_params") or {}),
+                            "model_tier": tier,
                         },
                     )
                 )
@@ -219,6 +283,7 @@ class WorkflowLadderNode(BaseNode):
                     error=str(e),
                     data={"stages": stage_reports, "total": total, "failed": failed_total},
                 )
+            tier_by_name = {s.name: str(s.metadata.get("model_tier") or "") for s in specs}
             workers_out = [
                 {
                     "name": r.name,
@@ -226,6 +291,7 @@ class WorkflowLadderNode(BaseNode):
                     "status": r.status,
                     "summary": r.summary,
                     "error": r.error,
+                    "model_tier": tier_by_name.get(r.name, ""),
                 }
                 for r in raw
             ]
@@ -239,7 +305,13 @@ class WorkflowLadderNode(BaseNode):
                     f"workflow_ladder stage '{stage_name}' phase evaluator blocked: {blocked}/{len(raw)} members marked blocked"
                 )
             stage_reports.append(
-                {"name": stage_name, "results": workers_out, "failed": len(failed), "blocked": blocked}
+                {
+                    "name": stage_name,
+                    "results": workers_out,
+                    "failed": len(failed),
+                    "blocked": blocked,
+                    "warnings": stage_warnings,
+                }
             )
             if failed and not allow_partial:
                 names = ",".join(r["name"] for r in failed)
