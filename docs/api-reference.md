@@ -32,7 +32,7 @@ Convention: JSON bodies; errors are `{"detail": {"code": "...", "message": "..."
 | POST | `/api/runs/{run_id}/review` | delivery review `pending_review→approved/rejected` |
 | GET | `/api/runs/{run_id}/events` | SSE snapshot + broadcast |
 | GET | `/api/runs/{run_id}/artifacts` | derived from step outputs |
-| POST | `/api/runs/{run_id}/resume-from` | body `{step_id}` → new linked run with snapshot |
+| POST | `/api/runs/{run_id}/resume-from` | body `{node_id}` → new linked run with snapshot |
 | GET | `/api/runs/{run_id}/steps` | step list with tokens/duration |
 
 ## Permissions / approvals
