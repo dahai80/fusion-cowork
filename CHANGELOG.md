@@ -7,8 +7,8 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.135
-updated: 2026-11-19
+version: 0.5.136
+updated: 2026-11-20
 owner: "@dahai"
 source_of_truth:
   - CHANGELOG.md
@@ -16,6 +16,14 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.136 (issue #563 — kernel vocabulary wiring: HITL marker re-delivery + model_tier + fan-out bounds)
+
+- **#563 (PR #564)**: companion adoption to #558 against fusion-harness 0.27.0 (#141/#142/#145 tier vocabulary + #125/#124 constants):
+  - **HITL restart re-delivery (#125 companion)**: after a SIGKILL mid-HITL-wait the kernel HumanGate queue keeps the pending question on disk; new `WorkflowEngine.hitl_recover(exec_id)` surfaces it read-only and verifies the `awaiting_human` checkpoint marker against the kernel CheckpointStore (when wired). The resume path (`_hitl_await`) rebinds the original pending question for the same node instead of asking a duplicate — resolve against the original wakes the resumed run (single-winner semantics preserved). `runs_get` exposes `hitl_recover` on running records whose engine memory is empty after a crash.
+  - **model_tier vocabulary (#141)**: `workflow_ladder` workers accept an optional `model_tier` hint validated client-side against kernel `VALID_MODEL_TIERS` (''/cheap/strong) for every stage UPFRONT before any dispatch — invalid tier = typed error, no partial fan-out; valid tiers pass through `SubagentSpec.metadata` and ride the stage report.
+  - **node-level fan-out bounds (#124)**: `workflow_ladder` pre-validates per-stage worker counts before dispatch — above `FANOUT_HARD_MAX` (20) the node fails with a typed error; above `FANOUT_COMPLEX_MAX` (15) the kernel `TOKEN_MULTIPLIER_WARNING` rides the stage report (`warnings` field, kernel wording).
+  - Pin suite `tests/test_issue_563_kernel_vocab.py` (13 cases).
 
 ## v0.5.135 (issue #558 — P-series knobs complete: phase evaluator + handoff attribution + duplicate work)
 
