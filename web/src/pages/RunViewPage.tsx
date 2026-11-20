@@ -465,7 +465,10 @@ export function RunViewPage({ runId }: { runId: string }) {
             {record.failure_attribution?.handoff_candidates?.length ? (
                 <div className="rounded-md border border-border bg-bg-surface px-3 py-2 text-xs">
                     <div className="text-[10px] font-medium text-text-muted">
-                        {t('失败归因 · 边级候选 (kernel 确定性启发)', 'Failure attribution · handoff candidates (kernel heuristics)')}
+                        {t(
+                            '失败归因 · 边级候选 (kernel 确定性启发)',
+                            'Failure attribution · handoff candidates (kernel heuristics)'
+                        )}
                     </div>
                     <ul className="mt-1 space-y-0.5">
                         {record.failure_attribution.handoff_candidates.slice(0, 5).map((c, i) => (
