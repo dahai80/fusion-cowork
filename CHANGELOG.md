@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.134
+version: 0.5.135
 updated: 2026-11-19
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,14 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.135 (issue #558 — P-series knobs complete: phase evaluator + handoff attribution + duplicate work)
+
+- **#558 (PR #561)**: items 2-4 shipped with fusion-harness 0.26.0 on PyPI (harness#140 closed); slice 1 (items 1+5) landed in v0.5.134. All opt-in, defaults = current behavior:
+  - **#133 phase evaluator**: `workflow_ladder` gains `phase_evaluator` param (default false) — deterministic checks between member phases (empty results / all-failed phase) block the phase via kernel `ParallelTeam` (survivors marked "blocked", `team_evaluator_block` emitted); stage reports gain `blocked` counter; blocked members never feed ladder propagation, so error compounding between stages stops.
+  - **#132 handoff attribution**: terminal failed runs attach `failure_attribution` (`handoff_candidates` A→B edges / `decisive_moment` / `responsible_agent`) via kernel `FailureAnalyzer` deterministic keyword heuristics — no model call, no replay; only failed steps carry "error" events so the repeated-tool-call heuristic stays silent on normal DAG steps. RunViewPage renders the candidates.
+  - **#134 duplicate work**: `FUSION_COWORK_TEAM_DUPLICATE_THRESHOLD` (int ≥ 2, default off) wires `TeamRuntime` duplicate detection in `SpaceKernelPlane`; `team_duplicate_work` events captured per space via minimal bus adapter (bounded 100/space) + warning logs.
+  - Pin suite `tests/test_issue_558_p_series.py` grown to 22 cases.
 
 ## v0.5.134 (issue #558 — P-series kernel knobs, slice 1: durable HITL + fanout)
 
