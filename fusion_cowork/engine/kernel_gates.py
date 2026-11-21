@@ -124,6 +124,70 @@ def reset_sandbox_runner_cache() -> None:
     _sandbox_runner_cache.clear()
 
 
+# ── issue #571: MAST failure attribution 接线 (fusion_harness.failure_attribution) ──
+# 节点失败时对当前 run 轨迹做归因, verdict (mode/cluster/confidence/evidence) 落
+# 节点结果 + run 摘要; spec-class (specification_system_design) 失败不再烧重试
+# 预算 (升级语义 — 归因随 run 摘要交 QA/rework 路由)。env 默认关 = 行为零变化。
+ATTRIBUTION_ENV = "FUSION_COWORK_FAILURE_ATTRIBUTION"
+SPEC_CLUSTER = "specification_system_design"
+
+
+def failure_attribution_enabled() -> bool:
+    return os.environ.get(ATTRIBUTION_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def attribute_node_failure(
+    exec_id: str,
+    steps: Any,
+    failing_node_id: str,
+    error: str,
+) -> Optional[Dict[str, Any]]:
+    # MAST 归因 — 轨迹 = 已完成步 (tool_result) + 失败节点 error 记录;
+    # 分析/分类语义全在内核 FailureAnalyzer, 这里只做记录形状适配
+    try:
+        from fusion_harness.failure_attribution import FailureAnalyzer
+
+        from ..trajectory.recorder import kernel_record
+    except Exception as e:
+        logger.warning(f"failure attribution unavailable (ignored): {e}")
+        return None
+    records = []
+    for s in steps or []:
+        records.append(
+            kernel_record(
+                "post_node_execute",
+                exec_id,
+                node_id=str(getattr(s, "node_id", "") or "workflow"),
+                payload={
+                    "summary": str(getattr(s, "summary", "") or ""),
+                    "error": str(getattr(s, "error", "") or ""),
+                },
+                status=str(getattr(getattr(s, "status", None), "value", "") or ""),
+            )
+        )
+    records.append(
+        kernel_record(
+            "node_error",
+            exec_id,
+            node_id=str(failing_node_id or "workflow"),
+            payload={"error": str(error or "")},
+            status="failed",
+        )
+    )
+    try:
+        report = FailureAnalyzer().analyze(records)
+    except Exception as e:
+        logger.warning(f"failure attribution analyze failed (ignored): {e}")
+        return None
+    run = (report.get("runs") or {}).get(exec_id) or {}
+    verdicts = run.get("verdicts") or []
+    return verdicts[0] if verdicts else None
+
+
+def is_spec_failure(verdict: Optional[Dict[str, Any]]) -> bool:
+    return bool(verdict) and verdict.get("cluster") == SPEC_CLUSTER
+
+
 def sandbox_block_reason(policy: SandboxPolicy, tool_name: str, params: Dict[str, Any]) -> str:
     # SANDBOX tier + 无 runner = BLOCKED (fail-closed, 审批也救不回); 其余放行 ""
     # 风险分/band 不参与 — 权限闸门只认显式 tier 映射 (opt-in); 内核按风险自动
@@ -190,9 +254,12 @@ __all__ = [
     "classify_destructive",
     "get_quarantine",
     "get_sandbox_runner",
+    "is_spec_failure",
     "json_repairs_in_step",
     "parse_llm_json",
     "reset_sandbox_runner_cache",
+    "attribute_node_failure",
+    "failure_attribution_enabled",
     "sandbox_block_reason",
     "scan_or_quarantine",
 ]
