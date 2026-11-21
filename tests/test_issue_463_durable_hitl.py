@@ -211,6 +211,9 @@ class TestWebPendingMerge:
         eng = WorkflowEngine(permission_manager=pm, event_emitter=EventEmitter(), approval_journal=j)
         monkeypatch.setenv("FUSION_COWORK_WEB_API_KEY", "test-key-463")
         app = create_web_app(engine=eng)
+        # issue #572: journal rows for runs without a record are dropped —
+        # register the referenced run as active so the merge path is exercised
+        app.state.run_registry._runs["run-web-1"] = {"run_id": "run-web-1", "status": "running"}
         with TestClient(app) as client:
             r = client.get("/api/permissions/pending", headers={"Authorization": "Bearer test-key-463"})
             assert r.status_code == 200
