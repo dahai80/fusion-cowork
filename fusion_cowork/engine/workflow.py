@@ -30,7 +30,14 @@ from ..observability.trace import set_trace_id
 from ._harness_guard import harness_import_error
 from .executors import NodeExecutionContext, executor_for_node, executor_names
 from .hooks import HookEvent
-from .kernel_gates import build_approval_gate, classify_destructive, json_repairs_in_step
+from .kernel_gates import (
+    attribute_node_failure,
+    build_approval_gate,
+    classify_destructive,
+    failure_attribution_enabled,
+    is_spec_failure,
+    json_repairs_in_step,
+)
 from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus, _coerce_bool
 from .permission_manager import (
     HITL_GATE_TOOLS,
@@ -391,6 +398,9 @@ class WorkflowExecution:
     # issue #189: run 级并发上限 + 执行器分布 (simple:N, agent:M)
     concurrency: int = 1
     executors: Dict[str, int] = field(default_factory=dict)
+    # issue #571: 首个失败节点的 MAST 归因 (mode/cluster/confidence/evidence;
+    # FUSION_COWORK_FAILURE_ATTRIBUTION=1 时启用, 默认 None)
+    attribution: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -1727,6 +1737,9 @@ class WorkflowEngine:
             attempt_errors: List[str] = []
             final_attempt = 1
             _err_class = ""
+            # issue #571: MAST 失败归因 (env 默认关)
+            attribution_on = failure_attribution_enabled()
+            _failure_verdict: Optional[Dict[str, Any]] = None
             # issue #570: fusion_executor backend — 节点执行前 Git 快照工作区,
             # 节点最终失败时回滚 (impl 节点失败恢复; 仅 FUSION_SANDBOX_BACKEND=
             # fusion_executor 且 backend 可用时激活, 默认路径零行为变化)
@@ -1779,6 +1792,18 @@ class WorkflowEngine:
                             _err_class = "BusinessFailure"
                             attempt_errors.append(err_txt)
                             if retry_business and attempt < max_retries:
+                                # issue #571: MAST 归因 — spec 类失败不烧重试预算,
+                                # 直接失败交归因升级 (env 默认关 = 照常重试)
+                                if attribution_on and _failure_verdict is None:
+                                    _failure_verdict = attribute_node_failure(
+                                        exec_id, state.execution.steps, node_id, err_txt
+                                    )
+                                if _failure_verdict is not None and is_spec_failure(_failure_verdict):
+                                    logger.warning(
+                                        f"节点 '{node.name}' spec 类失败 "
+                                        f"(mode={_failure_verdict.get('mode')}) — 跳过剩余重试, 升级归因"
+                                    )
+                                    break
                                 logger.warning(
                                     f"节点 '{node.name}' 业务失败 attempt={attempt + 1}/{max_retries + 1}: {err_txt}"
                                 )
@@ -1826,6 +1851,26 @@ class WorkflowEngine:
                     )
                 except Exception as rbe:
                     logger.warning(f"[{exec_id}] node '{node.name}' workspace rollback error (ignored): {rbe}")
+            # issue #571: 最终失败归因 — verdict 落节点结果 + run 摘要 (升级路由输入)
+            if attribution_on and result.status == NodeStatus.FAILED:
+                try:
+                    if _failure_verdict is None:
+                        _failure_verdict = attribute_node_failure(
+                            exec_id, state.execution.steps, node_id, result.error or ""
+                        )
+                    if _failure_verdict is not None:
+                        if not isinstance(result.data, dict):
+                            result.data = {}
+                        result.data["attribution"] = _failure_verdict
+                        if state.execution.attribution is None:
+                            state.execution.attribution = _failure_verdict
+                        logger.info(
+                            f"[{exec_id}] node '{node.name}' MAST attribution: "
+                            f"mode={_failure_verdict.get('mode')} cluster={_failure_verdict.get('cluster')} "
+                            f"confidence={_failure_verdict.get('confidence')}"
+                        )
+                except Exception as ae:
+                    logger.warning(f"[{exec_id}] node '{node.name}' failure attribution error (ignored): {ae}")
 
             # issue #382: outbox 日志 — 节点结果 + 声明的 effects 单事务落账;
             # 落账失败不影响 run (响亮警告)

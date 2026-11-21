@@ -555,6 +555,10 @@ class RunRegistry:
             # issue #461: 每 run token/花费归因 — 随事件实时滚动
             record["tokens"] = _token_rollup(record["steps"])
             record["spend_usd"] = _spend_usd(record["tokens"]["total_tokens"])
+            # issue #571: MAST 归因实时滚动 (失败节点落 verdict 后可见)
+            _attr = getattr(execution, "attribution", None)
+            if _attr:
+                record["attribution"] = _attr
             status = execution.status.value if hasattr(execution.status, "value") else str(execution.status)
             # issue #191: paused 记录不被运行事件翻回 running —
             # 引擎暂停检查点/HITL 边界不改 execution.status, 状态翻转只由 resume() 显式驱动
@@ -879,6 +883,11 @@ class RunRegistry:
             record["result"] = {
                 "summary": execution.result_summary,
             }
+            # issue #571: run 摘要 MAST 归因 (失败归因路由; 默认 None)
+            _attr = getattr(execution, "attribution", None)
+            if _attr:
+                record["result"]["attribution"] = _attr
+                record["attribution"] = _attr
             if execution.error:
                 record["error"] = execution.error
             # issue #157: 成功 run 结束写回 (失败/取消不入库 — 只沉淀有效产出)
