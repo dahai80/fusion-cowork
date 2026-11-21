@@ -1727,6 +1727,27 @@ class WorkflowEngine:
             attempt_errors: List[str] = []
             final_attempt = 1
             _err_class = ""
+            # issue #570: fusion_executor backend — 节点执行前 Git 快照工作区,
+            # 节点最终失败时回滚 (impl 节点失败恢复; 仅 FUSION_SANDBOX_BACKEND=
+            # fusion_executor 且 backend 可用时激活, 默认路径零行为变化)
+            backend_runner = None
+            try:
+                from .kernel_gates import get_sandbox_runner
+
+                _br, _bb = get_sandbox_runner(cwd=self._run_workspace.get(exec_id, ""))
+                if _bb == "fusion_executor" and _br is not None and hasattr(_br, "snapshot"):
+                    backend_runner = _br
+            except Exception as sbe:
+                logger.warning(f"[{exec_id}] sandbox backend resolve failed (ignored): {sbe}")
+            snapshot_id = ""
+            if backend_runner is not None:
+                try:
+                    snapshot_id = await asyncio.to_thread(backend_runner.snapshot)
+                    logger.info(f"[{exec_id}] node '{node.name}' pre-node workspace snapshot: {snapshot_id}")
+                except Exception as se:
+                    logger.warning(
+                        f"[{exec_id}] node '{node.name}' workspace snapshot failed (continue without rollback): {se}"
+                    )
             try:
                 for attempt in range(max_retries + 1):
                     final_attempt = attempt + 1
@@ -1796,6 +1817,15 @@ class WorkflowEngine:
                     status=NodeStatus.FAILED,
                     error=last_err or f"节点 '{node.name}' 重试 {max_retries} 次后仍失败",
                 )
+            if result.status == NodeStatus.FAILED and backend_runner is not None:
+                try:
+                    _ok = await asyncio.to_thread(backend_runner.rollback, snapshot_id)
+                    logger.warning(
+                        f"[{exec_id}] node '{node.name}' failed — workspace rollback "
+                        f"{'restored' if _ok else 'FAILED'} (fusion_executor backend)"
+                    )
+                except Exception as rbe:
+                    logger.warning(f"[{exec_id}] node '{node.name}' workspace rollback error (ignored): {rbe}")
 
             # issue #382: outbox 日志 — 节点结果 + 声明的 effects 单事务落账;
             # 落账失败不影响 run (响亮警告)

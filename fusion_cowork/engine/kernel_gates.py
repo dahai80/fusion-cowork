@@ -16,6 +16,7 @@ import os
 from contextvars import ContextVar
 from typing import Any, Dict, Optional, Tuple
 
+from ..security.kernel_sandbox import kernel_sandbox_policy
 from ._harness_guard import harness_import_error
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ try:  # issue #554: 内核三机制 — harness 是强制安装 ([plugins] extra
         parse_repair,
         scan_artifact,
     )
+    from fusion_harness.executor_backend import select_sandbox_runner
 except ImportError as exc:
     raise harness_import_error(exc) from exc
 
@@ -82,15 +84,44 @@ def build_sandbox_policy() -> SandboxPolicy:
             name = name.strip()
             if name:
                 tiers[name] = ExecutionTier.SANDBOX
-    runner = None
-    if os.environ.get("FUSION_COWORK_SANDBOX_RUNNER", "").strip().lower() in ("1", "true", "yes", "on"):
-        runner = SandboxExecRunner()
+    runner, _backend = get_sandbox_runner()
     if tiers:
         logger.info(f"sandbox policy wired: tiers={sorted(tiers)} runner={'yes' if runner else 'none (fail-closed)'}")
     # risk_threshold=inf — 权限闸门只认显式 tier 映射 (opt-in); 内核按风险分自动
     # 升 SANDBOX 的默认语义会让未配置的高风险工具 (shell_exec rm -rf 等) 在
     # guard 委托之前被 fail-closed 拦掉, 破坏 #73 既有行为
-    return SandboxPolicy(runner=runner, tool_tiers=tiers, risk_threshold=float("inf"))
+    # issue #570: 经 kernel_sandbox_policy 构建 (helper 的唯一生产调用点, 不再并行造 policy)
+    return kernel_sandbox_policy(runner, tool_tiers=tiers, risk_threshold=float("inf"))
+
+
+# issue #570: harness select_sandbox_runner 接线 — FUSION_SANDBOX_BACKEND=
+# fusion_executor 时 impl 节点经 FusionExecutorBackend (原生沙箱 + Git 快照
+# 回滚); 未设置/不可用 → 现行 runner 原样返回 (default 路径零行为变化)。
+# 按 cwd 缓存单例 — 权限闸门每次 check 都会 build policy, 不缓存的话每个
+# tool call 都新建 backend, 快照状态 (last_snapshot_id) 会互相覆盖。
+_sandbox_runner_cache: Dict[str, Tuple[Any, str]] = {}
+
+
+def get_sandbox_runner(cwd: str = "") -> Tuple[Any, str]:
+    key = cwd or ""
+    cached = _sandbox_runner_cache.get(key)
+    if cached is not None:
+        return cached
+    runner = None
+    if os.environ.get("FUSION_COWORK_SANDBOX_RUNNER", "").strip().lower() in ("1", "true", "yes", "on"):
+        runner = SandboxExecRunner()
+    preferred = os.environ.get("FUSION_SANDBOX_BACKEND", "default").strip() or "default"
+    backend_kwargs: Optional[Dict[str, Any]] = {"cwd": cwd} if cwd else None
+    runner, backend = select_sandbox_runner(preferred=preferred, default_runner=runner, backend_kwargs=backend_kwargs)
+    if backend != "default":
+        logger.info(f"sandbox runner via harness select_sandbox_runner: backend={backend} cwd={cwd or 'process'}")
+    _sandbox_runner_cache[key] = (runner, backend)
+    return runner, backend
+
+
+def reset_sandbox_runner_cache() -> None:
+    # 测试/配置变更后清缓存 (env 变了缓存里的 runner 不再匹配)
+    _sandbox_runner_cache.clear()
 
 
 def sandbox_block_reason(policy: SandboxPolicy, tool_name: str, params: Dict[str, Any]) -> str:
@@ -158,8 +189,10 @@ __all__ = [
     "build_sandbox_policy",
     "classify_destructive",
     "get_quarantine",
+    "get_sandbox_runner",
     "json_repairs_in_step",
     "parse_llm_json",
+    "reset_sandbox_runner_cache",
     "sandbox_block_reason",
     "scan_or_quarantine",
 ]
