@@ -7,8 +7,8 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.137
-updated: 2026-11-20
+version: 0.5.138
+updated: 2026-11-21
 owner: "@dahai"
 source_of_truth:
   - CHANGELOG.md
@@ -16,6 +16,13 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.138 (issues #570/#571/#572 — harness sandbox backend + MAST failure attribution + journal hygiene)
+
+- **#570 (PR #574)**: sandbox runner selection routed through harness `executor_backend.select_sandbox_runner` — `FUSION_SANDBOX_BACKEND=fusion_executor` opts impl-node execution into `FusionExecutorBackend` (native sandbox + Git snapshot/rollback); unset or unavailable backend falls back to the current runner (default path zero behavior change). Per-cwd singleton cache (`get_sandbox_runner(cwd)`) so permission-gate policy builds don't create a new backend per tool call and overwrite snapshot state; `reset_sandbox_runner_cache()` for tests/config changes. Engine snapshot before node execution + rollback after final failure when a fusion_executor backend is active (errors logged, never block execution). `build_sandbox_policy()` is now the sole production caller of `kernel_sandbox_policy`. Tests `tests/test_issue_570_sandbox_backend.py` (10 cases).
+- **#571 (PR #577)**: MAST failure attribution on the DAG node failure path (fusion-harness `failure_attribution.FailureAnalyzer`), opt-in `FUSION_COWORK_FAILURE_ATTRIBUTION=1` (default off = zero behavior change). On node failure, `attribute_node_failure()` builds kernel records from completed steps + the failing node's error and returns the first verdict (mode/cluster/confidence/evidence); verdict lands on the failed node's `data.attribution`, the execution (`execution.attribution`, first failure wins), and the web run record (live event + terminal result paths). Spec-class failures (cluster `specification_system_design` — unclear goal / ambiguous task / no objective) skip business-failure retries: retry budget not burned, verdict routed to QA/rework instead. Tests `tests/test_issue_571_failure_attribution.py` (7 cases).
+- **#572 (PR #573)**: approval-journal ghost rows in `/api/permissions/pending` — rows whose run record is gone entirely are now dropped alongside the existing empty-`run_id` and terminal-run drops (records durable since #399, so absence means the run is unrecoverable and the approval can never be woken or resolved). Tests updated in `tests/test_issue_497_journal_hygiene.py` + `tests/test_issue_463_durable_hitl.py`.
+- **CI pin fix (PR #576)**: `tests/test_issue_533_comm_bus.py` kernel `MSG_TYPES` pin updated for fusion-harness 0.29.0 (new `destructive_gate` member, ApprovalGate operator-inbox kind, consumed via #554); `orchestrator/comm.py` module ruling updated to match.
 
 ## v0.5.137 (issue #565 — service credential path for storefront bff engine calls)
 
