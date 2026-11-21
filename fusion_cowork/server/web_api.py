@@ -4914,7 +4914,8 @@ def create_web_app(
         # issue #463: durable HITL — 审批日志 pending 行兜底合并 (队列丢失仍可见, source=journal)
         # issue #497: journal 行卫生 — 空 run_id (崩溃前未落账, 永远无法唤醒/解决) 和
         # 终态 run 的行不再出现在待审批列表 (污染审批箱 + 跨 run 过滤器误报); 活跃
-        # run 的行照常兜底可见
+        # run 的行照常兜底可见。issue #572: run 记录整体丢失 (重启丢内存库/历史
+        # 淘汰) 的行同样丢弃 — 无法唤醒也无法解决, 永久滞留只会污染审批箱。
         journal = getattr(engine, "_approval_journal", None)
         if journal is not None:
             try:
@@ -4930,7 +4931,11 @@ def create_web_app(
                         dropped += 1
                         continue
                     rec = runs.get(rid)
-                    if rec is not None and rec.get("status") not in active_statuses:
+                    # issue #572: run record gone entirely (restart with lost
+                    # store, evicted history) — the approval can never be woken
+                    # or resolved, so the row must not surface. Records are
+                    # durable since #399; absence means the run is unrecoverable.
+                    if rec is None or rec.get("status") not in active_statuses:
                         dropped += 1
                         continue
                     approvals.append(

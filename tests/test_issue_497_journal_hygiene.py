@@ -6,6 +6,9 @@
 # consumers (nightly eval verify filters pendings by node_id/tool_name across
 # ALL runs — one stale row fails every later verification).
 # Fix: only rows bound to a non-terminal run are merged as source=journal.
+# issue #572: run record gone entirely also drops the row — records are
+# durable since #399, so absence means the run is unrecoverable and the
+# approval can never be woken or resolved.
 
 import pytest
 
@@ -75,10 +78,23 @@ class TestJournalPendingHygiene:
         assert rows[0]["source"] == "journal"
         assert rows[0]["execution_id"] == "run_live_1"
 
-    def test_unknown_run_row_kept(self, env):
-        # run record absent (pre-#399 history) — conservative: keep visible
+    def test_unknown_run_row_dropped(self, env):
+        # issue #572: run record absent (lost store on restart, evicted
+        # history) — the approval can never be woken or resolved, drop it
         tc, journal = env
         _record("local_ghost1", journal, run_id_value="run_ghost_1")
         resp = tc.get("/api/permissions/pending", headers=_auth())
         aids = [a.get("action_id") for a in resp.json().get("approvals", [])]
-        assert "local_ghost1" in aids
+        assert "local_ghost1" not in aids
+
+    def test_unknown_run_row_dropped_does_not_affect_active(self, env):
+        # ghost drop must not touch rows bound to live runs
+        tc, journal = env
+        _record("local_ghost2", journal, run_id_value="run_ghost_2")
+        _record("local_live2", journal, run_id_value="run_live_2")
+        runs = tc.app.state.run_registry
+        runs._runs["run_live_2"] = {"run_id": "run_live_2", "status": "running"}
+        resp = tc.get("/api/permissions/pending", headers=_auth())
+        aids = [a.get("action_id") for a in resp.json().get("approvals", [])]
+        assert "local_ghost2" not in aids
+        assert "local_live2" in aids
