@@ -25,7 +25,15 @@ class TestKernelContractPins:
     def test_kernel_msg_types_still_closed_set(self):
         from fusion_harness.team_runtime import MSG_TYPES
 
-        assert MSG_TYPES == ("text", "plan_approval", "shutdown_request", "shutdown_response")
+        # harness 0.29.0 added destructive_gate (ApprovalGate operator-inbox
+        # kind, consumed via #554); the set stays closed — pin the new contract
+        assert MSG_TYPES == (
+            "text",
+            "plan_approval",
+            "shutdown_request",
+            "shutdown_response",
+            "destructive_gate",
+        )
 
     def test_kernel_send_requires_members(self):
         from fusion_harness.team_runtime import TeamMessage, TeamRuntime

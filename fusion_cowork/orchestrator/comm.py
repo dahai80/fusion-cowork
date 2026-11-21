@@ -9,7 +9,7 @@
 This bus is intentionally NOT mapped onto kernel TeamRuntime.send/inbox:
 - kernel mailbox is member-scoped — sender/recipient/mentions must exist in
   the TeamDefinition, message type is a closed set (MSG_TYPES = text,
-  plan_approval, shutdown_request, shutdown_response), body is a plain str,
+  plan_approval, shutdown_request, shutdown_response, destructive_gate), body is a plain str,
   delivery is a durable state_dir file write with a {"delivered": bool} flag;
 - cowork bus is an open in-process transport: arbitrary topic strings,
   arbitrary dict payloads, publisher need not be a team member (orchestrator
