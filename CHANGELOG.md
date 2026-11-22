@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.139
+version: 0.5.140
 updated: 2026-11-22
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,14 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.140 (issue #580 — worktree isolation safety: ownership-proof delete + untrusted-source gate + merge-back)
+
+- **#580 (PR #583)**: the three non-negotiable safety pieces from the paseo analysis design inputs land on the existing `worktree` node / `WorktreeManager`:
+  - **Ownership-proof deletion**: `create` writes a `.fusion-worktree.json` marker (name/branch/repo_root/created_at/trust state, atomic tmp+replace); `remove` requires the marker with matching name **and** a `git worktree list --porcelain` cross-check — the old path-tail matching fallback is removed, unowned directories are never deleted (`force` only passes git `--force`).
+  - **Untrusted-source gate**: `create(source_repo=...)` marks the worktree `untrusted_source` when the source differs from the repo's own `origin` remote; `exec_in` is blocked until explicitly trusted via the `trust_source` node param or `WorktreeManager.mark_trusted()` (persisted in the marker). Own-origin sources pass through untouched.
+  - **Merge-back never occupies the agent worktree**: new `merge_back` action + `WorktreeManager.merge_back()` runs the merge in the base repo's main worktree (never inside the agent worktree), checks out the target branch and restores the original branch in `finally`, refuses a dirty base tree (`git status --porcelain`), and `git merge --abort`s on failure.
+  - `worktree` classified HIGH_RISK (arbitrary exec + destructive remove, same exposure class as `shell_exec`). Tests `tests/test_issue_580_worktree_safety.py` (16 cases, real git repos in tmp_path, zero network). Items 4-6 (auto-archive guard, placeholder auto-rename, git priority scheduler) remain design-input in #580.
 
 ## v0.5.139 (issue #579 — steer/interrupt directive modes + at-least-once finish notifications)
 
