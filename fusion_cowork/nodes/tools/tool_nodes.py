@@ -1279,7 +1279,7 @@ class WorktreeNode(BaseNode):
     name = "worktree"
     display_name = "Worktree 隔离"
     category = NodeCategory.TOOL
-    description = "git worktree 隔离工作树: 创建/执行/删除"
+    description = "git worktree 隔离工作树: 创建/执行/删除/合并回基线"
     icon = "🌿"
     default_label = "Worktree"
 
@@ -1296,7 +1296,7 @@ class WorktreeNode(BaseNode):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["create", "exec", "remove", "list"],
+                    "enum": ["create", "exec", "remove", "list", "merge_back"],
                     "description": "操作类型",
                     "default": "exec",
                 },
@@ -1324,6 +1324,26 @@ class WorktreeNode(BaseNode):
                     "description": "exec 超时 (秒)",
                     "default": 30,
                 },
+                "source_repo": {
+                    "type": "string",
+                    "description": "create 动作: 来源仓库 URL; 与本仓 origin 不同则标记不可信, exec 被门禁阻止",
+                    "default": "",
+                },
+                "trust_source": {
+                    "type": "boolean",
+                    "description": "显式信任该 worktree 的外部来源 (解除 exec 门禁)",
+                    "default": False,
+                },
+                "target_branch": {
+                    "type": "string",
+                    "description": "merge_back 动作: 目标分支 (空则当前分支)",
+                    "default": "",
+                },
+                "message": {
+                    "type": "string",
+                    "description": "merge_back 动作: 合并提交信息",
+                    "default": "",
+                },
             },
             "required": ["action", "name"],
         }
@@ -1343,7 +1363,12 @@ class WorktreeNode(BaseNode):
         if action == "create":
             if not name:
                 return NodeResult(status=NodeStatus.FAILED, error="缺少 worktree name", summary="参数缺失")
-            wt = mgr.create(name, branch=params.get("branch", ""))
+            wt = mgr.create(
+                name,
+                branch=params.get("branch", ""),
+                source_repo=params.get("source_repo", ""),
+                trusted=bool(params.get("trust_source", False)),
+            )
             if not wt:
                 return NodeResult(status=NodeStatus.FAILED, error="worktree 创建失败", summary="创建失败")
             return NodeResult(
@@ -1359,13 +1384,9 @@ class WorktreeNode(BaseNode):
                 summary=f"共 {len(wts)} 个 worktree",
             )
         elif action == "remove":
+            # issue #580: 所有权证明删除 — 不再路径尾段匹配; marker + porcelain 交叉校验
             if not name:
                 return NodeResult(status=NodeStatus.FAILED, error="缺少 worktree name", summary="参数缺失")
-            if not mgr.get(name):
-                for w in mgr.list_worktrees():
-                    if Path(w.path).name == name:
-                        mgr._worktrees[name] = w
-                        break
             ok = mgr.remove(name, force=True)
             return NodeResult(
                 status=NodeStatus.SUCCESS if ok else NodeStatus.FAILED,
@@ -1375,12 +1396,9 @@ class WorktreeNode(BaseNode):
         elif action == "exec":
             if not name:
                 return NodeResult(status=NodeStatus.FAILED, error="缺少 worktree name", summary="参数缺失")
-            # 若未登记则尝试登记现有 worktree (按名称匹配路径末段)
-            if not mgr.get(name):
-                for w in mgr.list_worktrees():
-                    if Path(w.path).name == name:
-                        mgr._worktrees[name] = w
-                        break
+            if params.get("trust_source") and mgr.is_untrusted(name):
+                if not mgr.mark_trusted(name):
+                    return NodeResult(status=NodeStatus.FAILED, error="信任标记失败", summary="门禁错误")
             command = inputs.get("command", params.get("command", ""))
             if not command:
                 return NodeResult(status=NodeStatus.FAILED, error="缺少 command", summary="参数缺失")
@@ -1391,6 +1409,20 @@ class WorktreeNode(BaseNode):
                 status=NodeStatus.SUCCESS if result.get("return_code", 1) == 0 else NodeStatus.FAILED,
                 data=result,
                 summary=f"worktree exec rc={result.get('return_code')}",
+            )
+        elif action == "merge_back":
+            # issue #580: 合并在基线工作树执行, 绝不占用 agent worktree
+            if not name:
+                return NodeResult(status=NodeStatus.FAILED, error="缺少 worktree name", summary="参数缺失")
+            result = mgr.merge_back(
+                name, target_branch=params.get("target_branch", ""), message=params.get("message", "")
+            )
+            if "error" in result:
+                return NodeResult(status=NodeStatus.FAILED, error=result["error"], data=result, summary="合并失败")
+            return NodeResult(
+                status=NodeStatus.SUCCESS,
+                data=result,
+                summary=f"已合并 {name} ({result.get('branch')}) -> {result.get('target')}",
             )
         return NodeResult(status=NodeStatus.FAILED, error=f"未知 action: {action}", summary="参数错误")
 
