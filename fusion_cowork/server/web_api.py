@@ -502,6 +502,9 @@ class RunRegistry:
         self.run_store = run_store
         # issue #154: webhook push 出口 (未注入 = 不推送, 零行为变化)
         self.push = None
+        # issue #579: at-least-once 完成通知 — 持久 outbox (未注入 = 原 best-effort 路径)
+        self.reliable_push = None
+        self._push_flushing = False
         # issue #228: 能力用量入账回调 (未注入 = 不记账, 零行为变化)
         self.capability_recorder = None
         # issue #516: golden run 录制回调 (未注入 = 不录制, 零行为变化)
@@ -540,6 +543,26 @@ class RunRegistry:
             except asyncio.QueueFull:
                 logger.warning(f"SSE 队列已满, 丢帧: {run_id}")
 
+    def _schedule_push_flush(self, reliable: Any) -> None:
+        # issue #579: 去重调度 flush — 已有 flush 在跑就不叠加; 无运行中事件循环则跳过
+        if getattr(self, "_push_flushing", False):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._push_flushing = True
+
+        async def _flush() -> None:
+            try:
+                await reliable.flush_pending()
+            except Exception as e:
+                logger.warning(f"push outbox flush 异常 (留待下次): {e}")
+            finally:
+                self._push_flushing = False
+
+        loop.create_task(_flush())
+
     def _on_event(self, event: Any) -> None:
         run_id = getattr(event, "execution_id", "")
         record = self._runs.get(run_id)
@@ -564,6 +587,21 @@ class RunRegistry:
             # 引擎暂停检查点/HITL 边界不改 execution.status, 状态翻转只由 resume() 显式驱动
             if record.get("status") != "paused":
                 record["status"] = status
+        # issue #579: at-least-once 节点完成通知 — node_end 事件入持久 outbox
+        # (event_type 是 str-mixin 枚举, 直接与字符串相等比较, 不走 str())
+        if self.reliable_push is not None and getattr(event, "event_type", "") == "node_end":
+            evt_data = getattr(event, "data", None)
+            evt_status = str(evt_data.get("status", "")) if isinstance(evt_data, dict) else ""
+            self.reliable_push.enqueue(
+                "node_finished",
+                {
+                    "run_id": run_id,
+                    "node_id": getattr(event, "node_id", ""),
+                    "node_name": getattr(event, "node_name", ""),
+                    "status": evt_status,
+                },
+            )
+            self._schedule_push_flush(self.reliable_push)
         self._broadcast(
             run_id,
             {
@@ -955,7 +993,23 @@ class RunRegistry:
             self._tasks.pop(run_id, None)
             self._last_event.pop(run_id, None)
             # issue #154: run 终态 webhook 掬点 (未注入 = 零行为变化)
-            if self.push is not None:
+            if self.reliable_push is not None:
+                # issue #579: at-least-once — 登记落盘先于投递, flush 失败留待重试
+                reliable = self.reliable_push
+                record_ref = record
+                reliable.enqueue(
+                    "run_finished",
+                    {
+                        "run_id": run_id,
+                        "workflow_name": record_ref.get("workflow_name", ""),
+                        "status": record_ref.get("status", ""),
+                        "error": record_ref.get("error"),
+                        "source": record_ref.get("source", ""),
+                        "labels": dict(record_ref.get("labels") or {}),
+                    },
+                )
+                self._schedule_push_flush(reliable)
+            elif self.push is not None:
                 push = self.push
                 record_ref = record
                 asyncio.create_task(
@@ -2009,11 +2063,17 @@ def create_web_app(
     app.state.runner_pool = runner_pool
 
     # issue #154: webhook push 出口 (未配 FUSION_COWORK_PUSH_WEBHOOK_URL = no-op)
-    from .push import PushEgress
+    from .push import PushEgress, ReliableEgress
 
     push_egress = PushEgress.from_env()
     app.state.push_egress = push_egress
     runs.push = push_egress
+    # issue #579: at-least-once 完成通知 — FUSION_COWORK_PUSH_AT_LEAST_ONCE=1 时
+    # run_finished/node_end 走持久 outbox (未开 = 原 best-effort 路径零行为变化)
+    reliable_push = ReliableEgress.from_env()
+    app.state.reliable_push = reliable_push
+    if reliable_push is not None:
+        runs.reliable_push = reliable_push
     # issue #154: 审批入队 → webhook 推送 (permission manager 回调, best-effort)
     if permission_manager is not None:
         permission_manager.on_pending_created = _make_pending_push_callback(push_egress, runs)
@@ -2024,6 +2084,13 @@ def create_web_app(
         recovered = await runs.recover_persisted()
         if recovered:
             logger.warning(f"启动恢复: 从持久层重建 {recovered} 个活跃 run (均以 paused 起跑, 等待人工 resume/审批)")
+        # issue #579: 启动冲刷 outbox 残留 — 上次未送达的完成通知重投 (可能重复, 接收方按 id 去重)
+        if reliable_push is not None and reliable_push.pending_count():
+            try:
+                delivered = await reliable_push.flush_pending()
+                logger.info(f"push outbox 启动冲刷: delivered={delivered} pending={reliable_push.pending_count()}")
+            except Exception as e:
+                logger.warning(f"push outbox 启动冲刷失败 (留待事件触发): {e}")
 
     @app.on_event("startup")
     async def _start_team_pool():
