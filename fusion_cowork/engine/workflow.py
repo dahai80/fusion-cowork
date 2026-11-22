@@ -833,6 +833,9 @@ class WorkflowEngine:
         self._hitl_waiting_node: Dict[str, str] = {}
         # W8/B1: 运行改向指令队列 — 节点边界应用 (set_params/skip_remaining/insert_node)
         self._directives: Dict[str, List[Dict[str, Any]]] = {}
+        # issue #579: interrupt 投递模式 — exec_id -> event, add_directive(mode=interrupt)
+        # 置位; 波次等待与它竞速, 命中即作废在飞节点尝试, 指令按入队顺序在边界应用后重跑
+        self._interrupt_events: Dict[str, asyncio.Event] = {}
         self._progress_callbacks: List[callable] = []
         self._permission_manager = permission_manager
         self._hook_manager = hook_manager
@@ -1103,6 +1106,9 @@ class WorkflowEngine:
         try:
             # issue #465: 结构校验引用 — add_directive 同步校验节点/边存在性
             self._run_workflows[exec_id] = workflow
+            # issue #579: interrupt event 随 run 注册 — _wait_wave 与 add_directive
+            # 共享同一对象, 波次开始后入队的 interrupt 才能被竞速观察到
+            self._interrupt_events.setdefault(exec_id, asyncio.Event())
             state = _RunState(
                 exec_id=exec_id,
                 workflow=workflow,
@@ -1176,11 +1182,31 @@ class WorkflowEngine:
                 from ..observability.tracing import span
 
                 with span("workflow.wave", run=exec_id, nodes=",".join(wave)):
-                    if len(wave) == 1:
-                        results = [await self._run_node(state, wave[0])]
-                    else:
-                        results = await asyncio.gather(*(self._run_node(state, nid) for nid in wave))
+                    # issue #579: interrupt 竞速 — 排队 interrupt 指令的 run,
+                    # 波次等待与 interrupt event 赛跑; 命中即作废在飞尝试
+                    # (不落结果步骤, 只落审计 marker), 边界应用指令后重跑
+                    tasks = [asyncio.ensure_future(self._run_node(state, nid)) for nid in wave]
+                    results, interrupted, voided = await self._wait_wave(exec_id, wave, tasks)
                 self._wave_running.pop(exec_id, None)
+                if interrupted:
+                    for nid in voided:
+                        marker = WorkflowStep(
+                            node_id=nid,
+                            node_name=workflow.nodes[nid].name if nid in workflow.nodes else nid,
+                            node_display_name=(
+                                workflow.nodes[nid].config.label or workflow.nodes[nid].display_name
+                                if nid in workflow.nodes
+                                else nid
+                            ),
+                            status=NodeStatus.SKIPPED,
+                            started_at=time.time(),
+                            summary="用户中断: 打断节点执行, 指令应用后重跑",
+                            user_correction=True,
+                        )
+                        marker.completed_at = time.time()
+                        execution.steps.append(marker)
+                        self._notify_progress(execution, marker)
+                    logger.info(f"[{exec_id}] 运行中断: 波内节点已作废待重跑 nodes={sorted(voided)}")
 
                 # issue #189: 并发完成顺序不确定, 步骤统一按拓扑序落盘, 保证确定性
                 position = {nid: idx for idx, nid in enumerate(order)}
@@ -1188,6 +1214,9 @@ class WorkflowEngine:
                 control = "continue"
                 control_error = ""
                 for nid, (steps, node_control, node_error) in zip(wave, results):
+                    # issue #579: 被中断作废的节点不记 done — 指令应用后下一波重跑
+                    if interrupted and nid in voided:
+                        continue
                     done.add(nid)
                     for step in steps:
                         collected.append((position.get(step.node_id, len(order)), step))
@@ -1250,6 +1279,7 @@ class WorkflowEngine:
             execution.total_time = execution.completed_at - execution.started_at
             # issue #465: 异常旁路也清波内状态 (终态清理块只覆盖正常出循环路径)
             self._wave_running.pop(exec_id, None)
+            self._interrupt_events.pop(exec_id, None)
             self._run_workflows.pop(exec_id, None)
 
             # Hook: WORKFLOW_END / WORKFLOW_CANCEL
@@ -2517,7 +2547,19 @@ class WorkflowEngine:
                     # None = resume/cancel 桥接取消或 ttl 过期 — 检查决定/取消后重问继续等
                     reply = None
                     try:
-                        reply = await self._hitl_gate.wait(question_id, timeout=remaining)
+                        # issue #579: 内核 wait 经 cowork 侧任务轮询而非直接 await —
+                        # py3.11 内层 wait_for 在"取消/完成"竞态下会吞 CancelledError
+                        # (内层 future 已 done 则 return result), 任务逃出取消继续跑,
+                        # teardown gather 永久 pending (CI py3.11 复现)。轮询让取消
+                        # 落在 cowork 侧 sleep 上, 语义干净; 内层任务显式取消不留孤儿。
+                        gate_task = asyncio.ensure_future(self._hitl_gate.wait(question_id, timeout=remaining))
+                        try:
+                            while not gate_task.done():
+                                await asyncio.sleep(0.05)
+                            reply = gate_task.result()
+                        except asyncio.CancelledError:
+                            gate_task.cancel()
+                            raise
                     except Exception as e:
                         logger.warning(f"[{exec_id}] kernel HumanGate wait failed (degrade to evt wait): {e}")
                         question_id = ""
@@ -2536,7 +2578,15 @@ class WorkflowEngine:
                         evt.set()
                         logger.info(f"[{exec_id}] HITL kernel reply adopted: approved={bool(reply.get('approved'))}")
                 if not question_id:
-                    await asyncio.wait_for(evt.wait(), timeout=remaining)
+                    # issue #579: 轮询替代 wait_for — py3.11 wait_for 在"外层取消"
+                    # 与"事件 set"竞态时 (内层 future 恰好 done) 会吞掉 CancelledError
+                    # 直接 return result, _run_node 逃出取消继续跑, teardown gather
+                    # 永久 pending (CI py3.11 复现); sleep 轮询取消语义干净。
+                    deadline_ts = time.time() + remaining
+                    while not evt.is_set():
+                        if time.time() >= deadline_ts:
+                            raise TimeoutError()
+                        await asyncio.sleep(0.05)
             except TimeoutError:
                 timed_out = True
                 break
@@ -2671,6 +2721,12 @@ class WorkflowEngine:
         ):
             logger.warning(f"未知运行改向指令: action={action} exec={execution_id}")
             return False
+        # issue #579: 投递模式 — steer (默认, 等下一节点边界) / interrupt
+        # (作废在飞节点尝试, 指令仍按入队顺序在边界应用后重跑被断节点)
+        mode = str((directive or {}).get("mode") or "steer")
+        if mode not in ("steer", "interrupt"):
+            logger.warning(f"运行改向指令 mode 非法: mode={mode} exec={execution_id}")
+            return False
         if action == "inject" and not str((directive or {}).get("instruction") or "").strip():
             # issue #227: 空指令早拒 — 不排队一个注定无效的注入 (API 409 可见)
             logger.warning(f"注入指令 instruction 为空: exec={execution_id}")
@@ -2689,7 +2745,9 @@ class WorkflowEngine:
             return False
         payload = dict(directive)
         self._directives.setdefault(execution_id, []).append(payload)
-        logger.info(f"运行改向指令已排队: exec={execution_id} action={action}")
+        logger.info(f"运行改向指令已排队: exec={execution_id} action={action} mode={mode}")
+        if mode == "interrupt":
+            self._interrupt_events.setdefault(execution_id, asyncio.Event()).set()
         if self._trajectory_recorder is not None:
             try:
                 self._trajectory_recorder.record_directive(execution_id, payload)
@@ -2747,6 +2805,65 @@ class WorkflowEngine:
         if not _node_ok(new_target_id, "新目标"):
             return False
         return True
+
+    async def _wait_wave(
+        self, exec_id: str, wave: List[str], tasks: List[asyncio.Task]
+    ) -> Tuple[List[Any], bool, Set[str]]:
+        # issue #579: 波次等待与 interrupt event 竞速 — 命中且仍有在飞节点时,
+        # 取消在飞任务并作废其尝试 (返回 interrupted=True + 被作废节点集合,
+        # 调用方落审计 marker 且不给它们记 done — 下一波带应用后的指令重跑);
+        # 若命中时全部已完成则按正常完成处理 (事件就地消费, 不影响下一波)。
+        # 竞速用 50ms 轮询而非混排 future — py3.11 portal 循环下混排 Event.wait()
+        # future 会永久挂起 (CI 复现), 轮询在所有版本行为一致。
+        evt = self._interrupt_events.get(exec_id)
+        fired = False
+        try:
+            while True:
+                # 每轮重取 — add_directive(interrupt) 可在等待期间注册 event
+                cur = self._interrupt_events.get(exec_id) or evt
+                if cur is not None and cur.is_set():
+                    fired = True
+                    evt = cur
+                    break
+                done, pending = await asyncio.wait(tasks, timeout=0.05, return_when=asyncio.FIRST_COMPLETED)
+                if not pending:
+                    break
+        except asyncio.CancelledError:
+            # gather 语义: 等待者被取消时取消全部在飞子任务, 不留孤儿
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            raise
+        if fired and all(t.done() for t in tasks):
+            evt.clear()
+            self._interrupt_events.pop(exec_id, None)
+            fired = False
+        if not fired:
+            results = []
+            try:
+                for t in tasks:
+                    results.append(await t)
+            except asyncio.CancelledError:
+                for t2 in tasks:
+                    if not t2.done():
+                        t2.cancel()
+                raise
+            return results, False, set()
+        # interrupt 命中 — 作废在飞尝试 (已完成的保留真实结果)
+        evt.clear()
+        self._interrupt_events.pop(exec_id, None)
+        results = []
+        voided: Set[str] = set()
+        for nid, t in zip(wave, tasks):
+            if not t.done():
+                voided.add(nid)
+                t.cancel()
+            try:
+                results.append(await t)
+            except BaseException:
+                # CancelledError / 节点抛错 — 尝试已作废, 不进结果步骤
+                results.append(([], "continue", ""))
+        return results, True, voided
 
     def _apply_directives(
         self,

@@ -52,7 +52,11 @@ def client(monkeypatch, tmp_path):
         store_root=tmp_path / "workflows",
         space_data_dir=tmp_path / "spaces",
     )
-    return TestClient(app), app
+    # context-manager portal — un-entered TestClient opens a fresh event loop
+    # per request, so a background run task frozen on the start request's loop
+    # is cancelled at portal close and never reaches terminal state (issue #579)
+    with TestClient(app) as tc:
+        yield tc, app
 
 
 def _headers():
@@ -126,7 +130,9 @@ class TestRewind:
         first = r.json()
         assert first["idempotent"] is False
         resumed_id = first["run_id"]
-        # 手工把产物 run 置 running (模拟仍在执行)
+        # 等产物 run 真正终态 (context-manager portal 下它在后台继续执行, 会写回终态),
+        # 再手工置 running 模拟仍在执行
+        _wait_terminal(tc, resumed_id)
         registry._runs[resumed_id]["status"] = "running"
 
         second = tc.post(
