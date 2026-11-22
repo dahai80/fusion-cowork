@@ -7,8 +7,8 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.138
-updated: 2026-11-21
+version: 0.5.139
+updated: 2026-11-22
 owner: "@dahai"
 source_of_truth:
   - CHANGELOG.md
@@ -16,6 +16,12 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.139 (issue #579 — steer/interrupt directive modes + at-least-once finish notifications)
+
+- **#579 (PR #581)**: run directives gain a dual delivery mode — `mode: "steer"` (default, unchanged: applies at the next node boundary, in-flight attempt completes untouched) vs `mode: "interrupt"` (in-flight node attempts are cancelled and voided at the boundary, an audit marker step with `user_correction=True` is recorded, the directive applies in FIFO admission order alongside any older queued directives, and voided nodes re-run in the next wave with the instruction merged). An interrupt never overtakes an older queued directive — admission-order invariant holds at the interrupt boundary. Interrupt events are consumed at the boundary (engine `_interrupt_events` cleaned up at execute end and after consumption).
+- **At-least-once finish notifications**: new `server/push.py` `ReliableEgress` durable outbox — persist-before-ack enqueue (atomic tmp+`os.replace`), `flush_pending()` retries until 2xx and bumps `attempts`; crash between delivery and mark duplicates the delivery (documented at-least-once, not exactly-once). Opt-in via `FUSION_COWORK_PUSH_AT_LEAST_ONCE=1` + `FUSION_COWORK_PUSH_WEBHOOK_URL` (+ optional `FUSION_COWORK_PUSH_OUTBOX_PATH`, default `~/.fusion-cowork/web/push_outbox.json`); `RunRegistry` enqueues `node_finished` on node-end events and `run_finished` on the terminal path, flushes via scheduled task, and recovers pending records at startup (`_recover_runs`).
+- **py3.11 cancellation fix (CI shard hang)**: `asyncio.wait_for` on py3.11 swallows `CancelledError` when the inner future completes in the same tick as the outer cancel (`wait_for` returns the result instead of raising) — a run task cancelled exactly as a HITL gate resolved escaped cancellation, parked in a fresh 1800s `_hitl_await`, and pytest-asyncio's `_cancel_all_tasks` gather pended forever. `_hitl_await` now waits on the pause event via a 50ms sleep poll against the deadline (cancellation lands on sleep; `TimeoutError` semantics unchanged), and the kernel `HumanGate.wait` call runs in a cowork-owned task with a poll loop + explicit inner cancel (harness `human_gate.wait` has the same internal `wait_for` swallow). `tests/test_issue_489_rewind_deploy.py` uses the context-manager `TestClient` (un-entered clients open a fresh per-request event loop that cancels background run tasks) and waits for the resumed run to reach terminal state before forcing a running status. Tests `tests/test_issue_579_steer_interrupt.py` (10 cases); full suite green on 3.11/3.12/3.13.
 
 ## v0.5.138 (issues #570/#571/#572 — harness sandbox backend + MAST failure attribution + journal hygiene)
 
