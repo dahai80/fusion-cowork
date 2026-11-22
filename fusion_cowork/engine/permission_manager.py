@@ -156,6 +156,7 @@ HIGH_RISK_NODES = frozenset(
         "shell_exec",
         "python_repl",
         "apply_edit",
+        "worktree",  # issue #580: worktree exec 任意命令 + remove 破坏性, 同 shell_exec 高危
         # 文件破坏性操作
         "file_delete",
         "file_copy",

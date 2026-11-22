@@ -7,14 +7,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+MARKER_FILE = ".fusion-worktree.json"
 
 
 @dataclass
@@ -74,8 +78,14 @@ class WorktreeManager:
         branch: str = "",
         base_ref: str = "HEAD",
         parent: str = "",
+        source_repo: str = "",
+        trusted: bool = False,
     ) -> Optional[Worktree]:
-        """创建 worktree。branch 空 → 新建分支 worktree/<name>; 否则 checkout 已有分支。"""
+        """创建 worktree。branch 空 → 新建分支 worktree/<name>; 否则 checkout 已有分支。
+
+        issue #580: source_repo 非空且 != 本仓 origin → 标记 untrusted_source,
+        exec 受信任门禁约束 (trusted=True 或 mark_trusted 解锁)。
+        """
         if not self.is_git_repo():
             logger.error(f"非 git 仓库, 无法创建 worktree: {self.repo_root}")
             return None
@@ -95,8 +105,15 @@ class WorktreeManager:
             logger.error(f"git worktree add 失败: {res.stderr.strip()}")
             return None
         head = self._git(["rev-parse", "HEAD"], cwd=wt_path).stdout.strip()
-        import time
-
+        untrusted = ""
+        if source_repo:
+            own = self._git(["remote", "get-url", "origin"]).stdout.strip()
+            if source_repo != own:
+                untrusted = source_repo
+                logger.warning(
+                    f"worktree '{name}' 来源不可信 (source={source_repo} != origin={own}): "
+                    "exec 被门禁阻止, 需显式 trust_source 解锁"
+                )
         wt = Worktree(
             path=str(wt_path),
             branch=branch or new_branch,
@@ -105,13 +122,65 @@ class WorktreeManager:
             created_at=time.time(),
         )
         self._worktrees[name] = wt
-        logger.info(f"worktree 已创建: {name} -> {wt_path} (branch={wt.branch})")
+        self._write_marker(wt_path, name=name, branch=wt.branch, untrusted_source=untrusted, trusted=trusted)
+        logger.info(f"worktree 已创建: {name} -> {wt_path} (branch={wt.branch}, untrusted={bool(untrusted)})")
         return wt
 
-    def remove(self, name: str, force: bool = False) -> bool:
+    def _write_marker(self, wt_path: Path, name: str, branch: str, untrusted_source: str, trusted: bool) -> None:
+        # issue #580: 所有权证明 — 创建时落 marker 文件, 删除/合并前交叉校验
+        marker = {
+            "name": name,
+            "branch": branch,
+            "repo_root": str(self.repo_root),
+            "created_at": time.time(),
+            "untrusted_source": untrusted_source,
+            "trusted": trusted,
+        }
+        try:
+            tmp = wt_path / (MARKER_FILE + ".tmp")
+            tmp.write_text(json.dumps(marker, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(wt_path / MARKER_FILE)
+        except Exception as e:
+            logger.error(f"worktree marker 写入失败 {wt_path}: {e}")
+
+    def read_marker(self, wt_path: str | Path) -> Optional[Dict[str, Any]]:
+        try:
+            return json.loads((Path(wt_path) / MARKER_FILE).read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
+    def _porcelain_paths(self) -> List[str]:
+        res = self._git(["worktree", "list", "--porcelain"])
+        if res.returncode != 0:
+            return []
+        return [line[len("worktree ") :] for line in res.stdout.splitlines() if line.startswith("worktree ")]
+
+    def _resolve(self, name: str) -> Optional[Worktree]:
+        # issue #580: 解析不信任路径尾段匹配 — 只认内存登记或 marker 名称匹配
         wt = self._worktrees.get(name)
+        if wt:
+            return wt
+        for p in self._porcelain_paths():
+            marker = self.read_marker(p)
+            if marker and marker.get("name") == name:
+                wt = Worktree(path=p, branch=marker.get("branch", ""), repo_root=str(self.repo_root))
+                self._worktrees[name] = wt
+                return wt
+        return None
+
+    def remove(self, name: str, force: bool = False) -> bool:
+        # issue #580: 所有权证明删除 — 必须 marker 存在且 git worktree list 交叉确认;
+        # 无 marker 的目录一律拒绝 (路径尾段/前缀匹配不可信), force 只透传 git --force
+        wt = self._resolve(name)
         if not wt:
-            logger.warning(f"worktree 未登记: {name}")
+            logger.warning(f"worktree 未登记或无所有权证明, 拒绝删除: {name}")
+            return False
+        marker = self.read_marker(wt.path)
+        if not marker or marker.get("name") != name:
+            logger.warning(f"worktree marker 缺失或名称不符, 拒绝删除: {name} ({wt.path})")
+            return False
+        if wt.path not in self._porcelain_paths():
+            logger.warning(f"worktree 不在 git worktree list 中, 拒绝删除: {name} ({wt.path})")
             return False
         args = ["worktree", "remove", wt.path]
         if force:
@@ -125,9 +194,79 @@ class WorktreeManager:
                 pass
         if wt.branch.startswith("worktree/"):
             self._git(["branch", "-D", wt.branch])
-        del self._worktrees[name]
+        self._worktrees.pop(name, None)
         logger.info(f"worktree 已删除: {name}")
         return True
+
+    def is_untrusted(self, name: str) -> Optional[str]:
+        # 返回 untrusted 来源 (可信/未知 → None; 未登记也 None, 由调用方另行报错)
+        wt = self._resolve(name)
+        if not wt:
+            return None
+        marker = self.read_marker(wt.path) or {}
+        if marker.get("untrusted_source") and not marker.get("trusted"):
+            return str(marker["untrusted_source"])
+        return None
+
+    def mark_trusted(self, name: str) -> bool:
+        wt = self._resolve(name)
+        if not wt:
+            return False
+        marker = self.read_marker(wt.path)
+        if not marker:
+            return False
+        marker["trusted"] = True
+        try:
+            tmp = Path(wt.path) / (MARKER_FILE + ".tmp")
+            tmp.write_text(json.dumps(marker, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(Path(wt.path) / MARKER_FILE)
+        except Exception as e:
+            logger.error(f"worktree marker 更新失败 {wt.path}: {e}")
+            return False
+        logger.info(f"worktree 来源已信任: {name} (source={marker.get('untrusted_source')})")
+        return True
+
+    def merge_back(
+        self,
+        name: str,
+        target_branch: str = "",
+        message: str = "",
+    ) -> Dict[str, Any]:
+        """issue #580: 把 worktree 分支合并回基线 — 合并在基线自己的工作树
+        (repo_root 主工作树) 执行, 绝不占用 agent worktree; 目标分支切换且
+        finally 恢复原分支; 基线脏树拒绝; 失败 merge --abort 兜底。
+        """
+        wt = self._resolve(name)
+        if not wt:
+            return {"error": f"worktree 不存在: {name}"}
+        marker = self.read_marker(wt.path)
+        if not marker or marker.get("name") != name or wt.path not in self._porcelain_paths():
+            return {"error": f"worktree 所有权证明缺失, 拒绝合并: {name}"}
+        if self._git(["status", "--porcelain"]).stdout.strip():
+            return {"error": "基线工作树有未提交变更, 拒绝合并 (先 commit/stash)"}
+        head_branch = self._git(["rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
+        target = target_branch or head_branch
+        try:
+            if target != head_branch:
+                co = self._git(["checkout", target])
+                if co.returncode != 0:
+                    return {"error": f"切换目标分支失败: {co.stderr.strip()}", "target": target}
+            merge_args = ["merge", "--no-ff", wt.branch]
+            if message:
+                merge_args += ["-m", message]
+            res = self._git(merge_args)
+            if res.returncode != 0:
+                self._git(["merge", "--abort"])
+                logger.warning(f"merge_back 失败已回滚: {name} -> {target}: {res.stderr.strip()}")
+                return {"error": f"合并失败 (已 abort): {res.stderr.strip()}", "target": target}
+            commit = self._git(["rev-parse", "HEAD"]).stdout.strip()
+            logger.info(f"merge_back 完成: {name} ({wt.branch}) -> {target} @ {commit[:8]}")
+            return {"merged": True, "branch": wt.branch, "target": target, "commit": commit}
+        finally:
+            if target != head_branch:
+                back = self._git(["checkout", head_branch])
+                if back.returncode != 0:
+                    logger.error(f"恢复原分支失败: {head_branch}: {back.stderr.strip()}")
 
     def list_worktrees(self) -> List[Worktree]:
         res = self._git(["worktree", "list", "--porcelain"])
@@ -173,9 +312,17 @@ class WorktreeManager:
         env: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """在指定 worktree 内执行 shell 命令。"""
-        wt = self._worktrees.get(name)
+        wt = self._resolve(name)
         if not wt:
             return {"error": f"worktree 不存在: {name}"}
+        # issue #580: 不可信来源门禁 — 外部来源 worktree 的 setup/exec 阻止到显式信任
+        untrusted = self.is_untrusted(name)
+        if untrusted:
+            return {
+                "error": f"worktree 来源不可信 (source={untrusted}), 拒绝执行; 需显式 trust_source 解锁",
+                "untrusted_source": untrusted,
+                "command": command,
+            }
         import os
 
         run_env = os.environ.copy()
