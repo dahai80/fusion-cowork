@@ -2547,7 +2547,19 @@ class WorkflowEngine:
                     # None = resume/cancel 桥接取消或 ttl 过期 — 检查决定/取消后重问继续等
                     reply = None
                     try:
-                        reply = await self._hitl_gate.wait(question_id, timeout=remaining)
+                        # issue #579: 内核 wait 经 cowork 侧任务轮询而非直接 await —
+                        # py3.11 内层 wait_for 在"取消/完成"竞态下会吞 CancelledError
+                        # (内层 future 已 done 则 return result), 任务逃出取消继续跑,
+                        # teardown gather 永久 pending (CI py3.11 复现)。轮询让取消
+                        # 落在 cowork 侧 sleep 上, 语义干净; 内层任务显式取消不留孤儿。
+                        gate_task = asyncio.ensure_future(self._hitl_gate.wait(question_id, timeout=remaining))
+                        try:
+                            while not gate_task.done():
+                                await asyncio.sleep(0.05)
+                            reply = gate_task.result()
+                        except asyncio.CancelledError:
+                            gate_task.cancel()
+                            raise
                     except Exception as e:
                         logger.warning(f"[{exec_id}] kernel HumanGate wait failed (degrade to evt wait): {e}")
                         question_id = ""
@@ -2566,7 +2578,15 @@ class WorkflowEngine:
                         evt.set()
                         logger.info(f"[{exec_id}] HITL kernel reply adopted: approved={bool(reply.get('approved'))}")
                 if not question_id:
-                    await asyncio.wait_for(evt.wait(), timeout=remaining)
+                    # issue #579: 轮询替代 wait_for — py3.11 wait_for 在"外层取消"
+                    # 与"事件 set"竞态时 (内层 future 恰好 done) 会吞掉 CancelledError
+                    # 直接 return result, _run_node 逃出取消继续跑, teardown gather
+                    # 永久 pending (CI py3.11 复现); sleep 轮询取消语义干净。
+                    deadline_ts = time.time() + remaining
+                    while not evt.is_set():
+                        if time.time() >= deadline_ts:
+                            raise TimeoutError()
+                        await asyncio.sleep(0.05)
             except TimeoutError:
                 timed_out = True
                 break
@@ -2793,27 +2813,45 @@ class WorkflowEngine:
         # 取消在飞任务并作废其尝试 (返回 interrupted=True + 被作废节点集合,
         # 调用方落审计 marker 且不给它们记 done — 下一波带应用后的指令重跑);
         # 若命中时全部已完成则按正常完成处理 (事件就地消费, 不影响下一波)。
+        # 竞速用 50ms 轮询而非混排 future — py3.11 portal 循环下混排 Event.wait()
+        # future 会永久挂起 (CI 复现), 轮询在所有版本行为一致。
         evt = self._interrupt_events.get(exec_id)
-        evt_wait = asyncio.ensure_future(evt.wait()) if evt is not None else None
-        waits: List[Any] = list(tasks) + ([evt_wait] if evt_wait is not None else [])
-        await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
-        fired = evt_wait is not None and evt_wait.done() and evt.is_set()
+        fired = False
+        try:
+            while True:
+                # 每轮重取 — add_directive(interrupt) 可在等待期间注册 event
+                cur = self._interrupt_events.get(exec_id) or evt
+                if cur is not None and cur.is_set():
+                    fired = True
+                    evt = cur
+                    break
+                done, pending = await asyncio.wait(tasks, timeout=0.05, return_when=asyncio.FIRST_COMPLETED)
+                if not pending:
+                    break
+        except asyncio.CancelledError:
+            # gather 语义: 等待者被取消时取消全部在飞子任务, 不留孤儿
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            raise
         if fired and all(t.done() for t in tasks):
             evt.clear()
             self._interrupt_events.pop(exec_id, None)
             fired = False
         if not fired:
-            if evt_wait is not None:
-                evt_wait.cancel()
             results = []
-            for t in tasks:
-                results.append(await t)
+            try:
+                for t in tasks:
+                    results.append(await t)
+            except asyncio.CancelledError:
+                for t2 in tasks:
+                    if not t2.done():
+                        t2.cancel()
+                raise
             return results, False, set()
         # interrupt 命中 — 作废在飞尝试 (已完成的保留真实结果)
         evt.clear()
         self._interrupt_events.pop(exec_id, None)
-        if evt_wait is not None:
-            evt_wait.cancel()
         results = []
         voided: Set[str] = set()
         for nid, t in zip(wave, tasks):
