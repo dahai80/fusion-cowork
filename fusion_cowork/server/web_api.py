@@ -5792,12 +5792,16 @@ def create_web_app(
         body = await request.json()
         capabilities = body.get("capabilities")
         if not isinstance(capabilities, list) or not capabilities:
-            raise HTTPException(status_code=400, detail={"code": "invalid_catalog", "message": "capabilities 必须是非空列表"})
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_catalog", "message": "capabilities 必须是非空列表"}
+            )
         if not str(body.get("version") or "").strip():
             raise HTTPException(status_code=400, detail={"code": "invalid_catalog", "message": "version 必填"})
         old_version = ""
         try:
-            old_version = str(load_catalog(_demand_catalog_file() if Path(_demand_catalog_file()).exists() else "").get("version", ""))
+            old_version = str(
+                load_catalog(_demand_catalog_file() if Path(_demand_catalog_file()).exists() else "").get("version", "")
+            )
         except Exception:
             pass
         version = str(body["version"]).strip()
@@ -5845,7 +5849,9 @@ def create_web_app(
         try:
             port = int(port) if port else 0
         except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail={"code": "invalid_port", "message": "port 必须是整数"}) from None
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_port", "message": "port 必须是整数"}
+            ) from None
         path = write_settings(
             host=str(body.get("host") or ""),
             port=port,
