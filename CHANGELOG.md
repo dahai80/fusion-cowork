@@ -7,8 +7,8 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.140
-updated: 2026-11-22
+version: 0.5.141
+updated: 2026-11-23
 owner: "@dahai"
 source_of_truth:
   - CHANGELOG.md
@@ -16,6 +16,15 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.141 (issues #585-#588 — demand engine M1 mail rail: poll / normalize / match / dual-draft)
+
+- **#585-#588 (PR #589)**: unified Lead pipeline (adapters -> normalize -> match -> draft) as four scheduler-driven nodes over one SQLite store (`fusion_cowork/demand/`):
+  - **#585 `poll_qq_imap`**: read-only QQ mail IMAP poll (`BODY.PEEK`, EXAMINE-only select) — per-folder UID cursor in `poll_state` (restart never re-emits), Message-ID dedupe incl. synthetic-id fallback and same-batch/cross-UID duplicates, HTML stripped to plain text, attachments never decoded, password env-only and never in errors.
+  - **#586 `normalize_lead`**: raw mail -> unified Lead schema via the local model (fixed prompt + JSON validation) with a deterministic rule fallback on any model failure (node never fails on model-down); platform-id extraction tolerant of punctuation; spam marked, never deleted, excluded from matching.
+  - **#587 `match`**: pure-code Lead x capability-catalog scoring (keyword/skill tables + budget-range fit, no LLM per Rule 5); catalog is a versioned JSON file (seed frozen 2026-11-20: RAG 2000 / voice 3500 / extraction 1800 / DAG 2500 / video 4000 / doc 1500 CNY); version bump re-scores the backlog; below-threshold leads parked with best score kept, never dropped; catalog version recorded per row.
+  - **#588 `dual_draft`**: draft_a (local gateway model) + draft_b (cloud GLM-5, `FUSION_GLM_API_KEY` optional) per matched lead — fixed proposal template, client brief embedded as JSON-quoted untrusted data with instruction-like lines stripped (prompt injection cannot alter price or policy), catalog-quoted price, no off-platform contact info, per-slot error tolerance, restart-safe re-run, drafts stored only (nothing is ever sent), optional ntfy ping; `LeadStore.metrics()` exposes A/B pick rates, avg edit distance, per-capability win rate.
+  - All four registered via `nodes/demand/demand_nodes.py` in `_NODE_MODULES` (73 -> 77 node classes). Tests `tests/test_issue_585..588_*.py` (46 cases: FakeIMAP4SSL protocol stand-in, golden platform fixtures, scoring matrix, E2E draft + injection + metrics).
 
 ## v0.5.140 (issue #580 — worktree isolation safety: ownership-proof delete + untrusted-source gate + merge-back)
 
