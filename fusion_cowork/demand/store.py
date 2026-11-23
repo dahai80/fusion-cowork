@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS leads (
     draft_meta TEXT NOT NULL DEFAULT '{}',
     draft_pick TEXT NOT NULL DEFAULT '',
     draft_edit_distance REAL NOT NULL DEFAULT -1,
-    win_loss TEXT NOT NULL DEFAULT ''
+    win_loss TEXT NOT NULL DEFAULT '',
+    draft_final TEXT NOT NULL DEFAULT '',
+    discard_reason TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_external ON leads(source, external_id) WHERE external_id != '';
 CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status);
@@ -92,6 +94,14 @@ class LeadStore:
         except Exception as e:
             if "duplicate column name" not in str(e):
                 raise
+        # issue #595: operator approve/discard columns
+        for column, default in (("draft_final", "''"), ("discard_reason", "''")):
+            try:
+                await self.db.execute(f"ALTER TABLE leads ADD COLUMN {column} TEXT NOT NULL DEFAULT {default}")
+                logger.info(f"demand store migrated: leads.{column} added")
+            except Exception as e:
+                if "duplicate column name" not in str(e):
+                    raise
 
     async def close(self) -> None:
         if self._db is not None:
@@ -256,6 +266,8 @@ class LeadStore:
             "draft_pick",
             "draft_edit_distance",
             "win_loss",
+            "draft_final",
+            "discard_reason",
         }
         sets, args = [], []
         for k, v in fields.items():
