@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.141
+version: 0.5.142
 updated: 2026-11-23
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,13 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.142 (issue #594 — RunGate admission-time reservation closes same-key race)
+
+- **#594 (PR #598)**: a run admitted as `running` did not actually hold its per-key concurrency slot until the spawned `_execute` task reached `gate.acquire()` — between `create_task` and first scheduling, a later same-key run probed the gate unsaturated and was also admitted `running`, violating the per-key cap. Fix: admission-time reservation —
+  - `RunGate` (`engine/run_gate.py`): lazy per-key semaphores replaced with plain counters (`_global_running` / `_key_running`); probe+reserve atomic on the single event loop (no await between them). `try_reserve(key)` takes the slot synchronously; `acquire_reserved(key)` polls (0.05s) until a slot frees; `acquire(key)` kept as back-compat entry; `release()` clamps at zero; `status()` keeps the `running_by_key` API.
+  - `web_api.runs_start`: reserves the slot at admission (`gate_reserved` on the record); record status is `queued` when reservation fails instead of `running`. `_execute` skips re-acquire for reserved runs; resume/derive paths keep the existing acquire-then-run flow; slot released in the existing `finally`.
+  - Tests `tests/test_issue_594_rungate_admission.py` (8 cases: per-key atomicity, global cap, acquire/reserve parity, release clamp, wait-after-release, disabled gate, 5-run same-key burst = exactly one running + rest queued + FIFO drain, slot released on completion); probe node re-registered defensively in the fixture (other test files clear `NodeRegistry` without restore). Full suite 3392 tests, 0 failures.
 
 ## v0.5.141 (issues #585-#588 — demand engine M1 mail rail: poll / normalize / match / dual-draft)
 
