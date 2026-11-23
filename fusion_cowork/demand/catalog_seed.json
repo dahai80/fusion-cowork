@@ -1,0 +1,67 @@
+{
+    "version": "1",
+    "updated": "2026-11-22",
+    "note": "Seed capability catalog — frozen rulings 2026-11-20 (factory-capability-catalog-spec). Keywords/budget ranges are the matcher's deterministic signal tables; operator-editable, version bumps on every edit.",
+    "capabilities": [
+        {
+            "id": "rag-qa",
+            "enabled": true,
+            "name_en": "RAG knowledge-base Q&A",
+            "name_zh": "RAG 问答",
+            "price_cny": 2000,
+            "budget_min_cny": 1000,
+            "budget_max_cny": 8000,
+            "keywords": ["rag", "knowledge base", "kb", "retrieval", "embedding", "vector", "document qa", "corpus", "q&a bot"]
+        },
+        {
+            "id": "voice-inbound",
+            "enabled": true,
+            "name_en": "Voice inbound assistant",
+            "name_zh": "语音进线助理",
+            "price_cny": 3500,
+            "budget_min_cny": 2000,
+            "budget_max_cny": 12000,
+            "keywords": ["voice agent", "voice assistant", "inbound call", "phone agent", "vapi", "retell", "twilio voice", "call center ai", "speech"]
+        },
+        {
+            "id": "extraction-scoring",
+            "enabled": true,
+            "name_en": "Document extraction + scoring",
+            "name_zh": "抽取+评分",
+            "price_cny": 1800,
+            "budget_min_cny": 800,
+            "budget_max_cny": 6000,
+            "keywords": ["extraction", "document ai", "ocr", "resume screening", "scoring", "classification", "data extraction", "invoice", "parse documents"]
+        },
+        {
+            "id": "dag-workflow",
+            "enabled": true,
+            "name_en": "DAG workflow automation",
+            "name_zh": "DAG 工作流自动化",
+            "price_cny": 2500,
+            "budget_min_cny": 1000,
+            "budget_max_cny": 10000,
+            "keywords": ["workflow automation", "n8n", "dify", "zapier", "make.com", "pipeline automation", "orchestration", "no-code workflow", "automation agent"]
+        },
+        {
+            "id": "video-pipeline",
+            "enabled": true,
+            "name_en": "Video processing pipeline",
+            "name_zh": "视频管线",
+            "price_cny": 4000,
+            "budget_min_cny": 2000,
+            "budget_max_cny": 15000,
+            "keywords": ["video pipeline", "video generation", "transcode", "subtitles", "short video", "clip automation", "ffmpeg", "digital human"]
+        },
+        {
+            "id": "doc-automation",
+            "enabled": true,
+            "name_en": "Document automation",
+            "name_zh": "文档自动化",
+            "price_cny": 1500,
+            "budget_min_cny": 600,
+            "budget_max_cny": 5000,
+            "keywords": ["document automation", "report generation", "docx", "xlsx", "pptx", "contract generation", "pdf processing", "template filling"]
+        }
+    ]
+}
