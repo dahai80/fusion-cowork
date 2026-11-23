@@ -1196,12 +1196,96 @@ export const api = {
             body
         ),
     fusionBrowserClose: () => post<FusionBrowserStatus>('/api/fusion-browser/close'),
+    // issue #595: demand engine — leads / metrics / catalog / settings
+    demandLeads: (status = '', limit = 200) =>
+        get<{ leads: DemandLead[]; count: number }>(
+            `/api/demand/leads?status=${encodeURIComponent(status)}&limit=${limit}`
+        ),
+    demandLead: (id: number) => get<DemandLead>(`/api/demand/leads/${id}`),
+    approveDemandLead: (id: number, pick: 'a' | 'b', text = '') =>
+        post<DemandLead>(`/api/demand/leads/${id}/approve`, { pick, ...(text ? { text } : {}) }),
+    discardDemandLead: (id: number, reason = '') => post<DemandLead>(`/api/demand/leads/${id}/discard`, { reason }),
+    demandMetrics: () => get<DemandMetrics>('/api/demand/metrics'),
+    demandCatalog: () => get<DemandCatalog>('/api/demand/catalog'),
+    saveDemandCatalog: (catalog: DemandCatalog) =>
+        put<{ version: string; previous_version: string; parked_re_scored: number }>('/api/demand/catalog', catalog),
+    demandSettings: () => get<DemandSettings>('/api/demand/settings'),
+    saveDemandSettings: (body: DemandSettingsInput) =>
+        put<{ saved: boolean; env_path: string }>('/api/demand/settings', body),
+    testDemandSettings: () =>
+        post<{ ok: boolean; latency_ms?: number; cursor?: number; error?: string }>('/api/demand/settings/test'),
     rpc: <T>(method: string, params?: Record<string, unknown>) =>
         post<RpcResponse<T>>('/rpc', { jsonrpc: '2.0', id: Date.now(), method, params: params ?? {} }).then((resp) => {
             if (resp.error) throw new Error(resp.error.message || `rpc error ${resp.error.code}`);
             return resp.result as T;
         }),
 };
+
+// issue #596: demand engine GUI types (wire contract of /api/demand/*, issue #595)
+export interface DemandLead {
+    id: number;
+    source: string;
+    title: string;
+    description: string;
+    budget_hint: string;
+    status: string;
+    skills?: string[];
+    matched_capabilities?: string[];
+    match_score?: number;
+    match_reason?: string;
+    catalog_version?: string;
+    draft_a?: string;
+    draft_b?: string;
+    draft_meta?: { model_a?: string; model_b?: string; latency_a_ms?: number; latency_b_ms?: number };
+    draft_pick?: string;
+    draft_final?: string;
+    discard_reason?: string;
+}
+
+export interface DemandMetrics {
+    total_picks: number;
+    pick_rate_local: number;
+    pick_rate_cloud: number;
+    avg_edit_distance: number;
+    per_capability_win_rate: Record<string, number>;
+}
+
+export interface DemandCapability {
+    id: string;
+    enabled?: boolean;
+    name_en?: string;
+    name_zh?: string;
+    price_cny?: number;
+    budget_min_cny?: number;
+    budget_max_cny?: number;
+    keywords?: string[];
+}
+
+export interface DemandCatalog {
+    version: string;
+    updated?: string;
+    note?: string;
+    capabilities: DemandCapability[];
+}
+
+export interface DemandSettings {
+    host: string;
+    port: number;
+    user: string;
+    folder: string;
+    password_present: boolean;
+    env_path: string;
+    cursor?: number;
+    last_test?: { ok: boolean; latency_ms?: number; cursor?: number; error?: string; tested_at?: number } | null;
+}
+
+export interface DemandSettingsInput {
+    host?: string;
+    port?: number;
+    user?: string;
+    password?: string;
+    folder?: string;
+}
 
 export function statusKind(status: string): 'success' | 'running' | 'error' | 'offline' | 'warning' {
     switch (status) {
