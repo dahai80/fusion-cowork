@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS leads (
     client_meta TEXT NOT NULL DEFAULT '{}',
     arrived_at REAL NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'normalized',
+    extraction TEXT NOT NULL DEFAULT '',
     matched_capabilities TEXT NOT NULL DEFAULT '[]',
     match_score REAL NOT NULL DEFAULT 0,
     match_reason TEXT NOT NULL DEFAULT '',
@@ -79,8 +80,18 @@ class LeadStore:
         self._db = await aiosqlite.connect(self.db_path)
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(_SCHEMA)
+        await self._migrate()
         await self._db.commit()
         logger.info(f"demand store connected: {self.db_path}")
+
+    async def _migrate(self) -> None:
+        # issue #592: pre-0.5.142 DBs lack the extraction column
+        try:
+            await self.db.execute("ALTER TABLE leads ADD COLUMN extraction TEXT NOT NULL DEFAULT ''")
+            logger.info("demand store migrated: leads.extraction added")
+        except Exception as e:
+            if "duplicate column name" not in str(e):
+                raise
 
     async def close(self) -> None:
         if self._db is not None:
@@ -155,7 +166,7 @@ class LeadStore:
     async def insert_lead(self, lead: Dict[str, Any]) -> int:
         cur = await self.db.execute(
             "INSERT INTO leads(message_id, source, external_id, title, description, budget_hint, skills, "
-            "client_meta, arrived_at, status) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "client_meta, arrived_at, status, extraction) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 lead.get("message_id", ""),
                 lead.get("source", "unknown"),
@@ -167,10 +178,49 @@ class LeadStore:
                 json.dumps(lead.get("client_meta", {}), ensure_ascii=False),
                 float(lead.get("arrived_at", 0)),
                 lead.get("status", "normalized"),
+                lead.get("extraction", ""),
             ),
         )
         await self.db.commit()
         return int(cur.lastrowid)
+
+    async def insert_or_merge_lead(self, lead: Dict[str, Any]) -> Dict[str, Any]:
+        # issue #592: UNIQUE(source, external_id) collision -> merge raw text
+        # into the existing lead (thread convergence) and file the duplicate
+        # under its own message_id (status=duplicate) so the raw mail is
+        # processed exactly once and never wedges the pipeline.
+        try:
+            new_id = await self.insert_lead(lead)
+            return {"id": new_id, "merged": False}
+        except Exception as e:
+            if "UNIQUE" not in str(e):
+                raise
+        async with self.db.execute(
+            "SELECT * FROM leads WHERE source=? AND external_id=? AND external_id != '' ORDER BY id LIMIT 1",
+            (lead.get("source", "unknown"), lead.get("external_id", "")),
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            raise RuntimeError(f"lead collision but primary not found: {lead.get('source')}/{lead.get('external_id')}")
+        existing = self._lead_dict(row)
+        primary_id = int(existing["id"])
+        desc = (existing.get("description") or "").strip()
+        add = (lead.get("description") or "").strip()
+        if add and add[:200] not in desc:
+            desc = f"{desc}\n---\n{add}"[:4000]
+        fields: Dict[str, Any] = {
+            "description": desc,
+            "skills": list(dict.fromkeys([*existing.get("skills", []), *lead.get("skills", [])]))[:8],
+        }
+        if not existing.get("budget_hint") and lead.get("budget_hint"):
+            fields["budget_hint"] = lead.get("budget_hint", "")
+        await self.update_lead(primary_id, fields)
+        marker = {**lead, "external_id": "", "status": "duplicate"}
+        marker_id = await self.insert_lead(marker)
+        logger.info(
+            f"lead collision merged: raw {lead.get('message_id', '')[:40]} -> lead #{primary_id} (marker #{marker_id})"
+        )
+        return {"id": primary_id, "merged": True, "marker_id": marker_id}
 
     async def get_lead(self, lead_id: int) -> Optional[Dict[str, Any]]:
         async with self.db.execute("SELECT * FROM leads WHERE id=?", (lead_id,)) as cur:
@@ -194,6 +244,8 @@ class LeadStore:
             "description",
             "budget_hint",
             "status",
+            "skills",
+            "extraction",
             "matched_capabilities",
             "match_score",
             "match_reason",
