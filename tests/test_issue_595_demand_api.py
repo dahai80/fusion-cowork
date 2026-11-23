@@ -26,22 +26,35 @@ def _lead(**over):
     return base
 
 
-def _seed_draft(store, **over):
-    lead_id = asyncio.get_event_loop().run_until_complete(store.insert_lead(_lead(**over)))
-    asyncio.get_event_loop().run_until_complete(
-        store.update_lead(
-            lead_id,
-            {
-                "draft_a": "draft A text",
-                "draft_b": "draft B text",
-                "draft_meta": {"model_a": "qwen", "model_b": "glm-5"},
-                "matched_capabilities": ["rag-qa"],
-                "match_score": 5.0,
-                "catalog_version": "1",
-            },
-        )
-    )
-    return lead_id
+_DRAFT_FIELDS = {
+    "draft_a": "draft A text",
+    "draft_b": "draft B text",
+    "draft_meta": {"model_a": "qwen", "model_b": "glm-5"},
+    "matched_capabilities": ["rag-qa"],
+    "match_score": 5.0,
+    "catalog_version": "1",
+}
+
+
+def _seed_all(db_path):
+    # one asyncio.run block — aiosqlite connection lives and dies on the same
+    # loop (asyncio.get_event_loop() is unusable in full-suite MainThread)
+    async def main():
+        from fusion_cowork.demand.store import LeadStore
+
+        store = LeadStore(db_path)
+        await store.connect()
+        try:
+            drafted = await store.insert_lead(_lead())
+            await store.update_lead(drafted, _DRAFT_FIELDS)
+            normalized = await store.insert_lead(_lead(status="normalized"))
+            parked = await store.insert_lead(_lead(status="parked", title="parked one"))
+            await store.update_lead(parked, _DRAFT_FIELDS)
+            return drafted, normalized, parked
+        finally:
+            await store.close()
+
+    return asyncio.run(main())
 
 
 class TestDemandAPI:
@@ -53,16 +66,10 @@ class TestDemandAPI:
         monkeypatch.setenv("FUSION_COWORK_DEMAND_IMAP_ENV", str(tmp_path / "imap.env"))
         monkeypatch.delenv("FUSION_QQ_IMAP_USER", raising=False)
         monkeypatch.delenv("FUSION_QQ_IMAP_PASSWORD", raising=False)
-        from fusion_cowork.demand.store import LeadStore
         from fusion_cowork.engine import PermissionManager, WorkflowEngine
 
         db_path = str(tmp_path / "demand.db")
-        store = LeadStore(db_path)
-        asyncio.get_event_loop().run_until_complete(store.connect())
-        drafted_id = _seed_draft(store)
-        normalized_id = asyncio.get_event_loop().run_until_complete(store.insert_lead(_lead(status="normalized")))
-        parked_id = _seed_draft(store, status="parked", title="parked one")
-        asyncio.get_event_loop().run_until_complete(store.close())
+        drafted_id, normalized_id, parked_id = _seed_all(db_path)
 
         eng = WorkflowEngine(permission_manager=PermissionManager())
         from fusion_cowork.server import web_api
