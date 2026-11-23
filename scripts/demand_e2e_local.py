@@ -24,22 +24,13 @@ import tempfile
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("demand_e2e")
 
-# Local model endpoint: default to fusion-mlx direct (:11434). Shell env may
-# carry FUSION_MLX_PORT=11432 (gateway) — the driver overrides it unless an
-# explicit FUSION_MLX_URL is set.
-if not os.environ.get("FUSION_MLX_URL", "").strip():
-    os.environ["FUSION_MLX_HOST"] = "127.0.0.1"
-    os.environ["FUSION_MLX_PORT"] = "11434"
-    # direct mlx auth = the server's own api key (settings.json auth.api_key),
-    # not the gateway FUSION_CLIENT_KEY — resolved here, never hardcoded
-    try:
-        with open(os.path.expanduser("~/.fusion-mlx/settings.json"), encoding="utf-8") as f:
-            _k = (json.load(f).get("auth") or {}).get("api_key", "")
-        if _k:
-            os.environ["FUSION_CLIENT_KEY"] = _k
-            logger.info("fusion-mlx api key loaded from settings.json (direct :11434)")
-    except Exception as e:
-        logger.warning("could not read fusion-mlx api key: %s (model calls may 401)", e)
+# All LLM traffic routes through fusion-gateway :11432 (ruling 2026-11-23):
+# the FusionMLXClient default already points there and the demo key allowlist
+# covers qwen* (local arm) + glm* (cloud arm). Set FUSION_MLX_URL to override.
+_endpoint = os.environ.get("FUSION_MLX_URL", "").strip() or "http://127.0.0.1:11432/v1"
+logger.info("model endpoint (both draft arms): %s", _endpoint)
+if not os.environ.get("FUSION_CLIENT_KEY", ""):
+    logger.warning("FUSION_CLIENT_KEY not set: model calls will 401")
 # Fake mailbox creds: poll node refuses to run without them; values unused offline
 os.environ.setdefault("FUSION_QQ_IMAP_USER", "e2e@local.test")
 os.environ.setdefault("FUSION_QQ_IMAP_PASSWORD", "e2e-fake-authcode")
@@ -187,11 +178,11 @@ async def main() -> None:
         ),
         {},
     )
-    cloud_on = bool(os.environ.get("FUSION_GLM_API_KEY"))
+    cloud_on = bool(os.environ.get("FUSION_GLM_API_KEY")) or draft.get("cloud_enabled", False)
     logger.info(
         "draft: drafted=%s (cloud arm %s)",
         draft.get("drafted"),
-        "GLM-5" if cloud_on else "OFF: FUSION_GLM_API_KEY not set, draft_b stays empty",
+        "GLM-5 via gateway" if cloud_on else "OFF: no FUSION_CLIENT_KEY/FUSION_GLM_API_KEY, draft_b stays empty",
     )
 
     from fusion_cowork.demand.store import LeadStore
@@ -212,7 +203,7 @@ async def main() -> None:
             print("  --- draft_a ---")
             print(lead.get("draft_a") or "(empty)")
             print("  --- draft_b ---")
-            print(lead.get("draft_b") or "(empty: no FUSION_GLM_API_KEY)")
+            print(lead.get("draft_b") or "(empty: cloud arm disabled — no gateway/GLM key)")
             meta = lead.get("draft_meta") or {}
             print(f"  meta: model_a={meta.get('model_a')} model_b={meta.get('model_b')} errors={meta.get('errors')}")
 

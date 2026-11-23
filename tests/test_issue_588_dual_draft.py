@@ -327,4 +327,12 @@ def test_cloud_glm_client_key_from_env_only(monkeypatch):
     client = CloudGLMClient()
     assert client.enabled is True
     monkeypatch.delenv("FUSION_GLM_API_KEY")
+    monkeypatch.delenv("FUSION_CLIENT_KEY", raising=False)  # gateway key also satisfies enabled
     assert CloudGLMClient().enabled is False  # no key -> disabled, never raises at init
+    assert client.base_url.startswith("http://127.0.0.1:11432")  # default routes via fusion-gateway
+
+
+def test_cloud_glm_client_gateway_key_fallback(monkeypatch):
+    monkeypatch.delenv("FUSION_GLM_API_KEY", raising=False)
+    monkeypatch.setenv("FUSION_CLIENT_KEY", "gw-key")
+    assert CloudGLMClient().enabled is True  # FUSION_CLIENT_KEY is the gateway credential
