@@ -340,7 +340,13 @@ class TestWaveParallel:
         execution = await engine.execute(wf)
         wall = time.monotonic() - start
         assert execution.concurrency == 3
-        assert wall < 0.45
+        # CI timing flake (#466 family): wall-clock alone raced at 0.4508 vs 0.45 —
+        # prove concurrency via overlapping spans (serial floor is 0.6s) + loose bound
+        assert wall < 0.55, f"并发未生效: {wall:.3f}s"
+        spans = PARALLEL_STATE["spans"]
+        first_end = min(end for _, end in spans.values())
+        last_start = max(start for start, _ in spans.values())
+        assert last_start < first_end, "三个节点未重叠执行"
 
     async def test_invalid_env_falls_back_to_serial(self, monkeypatch):
         monkeypatch.setenv("FUSION_COWORK_MAX_CONCURRENCY", "abc")
