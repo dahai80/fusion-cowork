@@ -23,6 +23,22 @@ def default_catalog_path() -> str:
     return os.environ.get("FUSION_COWORK_DEMAND_CATALOG", str(SEED_PATH))
 
 
+def runtime_catalog_path() -> str:
+    # issue #595: PUT writes here (never the in-repo seed); env override wins
+    return os.environ.get("FUSION_COWORK_DEMAND_CATALOG", str(Path.home() / ".fusion-cowork" / "demand_catalog.json"))
+
+
+def save_catalog(data: Dict[str, Any], path: str = "") -> str:
+    # atomic write (tmp + replace); returns the version that was saved
+    target = Path(path or runtime_catalog_path())
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, target)
+    logger.info(f"catalog saved: {target} v{data.get('version')}")
+    return str(data.get("version", ""))
+
+
 def load_catalog(path: str = "") -> Dict[str, Any]:
     p = Path(path or default_catalog_path())
     data = json.loads(p.read_text(encoding="utf-8"))

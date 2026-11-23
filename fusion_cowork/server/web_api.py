@@ -1787,6 +1787,8 @@ def create_web_app(
     studio_api_key: Optional[str] = None,
     capabilities_transport: Any = None,
     templates_dir: Optional[Path] = None,
+    demand_db_path: Optional[str] = None,
+    demand_catalog_path: Optional[str] = None,
 ):
     try:
         from fastapi import FastAPI, HTTPException, Request, WebSocket
@@ -5686,6 +5688,186 @@ def create_web_app(
     async def team_pool_stop():
         await app.state.runner_pool.stop()
         return {"running": app.state.runner_pool.running}
+
+    # ── issue #595: demand engine web API — leads / metrics / catalog / settings ──
+    # LLM endpoints stay behind fusion-gateway :11432; this surface only reads
+    # and updates the LeadStore + catalog + IMAP settings. Mail content is
+    # untrusted data: only what LeadStore already persists is echoed back.
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _demand_store():
+        from ..demand.store import LeadStore, default_db_path
+
+        store = LeadStore(demand_db_path or default_db_path())
+        await store.connect()
+        try:
+            yield store
+        finally:
+            await store.close()
+
+    def _demand_catalog_file() -> str:
+        from ..demand.catalog import runtime_catalog_path
+
+        return demand_catalog_path or runtime_catalog_path()
+
+    @app.get("/api/demand/leads")
+    async def demand_leads(status: str = "", limit: int = 200):
+        async with _demand_store() as store:
+            leads = await store.list_leads(status=status.strip(), limit=max(1, min(int(limit), 500)))
+        return {"leads": leads, "count": len(leads)}
+
+    @app.get("/api/demand/leads/{lead_id}")
+    async def demand_lead_detail(lead_id: int):
+        async with _demand_store() as store:
+            lead = await store.get_lead(lead_id)
+        if lead is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"lead 不存在: {lead_id}"})
+        return lead
+
+    @app.post("/api/demand/leads/{lead_id}/approve")
+    async def demand_lead_approve(lead_id: int, request: Request):
+        body = await request.json()
+        pick = str(body.get("pick") or "")
+        if pick not in ("a", "b"):
+            raise HTTPException(status_code=400, detail={"code": "invalid_pick", "message": "pick 必须是 a 或 b"})
+        edited = str(body.get("text") or "")
+        async with _demand_store() as store:
+            lead = await store.get_lead(lead_id)
+            if lead is None:
+                raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"lead 不存在: {lead_id}"})
+            if lead.get("status") != "drafted":
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "invalid_status", "message": f"仅 drafted 状态可审批, 当前: {lead.get('status')}"},
+                )
+            fields: Dict[str, Any] = {"status": "approved", "draft_pick": pick}
+            if edited:
+                import difflib
+
+                base = lead.get(f"draft_{pick}") or ""
+                fields["draft_final"] = edited
+                ratio = difflib.SequenceMatcher(None, base, edited).ratio()
+                fields["draft_edit_distance"] = round(1.0 - ratio, 4)
+            await store.update_lead(lead_id, fields)
+            updated = await store.get_lead(lead_id)
+        logger.info(f"[demand] lead {lead_id} approved pick={pick} edited={bool(edited)}")
+        return updated
+
+    @app.post("/api/demand/leads/{lead_id}/discard")
+    async def demand_lead_discard(lead_id: int, request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        reason = str(body.get("reason") or "")
+        async with _demand_store() as store:
+            lead = await store.get_lead(lead_id)
+            if lead is None:
+                raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"lead 不存在: {lead_id}"})
+            await store.update_lead(lead_id, {"status": "discarded", "discard_reason": reason})
+            updated = await store.get_lead(lead_id)
+        logger.info(f"[demand] lead {lead_id} discarded reason={reason[:80]}")
+        return updated
+
+    @app.get("/api/demand/metrics")
+    async def demand_metrics():
+        async with _demand_store() as store:
+            return await store.metrics()
+
+    @app.get("/api/demand/catalog")
+    async def demand_catalog_get():
+        from ..demand.catalog import load_catalog
+
+        path = _demand_catalog_file()
+        if not Path(path).exists():
+            path = ""  # fall back to the bundled seed
+        return load_catalog(path)
+
+    @app.put("/api/demand/catalog")
+    async def demand_catalog_put(request: Request):
+        from ..demand.catalog import load_catalog, match_lead, save_catalog
+
+        body = await request.json()
+        capabilities = body.get("capabilities")
+        if not isinstance(capabilities, list) or not capabilities:
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_catalog", "message": "capabilities 必须是非空列表"}
+            )
+        if not str(body.get("version") or "").strip():
+            raise HTTPException(status_code=400, detail={"code": "invalid_catalog", "message": "version 必填"})
+        old_version = ""
+        try:
+            old_version = str(
+                load_catalog(_demand_catalog_file() if Path(_demand_catalog_file()).exists() else "").get("version", "")
+            )
+        except Exception:
+            pass
+        version = str(body["version"]).strip()
+        if version == old_version:
+            # issue #595: every save must move the version — auto-bump on repeat
+            parts = version.rsplit(".", 1)
+            version = f"{parts[0]}.{int(parts[1]) + 1}" if len(parts) == 2 and parts[1].isdigit() else f"{version}.1"
+        data = {**body, "version": version}
+        save_catalog(data, _demand_catalog_file())
+        # re-score parked leads against the new version
+        threshold = float(body.get("threshold", 3.0))
+        re_scored = 0
+        async with _demand_store() as store:
+            for lead in await store.list_leads(status="parked", limit=500):
+                result = match_lead(lead, data, threshold=threshold)
+                await store.update_lead(
+                    lead["id"],
+                    {
+                        "matched_capabilities": result["matched_capabilities"],
+                        "match_score": result["match_score"],
+                        "match_reason": result["match_reason"],
+                        "catalog_version": result["catalog_version"],
+                        "status": "parked" if result["parked"] else "matched",
+                    },
+                )
+                re_scored += 1
+        logger.info(f"[demand] catalog updated v{old_version} -> v{version}, parked re-scored={re_scored}")
+        return {"version": version, "previous_version": old_version, "parked_re_scored": re_scored}
+
+    @app.get("/api/demand/settings")
+    async def demand_settings_get():
+        from ..demand.settings import read_settings
+
+        data = read_settings()
+        async with _demand_store() as store:
+            data["cursor"] = await store.get_cursor(f"uid:{data['folder'] or 'INBOX'}")
+        return data  # password never included — presence flag only
+
+    @app.put("/api/demand/settings")
+    async def demand_settings_put(request: Request):
+        from ..demand.settings import write_settings
+
+        body = await request.json()
+        port = body.get("port")
+        try:
+            port = int(port) if port else 0
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_port", "message": "port 必须是整数"}
+            ) from None
+        path = write_settings(
+            host=str(body.get("host") or ""),
+            port=port,
+            user=str(body.get("user") or ""),
+            password=str(body.get("password") or ""),  # empty = keep stored; never logged
+            folder=str(body.get("folder") or ""),
+        )
+        logger.info(f"[demand] settings updated: {path}")
+        return {"saved": True, "env_path": str(path)}
+
+    @app.post("/api/demand/settings/test")
+    async def demand_settings_test():
+        from ..demand.settings import load_env_file, test_imap
+
+        load_env_file()
+        return await test_imap()
 
     # ── P2 W12/W13 空间协作面 — space 域子应用挂载 (含 SSE / WS / artifacts) ──
     app.mount("/api/space", space_api)

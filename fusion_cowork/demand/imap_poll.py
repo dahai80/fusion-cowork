@@ -35,6 +35,14 @@ class ImapConfig:
 
     @classmethod
     def from_env(cls) -> ImapConfig:
+        # issue #595: operator env file (~/.fusion-cowork/demand_imap.env) is
+        # loaded first; process env vars keep priority (setdefault semantics)
+        try:
+            from .settings import load_env_file
+
+            load_env_file()
+        except Exception:
+            pass
         return cls(
             host=os.environ.get("FUSION_QQ_IMAP_HOST", DEFAULT_HOST),
             port=int(os.environ.get("FUSION_QQ_IMAP_PORT", str(DEFAULT_PORT))),
