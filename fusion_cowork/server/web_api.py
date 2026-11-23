@@ -786,14 +786,20 @@ class RunRegistry:
             setter = getattr(self._engine, "set_run_hitl_pause", None)
             if callable(setter):
                 setter(run_id, bool(hitl_pause))
+        # issue #594: admission-time reservation — the slot is taken here,
+        # synchronously, so a same-key run can never be admitted as running
+        # while an earlier same-key run is pending its _execute
+        gate_key = str(concurrency_key or "default")
+        gate_reserved = bool(self._gate.enabled and self._gate.try_reserve(gate_key))
         record: Dict[str, Any] = {
             "run_id": run_id,
             "workflow_id": workflow_id,
             "workflow_name": workflow_name or wf.name or workflow_id,
             # issue #461: 闸门饱和时以 queued 起跑, _execute 拿到槽位才翻 running
-            "status": "queued"
-            if (self._gate.enabled and self._gate.saturated(str(concurrency_key or "default")))
-            else "running",
+            "status": "queued" if (self._gate.enabled and not gate_reserved) else "running",
+            # issue #594: reservation flag — _execute skips re-acquire when held
+            "gate_reserved": gate_reserved,
+            "gate_key": gate_key,
             "created_at": time.time(),
             "started_at": time.time(),
             "finished_at": None,
@@ -854,16 +860,19 @@ class RunRegistry:
 
         set_current_identity_token(identity_token)
         # issue #461: 跨 run 并发闸门 — 排队等待时 run 记录标 queued, 拿到槽位翻 running
-        gate_key = str(record.get("concurrency_key") or "default")
+        gate_key = str(record.get("concurrency_key") or record.get("gate_key") or "default")
         gate_acquired = False
         if self._gate.enabled:
-            if self._gate.saturated(gate_key):
+            if record.get("gate_reserved"):
+                # issue #594: slot already reserved at admission — no re-acquire
+                gate_acquired = True
+            else:
                 record["status"] = "queued"
                 record["queued_at"] = time.time()
                 self._persist(run_id)
                 logger.info(f"[{run_id}] run 排队等待并发闸 key={gate_key}")
-            await self._gate.acquire(gate_key)
-            gate_acquired = True
+                await self._gate.acquire(gate_key)
+                gate_acquired = True
             record["status"] = "running"
             record["started_at"] = time.time()
             self._persist(run_id)
