@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.142
+version: 0.5.143
 updated: 2026-11-23
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,15 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.143 (issue #595 — demand engine web API: leads / metrics / catalog / settings)
+
+- **#595 (PR #600)**: `/api/demand/*` surface in `web_api.py` (user-key territory, zero LLM calls — models stay behind gateway :11432; mail content echoed only as `LeadStore` persists it):
+  - **Leads**: `GET /api/demand/leads?status=&limit=` (newest first, limit clamped 1..500), `GET /api/demand/leads/{id}` (full record incl. drafts + draft_meta, 404 unknown), `POST /api/demand/leads/{id}/approve` (`{pick: "a"|"b", text?}` — 409 unless `drafted`, 400 bad pick; edited text stored as `draft_final` + `draft_edit_distance` = 1 − difflib ratio vs picked draft), `POST /api/demand/leads/{id}/discard` (optional reason).
+  - **Metrics**: `GET /api/demand/metrics` — `LeadStore.metrics()` proxy.
+  - **Catalog**: `GET /api/demand/catalog` (runtime file, seed fallback) / `PUT` — validates version + non-empty capabilities, same-version saves auto-bump (`2` → `2.1`), atomic write to the runtime path (never the in-repo seed), re-runs `match_lead` for all parked leads and stamps the new `catalog_version`, returns `{version, previous_version, parked_re_scored}`.
+  - **Settings** (QQ IMAP): `GET` (host/port/user/folder, `password_present` flag only, env path, last test result, UID cursor) / `PUT` (password write-only, empty keeps stored; env file written 0600) / `POST /api/demand/settings/test` (read-only EXAMINE connect → ok/latency_ms/cursor, never logs secrets).
+  - Support: `demand/store.py` `draft_final` + `discard_reason` columns (schema + `_migrate`); new `demand/settings.py` env-file layer (`~/.fusion-cowork/demand_imap.env`, `FUSION_COWORK_DEMAND_IMAP_ENV` override, process env keeps priority — `ImapConfig.from_env` loads the file); `demand/catalog.py` `runtime_catalog_path()` + atomic `save_catalog()`; `create_web_app` seams `demand_db_path` / `demand_catalog_path`. Tests `tests/test_issue_595_demand_api.py` (14 cases); full suite 3413 tests, 0 failures.
 
 ## v0.5.142 (issue #594 — RunGate admission-time reservation closes same-key race)
 
