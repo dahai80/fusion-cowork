@@ -16,12 +16,13 @@ from fusion_cowork.engine.node import BaseNode, NodeCategory, NodeResult, NodeSt
 logger = logging.getLogger(__name__)
 
 
-def _pick_chat_model(client: Any) -> str:
+def _pick_chat_model(models: Any) -> str:
     # shared picker filters embedding/draft engine types; empty on failure
+    # (models = list from client.list_models(), not the client itself)
     try:
         from fusion_cowork.ai.nl_parser import _pick_chat_model
 
-        return _pick_chat_model(client) or ""
+        return _pick_chat_model(models) or ""
     except Exception:
         return ""
 
@@ -144,7 +145,7 @@ class NormalizeLeadNode(BaseNode):
                 from fusion_cowork.ai.mlx_client import FusionMLXClient
 
                 client = FusionMLXClient()
-                model = _pick_chat_model(client)
+                model = _pick_chat_model(await client.list_models())
             except Exception as e:
                 logger.warning(f"[normalize_lead] model client unavailable, rule fallback: {e}")
                 client = None
@@ -296,15 +297,15 @@ class DualDraftNode(BaseNode):
         price_by_cap = {c["id"]: int(c.get("price_cny", 0)) for c in catalog.get("capabilities", [])}
         local_client = None
         local_model = str(params.get("local_model", ""))
-        if not local_model:
-            try:
-                from fusion_cowork.ai.mlx_client import FusionMLXClient
+        try:
+            from fusion_cowork.ai.mlx_client import FusionMLXClient
 
-                local_client = FusionMLXClient()
-                local_model = _pick_chat_model(local_client)
-            except Exception as e:
-                logger.warning(f"[dual_draft] local client unavailable: {e}")
-                local_client = None
+            local_client = FusionMLXClient()
+            if not local_model:
+                local_model = _pick_chat_model(await local_client.list_models())
+        except Exception as e:
+            logger.warning(f"[dual_draft] local client unavailable: {e}")
+            local_client = None
         cloud = CloudGLMClient()
         store = _open_store(params.get("db_path", ""))
         await store.connect()

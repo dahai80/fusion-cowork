@@ -70,13 +70,14 @@ def build_brief(lead: Dict[str, Any], price_cny: int, portfolio: List[str]) -> s
 
 class CloudGLMClient:
     """Minimal OpenAI-compatible chat client for the cloud model (GLM-5).
-    Key from env only; never logged, never serialized into payloads."""
+    All LLM traffic — local and cloud — routes through fusion-gateway (ruling
+    2026-11-23): default endpoint is the gateway, auth is FUSION_CLIENT_KEY,
+    and the glm-5 upstream lives in the gateway's own provider config. Key from
+    env only; never logged, never serialized into payloads."""
 
     def __init__(self, base_url: str = "", api_key: str = "", model: str = ""):
-        self.base_url = (
-            base_url or os.environ.get("FUSION_GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
-        ).rstrip("/")
-        self.api_key = api_key or os.environ.get("FUSION_GLM_API_KEY", "")
+        self.base_url = (base_url or os.environ.get("FUSION_GLM_BASE_URL", "http://127.0.0.1:11432/v1")).rstrip("/")
+        self.api_key = api_key or os.environ.get("FUSION_GLM_API_KEY", "") or os.environ.get("FUSION_CLIENT_KEY", "")
         self.model = model or os.environ.get("FUSION_GLM_MODEL", "glm-5")
         self._client = httpx.AsyncClient(timeout=120)
 
