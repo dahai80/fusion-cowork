@@ -3,6 +3,8 @@
 
 import json
 
+import pytest
+
 from fusion_cowork.demand.normalize import _validate_lead, classify_rules, normalize_lead
 from fusion_cowork.demand.store import LeadStore
 from fusion_cowork.engine.node import NodeConfig, NodeStatus
@@ -19,11 +21,28 @@ class FakeModel:
         self.content = content
         self.calls = 0
 
+    async def list_models(self):
+        return [{"id": "chat-x"}]
+
     async def chat(self, model, messages, **kw):
         self.calls += 1
         if self.content == "__raise__":
             raise RuntimeError("model down")
         return FakeResp(self.content)
+
+
+class NoLiveModel:
+    # blocks the node from reaching a live fusion-mlx in unit tests — a running
+    # local server must not change rule-fallback test outcomes
+    def __init__(self):
+        raise RuntimeError("no live model in unit tests")
+
+
+@pytest.fixture
+def no_live_model(monkeypatch):
+    import fusion_cowork.ai.mlx_client as mlx_mod
+
+    monkeypatch.setattr(mlx_mod, "FusionMLXClient", NoLiveModel)
 
 
 UPWORK_GOLDEN = {
@@ -129,7 +148,7 @@ async def _seed(store, records):
     await store.close()
 
 
-async def test_node_normalizes_and_marks_spam(tmp_path):
+async def test_node_normalizes_and_marks_spam(tmp_path, no_live_model):
     db = str(tmp_path / "demand.db")
     await _seed(LeadStore(db), [UPWORK_GOLDEN, FIVERR_GOLDEN, SPAM_GOLDEN])
     node = NormalizeLeadNode("n1", NodeConfig(params={"db_path": db}))
@@ -182,7 +201,7 @@ async def test_node_uses_model_client(tmp_path, monkeypatch):
     assert leads[0]["external_id"] == "MM11"
 
 
-async def test_node_record_error_counted(tmp_path, monkeypatch):
+async def test_node_record_error_counted(tmp_path, monkeypatch, no_live_model):
     db = str(tmp_path / "demand.db")
     await _seed(LeadStore(db), [UPWORK_GOLDEN])
     import fusion_cowork.demand.normalize as nm

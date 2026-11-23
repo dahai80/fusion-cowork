@@ -29,6 +29,9 @@ class FakeModel:
         self.fail = fail
         self.prompts = []
 
+    async def list_models(self):
+        return [{"id": "chat-local"}]
+
     async def chat(self, model, messages, **kw):
         prompt = messages[-1]["content"]
         self.prompts.append(prompt)
