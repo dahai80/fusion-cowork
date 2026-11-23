@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -151,6 +152,26 @@ def _validate_lead(obj: Dict[str, Any], record: Dict[str, Any]) -> Optional[Dict
     }
 
 
+def _auto_external_id(record: Dict[str, Any]) -> str:
+    # issue #592: deterministic per-message fallback id — distinct mails never
+    # collide on (source, external_id) even when the model returns "" for all.
+    basis = (
+        record.get("message_id")
+        or f"{record.get('subject', '')}|{record.get('from_addr', '')}|{record.get('body_text', '')[:200]}"
+    )
+    digest = hashlib.sha256(str(basis).encode("utf-8", "ignore")).hexdigest()[:12]
+    return f"auto-{digest}"
+
+
+def _finalize_lead(lead: Dict[str, Any], record: Dict[str, Any], extraction: str) -> Dict[str, Any]:
+    # issue #592: empty external_id -> deterministic fallback; record which
+    # path produced the lead (model vs rule fallback).
+    if not lead.get("external_id"):
+        lead["external_id"] = _auto_external_id(record)
+    lead["extraction"] = extraction
+    return lead
+
+
 async def normalize_lead(
     record: Dict[str, Any],
     client: Any = None,
@@ -160,11 +181,15 @@ async def normalize_lead(
     fallback = classify_rules(record.get("subject", ""), record.get("from_addr", ""), record.get("body_text", ""))
     if client is None:
         logger.info(f"normalize rule-fallback (no model client): {record.get('message_id', '')[:40]}")
-        return {
-            **fallback,
-            "message_id": record.get("message_id", ""),
-            "status": "spam" if fallback["source"] == "spam" else "normalized",
-        }
+        return _finalize_lead(
+            {
+                **fallback,
+                "message_id": record.get("message_id", ""),
+                "status": "spam" if fallback["source"] == "spam" else "normalized",
+            },
+            record,
+            "rules",
+        )
     mail_block = (
         f"Subject: {record.get('subject', '')}\n"
         f"From: {record.get('from_addr', '')}\n"
@@ -179,12 +204,16 @@ async def normalize_lead(
         if lead is None:
             raise ValueError("model output failed schema validation")
         logger.info(f"normalize model ok: {lead['source']} / {lead['title'][:50]}")
-        return lead
+        return _finalize_lead(lead, record, "model")
     except Exception as e:
         logger.warning(f"normalize model failed, rule fallback: {type(e).__name__}: {e}")
-        return {
-            **fallback,
-            "message_id": record.get("message_id", ""),
-            "arrived_at": float(record.get("arrived_at", 0)) or time.time(),
-            "status": "spam" if fallback["source"] == "spam" else "normalized",
-        }
+        return _finalize_lead(
+            {
+                **fallback,
+                "message_id": record.get("message_id", ""),
+                "arrived_at": float(record.get("arrived_at", 0)) or time.time(),
+                "status": "spam" if fallback["source"] == "spam" else "normalized",
+            },
+            record,
+            "rules",
+        )

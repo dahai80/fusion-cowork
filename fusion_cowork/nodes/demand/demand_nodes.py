@@ -112,7 +112,10 @@ class NormalizeLeadNode(BaseNode):
     # issue #586: raw mail -> unified Lead. Classification/extraction via the
     # local model (fixed prompt + JSON validation), deterministic rule
     # fallback when the model is unreachable — node never fails on model-down.
-    # Spam leads are marked, never deleted.
+    # Spam leads are marked, never deleted. issue #592: empty external_id gets
+    # a deterministic per-message fallback; (source, external_id) collisions
+    # merge into the existing lead and file a duplicate marker instead of
+    # wedging the raw mail in a permanent error loop.
     name = "normalize_lead"
     display_name = "线索归一化"
     category = NodeCategory.IO
@@ -155,22 +158,41 @@ class NormalizeLeadNode(BaseNode):
             records = await store.list_unnormalized(limit=int(params.get("limit", 20)))
             normalized = 0
             spam = 0
+            merged = 0
             errors = 0
+            by_extraction = {"model": 0, "rules": 0}
             for record in records:
                 try:
                     lead = await normalize_lead(record, client=client, model=model)
-                    await store.insert_lead(lead)
-                    normalized += 1
-                    if lead["status"] == "spam":
-                        spam += 1
+                    # issue #592: collision merges into the existing lead and
+                    # files a duplicate marker — raw never re-processes
+                    result = await store.insert_or_merge_lead(lead)
+                    path = lead.get("extraction", "rules")
+                    by_extraction[path] = by_extraction.get(path, 0) + 1
+                    if result.get("merged"):
+                        merged += 1
+                    else:
+                        normalized += 1
+                        if lead["status"] == "spam":
+                            spam += 1
                 except Exception as e:
                     errors += 1
                     logger.error(f"[normalize_lead] record failed: {e}")
-            logger.info(f"[normalize_lead] normalized={normalized} spam={spam} errors={errors}")
+            logger.info(
+                f"[normalize_lead] normalized={normalized} spam={spam} merged={merged} errors={errors} "
+                f"by_extraction={by_extraction}"
+            )
             return NodeResult(
                 status=NodeStatus.SUCCESS,
-                data={"normalized": normalized, "spam": spam, "errors": errors, "model_used": bool(model)},
-                summary=f"normalized {normalized} leads (spam {spam}, errors {errors})",
+                data={
+                    "normalized": normalized,
+                    "spam": spam,
+                    "merged": merged,
+                    "errors": errors,
+                    "model_used": bool(model),
+                    "by_extraction": by_extraction,
+                },
+                summary=f"normalized {normalized} leads (spam {spam}, merged {merged}, errors {errors})",
             )
         finally:
             await store.close()
