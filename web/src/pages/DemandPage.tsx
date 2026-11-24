@@ -539,10 +539,33 @@ function SettingsPane({ t }: { t: (zh: string, en: string) => string }) {
 }
 
 function PipelinePane({ t }: { t: (zh: string, en: string) => string }) {
+    // issue #608: the seeded demand-mail-rail task is operator-actionable here —
+    // next-run time, pause/resume, run-now, plus last N run results.
     const tasks = useAutoRetry(() => api.schedulerTasks(), []);
     const runs = useAutoRetry(() => api.runs(), []);
+    const [busy, setBusy] = useState(false);
+    const [notice, setNotice] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
     const demandTasks = (tasks.data?.tasks ?? []).filter((task) => /demand/i.test(task.workflow_id));
     const demandRuns = (runs.data?.runs ?? []).filter((run) => /demand/i.test(run.workflow_name));
+
+    const act = async (fn: () => Promise<unknown>, ok: string) => {
+        setBusy(true);
+        setNotice(null);
+        setError(null);
+        try {
+            await fn();
+            setNotice(ok);
+            tasks.manualRetry();
+            runs.manualRetry();
+        } catch (err) {
+            setError(err instanceof Error ? err.message : String(err));
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const fmtTime = (ts: number | null) => (ts ? new Date(ts * 1000).toLocaleString() : t('—', '—'));
 
     return (
         <div className="space-y-3 text-xs">
@@ -555,35 +578,84 @@ function PipelinePane({ t }: { t: (zh: string, en: string) => string }) {
                 ) : demandTasks.length === 0 ? (
                     <EmptyState
                         title={t(
-                            '未注册 demand 调度任务 — 在调度页创建',
-                            'No demand scheduler task — create one on the Schedule page'
+                            '未注册 demand 调度任务 — 重启 serve 自动播种',
+                            'No demand scheduler task — seeded automatically on serve restart'
                         )}
                     />
                 ) : (
-                    <div className="space-y-1">
+                    <div className="space-y-2">
                         {demandTasks.map((task) => (
-                            <div key={task.id} className="flex items-center gap-2 text-text-secondary">
-                                <span className="font-mono text-text-primary">{task.workflow_id}</span>
-                                <span className="truncate">{task.name}</span>
-                                {task.trigger_config?.cron ? <Chip label={String(task.trigger_config.cron)} /> : null}
-                                <Chip
-                                    label={task.status}
-                                    className={
-                                        task.status === 'running' || task.status === 'active'
-                                            ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                                            : ''
-                                    }
-                                />
+                            <div key={task.id} className="rounded-lg border border-border/60 p-2">
+                                <div className="flex flex-wrap items-center gap-2 text-text-secondary">
+                                    <span className="font-mono text-text-primary">{task.workflow_id}</span>
+                                    <span className="truncate">{task.name}</span>
+                                    {task.trigger_config?.cron ? (
+                                        <Chip label={String(task.trigger_config.cron)} />
+                                    ) : null}
+                                    <Chip
+                                        label={task.status}
+                                        className={
+                                            task.status === 'running' || task.status === 'active'
+                                                ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                                                : ''
+                                        }
+                                    />
+                                </div>
+                                <div className="mt-1 flex flex-wrap items-center gap-3 text-text-muted">
+                                    <span>
+                                        {t('下次运行', 'Next run')}: {fmtTime(task.next_run)}
+                                    </span>
+                                    <span>
+                                        {t('上次运行', 'Last run')}: {fmtTime(task.last_run)}
+                                    </span>
+                                    <span>
+                                        {t('次数', 'runs')} {task.run_count} · {t('失败', 'fail')} {task.fail_count}
+                                    </span>
+                                </div>
+                                <div className="mt-2 flex gap-2">
+                                    <button
+                                        type="button"
+                                        disabled={busy}
+                                        className="rounded-lg border border-border px-2 py-1 text-text-secondary hover:bg-bg-muted disabled:opacity-50"
+                                        onClick={() =>
+                                            void act(
+                                                () => api.runNowSchedulerTask(task.id),
+                                                t('已触发运行', 'Run triggered')
+                                            )
+                                        }
+                                    >
+                                        {t('立即运行', 'Run now')}
+                                    </button>
+                                    {task.status === 'paused' || task.status === 'failed' ? (
+                                        <button
+                                            type="button"
+                                            disabled={busy}
+                                            className="rounded-lg border border-border px-2 py-1 text-text-secondary hover:bg-bg-muted disabled:opacity-50"
+                                            onClick={() =>
+                                                void act(() => api.resumeSchedulerTask(task.id), t('已恢复', 'Resumed'))
+                                            }
+                                        >
+                                            {t('恢复', 'Resume')}
+                                        </button>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            disabled={busy}
+                                            className="rounded-lg border border-border px-2 py-1 text-text-secondary hover:bg-bg-muted disabled:opacity-50"
+                                            onClick={() =>
+                                                void act(() => api.pauseSchedulerTask(task.id), t('已暂停', 'Paused'))
+                                            }
+                                        >
+                                            {t('暂停', 'Pause')}
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                         ))}
                     </div>
                 )}
-                <div className="mt-2 text-text-muted">
-                    {t(
-                        '编辑 / 立即运行 / 暂停恢复在调度页操作',
-                        'Edit / run-now / pause-resume live on the Schedule page'
-                    )}
-                </div>
+                {notice ? <div className="mt-2 text-emerald-600 dark:text-emerald-400">{notice}</div> : null}
+                {error ? <div className="mt-2 text-red-600 dark:text-red-400">{error}</div> : null}
             </div>
             <div className="rounded-xl border border-border p-3">
                 <div className="mb-2 text-sm font-medium text-text-primary">{t('最近运行', 'Recent runs')}</div>

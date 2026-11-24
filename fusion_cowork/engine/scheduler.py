@@ -334,6 +334,19 @@ class TaskScheduler:
         """获取任务信息。"""
         return self._tasks.get(task_id)
 
+    async def run_task_now(self, task_id: str) -> bool:
+        # issue #608: operator run-now — execute the task's workflow immediately
+        # with the same bookkeeping as a cron fire (_run_task bumps run_count/
+        # last_run and applies the fail threshold). Paused/failed tasks refuse
+        # explicitly so the GUI can surface 409 instead of a silent skip.
+        task = self._tasks.get(task_id)
+        if not task:
+            return False
+        if task.status != TaskStatus.ACTIVE:
+            raise ValueError(f"task not active: {task.status.value}")
+        await self._run_task(task_id)
+        return True
+
     def list_tasks(
         self,
         status: Optional[TaskStatus] = None,
