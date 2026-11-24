@@ -229,13 +229,34 @@ class OrderStore:
         await self.audit(order_no, "invite_created", {"ttl_hours": ttl_hours})
         return token  # plaintext returned exactly once — never stored
 
+    async def peek_invite(self, token: str) -> Optional[Dict[str, Any]]:
+        # issue #609: resolve a token to its invited order without consuming.
+        # Hash lookup only — the plaintext token never touches storage or logs.
+        row_hash = _hash_token(token)
+        async with self.db().execute(
+            "SELECT t.order_no, t.expires_at, t.created_at, t.used_at, o.title, o.stage, o.repo "
+            "FROM invite_tokens t JOIN orders o ON o.order_no = t.order_no WHERE t.token_hash=?",
+            (row_hash,),
+        ) as cur:
+            row = await cur.fetchone()
+        return dict(row) if row else None
+
     async def consume_invite(self, token: str) -> Optional[str]:
         row_hash = _hash_token(token)
         async with self.db().execute("SELECT * FROM invite_tokens WHERE token_hash=?", (row_hash,)) as cur:
             row = await cur.fetchone()
         if row is None or row["used_at"] or row["expires_at"] < time.time():
             return None
-        await self.db().execute("UPDATE invite_tokens SET used_at=? WHERE token_hash=?", (time.time(), row_hash))
+        # issue #609: single conditional UPDATE — atomic even under concurrent
+        # double-consume; rowcount 0 means another consumer won the race
+        # (schema keeps used_at NOT NULL DEFAULT 0, so unconsumed is 0, not NULL)
+        cur2 = await self.db().execute(
+            "UPDATE invite_tokens SET used_at=? WHERE token_hash=? AND used_at=0",
+            (time.time(), row_hash),
+        )
+        if cur2.rowcount == 0:
+            await self.db().rollback()
+            return None
         await self.db().commit()
         await self.audit(row["order_no"], "invite_consumed", {})
         return row["order_no"]
