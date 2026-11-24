@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.144
+version: 0.5.145
 updated: 2026-11-24
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,15 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.145 (issue #605 — demand direct-ingest endpoint for fusion-site)
+
+- **#605 (PR #606)**: `POST /api/demand/leads` — the direct-ingest channel from the #595 closing contract, unblocking fusion-site#141 (E1: intake form produces a `direct` lead visible in the cowork demand inbox):
+  - Body `{source: "direct", external_id, title, description, budget_hint?, skills?, client_meta?}`; `external_id` is the intake flow_id. Dedup on the existing `idx_leads_external(source, external_id)` unique index — duplicate POST returns the existing lead with **200** (`duplicate: true`, stored row never mutated), new lead **201** with `{lead_id, status, matched_capabilities, match_score}`.
+  - Same normalize + match stage as mailbox leads: rule spam markers from `classify_rules` (spam filtering stays in the normalize stage), then `match_lead` against the versioned catalog — status `matched`/`parked`/`spam` with `matched_capabilities` + `match_score` stored and echoed. Zero LLM calls in the web plane (`extraction="rules"`), consistent with #595.
+  - No network in the request path + catalog seed fallback (same as `GET /api/demand/catalog`) → the fire-and-forget fusion-site caller can never hang.
+  - Validations 400: `source != "direct"`, missing `external_id`, empty `title`/`description`; `skills`/`client_meta` sanitized to store limits.
+  - Tests `tests/test_issue_605_direct_ingest.py` (6 cases: 201 matched + inbox visibility, 200 dedup without mutation, 400 validation matrix, spam marked not matched, skills/meta persisted, auth required); full suite 3431 tests, 0 failures.
 
 ## v0.5.144 (issues #596/#597 — demand operator GUI + factory delivery rail)
 
