@@ -1789,6 +1789,7 @@ def create_web_app(
     templates_dir: Optional[Path] = None,
     demand_db_path: Optional[str] = None,
     demand_catalog_path: Optional[str] = None,
+    delivery_db_path: Optional[str] = None,
 ):
     try:
         from fastapi import FastAPI, HTTPException, Request, WebSocket
@@ -5868,6 +5869,56 @@ def create_web_app(
 
         load_env_file()
         return await test_imap()
+
+    # ── issue #597: delivery rail — orders (S0-S7 state machine, human gates) ──
+    # Read surface for the pipeline view + the ONLY path that advances an
+    # order out of a human gate. The system drafts; the human approves here.
+
+    from contextlib import asynccontextmanager as _alcm
+
+    @_alcm
+    async def _delivery_store():
+        from ..delivery.store import OrderStore
+        from ..delivery.store import default_db_path as delivery_default_db
+
+        store = OrderStore(delivery_db_path or delivery_default_db())
+        await store.connect()
+        try:
+            yield store
+        finally:
+            await store.close()
+
+    @app.get("/api/delivery/orders")
+    async def delivery_orders(stage: str = "", limit: int = 100):
+        async with _delivery_store() as store:
+            orders = await store.list_orders(stage=stage.strip(), limit=max(1, min(int(limit), 200)))
+        return {"orders": orders, "count": len(orders)}
+
+    @app.get("/api/delivery/orders/{order_no}")
+    async def delivery_order_detail(order_no: str):
+        async with _delivery_store() as store:
+            order = await store.get_order(order_no)
+            if order is None:
+                raise HTTPException(
+                    status_code=404, detail={"code": "not_found", "message": f"order 不存在: {order_no}"}
+                )
+            verified = await store.audit_verify()
+        order["audit_chain_ok"] = verified
+        return order
+
+    @app.post("/api/delivery/orders/{order_no}/approve")
+    async def delivery_order_approve(order_no: str):
+        # human gate advance — machine stages never skip; approve moves the
+        # order to the next stage in the S0-S7 ladder
+        async with _delivery_store() as store:
+            order = await store.get_order(order_no)
+            if order is None:
+                raise HTTPException(
+                    status_code=404, detail={"code": "not_found", "message": f"order 不存在: {order_no}"}
+                )
+            updated = await store.advance_stage(order_no)
+        logger.info(f"[delivery] order {order_no} approved: {order['stage']} -> {updated['stage']}")
+        return updated
 
     # ── P2 W12/W13 空间协作面 — space 域子应用挂载 (含 SSE / WS / artifacts) ──
     app.mount("/api/space", space_api)
