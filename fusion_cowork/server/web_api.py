@@ -5719,6 +5719,121 @@ def create_web_app(
             leads = await store.list_leads(status=status.strip(), limit=max(1, min(int(limit), 500)))
         return {"leads": leads, "count": len(leads)}
 
+    @app.post("/api/demand/leads", status_code=201)
+    async def demand_lead_ingest(request: Request):
+        # issue #605: direct-ingest channel (fusion-site#141 E1) — structured
+        # intake form payloads, source="direct". Dedup on the existing
+        # idx_leads_external unique index: duplicate POST returns the existing
+        # lead with 200. Same spam filter + match stage as mailbox leads, but
+        # zero LLM calls here (rule spam markers only, model stays behind the
+        # gateway plane). The commerce path on fusion-site is fire-and-forget,
+        # so this endpoint must never hang: no network, local DB only.
+        import time as _time
+
+        from ..demand.catalog import load_catalog, match_lead
+        from ..demand.normalize import classify_rules
+
+        body = await request.json()
+        source = str(body.get("source") or "").strip().lower()
+        external_id = str(body.get("external_id") or "").strip()[:64]
+        title = str(body.get("title") or "").strip()[:120]
+        description = str(body.get("description") or "").strip()[:4000]
+        if source != "direct":
+            raise HTTPException(status_code=400, detail={"code": "invalid_source", "message": "source 必须是 direct"})
+        if not external_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_external_id", "message": "external_id 必填"})
+        if not title or not description:
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_body", "message": "title 与 description 必填"}
+            )
+        skills_raw = body.get("skills") or []
+        skills = (
+            [str(s).lower().strip()[:40] for s in skills_raw if str(s).strip()][:8]
+            if isinstance(skills_raw, list)
+            else []
+        )
+        client_meta_raw = body.get("client_meta") or {}
+        client_meta = (
+            {str(k)[:40]: str(v)[:200] for k, v in list(client_meta_raw.items())[:10]}
+            if isinstance(client_meta_raw, dict)
+            else {}
+        )
+        budget_hint = str(body.get("budget_hint") or "").strip()[:80]
+        async with _demand_store() as store:
+            async with store.db.execute(
+                "SELECT * FROM leads WHERE source=? AND external_id=? AND external_id != '' ORDER BY id LIMIT 1",
+                ("direct", external_id),
+            ) as cur:
+                row = await cur.fetchone()
+            if row is not None:
+                from fastapi.responses import JSONResponse
+
+                existing = store._lead_dict(row)
+                logger.info(f"[demand] direct ingest dedup hit: external_id={external_id} -> lead #{existing['id']}")
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "lead_id": existing["id"],
+                        "status": existing["status"],
+                        "matched_capabilities": existing.get("matched_capabilities", []),
+                        "match_score": existing.get("match_score", 0),
+                        "duplicate": True,
+                    },
+                )
+            # spam filtering stays in the normalize stage: rule markers on the
+            # description text; the direct channel keeps source="direct"
+            verdict = classify_rules(title, "", description)
+            status = "spam" if verdict.get("source") == "spam" else "normalized"
+            lead_id = await store.insert_lead(
+                {
+                    "message_id": f"direct-{external_id}",
+                    "source": "direct",
+                    "external_id": external_id,
+                    "title": title,
+                    "description": description,
+                    "budget_hint": budget_hint,
+                    "skills": skills,
+                    "client_meta": client_meta,
+                    "arrived_at": _time.time(),
+                    "status": status,
+                    "extraction": "rules",
+                }
+            )
+            response = {
+                "lead_id": lead_id,
+                "status": status,
+                "matched_capabilities": [],
+                "match_score": 0,
+                "duplicate": False,
+            }
+            if status != "spam":
+                try:
+                    catalog = load_catalog(_demand_catalog_file())
+                except (FileNotFoundError, ValueError):
+                    catalog = load_catalog()  # in-repo seed fallback (same as GET /api/demand/catalog)
+                lead = await store.get_lead(lead_id)
+                result = match_lead(lead, catalog)
+                lead_status = "parked" if result["parked"] else "matched"
+                await store.update_lead(
+                    lead_id,
+                    {
+                        "status": lead_status,
+                        "matched_capabilities": result["matched_capabilities"],
+                        "match_score": result["match_score"],
+                        "match_reason": result["match_reason"],
+                        "catalog_version": result["catalog_version"],
+                    },
+                )
+                response.update(
+                    {
+                        "status": lead_status,
+                        "matched_capabilities": result["matched_capabilities"],
+                        "match_score": result["match_score"],
+                    }
+                )
+        logger.info(f"[demand] direct ingested: lead #{lead_id} external_id={external_id} status={response['status']}")
+        return response
+
     @app.get("/api/demand/leads/{lead_id}")
     async def demand_lead_detail(lead_id: int):
         async with _demand_store() as store:
