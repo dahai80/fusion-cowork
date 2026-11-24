@@ -122,6 +122,11 @@
       "route": "/pipeline",
       "title": "交付管线",
       "title_en": "Pipeline"
+    },
+    {
+      "route": "/demand",
+      "title": "需求引擎",
+      "title_en": "Demand"
     }
   ],
   "searchProviders": [

@@ -13,6 +13,7 @@ import { CanvasPage } from './pages/CanvasPage';
 import { CapabilitiesPage } from './pages/CapabilitiesPage';
 import { ClusterPage } from './pages/ClusterPage';
 import { DelegatePage } from './pages/DelegatePage';
+import { DemandPage } from './pages/DemandPage';
 import { ExtensionsPage } from './pages/ExtensionsPage';
 import { GovernancePage } from './pages/GovernancePage';
 import { HomePage } from './pages/HomePage';
@@ -68,6 +69,7 @@ type Route =
     | 'voice'
     | 'governance'
     | 'pipeline'
+    | 'demand'
     | 'm';
 
 const ROUTES: Route[] = [
@@ -128,6 +130,7 @@ function parseHash(): { route: Route; arg: string } {
     if (head === 'voice') return { route: 'voice', arg };
     if (head === 'governance') return { route: 'governance', arg };
     if (head === 'pipeline') return { route: 'pipeline', arg };
+    if (head === 'demand') return { route: 'demand', arg };
     if (head === 'm') return { route: 'm', arg };
     return { route: 'home', arg };
 }
@@ -184,6 +187,8 @@ function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
             return t('治理', 'Governance');
         case 'pipeline':
             return t('交付管线', 'Pipeline');
+        case 'demand':
+            return t('需求引擎', 'Demand');
         case 'capabilities':
             return t('能力市场', 'Capabilities');
         case 'm':
@@ -317,6 +322,8 @@ export function App() {
                     <GovernancePage />
                 ) : route === 'pipeline' ? (
                     <PipelinePage runId={arg} />
+                ) : route === 'demand' ? (
+                    <DemandPage />
                 ) : (
                     <SchedulePage />
                 )}
