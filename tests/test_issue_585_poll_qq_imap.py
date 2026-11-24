@@ -205,6 +205,10 @@ async def test_node_upserts_dedupe_across_cursors(tmp_path, fake_imap, monkeypat
 async def test_node_fails_without_credentials(tmp_path, monkeypatch):
     monkeypatch.delenv("FUSION_QQ_IMAP_USER", raising=False)
     monkeypatch.delenv("FUSION_QQ_IMAP_PASSWORD", raising=False)
+    # issue #595 env file (~/.fusion-cowork/demand_imap.env) re-seeds process
+    # env via setdefault — point it at an empty tmp path so "no credentials"
+    # is deterministic even on operator machines with a real env file
+    monkeypatch.setenv("FUSION_COWORK_DEMAND_IMAP_ENV", str(tmp_path / "absent.env"))
     node = PollQqImapNode("n1", NodeConfig(params={"db_path": str(tmp_path / "d.db")}))
     r = await node.execute({})
     assert r.status == NodeStatus.FAILED

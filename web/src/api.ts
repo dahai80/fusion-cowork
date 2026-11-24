@@ -897,6 +897,10 @@ export const api = {
         post<{ id: string; status: string }>(`/api/scheduler/tasks/${encodeURIComponent(id)}/pause`),
     resumeSchedulerTask: (id: string) =>
         post<{ id: string; status: string }>(`/api/scheduler/tasks/${encodeURIComponent(id)}/resume`),
+    runNowSchedulerTask: (id: string) =>
+        post<{ id: string; triggered: boolean; workflow_id: string; run_count: number }>(
+            `/api/scheduler/tasks/${encodeURIComponent(id)}/run-now`
+        ),
     deleteSchedulerTask: (id: string) => sdk.http.delete(`/api/scheduler/tasks/${encodeURIComponent(id)}`),
     generateWorkflow: (body: { prompt: string; model?: string; context?: Record<string, unknown> }) =>
         post<{ workflow: { name?: string; description?: string; nodes: CanvasNodeDef[]; edges: CanvasEdgeDef[] } }>(

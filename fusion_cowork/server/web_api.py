@@ -82,6 +82,52 @@ def extract_caller_key(headers: Any) -> str:
     return (headers.get("x-api-key") or "").strip()
 
 
+# ── issue #608: demand-mail-rail seed — workflow definition + hourly cron ──
+# Nodes + API shipped in #585-#588/#595; this wires them into the pipeline:
+# the workflow def is seeded idempotently at app build (existing file wins,
+# operator edits survive); the hourly cron task is created on first serve
+# from the startup hook — AFTER scheduler.start() has restored persisted
+# tasks, so the workflow_id check never duplicates across restarts, and a
+# restored task gets its executor re-bound (P1-12 auto-pause lifts).
+_DEMAND_MAIL_RAIL_DEF = {
+    "name": "demand-mail-rail",
+    "description": "Demand mail rail: poll_qq_imap -> normalize_lead -> match (threshold 3.0) -> dual_draft; hourly cron from the demand pipeline tab",
+    "workflow": {
+        "nodes": {
+            "poll": {
+                "id": "poll",
+                "name": "poll_qq_imap",
+                "params": {},
+                "config": {"continue_on_error": True, "label": "IMAP 轮询"},
+            },
+            "normalize": {
+                "id": "normalize",
+                "name": "normalize_lead",
+                "params": {},
+                "config": {"continue_on_error": True, "label": "线索归一化"},
+            },
+            "match": {
+                "id": "match",
+                "name": "match",
+                "params": {"threshold": 3.0},
+                "config": {"label": "能力匹配"},
+            },
+            "draft": {
+                "id": "draft",
+                "name": "dual_draft",
+                "params": {},
+                "config": {"continue_on_error": True, "label": "双模型草稿"},
+            },
+        },
+        "edges": [
+            {"source_id": "poll", "target_id": "normalize"},
+            {"source_id": "normalize", "target_id": "match"},
+            {"source_id": "match", "target_id": "draft"},
+        ],
+    },
+}
+
+
 class WorkflowDefStore:
     def __init__(self, root: Optional[Path] = None):
         self._root = Path(root) if root else Path.home() / ".fusion-cowork" / "web" / "workflows"
@@ -3300,6 +3346,56 @@ def create_web_app(
         if not scheduler.resume_task(task_id):
             raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"})
         return {"id": task_id, "status": "active"}
+
+    @app.post("/api/scheduler/tasks/{task_id}/run-now")
+    async def scheduler_tasks_run_now(task_id: str):
+        # issue #608: operator run-now from the demand pipeline tab — same
+        # executor + bookkeeping as a cron fire; paused tasks 409 (GUI shows
+        # the reason instead of a silent skip)
+        try:
+            triggered = await scheduler.run_task_now(task_id)
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail={"code": "task_not_active", "message": str(e)}) from e
+        if not triggered:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"})
+        t = scheduler.get_task(task_id)
+        return {
+            "id": task_id,
+            "triggered": True,
+            "workflow_id": t.workflow_id if t else "",
+            "run_count": t.run_count if t else 0,
+        }
+
+    # ── issue #608: demand-mail-rail seed — def at app build, cron on startup ──
+    if store.get("demand-mail-rail") is None:
+        store.save("demand-mail-rail", _DEMAND_MAIL_RAIL_DEF)
+        logger.info("[demand-mail-rail] workflow definition seeded")
+
+    @app.on_event("startup")
+    async def _seed_demand_mail_rail_task():
+        try:
+            # cli `web serve` starts the scheduler before uvicorn fires startup
+            # events, so persisted tasks are already restored; a bare TestClient
+            # never calls start() — load once here so the workflow_id check sees
+            # the persisted task either way (re-load is an idempotent overwrite)
+            scheduler.load_tasks()
+            existing = [t for t in scheduler.list_tasks() if t.workflow_id == "demand-mail-rail"]
+            for t in existing:
+                # restart path: restored task has no executor (P1-12) — re-bind
+                # and lift the auto-pause; user pause keeps its own marker
+                scheduler.register_executor(t.id, _make_task_executor("demand-mail-rail"))
+            if not existing:
+                task_id = scheduler.add_cron_task(
+                    "demand-mail-rail-hourly",
+                    "demand-mail-rail",
+                    "0 * * * *",
+                    _make_task_executor("demand-mail-rail"),
+                    description="Demand mail rail: hourly poll -> normalize -> match -> dual draft",
+                    tags=["demand"],
+                )
+                logger.info(f"[demand-mail-rail] hourly cron task created: {task_id}")
+        except Exception as e:
+            logger.warning(f"[demand-mail-rail] task seeding failed (ignored): {e}")
 
     @app.delete("/api/scheduler/tasks/{task_id}")
     async def scheduler_tasks_delete(task_id: str):
