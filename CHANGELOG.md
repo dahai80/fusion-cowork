@@ -7,8 +7,8 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.143
-updated: 2026-11-23
+version: 0.5.144
+updated: 2026-11-24
 owner: "@dahai"
 source_of_truth:
   - CHANGELOG.md
@@ -16,6 +16,21 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.144 (issues #596/#597 — demand operator GUI + factory delivery rail)
+
+- **#596 (PR #602)**: demand operator GUI — new `#/demand` page (`web/src/pages/DemandPage.tsx`) with four tabs wired to the #595 API:
+  - **Inbox**: metrics strip + status filter + lead list; dual-draft review with approve A / approve B / edit / discard, and "human sends on the original channel" hints (system never sends).
+  - **Catalog**: editable `price_cny`/`enabled` per capability, version auto-bump display, save re-scores parked leads server-side.
+  - **Settings**: QQ IMAP config form (authcode write-only, test connection) + read-only model routing card.
+  - **Pipeline**: read-only scheduler task/runs view deep-linking `#/runs/<id>`.
+  - `web/src/api.ts` demand endpoints + types; manifest `pages` entry; `web/tests/demand596.test.ts` (bun test 166 passing).
+
+- **#597 (PR #603)**: factory delivery rail — demand pipeline (won lead) now flows into delivery with a strict human-gate state machine:
+  - **OrderStore** (`fusion_cowork/delivery/store.py`): SQLite, restart-safe, idempotent. ORD-YYYY-NNN orders keyed per lead (one per lead, rerun returns existing). Strict S0-S7 ladder (`created → sow_draft → sow_gate → tad_draft → tad_gate → test_report → acceptance → closed`) — `advance_stage` moves exactly one step; machine nodes write drafts and park on gates; only the web approve route advances out of a gate. Single-use invite tokens (sha256 stored, 72h expiry, plaintext returned once). Issue cache with `sla-24h`/`sla-72h` overdue scan (flagged once). Tamper-evident sha256 audit chain (`audit_verify`) over every gate transition and repo action.
+  - **Nodes** (`fusion_cowork/delivery/nodes.py`, 77 → 82 node classes): `create_order` (won lead → order), `scaffold_repo` (private repo per order via gh CLI — token from env only, never logged; "already exists"/422 tolerated so reruns are idempotent), `draft_sow` (deterministic template fill, no re-draft past the gate), `generate_invite` (token + message draft for the human to send — system never sends), `sync_issues` (hourly issue pull + SLA overdue WARNING, source factory/delivery).
+  - **Web API**: `GET /api/delivery/orders` (stage filter), `GET /api/delivery/orders/{order_no}` (with `audit_chain_ok`), `POST /api/delivery/orders/{order_no}/approve` — the only human gate-advance path; optional `delivery_db_path` seam.
+  - Tests `tests/test_issue_597_delivery_rail.py` (11 cases: state-machine idempotency + no-skip ladder, fake-gh scaffold idempotency + 422 race, GH_TOKEN never in payload/audit, SOW gate parking, invite hash-only/single-use/expiry, SLA one-cycle flag, audit tamper detection). Full suite 3425 tests, 0 failures.
 
 ## v0.5.143 (issue #595 — demand engine web API: leads / metrics / catalog / settings)
 
