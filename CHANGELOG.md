@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.145
+version: 0.5.146
 updated: 2026-11-24
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,16 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.146 (issue #608 — demand-mail-rail scheduled workflow + pipeline run-now)
+
+- **#608 (PR #610)**: the demand mail rail nodes + API (#585-#588/#595) are now wired into a runnable pipeline:
+  - `demand-mail-rail` workflow definition (poll_qq_imap -> normalize_lead -> match threshold 3.0 -> dual_draft) seeded **idempotently at app build** — an existing def file wins, operator edits survive restarts.
+  - Hourly cron task (`0 * * * *`) created on first serve from a FastAPI startup hook that runs after persisted-task restore, keyed on `workflow_id` — restarts never duplicate; a restored task gets its executor re-bound, lifting the P1-12 auto-pause (user-paused tasks stay paused).
+  - `TaskScheduler.run_task_now()` + `POST /api/scheduler/tasks/{id}/run-now` — immediate execution with the same run_count/last_run/fail-threshold bookkeeping as a cron fire; paused/failed → 409, unknown → 404.
+  - DemandPage pipeline tab: next/last run times, run/fail counters, Run now + Pause/Resume per task.
+  - Acceptance: the rail runs end-to-end with zero LLM calls when no new mail (poll fails fast under `continue_on_error`, rest no-ops on empty store). Tests `tests/test_issue_608_demand_mail_rail.py` (7 cases).
+  - Also fixes the pre-existing `test_issue_585` no-credentials case on operator machines where the #595 env file re-seeds process env.
 
 ## v0.5.145 (issue #605 — demand direct-ingest endpoint for fusion-site)
 
