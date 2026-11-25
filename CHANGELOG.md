@@ -7,8 +7,8 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.146
-updated: 2026-11-24
+version: 0.5.147
+updated: 2026-11-25
 owner: "@dahai"
 source_of_truth:
   - CHANGELOG.md
@@ -16,6 +16,16 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.147 (issue #609 — invite token HTTP surface)
+
+- **#609 (PR #611)**: `GenerateInviteNode` (#597) shipped the invite store but no HTTP route could resolve or consume a token — the fusion-site `/invite/[token]` activation page was blocked. New surface:
+  - `GET /api/delivery/invites/{token}` — peek (non-consuming): `{token_status, ttl_hours, expires_at, order{order_no,title,stage,repo}}`; 404 `unknown_token` / `token_unavailable` (used/expired); logs at most a 6-char token prefix.
+  - `POST /api/delivery/invites/{token}/consume` — atomic single-use consume (`consumed:true`), same shape.
+  - `OrderStore.peek_invite(token)` — hash-only lookup joining `invite_tokens` to `orders`; plaintext token never touches storage or logs.
+  - `consume_invite` hardened to a single conditional `UPDATE ... WHERE used_at=0` + rowcount check — closes the concurrent double-consume race (schema stores unconsumed as 0, not NULL).
+  - Service-key scope (#565) extended to `/api/delivery/invites` so the site BFF can drive activation; still 403 on all other surfaces.
+  - Tests: `tests/test_issue_609_invite_surface.py` — 12 cases (peek/consume lifecycle, hashed-at-rest DB check, service-key scope boundaries, log hygiene).
 
 ## v0.5.146 (issue #608 — demand-mail-rail scheduled workflow + pipeline run-now)
 
