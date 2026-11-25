@@ -17,6 +17,7 @@ import re
 import threading
 import time
 import uuid
+from datetime import UTC
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -2220,9 +2221,11 @@ def create_web_app(
                 content={"error": {"code": "unauthorized", "message": "missing or invalid api key"}},
             )
         # issue #565: service credential scope — the storefront bff key may only
-        # drive the run lifecycle endpoints (create/poll/retry); everything else
+        # drive the run lifecycle endpoints (create/poll/retry) plus the invite
+        # token surface (#609, site /invite activation); everything else
         # (workflows CRUD, spaces, approvals, admin) stays user-key territory
-        if key_info.get("key_id") == "service" and not request.url.path.startswith("/api/runs"):
+        _svc_ok = request.url.path.startswith("/api/runs") or request.url.path.startswith("/api/delivery/invites")
+        if key_info.get("key_id") == "service" and not _svc_ok:
             logger.warning(f"web API service key out of scope: {request.url.path}")
             return JSONResponse(
                 status_code=403,
@@ -6130,6 +6133,62 @@ def create_web_app(
             updated = await store.advance_stage(order_no)
         logger.info(f"[delivery] order {order_no} approved: {order['stage']} -> {updated['stage']}")
         return updated
+
+    # ── issue #609: invite token HTTP surface — peek + single-use consume ──
+    # Called by the fusion-site BFF (service key) to resolve /invite/[token].
+    # Token travels in the path but is stored/logged hashed or prefix-only.
+
+    def _invite_log_tag(token: str) -> str:
+        return f"{token[:6]}…" if len(token) > 6 else "…"
+
+    def _invite_payload(invite: Dict[str, Any], consumed: bool = False) -> Dict[str, Any]:
+        ttl_hours = max(0, round((invite["expires_at"] - invite["created_at"]) / 3600))
+        from datetime import datetime
+
+        return {
+            "token_status": "active",
+            "ttl_hours": ttl_hours,
+            "expires_at": datetime.fromtimestamp(invite["expires_at"], tz=UTC).isoformat(),
+            "order": {
+                "order_no": invite["order_no"],
+                "title": invite.get("title", ""),
+                "stage": invite.get("stage", ""),
+                "repo": invite.get("repo", ""),
+            },
+            **({"consumed": True} if consumed else {}),
+        }
+
+    @app.get("/api/delivery/invites/{token}")
+    async def delivery_invite_peek(token: str):
+        async with _delivery_store() as store:
+            invite = await store.peek_invite(token)
+        if invite is None:
+            # unknown token — same 404 shape, no detail leaked
+            raise HTTPException(status_code=404, detail={"code": "unknown_token", "message": "invite token not found"})
+        if invite["used_at"] or invite["expires_at"] < time.time():
+            # known but consumed/expired — indistinguishable from unknown to
+            # the caller's happy path; explicit code kept for the site BFF
+            logger.info(f"[delivery] invite peek unavailable: {_invite_log_tag(token)}")
+            raise HTTPException(
+                status_code=404, detail={"code": "token_unavailable", "message": "invite token not found"}
+            )
+        logger.info(f"[delivery] invite peek ok: {_invite_log_tag(token)} order={invite['order_no']}")
+        return _invite_payload(invite)
+
+    @app.post("/api/delivery/invites/{token}/consume")
+    async def delivery_invite_consume(token: str):
+        async with _delivery_store() as store:
+            order_no = await store.consume_invite(token)
+            if order_no is None:
+                # unknown / expired / already-used all land here — consume is
+                # atomic in the store, so a double-POST fails the second time
+                logger.info(f"[delivery] invite consume rejected: {_invite_log_tag(token)}")
+                raise HTTPException(
+                    status_code=404, detail={"code": "token_unavailable", "message": "invite token not found"}
+                )
+            invite = await store.peek_invite(token)
+        logger.info(f"[delivery] invite consumed: {_invite_log_tag(token)} order={order_no}")
+        return _invite_payload(invite or {"order_no": order_no}, consumed=True)
 
     # ── P2 W12/W13 空间协作面 — space 域子应用挂载 (含 SSE / WS / artifacts) ──
     app.mount("/api/space", space_api)
