@@ -57,7 +57,7 @@ Guarantees:
 ## Status
 
 - [x] Design
-- [ ] Implementation
-- [ ] Tests
-- [ ] ruff + full pytest green
+- [x] Implementation (engine/node.py config + engine/workflow.py one-shot repair hook, seam `repair_client`)
+- [x] Tests (tests/test_repair_step.py, 12 cases: retry-with-params / skip / abort default-off regression / parse+LLM failure fallback / one-shot / config roundtrip)
+- [x] ruff clean, full pytest green (exit 0)
 - [ ] PR opened against main
