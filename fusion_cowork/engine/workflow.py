@@ -1628,6 +1628,16 @@ class WorkflowEngine:
         # issue #422: 数据驱动条件跳过 — config.skip_if 全部命中时本节点记 SKIPPED
         # (不执行不进权限/HITL), verdict 分支路由的基础原语
         skip_desc = _skip_if_hit(node.config.skip_if, passed_data, node_input)
+        # exp/degrade-semantics: degrade_on_skip runs the node on partial inputs
+        # instead of skipping (fusion-horizon v3 flywheel finding); default OFF
+        # preserves issue #422 skip semantics exactly
+        degraded_desc = ""
+        if skip_desc and node.config.degrade_on_skip:
+            degraded_desc = skip_desc
+            skip_desc = ""
+            logger.info(
+                f"[{exec_id}] skip_if hit but degrade_on_skip, running '{node.name}' on partial inputs: {degraded_desc}"
+            )
         if skip_desc:
             logger.info(f"[{exec_id}] skip_if 命中, 跳过节点 '{node.name}': {skip_desc}")
             step = WorkflowStep(
@@ -2243,6 +2253,12 @@ class WorkflowEngine:
                     f"节点 '{node.config.label or node.name}' 异常: {e}",
                 )
 
+        if degraded_desc:
+            # exp/degrade-semantics: tag the degraded execution so runs page and
+            # downstream condition checks can distinguish partial-input runs
+            step.output_data = {**(step.output_data or {}), "_degraded": degraded_desc}
+            step.summary = f"{step.summary or ''} (degraded: {degraded_desc})".strip()
+            logger.info(f"[{exec_id}] node '{node.name}' completed degraded: {degraded_desc}")
         return [step], "continue", ""
 
     def cancel(self, execution_id: str) -> bool:
