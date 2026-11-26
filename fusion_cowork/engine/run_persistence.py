@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import threading
 import time
@@ -60,7 +61,15 @@ _ACTIVE_STATUSES = ("running", "paused")
 class RunStateStore:
     # SQLite 运行状态存储 — 建库/迁移/CRUD; 调用方在 asyncio 单线程内同步调用
     def __init__(self, path: Optional[Path] = None):
-        self._path = Path(path) if path else Path.home() / ".fusion-cowork" / "web" / "run_states.db"
+        # Default path honors FUSION_COWORK_WEB_DIR (same override as
+        # ApprovalJournal) so tests never read a real machine's recovered-run
+        # state; unset = legacy ~/.fusion-cowork/web.
+        if path:
+            self._path = Path(path)
+        else:
+            web_dir = os.environ.get("FUSION_COWORK_WEB_DIR")
+            base = Path(web_dir) if web_dir else Path.home() / ".fusion-cowork" / "web"
+            self._path = base / "run_states.db"
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
