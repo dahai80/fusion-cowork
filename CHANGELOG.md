@@ -7,8 +7,8 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.147
-updated: 2026-11-25
+version: 0.5.148
+updated: 2026-11-26
 owner: "@dahai"
 source_of_truth:
   - CHANGELOG.md
@@ -16,6 +16,17 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.148 (issue #614 — office DAG node family)
+
+- **#614 (PR #615)**: new `office` node subpackage — the cowork executor leg of the Agentic Office plan. 4 nodes (`NodeCategory.FUSION_ECOSYSTEM`, registered in `import_all_nodes()`), each a structured office operation against fusion-office office-api (:11492) or the artifacts-engine version chain:
+  - `office_spreadsheet` — xlsx validity parse via `POST /v1/xlsx/parse`; invalid workbooks fail visibly (422 → FAILED + error outcome).
+  - `office_document` — docx `write` (markdown→docx), `fill` (template + values JSON; `X-Office-Unfilled` leftovers surface in output and map the outcome to `user_edited`), `parse` (docx→blocks).
+  - `office_slides` — pptx `parse` and `write` (markdown or ops format, optional base deck for ops mode).
+  - `office_artifact` — registers produced content into fusion-artifacts-engine over JSON-RPC (`artifact.create` new chain / `artifact.update` appends a version), `X-API-Key` from `FUSION_ARTIFACTS_API_KEY` when set.
+  - Outcome signals (plan §4.1) reported best-effort to office-api `POST /v1/outcomes` with the gateway `rollout_id`: `task_success` / `user_edited` (docx fill leaves unfilled placeholders) / `error`; reporting never fails the node, and no `rollout_id` → no POST.
+  - Chinese aliases: 办公文档/文档生成/文档解析、办公表格/表格解析、办公幻灯片/幻灯片生成、成果入库/工件入库.
+  - Tests `tests/test_issue_614_office_nodes.py` (17 cases): ASGI stub transports cover all ops + signal mapping + registration; live E2E leg (skips when :11492 down) runs a real xlsx→docx→outcome DAG against the rollout sink; artifact live test gated on `FUSION_ARTIFACTS_API_KEY` (local artifacts-engine fail-closed).
 
 ## v0.5.147 (issue #609 — invite token HTTP surface)
 
