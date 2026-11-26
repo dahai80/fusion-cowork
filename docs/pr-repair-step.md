@@ -1,3 +1,19 @@
+---
+doc_id: fusion-cowork/guide/pr-repair-step
+product: fusion-cowork
+class: platform
+entry: service
+doc_type: guide
+title: {zh: "LLM 节点修复步设计", en: "LLM-informed node repair design"}
+audience: engineer
+status: draft
+version: 0.5.148
+updated: 2026-11-26
+owner: "@dahai"
+source_of_truth:
+  - docs/pr-repair-step.md
+---
+
 # PR Design: LLM-informed node repair after retry exhaustion
 
 Branch: `exp/dynamic-orchestration` ｜ Author: AI Software Factory Researcher ｜ Date: 2026-11-26
