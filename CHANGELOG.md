@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.149
+version: 0.5.150
 updated: 2026-11-26
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,10 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.150 (PR #622 — degrade_on_skip graceful degradation)
+
+- **PR #622**: opt-in `NodeConfig.degrade_on_skip` (default OFF, zero behavior change) — when `skip_if` is fully hit because the upstream chain broke (missing outputs), a terminal node with the flag runs anyway on partial inputs instead of skipping itself out of the run. Step tagged `output_data["_degraded"] = <skip_desc>` + summary suffix `(degraded: ...)` so the runs page and downstream condition checks can distinguish partial-input runs. Failed/cancelled/denied paths untouched; permission + HITL gates run normally on the degraded execution (degrade never bypasses approval). Companion to #620; validated in the fusion-horizon long-horizon benchmark (task success 0.375 → 0.875 at ~100 tokens/task). Tests `tests/test_degrade_skip.py` (5 cases).
 
 ## v0.5.149 (#617 web state isolation; #618 node repair; #620 condition distillation)
 
