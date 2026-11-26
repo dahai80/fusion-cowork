@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.148
+version: 0.5.149
 updated: 2026-11-26
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,12 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.149 (#617 web state isolation; #618 node repair; #620 condition distillation)
+
+- **#618 (PR #618)**: opt-in `NodeConfig.on_error_repair` (default OFF, zero behavior change) — when a node fails after exhausting its retry budget, the engine makes one LLM call deciding `retry` (re-execute once with LLM-corrected params, re-entering the permission gate), `skip` (mark step SKIPPED and continue), or `abort` (unchanged failure path). Parse/LLM errors fall back to abort (fail-closed); repair is one-shot; decision logged under `[<run_id>] llm_repair:`. Design doc `docs/pr-repair-step.md`; tests `tests/test_repair_step.py` (12 cases).
+- **#620 (PR #620)**: condition-extraction layer for trajectory-to-workflow distillation (orchestration flywheel stage 3) — `trajectory/cond_distill.py` with `build_evidence` (ordered node executions → JSON-safe evidence packet), `extract_plan` (one restricted-DSL LLM call compiling `{tool, when}` conditions; model fallback arg > `FUSION_MLX_MODEL` > default), `plan_to_workflow` (linear chain, `when` conditions inverted into native `skip_if` with `negate`); `engine/workflow.py::_skip_if_hit` gains `gte`/`lte` numeric comparisons + `negate` flip (conditions without the new keys evaluate exactly as before). Tests `tests/test_cond_distill.py` (12 cases).
+- **#617 (PR #619)**: web state test isolation — `ApprovalJournal` + `RunStateStore` default paths honor `FUSION_COWORK_WEB_DIR` (unset = legacy `~/.fusion-cowork/web`), and a new autouse conftest fixture redirects the web state dir to tmp_path per test. Durable HITL (#463) recovery no longer restores a real machine's stale crashed-run approvals into test clients (observed: 35 leaked approvals). Resolves the audit #617 P2 residual.
 
 ## v0.5.148 (issue #614 — office DAG node family)
 
