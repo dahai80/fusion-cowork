@@ -292,8 +292,16 @@ def _skip_if_hit(conditions: Any, passed_data: Dict[str, Dict[str, Any]], node_i
             ok = val in (cond["in"] or [])
         elif "not_in" in cond:
             ok = val not in (cond["not_in"] or [])
+        elif "gte" in cond:
+            ok = isinstance(val, (int, float)) and val >= cond["gte"]
+        elif "lte" in cond:
+            ok = isinstance(val, (int, float)) and val <= cond["lte"]
         else:
             ok = bool(val)
+        # exp/cond-distill: negate flips the hit — lets skip_if express
+        # "run only when <cond>" (flywheel condition-DSL inversion)
+        if cond.get("negate"):
+            ok = not ok
         if not ok:
             return ""
     return "; ".join(
