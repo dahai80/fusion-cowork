@@ -37,6 +37,7 @@ _NODE_MODULES = (
     "fusion_cowork.nodes.ops.verify_node",
     "fusion_cowork.nodes.ops.deploy_node",
     "fusion_cowork.nodes.demand.demand_nodes",
+    "fusion_cowork.nodes.office.office_nodes",
     "fusion_cowork.delivery.nodes",
 )
 

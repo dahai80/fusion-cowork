@@ -126,6 +126,16 @@ NODE_NAME_ALIASES: dict[str, str] = {
     # Studio 互通 (fusion-agent-studio, issue #133)
     "运行Studio": "studio_run",
     "Studio运行": "studio_run",
+    # Agentic Office (fusion-office office-api + artifacts-engine, issue #614)
+    "办公文档": "office_document",
+    "文档生成": "office_document",
+    "文档解析": "office_document",
+    "办公表格": "office_spreadsheet",
+    "表格解析": "office_spreadsheet",
+    "办公幻灯片": "office_slides",
+    "幻灯片生成": "office_slides",
+    "成果入库": "office_artifact",
+    "工件入库": "office_artifact",
     # 团队互通 (agent-studio teams.*, issue #488)
     "团队调用": "team_call",
     # 决策门 (fusion-mlx laya 决策头, issue #517)
