@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import threading
 import time
@@ -40,7 +41,16 @@ CREATE INDEX IF NOT EXISTS idx_approval_journal_status ON approval_journal(statu
 
 class ApprovalJournal:
     def __init__(self, path: Optional[Path] = None):
-        self._path = Path(path) if path else Path.home() / ".fusion-cowork" / "web" / "approval_journal.db"
+        # Default path honors FUSION_COWORK_WEB_DIR so test suites (and
+        # sandboxed deployments) can redirect the web state dir; unset = legacy
+        # ~/.fusion-cowork/web. Prevents cross-run pending-approval restore from
+        # a shared on-disk journal (see conftest isolation fixture).
+        if path:
+            self._path = Path(path)
+        else:
+            web_dir = os.environ.get("FUSION_COWORK_WEB_DIR")
+            base = Path(web_dir) if web_dir else Path.home() / ".fusion-cowork" / "web"
+            self._path = base / "approval_journal.db"
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)

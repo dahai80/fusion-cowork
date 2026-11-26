@@ -45,3 +45,13 @@ def _isolate_permission_rules(monkeypatch, tmp_path):
     from fusion_cowork.engine import permission_manager as _pm_mod
 
     monkeypatch.setattr(_pm_mod, "_PERMISSIONS_FILE", str(tmp_path / "permissions.json"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_web_state_dir(monkeypatch, tmp_path):
+    # Durable HITL (#463) recovery reads ApprovalJournal + RunStateStore from
+    # ~/.fusion-cowork/web at app startup — a real machine's stale crashed runs
+    # restore pending approvals into every test client (observed: 35 leaked
+    # approvals). Redirect the web state dir per test via the env override
+    # both stores honor.
+    monkeypatch.setenv("FUSION_COWORK_WEB_DIR", str(tmp_path / "webstate"))
