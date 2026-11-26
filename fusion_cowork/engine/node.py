@@ -233,6 +233,11 @@ class NodeConfig:
     # exp/dynamic-orchestration: LLM-informed one-shot repair after retry exhaustion.
     # Default OFF, zero behavior change. See docs/pr-repair-step.md.
     on_error_repair: bool = False
+    # exp/degrade-semantics: when skip_if is fully hit, run the node anyway on
+    # partial inputs (missing upstream outputs stay absent) and tag the step
+    # output with "_degraded": <skip_desc>. Graceful degradation for terminal
+    # nodes. Default OFF preserves issue #422 skip semantics exactly.
+    degrade_on_skip: bool = False
 
 
 @dataclass
@@ -358,6 +363,7 @@ class BaseNode(KernelBaseNode, ABC):
                 "params": self.config.params,
                 "skip_if": self.config.skip_if,
                 "on_error_repair": self.config.on_error_repair,
+                "degrade_on_skip": self.config.degrade_on_skip,
             },
             "status": self.status.value,
         }
@@ -389,6 +395,7 @@ class BaseNode(KernelBaseNode, ABC):
             params=params or {},
             skip_if=[c for c in (data.get("config", {}).get("skip_if") or []) if isinstance(c, dict)],
             on_error_repair=bool(data.get("config", {}).get("on_error_repair", False)),
+            degrade_on_skip=bool(data.get("config", {}).get("degrade_on_skip", False)),
         )
         return cls(node_id=data.get("id", ""), config=config)
 
