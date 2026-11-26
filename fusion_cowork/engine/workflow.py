@@ -757,6 +757,33 @@ class Workflow:
         return cls.from_dict(json.loads(json_str))
 
 
+_REPAIR_SYSTEM_PROMPT = (
+    "You are a workflow node repair advisor. A node failed after exhausting its retry budget. "
+    'Reply with JSON only: {"action": "retry"|"skip"|"abort", "params": {}}. '
+    'Use "retry" with corrected "params" only if a parameter fix can plausibly resolve the error; '
+    '"skip" if the step is optional for the overall goal; "abort" otherwise.'
+)
+
+
+def _extract_repair_json(content: str) -> Dict[str, Any]:
+    # exp/dynamic-orchestration: robust repair-decision extraction — brace scan +
+    # json.loads, any failure means abort (fail-closed, no silent proceed).
+    text = (content or "").strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end <= start:
+        return {"action": "abort", "params": {}}
+    try:
+        obj = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return {"action": "abort", "params": {}}
+    action = obj.get("action") if isinstance(obj, dict) else None
+    if action not in ("retry", "skip", "abort"):
+        return {"action": "abort", "params": {}}
+    params = obj.get("params")
+    return {"action": action, "params": params if isinstance(params, dict) else {}}
+
+
 class WorkflowEngine:
     """工作流执行引擎 — 负责执行工作流并管理执行状态。
 
@@ -782,6 +809,7 @@ class WorkflowEngine:
         kernel_checkpoints=None,
         hitl_gate=None,
         ops_telemetry=None,
+        repair_client=None,
     ):
         self._executions: Dict[str, WorkflowExecution] = {}
         self._cancel_flags: Dict[str, bool] = {}
@@ -856,6 +884,9 @@ class WorkflowEngine:
         # issue #545: DAG run/node telemetry (flywheel Loop D) — None = 关闭零成本;
         # 注入 OpsTelemetry (create_web_app 按 FUSION_OPS_DSN 装配)
         self._ops_telemetry = ops_telemetry
+        # exp/dynamic-orchestration: LLM-informed one-shot node repair (docs/pr-repair-step.md)
+        # None = 懒构建 FusionMLXClient, 仅当节点 on_error_repair=True 才触达; 测试可注入 stub
+        self._repair_client = repair_client
         # exec_id -> 当前 park 的内核问题 id — resolve 单赢家 + resume/cancel 桥接用
         self._hitl_questions: Dict[str, str] = {}
         # issue #554: kernel destructive_gate — 审批通过后签发单次兑换 token;
@@ -921,6 +952,52 @@ class WorkflowEngine:
             except ValueError:
                 logger.warning(f"FUSION_COWORK_MAX_CONCURRENCY 非法: {raw!r}, 使用 1")
         return 1
+
+    async def _llm_repair_decision(
+        self, exec_id: str, node: BaseNode, node_input: Dict[str, Any], error: str, attempt_errors: List[str]
+    ) -> Dict[str, Any]:
+        # exp/dynamic-orchestration: one LLM call decides retry/skip/abort after
+        # retry exhaustion. Any failure path (client init, HTTP, parse) = abort,
+        # so the repair feature can never turn a crash into a silent pass.
+        if self._repair_client is None:
+            try:
+                from ..ai.mlx_client import FusionMLXClient
+
+                self._repair_client = FusionMLXClient()
+            except Exception as init_err:
+                logger.warning(f"[{exec_id}] llm_repair: client init failed, abort: {init_err}")
+                return {"action": "abort", "params": {}}
+        prompt = {
+            "node": node.name,
+            "node_type": node.config.executor,
+            "params": _sanitize_params(dict(node.config.params or {})),
+            "input": _sanitize_params(node_input),
+            "error": (error or "")[:500],
+            "attempt_errors": [e[:200] for e in (attempt_errors or [])[-5:]],
+        }
+        messages = [
+            {"role": "system", "content": _REPAIR_SYSTEM_PROMPT},
+            {"role": "user", "content": json.dumps(prompt, ensure_ascii=False, default=str)[:6000]},
+        ]
+        try:
+            model = (
+                (node.config.model or "").strip()
+                or os.environ.get("FUSION_MLX_MODEL", "").strip()
+                or "Qwen3.8-27B-4bit"
+            )
+            resp = await self._repair_client.chat(
+                model=model,
+                messages=messages,
+                temperature=0.0,
+                max_tokens=300,
+            )
+            content = resp.content if hasattr(resp, "content") else str(resp)
+        except Exception as llm_err:
+            logger.warning(f"[{exec_id}] llm_repair: LLM call failed, abort: {llm_err}")
+            return {"action": "abort", "params": {}}
+        decision = _extract_repair_json(content)
+        logger.info(f"[{exec_id}] llm_repair: node={node.name} action={decision['action']}")
+        return decision
 
     async def execute(
         self,
@@ -1872,6 +1949,72 @@ class WorkflowEngine:
                     status=NodeStatus.FAILED,
                     error=last_err or f"节点 '{node.name}' 重试 {max_retries} 次后仍失败",
                 )
+            # exp/dynamic-orchestration: LLM-informed one-shot repair after retry
+            # exhaustion (docs/pr-repair-step.md). Default OFF. One-shot: a second
+            # failure after a repair-retry falls through to the normal failure path.
+            if result.status == NodeStatus.FAILED and node.config.on_error_repair:
+                decision = await self._llm_repair_decision(
+                    exec_id, node, node_input, result.error or "", attempt_errors
+                )
+                action = decision.get("action", "abort")
+                if action == "retry":
+                    repaired_params = decision.get("params") or {}
+                    if isinstance(repaired_params, dict) and repaired_params:
+                        node_input = {**node_input, **repaired_params}
+                        logger.info(
+                            f"[{exec_id}] llm_repair: node={node.name} retrying with repaired params: {list(repaired_params.keys())}"
+                        )
+                    ctx2 = NodeExecutionContext(
+                        execution_id=exec_id,
+                        workflow_id=workflow.id,
+                        workflow_name=workflow.name,
+                        node_id=node_id,
+                        attempt=final_attempt + 1,
+                    )
+                    try:
+                        engine_token2 = _current_engine.set(self)
+                        try:
+                            if timeout > 0:
+                                result = await asyncio.wait_for(
+                                    executor.execute(node, node_input, ctx2), timeout=timeout
+                                )
+                            else:
+                                result = await executor.execute(node, node_input, ctx2)
+                        finally:
+                            _current_engine.reset(engine_token2)
+                        if result.status == NodeStatus.FAILED:
+                            _err_class = "BusinessFailure"
+                            attempt_errors.append(result.error or "repair retry business failure")
+                            logger.warning(
+                                f"[{exec_id}] llm_repair: node={node.name} repair retry failed: {result.error}"
+                            )
+                        else:
+                            _err_class = ""
+                            last_err = None
+                            result.data = {
+                                **(result.data or {}),
+                                "_repair": {"action": "retry", "attempt": final_attempt + 1},
+                            }
+                            logger.info(f"[{exec_id}] llm_repair: node={node.name} repair retry succeeded")
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as rp_err:
+                        result = NodeResult(status=NodeStatus.FAILED, error=str(rp_err))
+                        _err_class = type(rp_err).__name__
+                        attempt_errors.append(f"repair retry exception: {rp_err}")
+                        logger.warning(f"[{exec_id}] llm_repair: node={node.name} repair retry exception: {rp_err}")
+                elif action == "skip":
+                    logger.info(f"[{exec_id}] llm_repair: node={node.name} skip (error: {result.error})")
+                    result = NodeResult(
+                        status=NodeStatus.SKIPPED,
+                        data=(result.data if isinstance(result.data, dict) else {}),
+                        error=None,
+                        summary="llm_repair: skip",
+                    )
+                    result.data["_repair"] = {"action": "skip"}
+                    last_err = None
+                # action == "abort" (or parse/LLM failure): fall through to the
+                # normal failure path unchanged
             if result.status == NodeStatus.FAILED and backend_runner is not None:
                 try:
                     _ok = await asyncio.to_thread(backend_runner.rollback, snapshot_id)

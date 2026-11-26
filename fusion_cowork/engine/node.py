@@ -230,6 +230,9 @@ class NodeConfig:
     # {"source": "<node_id>", "path": "a.b", "equals": x}; 另支持
     # not_equals / in / not_in; source 缺省对合并上游输入求值
     skip_if: List[Dict[str, Any]] = field(default_factory=list)
+    # exp/dynamic-orchestration: LLM-informed one-shot repair after retry exhaustion.
+    # Default OFF, zero behavior change. See docs/pr-repair-step.md.
+    on_error_repair: bool = False
 
 
 @dataclass
@@ -354,6 +357,7 @@ class BaseNode(KernelBaseNode, ABC):
                 "budget_tokens": self.config.budget_tokens,
                 "params": self.config.params,
                 "skip_if": self.config.skip_if,
+                "on_error_repair": self.config.on_error_repair,
             },
             "status": self.status.value,
         }
@@ -384,6 +388,7 @@ class BaseNode(KernelBaseNode, ABC):
             budget_tokens=int(data.get("config", {}).get("budget_tokens", 0) or 0),
             params=params or {},
             skip_if=[c for c in (data.get("config", {}).get("skip_if") or []) if isinstance(c, dict)],
+            on_error_repair=bool(data.get("config", {}).get("on_error_repair", False)),
         )
         return cls(node_id=data.get("id", ""), config=config)
 
