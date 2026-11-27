@@ -92,7 +92,7 @@ class TestLoopObservability:
         with caplog.at_level(logging.ERROR, logger="fusion_cowork.server.shell_registry"):
             await _run_for(0.05, client)
         assert client.calls == 0, "invalid URL must fail fast, never loop"
-        assert any("非法" in r.message for r in caplog.records)  # i18n: user-facing
+        assert any("invalid" in r.message for r in caplog.records)
         assert registration_health()["last_error"] == "invalid gateway url"
 
     async def test_connect_error_names_target(self, caplog):
@@ -120,11 +120,11 @@ class TestFailureRateLimiting:
         with caplog.at_level(logging.DEBUG, logger="fusion_cowork.server.shell_registry"):
             await _run_for(0.35, _FlakyClient(mode="connect_error"), interval=0.01)
         errors = [
-            r for r in caplog.records if r.levelno >= logging.ERROR and "连续失败" in r.message  # i18n: user-facing
-        ]  # i18n: user-facing
+            r for r in caplog.records if r.levelno >= logging.ERROR and "times in a row" in r.message
+        ]
         warnings = [
-            r for r in caplog.records if r.levelno == logging.WARNING and "注册循环错误" in r.message  # i18n: user-facing
-        ]  # i18n: user-facing
+            r for r in caplog.records if r.levelno == logging.WARNING and "registration loop error" in r.message
+        ]
         assert len(errors) == 1, errors
         assert len(warnings) == FAIL_STREAK_ERROR_THRESHOLD - 1, warnings
 
@@ -134,7 +134,7 @@ class TestFailureRateLimiting:
             await _run_for(0.35, client, interval=0.01)
         assert registration_health()["registered"] is True
         # Failure again after recovery — streak counted from scratch, WARNING first (does not jump straight to the hourly ERROR)
-        assert any("注册循环错误" in r.message for r in caplog.records)  # i18n: user-facing
+        assert any("registration loop error" in r.message for r in caplog.records)
 
 
 class TestHealthEndpoint:

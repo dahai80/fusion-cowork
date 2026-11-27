@@ -110,7 +110,7 @@ class TestTerminalSweep:
         assert eng.hitl_pending("run_300_stale") is False
         assert pm.find_pending_by_execution("run_300_stale") is None
         assert pm.list_pending() == []
-        assert "终态清理" in caplog.text  # i18n: user-facing
+        assert "cleaned stale pending approval items" in caplog.text
 
     @pytest.mark.asyncio
     async def test_sweep_silent_when_no_residue(self, caplog):
@@ -120,7 +120,7 @@ class TestTerminalSweep:
         with caplog.at_level(logging.WARNING):
             execution = await eng.execute(wf, execution_id="run_300_ok")
         assert execution.status.value == "success"
-        assert "终态清理" not in caplog.text  # i18n: user-facing
+        assert "cleaned stale pending approval items" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_sweep_scoped_to_own_execution(self):

@@ -55,7 +55,7 @@ class TestTemplateResolution:
         with caplog.at_level(logging.WARNING, logger="fusion_cowork.nodes.tools.http_request_node"):
             out = resolve_template("Bearer ${missing.token}", {"a": 1})
         assert out == "Bearer ${missing.token}"
-        assert any("模板变量未命中" in r.message for r in caplog.records)  # i18n: user-facing
+        assert any("template variable miss" in r.message for r in caplog.records)
 
     def test_lookup_scalar_dict_list(self):
         assert _lookup("a", {"a": 1}, "${a}") == "1"

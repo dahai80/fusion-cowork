@@ -135,7 +135,7 @@ class TestWarnLevelVerdicts:
         with caplog.at_level(logging.DEBUG, logger=LOGGER_NAME):
             result = await node.execute({})
         assert result.status.value == "success"
-        warns = [m for m in _logs(caplog, logging.WARNING) if "注册表检查失败" in m]  # i18n: user-facing
+        warns = [m for m in _logs(caplog, logging.WARNING) if "registry check failed" in m]
         assert warns
         assert "registry file corrupt" in warns[0]
         assert _TRACE_RE.search(warns[0])
@@ -152,7 +152,7 @@ class TestWarnLevelVerdicts:
             second = await node.execute({})
         assert first.status.value == "success"
         assert second.status.value == "success"
-        warns = [m for m in _logs(caplog, logging.WARNING) if "降级跳过" in m]  # i18n: user-facing
+        warns = [m for m in _logs(caplog, logging.WARNING) if "degraded/skipped" in m]
         assert len(warns) == 1
         assert "url=http://127.0.0.1:11500/mcp" in warns[0]
         assert "tool=t" in warns[0]

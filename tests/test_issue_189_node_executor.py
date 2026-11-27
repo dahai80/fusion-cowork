@@ -271,8 +271,8 @@ class TestSerialDefault:
         assert [s.node_id for s in execution.steps] == ["a", "b", "c"]
         assert execution.executors == {"simple": 3}
         assert all(s.executor == "simple" for s in execution.steps)
-        assert "并发=1" in execution.result_summary  # i18n: user-facing
-        assert "执行器=simple:3" in execution.result_summary  # i18n: user-facing
+        assert "concurrency=1" in execution.result_summary
+        assert "executors=simple:3" in execution.result_summary
 
     async def test_default_serial_wall_is_sum(self):
         wf = _sleep_wf({"a": 0.1, "b": 0.1, "c": 0.1})
@@ -623,7 +623,7 @@ class TestAgentExecutorHttp:
         with caplog.at_level("WARNING", logger=executors_mod.__name__):
             result = await AgentExecutor().execute(node, {"task": "go"}, NodeExecutionContext(node_id="ag1"))
         assert result.status == NodeStatus.SUCCESS
-        assert any("不支持逐节点覆盖" in rec.message for rec in caplog.records)  # i18n: user-facing
+        assert any("does not support per-node overrides" in rec.message for rec in caplog.records)
 
     async def test_http_terminal_failure(self, monkeypatch):
         def handler(request: httpx.Request) -> httpx.Response:
@@ -690,7 +690,7 @@ class TestAgentNodeInWorkflow:
         assert [s.node_id for s in execution.steps] == ["src", "ag1", "sink"]
         assert [s.executor for s in execution.steps] == ["simple", "agent", "simple"]
         assert execution.executors == {"simple": 2, "agent": 1}
-        assert "并发=1" in execution.result_summary  # i18n: user-facing
+        assert "concurrency=1" in execution.result_summary
         assert "agent:1" in execution.result_summary
         assert "simple:2" in execution.result_summary
         assert PARALLEL_STATE.get("self_called", 0) == 0

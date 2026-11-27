@@ -177,7 +177,7 @@ class TestDispatchTimeoutOutcome:
         task.cancel()
         with caplog.at_level(logging.WARNING), pytest.raises(asyncio.CancelledError):
             await task
-        assert "被看门狗取消" in caplog.text  # i18n: user-facing
+        assert "cancelled by watchdog" in caplog.text
         assert "node_deadline=3600s" in caplog.text
         assert "4321" in caplog.text
         for t in asyncio.all_tasks():
