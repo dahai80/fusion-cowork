@@ -58,6 +58,20 @@ async def _run_for(seconds, client, manifest=MANIFEST, interval=0.01):
         pass
 
 
+async def _run_until(client, min_calls, manifest=MANIFEST, interval=0.01, timeout=10.0):
+    # deterministic: wait until the stub client saw min_calls attempts, never on wall clock
+    task = asyncio.create_task(_registry_loop_body(client, manifest, interval))
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + timeout
+    while client.calls < min_calls and loop.time() < deadline:
+        await asyncio.sleep(0.005)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
     monkeypatch.setenv("FUSION_SHELL_GATEWAY_URL", "http://127.0.0.1:11432")
@@ -117,19 +131,21 @@ class TestLoopObservability:
 class TestFailureRateLimiting:
     async def test_sustained_failure_downgrades_to_hourly_error(self, caplog):
         # After the failure streak reaches the threshold: one ERROR summary, the rest downgraded to silent — no more per-beat WARNING/ERROR spam
+        client = _FlakyClient(mode="connect_error")
         with caplog.at_level(logging.DEBUG, logger="fusion_cowork.server.shell_registry"):
-            await _run_for(0.35, _FlakyClient(mode="connect_error"), interval=0.01)
+            await _run_until(client, FAIL_STREAK_ERROR_THRESHOLD + 2, interval=0.01)
         errors = [r for r in caplog.records if r.levelno >= logging.ERROR and "times in a row" in r.message]
         warnings = [
             r for r in caplog.records if r.levelno == logging.WARNING and "registration loop error" in r.message
         ]
+        assert client.calls >= FAIL_STREAK_ERROR_THRESHOLD + 2
         assert len(errors) == 1, errors
         assert len(warnings) == FAIL_STREAK_ERROR_THRESHOLD - 1, warnings
 
     async def test_recovery_resets_counter(self, caplog):
         client = _FlakyClient(mode="connect_error", fail_then=3)
         with caplog.at_level(logging.DEBUG, logger="fusion_cowork.server.shell_registry"):
-            await _run_for(0.35, client, interval=0.01)
+            await _run_until(client, 8, interval=0.01)
         assert registration_health()["registered"] is True
         # Failure again after recovery — streak counted from scratch, WARNING first (does not jump straight to the hourly ERROR)
         assert any("registration loop error" in r.message for r in caplog.records)
