@@ -51,7 +51,7 @@ describe('stageLinks', () => {
 // issue #318: pipeline runs discoverable — matcher drives nav picker + run-row links
 describe('isPipelineRun', () => {
     test('matches bilingual template names', () => {
-        expect(isPipelineRun('交付-产品生命周期 (A/B/C 三闸门)')).toBe(true);
+        expect(isPipelineRun('交付-产品生命周期 (A/B/C 三闸门)')).toBe(true); // i18n: user-facing
         expect(isPipelineRun('product_lifecycle')).toBe(true);
         expect(isPipelineRun('governance_issue_lifecycle')).toBe(false);
         expect(isPipelineRun('')).toBe(false);

@@ -1,11 +1,11 @@
-"""#124: 本地 CONFIRM 拒绝进入 Web 审批队列 — guard OFF 也能 GUI 批准。
+"""#124: local CONFIRM denials enter the Web approval queue — GUI approval works even with guard OFF.
 
 Contract:
-- guard OFF 时高风险节点 check() 拒绝, 同时 _pending_local_approvals 记录;
-- list_pending() 合并 guard + local (source 字段区分);
-- confirm_guard(action_id, True) 对本地条目加 approve 规则 → 后续 check() 放行;
-- confirm_guard(action_id, False) 加 deny 规则;
-- reset() 清空本地待审批。
+- with guard OFF, a high-risk node check() is denied while _pending_local_approvals records it;
+- list_pending() merges guard + local (source field distinguishes them);
+- confirm_guard(action_id, True) adds an approve rule for the local entry -> later check() allows;
+- confirm_guard(action_id, False) adds a deny rule;
+- reset() clears local pending approvals.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from fusion_cowork.engine import PermissionLevel, PermissionManager
 
 @pytest.fixture
 def pm_no_guard(monkeypatch):
-    # guard 关闭 (默认): FUSION_GUARD_ENABLED 不设 + socket 不存在
+    # Guard off (default): FUSION_GUARD_ENABLED unset + socket absent
     monkeypatch.delenv("FUSION_GUARD_ENABLED", raising=False)
     from fusion_cowork.security import guard as guard_mod
 
@@ -56,7 +56,7 @@ class TestLocalPendingQueue:
         merged = pm_no_guard.list_pending()
         sources = {e["source"] for e in merged}
         assert sources == {"local", "guard"}
-        # 旧接口仍只回 guard (向后兼容)
+        # Legacy interface still returns only guard entries (backward compatible)
         assert {e["action_id"] for e in pm_no_guard.list_pending_guard()} == {"act-g1"}
 
     async def test_reset_clears_local_pending(self, pm_no_guard):

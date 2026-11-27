@@ -1,7 +1,8 @@
-"""issue #463: durable HITL — 审批决定日志 (SQLite), 崩溃重启审批不丢。
+"""issue #463: durable HITL — approval decision journal (SQLite), approvals survive crash restart.
 
-闸门入口 pending 落账 / 决定落账 (含超时自动拒绝) / 重启重放决定 /
-pending 行重建进审批队列 / web 待审批队列合并。
+Gate-entry pending journaling / decision journaling (incl. timeout auto-deny) /
+decision replay after restart / pending rows restored into the approval queue /
+web pending queue merge.
 """
 
 from __future__ import annotations
@@ -68,7 +69,7 @@ class TestApprovalJournalCRUD:
         assert len(j.pending()) == 1
         assert j.decision_for("run-1", "n1") is None
         assert j.resolve("act-1", True, decided_by="tester") is True
-        # 二次 resolve 无效 (只动 pending 行)
+        # Second resolve is a no-op (only the pending row is touched)
         assert j.resolve("act-1", False, decided_by="x") is False
         row = j.decision_for("run-1", "n1")
         assert row is not None
@@ -112,12 +113,13 @@ class TestEngineJournalWiring:
         assert len(pend) == 1
         assert pend[0]["node_id"] == nid
         assert pend[0]["status"] == "pending"
-        # 决定落账 (resolve_hitl 内部 resolve_run); once=True 一次性批准不落规则
+        # Decision journaled (resolve_hitl internally calls resolve_run); once=True one-shot approval persists no rule
         assert eng.resolve_hitl(exec_id, True, once=True, attribution={"decided_by": "alice"})
         execution = await asyncio.wait_for(task, timeout=5)
         assert execution.status.value == "success"
-        # issue #507: 决定被引擎采用后即时消费 — decision_for 不再返回已用决定,
-        # 行保留为 status='consumed' (审计可查), 修订回路重问闸门不受重放污染
+        # issue #507: decision is consumed immediately once adopted by the engine — decision_for no longer
+        # returns the used decision, the row stays as status='consumed' (auditable), revision-loop re-asks
+        # of the gate are not polluted by replay
         assert j.decision_for(exec_id, nid) is None
 
     async def test_timeout_denies_journal(self, tmp_path: Path, monkeypatch):
@@ -129,12 +131,13 @@ class TestEngineJournalWiring:
         wf, nid = _wf()
         execution = await asyncio.wait_for(eng.execute(wf, execution_id=exec_id), timeout=10)
         assert execution.status.value == "failed"
-        # issue #507: 超时自动拒绝同样即时消费
+        # issue #507: timeout auto-deny is consumed immediately too
         assert j.decision_for(exec_id, nid) is None
 
     async def test_replay_after_restart(self, tmp_path: Path, monkeypatch):
-        # 重启语义: 同一 journal, 新引擎 (旧引擎决定已随进程消失, 只有日志活着) —
-        # 闸门重入 (_hitl_await) 直接重放日志决定, 不再进等待
+        # Restart semantics: same journal, new engine (the old engine's decisions died with the process,
+        # only the journal lives on) — gate re-entry (_hitl_await) replays the journaled decision
+        # directly instead of waiting
         pm = _pm(monkeypatch)
         j = ApprovalJournal(tmp_path / "j.db")
         node = NodeRegistry.create(HITL_NODE)
@@ -144,7 +147,7 @@ class TestEngineJournalWiring:
         wf, _ = _wf()
         allowed = await eng._hitl_await("run-463-replay", wf, node, {})
         assert allowed is True
-        assert "run-463-replay" not in eng._hitl_waiting, "重启重放失败: 仍进等待"
+        assert "run-463-replay" not in eng._hitl_waiting, "重启重放失败: 仍进等待"  # i18n: user-facing
 
     async def test_replay_denied_decision(self, tmp_path: Path, monkeypatch):
         pm = _pm(monkeypatch)
@@ -186,9 +189,9 @@ class TestPendingRestore:
         assert entry["execution_id"] == "run-r1"
         assert entry["restored"] is True
         assert entry["params"] == {"cmd": "ls"}
-        # 幂等: 已存在不覆盖
+        # Idempotent: existing rows are not overwritten
         assert pm.restore_pending_details([{"action_id": "act-r1", "run_id": "run-r1"}]) == 0
-        # finder 按执行可见 (恢复 run 的闸门重入路径)
+        # finder is visible per execution (gate re-entry path of a restored run)
         found = pm.find_pending_by_execution("run-r1")
         assert found is not None and found["action_id"] == "act-r1"
 

@@ -1,15 +1,15 @@
-"""推送出口 — 任务完成 / 审批请求外发 (issue #154)。
+"""Push egress — outbound delivery of task completions / approval requests (issue #154).
 
 PushEgress: webhook egress, best-effort fire-and-forget:
-- 未配 FUSION_COWORK_PUSH_WEBHOOK_URL → 空实现 (零行为变化)
-- 配置后: run 终态 + 审批入队事件 POST 到 webhook, 失败仅记日志 (不阻塞主流程)
-- 密钥: FUSION_COWORK_PUSH_WEBHOOK_SECRET → X-Fusion-Push-Secret 头
+- FUSION_COWORK_PUSH_WEBHOOK_URL unset → no-op (zero behavior change)
+- when configured: run terminal states + approval enqueued events POST to the webhook; failures are only logged (never block the main flow)
+- secret: FUSION_COWORK_PUSH_WEBHOOK_SECRET → X-Fusion-Push-Secret header
 
-ReliableEgress (issue #579): at-least-once 完成通知 — 持久 outbox:
-- persist-before-ack: 事件先落盘再发起投递, 崩溃不丢已登记事件
-- 投递失败重试 (flush_pending 直到 2xx), 崩溃窗口 (已送达未标记) 可能重复 —
-  接收方按事件 id 幂等去重, 此处如实重复投递
-- FUSION_COWORK_PUSH_AT_LEAST_ONCE=1 且 webhook URL 已配时启用, 默认关
+ReliableEgress (issue #579): at-least-once completion notifications — persistent outbox:
+- persist-before-ack: events are written to disk before delivery is attempted, no registered event is lost on crash
+- delivery retries on failure (flush_pending until 2xx); the crash window (delivered but unmarked) may duplicate —
+  receivers dedupe idempotently by event id, this side re-delivers honestly
+- enabled when FUSION_COWORK_PUSH_AT_LEAST_ONCE=1 and the webhook URL is configured, default off
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ class PushEgress:
     def __init__(self, url: str = "", secret: str = "", transport: Any = None):
         self.url = url
         self.secret = secret
-        # transport: httpx.AsyncClient 兼容注入 (测试 MockTransport), 生产 None 自建
+        # transport: httpx.AsyncClient-compatible injection (test MockTransport); None → built in production
         self._transport = transport
 
     @classmethod
@@ -45,9 +45,9 @@ class PushEgress:
         return bool(self.url)
 
     async def push_event(self, kind: str, payload: Dict[str, Any]) -> bool:
-        """外发一条事件。返回是否真实送达 (未启用/失败均 False, 不抛)。"""
+        """Send one event. Returns whether it was actually delivered (False on disabled/failed, never raises)."""
         if not self.enabled:
-            logger.debug(f"push 未启用, 丢弃事件: {kind}")
+            logger.debug(f"push not enabled, dropping event: {kind}")
             return False
         body = {"kind": kind, "payload": payload, "ts": time.time()}
         headers = {"Content-Type": "application/json"}
@@ -59,12 +59,12 @@ class PushEgress:
             async with httpx.AsyncClient(timeout=_PUSH_TIMEOUT, transport=self._transport, trust_env=False) as client:
                 resp = await client.post(self.url, json=body, headers=headers)
             if resp.status_code >= 400:
-                logger.warning(f"push webhook 非成功状态: {kind} status={resp.status_code}")
+                logger.warning(f"push webhook non-success status: {kind} status={resp.status_code}")
                 return False
-            logger.info(f"push webhook 已送达: {kind} status={resp.status_code}")
+            logger.info(f"push webhook delivered: {kind} status={resp.status_code}")
             return True
         except Exception as e:
-            logger.warning(f"push webhook 失败 (忽略, 不阻塞): {kind} {e}")
+            logger.warning(f"push webhook failed (ignored, non-blocking): {kind} {e}")
             return False
 
 
@@ -76,10 +76,11 @@ def _default_outbox_path() -> str:
 
 
 class ReliableEgress:
-    """at-least-once 完成通知 — persist-before-ack 持久 outbox (issue #579)。
+    """at-least-once completion notifications — persist-before-ack durable outbox (issue #579).
 
-    事件登记 (落盘) 先于首次投递; flush_pending 对每条 pending 投递直到 2xx,
-    成功才移除。崩溃窗口: 投递成功但移除未发生 → 重启后重投 (重复, 如实文档化)。
+    Event registration (disk write) happens before the first delivery; flush_pending delivers each
+    pending record until 2xx and only then removes it. Crash window: delivery succeeded but removal
+    did not happen → redelivered after restart (duplicate, documented honestly).
     """
 
     def __init__(self, egress: PushEgress, path: str = ""):
@@ -90,13 +91,13 @@ class ReliableEgress:
 
     @classmethod
     def from_env(cls) -> Optional[ReliableEgress]:
-        # env 未开 (或 webhook URL 未配) → None, 调用方走原 best-effort 路径
+        # env flag off (or webhook URL not configured) → None, the caller falls back to the original best-effort path
         flag = os.environ.get("FUSION_COWORK_PUSH_AT_LEAST_ONCE", "").strip().lower()
         if flag not in ("1", "true", "yes", "on"):
             return None
         egress = PushEgress.from_env()
         if not egress.enabled:
-            logger.warning("at-least-once push 开启但 webhook URL 未配, 回退 best-effort")
+            logger.warning("at-least-once push enabled but webhook URL not configured, falling back to best-effort")
             return None
         return cls(egress, path=_default_outbox_path())
 
@@ -112,11 +113,11 @@ class ReliableEgress:
         except FileNotFoundError:
             self._pending = []
         except Exception as e:
-            logger.warning(f"push outbox 读取失败 (按空处理): {self.path} {e}")
+            logger.warning(f"push outbox read failed (treated as empty): {self.path} {e}")
             self._pending = []
 
     def _save(self) -> None:
-        # 原子写 — temp + os.replace, 避免半行损坏
+        # atomic write — temp + os.replace, avoids half-line corruption
         tmp = self.path + ".tmp"
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
         with open(tmp, "w", encoding="utf-8") as f:
@@ -124,7 +125,7 @@ class ReliableEgress:
         os.replace(tmp, self.path)
 
     def enqueue(self, kind: str, payload: Dict[str, Any]) -> bool:
-        # persist-before-ack — 登记落盘先于任何投递尝试
+        # persist-before-ack — registration is persisted before any delivery attempt
         self._load()
         record = {
             "id": f"pe_{uuid.uuid4().hex[:12]}",
@@ -136,10 +137,10 @@ class ReliableEgress:
         self._pending.append(record)
         try:
             self._save()
-            logger.info(f"push outbox 已登记: id={record['id']} kind={kind} pending={len(self._pending)}")
+            logger.info(f"push outbox enqueued: id={record['id']} kind={kind} pending={len(self._pending)}")
             return True
         except Exception as e:
-            logger.error(f"push outbox 落盘失败 (事件未登记): {kind} {e}")
+            logger.error(f"push outbox persist failed (event not registered): {kind} {e}")
             self._pending.pop()
             return False
 
@@ -148,7 +149,7 @@ class ReliableEgress:
         return len(self._pending)
 
     async def flush_pending(self) -> int:
-        # 逐条投递, 2xx 才移除; 失败保留 (attempts+1) 等下次 flush/重启
+        # deliver one by one, remove only on 2xx; failures are kept (attempts+1) for the next flush/restart
         self._load()
         delivered = 0
         changed = False
@@ -162,11 +163,13 @@ class ReliableEgress:
                 record["attempts"] = int(record.get("attempts", 0)) + 1
                 remaining.append(record)
                 changed = True
-                logger.warning(f"push outbox 投递失败保留重试: id={record['id']} attempts={record['attempts']}")
+                logger.warning(
+                    f"push outbox delivery failed, kept for retry: id={record['id']} attempts={record['attempts']}"
+                )
         if changed:
             self._pending = remaining
             try:
                 self._save()
             except Exception as e:
-                logger.error(f"push outbox 回写失败 (重启后可能重复投递): {e}")
+                logger.error(f"push outbox write-back failed (possible duplicate delivery after restart): {e}")
         return delivered

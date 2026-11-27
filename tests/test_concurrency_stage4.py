@@ -1,17 +1,17 @@
-"""Stage 4 — 并发/执行正确性测试 (CR-11/12/9/HI-7/8/9/10/16/18/19/20)。
+"""Stage 4 — concurrency/execution correctness tests (CR-11/12/9/HI-7/8/9/10/16/18/19/20).
 
-验证审计发现修复:
-- CR-11: execute() 不在共享 BaseNode 写 status/result, 并发执行无状态污染
-- CR-12: TrajectoryRecorder 按 execution_id 命名空间, 并发执行快照隔离
-- CR-9: ComputerUseLoop 动作白名单 + 参数校验
-- HI-7: submit_task 保留 asyncio.Task handle
-- HI-8: cancel_task 真取消运行协程 + ShellExecutor 超时杀进程
-- HI-9: WorkflowExecutor 注入父引擎 permission/hook/session
-- HI-10: ComputerUseLoop 截图用临时文件 + param 名/data 键修正
-- HI-16: Workflow.from_dict 环检测 + 断点续跑快照拓扑校验
-- HI-18: CancelledError 单独捕获, finally 置终态
-- HI-19: 预算超限中止执行
-- HI-20: CoordinatorExecutor 委托深度上限
+Verification of audit-driven fixes:
+- CR-11: execute() does not write status/result on the shared BaseNode; concurrent execution has no state pollution
+- CR-12: TrajectoryRecorder is namespaced by execution_id; concurrent execution snapshots are isolated
+- CR-9: ComputerUseLoop action allowlist + param validation
+- HI-7: submit_task keeps the asyncio.Task handle
+- HI-8: cancel_task actually cancels the running coroutine + ShellExecutor kills the process on timeout
+- HI-9: WorkflowExecutor injects the parent engine permission/hook/session
+- HI-10: ComputerUseLoop screenshots use a temp file + param name/data key fix
+- HI-16: Workflow.from_dict cycle detection + resume snapshot topology validation
+- HI-18: CancelledError caught separately, finally sets the terminal state
+- HI-19: budget overrun aborts execution
+- HI-20: CoordinatorExecutor delegation depth limit
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-# 注册全部节点 (与 test_permission_stage3 同模式, 防跨测试注册表污染)
+# Register all nodes (same pattern as test_permission_stage3, guards against cross-test registry pollution)
 from fusion_cowork.engine.node import (
     BaseNode,
     NodeCategory,
@@ -37,23 +37,26 @@ from fusion_cowork.engine.workflow import Workflow, WorkflowEngine, WorkflowStat
 
 @pytest.fixture(autouse=True)
 def _ensure_nodes_loaded():
-    """跨测试注册表污染防护: 缺 shell_exec 则重导。"""
+    """Cross-test registry pollution guard: re-import if shell_exec is missing."""
     if "shell_exec" not in NodeRegistry._registry:
         import fusion_cowork.nodes
 
         fusion_cowork.nodes.import_all_nodes()
 
 
-# ── CR-11: execute 不写共享 BaseNode ──
+# ── CR-11: execute does not write the shared BaseNode ──
 
 
 @register_node
 class _SharedStateProbe(BaseNode):
     name = "stage4_probe"
+    # i18n: user-facing
     display_name = "Stage4 探针"
     category = NodeCategory.IO
+    # i18n: user-facing
     description = "探测: 读取共享节点状态"
     icon = "🧪"
+    # i18n: user-facing
     default_label = "探针"
 
     async def execute(self, inputs: dict) -> NodeResult:
@@ -67,10 +70,10 @@ class TestCR11NoSharedNodeMutation:
         engine = WorkflowEngine()
         result = await engine.execute(wf)
         assert result.status == WorkflowStatus.SUCCESS
-        # CR-11: execute 后 BaseNode.status 仍为初始值 PENDING (未写 RUNNING/FAILED)
+        # CR-11: after execute, BaseNode.status is still the initial PENDING (RUNNING/FAILED not written)
         node = wf.nodes["n1"]
         assert node.status == NodeStatus.PENDING
-        # 状态只在 WorkflowStep, node.result 未被 execute 写入
+        # State lives only in WorkflowStep; node.result is not written by execute
         assert getattr(node, "result", None) is None
 
     async def test_concurrent_executions_independent(self):
@@ -82,12 +85,12 @@ class TestCR11NoSharedNodeMutation:
         r1, r2 = await asyncio.gather(engine.execute(wf), engine.execute(wf2))
         assert r1.status == WorkflowStatus.SUCCESS
         assert r2.status == WorkflowStatus.SUCCESS
-        # 两工作流节点互不污染
+        # The two workflow nodes do not pollute each other
         assert wf.nodes["n1"].id == "n1"
         assert wf2.nodes["m1"].id == "m1"
 
 
-# ── CR-12: TrajectoryRecorder exec_id 隔离 ──
+# ── CR-12: TrajectoryRecorder exec_id isolation ──
 
 
 class TestCR12RecorderExecIdIsolation:
@@ -99,7 +102,7 @@ class TestCR12RecorderExecIdIsolation:
         rec = TrajectoryRecorder(hm, trajectory_dir=str(tmp_path))
         rec.attach()
 
-        # 两并发执行各自 START + POST_NODE, 快照互不混入
+        # Two concurrent executions each get their own START + POST_NODE; snapshots must not mix
         await hm.fire(HookEvent.WORKFLOW_START, {"execution_id": "exec_a", "workflow_id": "w_a", "workflow_name": "a"})
         await hm.fire(HookEvent.WORKFLOW_START, {"execution_id": "exec_b", "workflow_id": "w_b", "workflow_name": "b"})
         await hm.fire(
@@ -125,7 +128,7 @@ class TestCR12RecorderExecIdIsolation:
             },
         )
 
-        # exec_a 槽只含 n1, exec_b 槽只含 n2
+        # exec_a slot contains only n1, exec_b slot only n2
         assert rec._execs["exec_a"]["steps_snapshot"][0]["node_id"] == "n1"
         assert rec._execs["exec_b"]["steps_snapshot"][0]["node_id"] == "n2"
         assert len(rec._execs["exec_a"]["steps_snapshot"]) == 1
@@ -140,11 +143,11 @@ class TestCR12RecorderExecIdIsolation:
         rec.attach()
         await hm.fire(HookEvent.WORKFLOW_START, {"execution_id": "exec_x", "workflow_id": "w", "workflow_name": "n"})
         await hm.fire(HookEvent.WORKFLOW_END, {"execution_id": "exec_x", "workflow_id": "w", "status": "completed"})
-        # CR-12: 执行结束清理状态槽防内存增长
+        # CR-12: execution end cleans up the state slot to prevent memory growth
         assert "exec_x" not in rec._execs
 
 
-# ── CR-9: ComputerUseLoop 动作白名单 + 参数校验 ──
+# ── CR-9: ComputerUseLoop action allowlist + param validation ──
 
 
 class TestCR9ActionWhitelist:
@@ -172,7 +175,7 @@ class TestCR9ActionWhitelist:
         from fusion_cowork.nodes.macos.input_nodes import ComputerUseLoopNode
 
         node = ComputerUseLoopNode(config=NodeConfig(params={"max_steps": 1}))
-        # AI 输出非白名单动作
+        # AI outputs a non-allowlisted action
         out = await node._execute_ai_action("ACTION: rm_rf ACTION_DONE")
         assert out["status"] == "unknown_action"
 
@@ -184,7 +187,7 @@ class TestCR9ActionWhitelist:
         assert out["status"] == "invalid_params"
 
 
-# ── HI-7: submit_task 保留 handle ──
+# ── HI-7: submit_task keeps the handle ──
 
 
 class TestHI7TaskHandleRetention:
@@ -195,13 +198,13 @@ class TestHI7TaskHandleRetention:
         orch.register_default_agents()
         task_id = await orch.submit_task("hi7 probe", {"command": "echo hi7", "timeout": 5})
         assert task_id in orch._task_handles
-        # 等后台完成
+        # Wait for the background task to finish
         await asyncio.sleep(0.3)
-        # handle 完成后从 _task_handles 移除 (finally pop), _bg_tasks 由回调移除
+        # handle is removed from _task_handles when done (finally pop); _bg_tasks is cleaned by callback
         assert task_id not in orch._task_handles
 
 
-# ── HI-8: cancel 真取消 + ShellExecutor 杀进程 ──
+# ── HI-8: cancel actually cancels + ShellExecutor kills the process ──
 
 
 class TestHI8CancelAndKill:
@@ -211,7 +214,7 @@ class TestHI8CancelAndKill:
         orch = AgentOrchestrator()
         orch._task_timeout = 10.0
 
-        # 注册一个长阻塞执行器
+        # Register a long-blocking executor
         async def slow_exec(_input):
             await asyncio.sleep(5)
             return {"ok": True}
@@ -223,7 +226,7 @@ class TestHI8CancelAndKill:
         )
         orch.register_executor("slow", slow_exec)
 
-        # submit_task 默认走 executor_node, 改用直接 _run_submitted_task 模拟
+        # submit_task normally routes via executor_node; simulate with a direct _run_submitted_task instead
         import time
 
         from fusion_cowork.orchestrator.orchestrator import AgentTask
@@ -235,28 +238,28 @@ class TestHI8CancelAndKill:
         orch._bg_tasks.add(handle)
         handle.add_done_callback(lambda h: orch._bg_tasks.discard(h))
         await asyncio.sleep(0.1)
-        # 真取消
+        # Actually cancel
         handle.cancel()
         try:
             await handle
         except asyncio.CancelledError:
             pass
-        # HI-18: CancelledError 捕获后置 cancelled
+        # HI-18: after CancelledError is caught the status becomes cancelled
         assert task.status == "cancelled"
 
     async def test_shell_executor_kills_proc_on_timeout(self):
         from fusion_cowork.orchestrator.executors import ShellExecutor
 
         ex = ShellExecutor()
-        # 启动 sleep 30, timeout 0.3 — 超时应杀进程
+        # Start sleep 30 with timeout 0.3 — timeout should kill the process
         out = await ex({"command": "sleep 30", "timeout": 0.3})
-        assert "error" in out and "超时" in out["error"]
-        # 确认无残留 sleep 进程 (best-effort: ps 不应含我们的 sleep 30)
-        # 注: 仅验证返回结构, 进程清理由 proc.kill() 保证
-        assert out["error"] == "命令超时 (0.3s)"
+        assert "error" in out and "超时" in out["error"]  # i18n: user-facing
+        # Confirm no leftover sleep process (best-effort: ps should not contain our sleep 30)
+        # Note: only the return structure is verified; process cleanup is guaranteed by proc.kill()
+        assert out["error"] == "命令超时 (0.3s)"  # i18n: user-facing
 
 
-# ── HI-9: WorkflowExecutor 注入父运行时 ──
+# ── HI-9: WorkflowExecutor injects the parent runtime ──
 
 
 class TestHI9RuntimeInjection:
@@ -279,11 +282,11 @@ class TestHI9RuntimeInjection:
         orch = AgentOrchestrator(permission_manager=perm)
         orch.register_default_agents()
         wf_exec = orch._executors["executor_workflow"]
-        # HI-9: 有父运行时则换私有 WorkflowExecutor, 注入了 perm
+        # HI-9: with a parent runtime a private WorkflowExecutor is used, with perm injected
         assert wf_exec._permission_manager is perm
 
 
-# ── HI-10: ComputerUseLoop 截图临时文件 + param/data 键修正 ──
+# ── HI-10: ComputerUseLoop screenshot temp file + param/data key fix ──
 
 
 class TestHI10ScreenshotTempfile:
@@ -293,7 +296,7 @@ class TestHI10ScreenshotTempfile:
 
         node = ComputerUseLoopNode(config=NodeConfig(params={"max_steps": 1, "save_screenshots": False}))
 
-        # monkeypatch AI 返回 task_complete 立即结束, ScreenCapture 返回临时文件路径
+        # monkeypatch AI to return task_complete immediately; ScreenCapture returns a temp file path
         async def fake_ai(_self, _text):
             return {"status": "task_complete"}
 
@@ -305,7 +308,7 @@ class TestHI10ScreenshotTempfile:
             Path(cap_path).write_bytes(b"fakepng")
             return NodeResult(status=NodeStatus.SUCCESS, data={"file_path": cap_path}, summary="cap")
 
-        # ScreenCaptureNode 经 globals() 查找, monkeypatch 类方法
+        # ScreenCaptureNode is looked up via globals(); monkeypatch the class method
         from fusion_cowork.nodes.macos import input_nodes
 
         orig = getattr(input_nodes, "ScreenCaptureNode", None)
@@ -316,16 +319,16 @@ class TestHI10ScreenshotTempfile:
             await node.execute({})
         finally:
             pass
-        # HI-10: save_screenshots=False 时截图临时文件应被清理
-        assert not os.path.exists(cap_path), "临时截图应删除"
+        # HI-10: with save_screenshots=False the screenshot temp file should be cleaned up
+        assert not os.path.exists(cap_path), "临时截图应删除"  # i18n: user-facing
 
 
-# ── HI-16: from_dict 环检测 + 断点续跑快照校验 ──
+# ── HI-16: from_dict cycle detection + resume snapshot validation ──
 
 
 class TestHI16CycleAndResumeValidation:
     def test_from_dict_rejects_cycle(self):
-        # 构造含环的 dict (绕过 connect 的逐条检查, 直接塞 edges)
+        # Build a dict containing a cycle (bypasses connect's per-edge check by injecting edges directly)
         d = {
             "name": "cyclic",
             "nodes": [
@@ -337,37 +340,37 @@ class TestHI16CycleAndResumeValidation:
                 {"source_id": "n2", "target_id": "n1"},
             ],
         }
-        with pytest.raises(ValueError, match="含环"):
+        with pytest.raises(ValueError, match="含环"):  # i18n: user-facing
             Workflow.from_dict(d)
 
     async def test_resume_stale_node_id_logged_not_crash(self):
         wf = Workflow(name="resume")
         wf.add_node(_SharedStateProbe(node_id="n1"))
         engine = WorkflowEngine()
-        # 快照含不存在节点 n_ghost
+        # Snapshot contains the nonexistent node n_ghost
         resume = [{"node_id": "n_ghost", "status": "success", "output_data": {}}]
         result = await engine.execute(wf, resume_steps=resume)
-        # 不应崩溃, n1 正常执行
+        # Must not crash; n1 runs normally
         assert result.status == WorkflowStatus.SUCCESS
 
 
-# ── HI-19: 预算超限中止执行 ──
+# ── HI-19: budget overrun aborts execution ──
 
 
 class TestHI19BudgetAbort:
     async def test_budget_over_limit_aborts_execution(self):
         from fusion_cowork.ai.budget import BudgetTracker
 
-        # 构造已超预算的 tracker (enforce=True, cost > max)
+        # Build a tracker already over budget (enforce=True, cost > max)
         tracker = BudgetTracker(max_budget_usd=0.01, enforce=True)
-        tracker._record.cost_usd = 0.5  # 远超 0.01 上限
+        tracker._record.cost_usd = 0.5  # far over the 0.01 cap
 
         wf = Workflow(name="budget")
         wf.add_node(_SharedStateProbe(node_id="n1"))
         engine = WorkflowEngine(budget_tracker=tracker)
         result = await engine.execute(wf)
         assert result.status == WorkflowStatus.FAILED
-        assert "预算" in (result.error or "")
+        assert "预算" in (result.error or "")  # i18n: user-facing
 
     async def test_no_budget_tracker_runs_normally(self):
         wf = Workflow(name="nobudget")
@@ -377,17 +380,17 @@ class TestHI19BudgetAbort:
         assert result.status == WorkflowStatus.SUCCESS
 
 
-# ── HI-20: CoordinatorExecutor 委托深度上限 ──
+# ── HI-20: CoordinatorExecutor delegation depth limit ──
 
 
 class TestHI20DepthLimit:
     async def test_depth_over_max_rejected(self):
         from fusion_cowork.orchestrator.executors import CoordinatorExecutor
 
-        coord = CoordinatorExecutor(orchestrator=object())  # 任意绑定
-        # depth=999 超 MAX_DEPTH(5)
+        coord = CoordinatorExecutor(orchestrator=object())  # arbitrary binding
+        # depth=999 exceeds MAX_DEPTH(5)
         out = await coord({"prompt": "deep", "subtask_type": "node", "_depth": 999})
-        assert "超限" in out["error"]
+        assert "超限" in out["error"]  # i18n: user-facing
 
     async def test_depth_zero_submits_with_incremented_child(self):
         from fusion_cowork.orchestrator import AgentOrchestrator
@@ -400,13 +403,13 @@ class TestHI20DepthLimit:
 
         async def fake_submit(description, input_data=None):
             submitted["child_depth"] = (input_data or {}).get("_depth")
-            # 返回伪 task_id
+            # Return a fake task_id
             return "task_fake"
 
         monkeypatch_target = orch.submit_task
         orch.submit_task = fake_submit
 
-        # get_task 返回终态立即结束轮询
+        # get_task returns a terminal state so polling ends immediately
         import time
 
         from fusion_cowork.orchestrator.orchestrator import AgentTask

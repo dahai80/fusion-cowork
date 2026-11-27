@@ -1,4 +1,4 @@
-"""#118 W17: 全局模型选择 — Space agent 聊天接受 model 参数。"""
+"""#118 W17: global model selection — Space agent chat accepts a model parameter."""
 
 from __future__ import annotations
 

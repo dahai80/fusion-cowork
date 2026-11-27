@@ -1,10 +1,11 @@
-"""Stage 6 — 上游熔断 (CircuitBreaker CLOSED/OPEN/HALF_OPEN)。
+"""Stage 6 — upstream circuit breaker (CircuitBreaker CLOSED/OPEN/HALF_OPEN).
 
-保护 MLX/KB 等上游: 连续失败达 threshold → OPEN, 拒调 (不挂下游); recovery_timeout 后 → HALF_OPEN
-放一条试探, 成功 → CLOSED, 失败 → 重新 OPEN。
+Protects upstreams like MLX/KB: consecutive failures reaching threshold → OPEN, calls refused
+(downstream never hangs); after recovery_timeout → HALF_OPEN allows one probe,
+success → CLOSED, failure → OPEN again.
 
-async 装饰器 call(): 包协程; open 时抛 CircuitOpenError (调用方捕后降级)。
-sync 调用 call_sync(): 包普通函数。
+Async: call() wraps coroutines; raises CircuitOpenError when open (caller catches and degrades).
+Sync: call_sync() wraps plain functions.
 """
 
 from __future__ import annotations
@@ -24,14 +25,14 @@ class CircuitState(str, Enum):
 
 
 class CircuitOpenError(Exception):
-    """熔断开启 — 调用被拒, 调用方应降级。"""
+    """Circuit open — call refused; caller should degrade."""
 
 
 class CircuitBreaker:
-    """三态熔断器 — per-name 实例 (如 "mlx", "kb")。
+    """Three-state circuit breaker — per-name instance (e.g. "mlx", "kb").
 
-    threshold: 连续失败数达此值 → OPEN
-    recovery_timeout: OPEN 后多少秒 → HALF_OPEN
+    threshold: consecutive failures reaching this → OPEN
+    recovery_timeout: seconds after OPEN → HALF_OPEN
     """
 
     def __init__(
@@ -54,7 +55,7 @@ class CircuitBreaker:
         if self._state == CircuitState.OPEN:
             if time.monotonic() - self._opened_at >= self.recovery_timeout:
                 self._state = CircuitState.HALF_OPEN
-                logger.info(f"circuit[{self.name}] OPEN→HALF_OPEN (recovery_timeout 到)")
+                logger.info(f"circuit[{self.name}] OPEN→HALF_OPEN (recovery_timeout elapsed)")
         return self._state
 
     def is_open(self) -> bool:
@@ -65,7 +66,7 @@ class CircuitBreaker:
 
     def on_success(self) -> None:
         if self._state != CircuitState.CLOSED:
-            logger.info(f"circuit[{self.name}] {self._state.value}→CLOSED (成功)")
+            logger.info(f"circuit[{self.name}] {self._state.value}→CLOSED (success)")
             self._state = CircuitState.CLOSED
             if self._on_close:
                 try:
@@ -77,11 +78,11 @@ class CircuitBreaker:
     def on_failure(self) -> None:
         self._failures += 1
         if self._state == CircuitState.HALF_OPEN:
-            logger.warning(f"circuit[{self.name}] HALF_OPEN→OPEN (试探失败)")
+            logger.warning(f"circuit[{self.name}] HALF_OPEN→OPEN (probe failed)")
             self._trip()
             return
         if self._failures >= self.failure_threshold:
-            logger.warning(f"circuit[{self.name}] CLOSED→OPEN (失败 {self._failures}/{self.failure_threshold})")
+            logger.warning(f"circuit[{self.name}] CLOSED→OPEN (failures {self._failures}/{self.failure_threshold})")
             self._trip()
 
     def _trip(self) -> None:
@@ -99,32 +100,32 @@ class CircuitBreaker:
         self._opened_at = 0.0
 
     async def call(self, fn: Callable[..., Awaitable[Any]], *args, **kwargs) -> Any:
-        """包协程调用; OPEN → 抛 CircuitOpenError。"""
+        """Wrap an async call; OPEN → raises CircuitOpenError."""
         if not self.is_call_allowed():
-            logger.warning(f"circuit[{self.name}] OPEN 拒调 (降级)")
+            logger.warning(f"circuit[{self.name}] OPEN refusing call (degraded)")
             raise CircuitOpenError(f"circuit[{self.name}] open")
         try:
             result = await fn(*args, **kwargs)
         except CircuitOpenError:
             raise
         except Exception as e:
-            logger.debug(f"circuit[{self.name}] 调用失败: {e}")
+            logger.debug(f"circuit[{self.name}] call failed: {e}")
             self.on_failure()
             raise
         self.on_success()
         return result
 
     def call_sync(self, fn: Callable[..., Any], *args, **kwargs) -> Any:
-        """包同步调用; OPEN → 抛 CircuitOpenError。"""
+        """Wrap a sync call; OPEN → raises CircuitOpenError."""
         if not self.is_call_allowed():
-            logger.warning(f"circuit[{self.name}] OPEN 拒调 (降级)")
+            logger.warning(f"circuit[{self.name}] OPEN refusing call (degraded)")
             raise CircuitOpenError(f"circuit[{self.name}] open")
         try:
             result = fn(*args, **kwargs)
         except CircuitOpenError:
             raise
         except Exception as e:
-            logger.debug(f"circuit[{self.name}] 调用失败: {e}")
+            logger.debug(f"circuit[{self.name}] call failed: {e}")
             self.on_failure()
             raise
         self.on_success()

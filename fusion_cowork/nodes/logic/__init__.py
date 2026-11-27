@@ -1,4 +1,4 @@
-"""Fusion-Cowork 逻辑节点。"""
+"""Fusion-Cowork logic nodes."""
 
 from .logic_nodes import FilterNode, LoopNode, MergeNode
 

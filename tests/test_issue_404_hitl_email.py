@@ -1,11 +1,11 @@
-"""issue #404: HITL 邮件通知 — 每个人工触点邮件通知注册用户。
+"""issue #404: HITL email notification — notify registered users at every human touchpoint.
 
-- SMTP_HOST 缺失 → 通知器禁用, 零行为变化
-- recipient: FUSION_COWORK_NOTIFY_EMAIL 覆盖 > identity 注册记录 (run 的 identity token → uid → /api/v1/users/{uid} → email)
-- identity 无邮箱 / token 无 uid / identity 禁用 → WARN 跳过, 不 crash
-- fire-and-forget: 发送在 daemon 线程, 3 次重试, 最终失败 WARN, run 永不阻塞
-- 引擎接线: pending + resolved (resolved 需 SMTP_NOTIFY_RESOLVED=1); 回调抛错被兜住
-- 邮件体: run_id / node / #/pipeline/<run_id> deep link / 一行摘要, 纯文本英文
+- SMTP_HOST missing → notifier disabled, zero behavior change
+- recipient: FUSION_COWORK_NOTIFY_EMAIL override > identity registration (run's identity token → uid → /api/v1/users/{uid} → email)
+- identity has no email / token has no uid / identity disabled → WARN and skip, no crash
+- fire-and-forget: send on a daemon thread, 3 retries, final failure WARNs, run never blocks
+- engine wiring: pending + resolved (resolved requires SMTP_NOTIFY_RESOLVED=1); callback exceptions are caught
+- email body: run_id / node / #/pipeline/<run_id> deep link / one-line summary, plain-text English
 """
 
 import logging

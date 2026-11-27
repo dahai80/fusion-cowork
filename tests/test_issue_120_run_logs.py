@@ -1,4 +1,4 @@
-"""#120: run-scoped 结构化执行日志 — grep "[<run_id>]" 重建时间线。"""
+"""#120: run-scoped structured execution logs — grep "[<run_id>]" rebuilds the timeline."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class _EchoNode(BaseNode):
     name = "echo_120"
     display_name = "Echo 120"
     category = NodeCategory.TOOL
-    description = "测试用: 回显输入"
+    description = "测试用: 回显输入"  # i18n: user-facing
     icon = "🔁"
     default_label = "Echo"
 
@@ -40,7 +40,7 @@ class _FailNode(BaseNode):
     name = "fail_120"
     display_name = "Fail 120"
     category = NodeCategory.TOOL
-    description = "测试用: 总是失败"
+    description = "测试用: 总是失败"  # i18n: user-facing
     icon = "💥"
     default_label = "Fail"
 
@@ -53,7 +53,7 @@ class _BlockedNode(BaseNode):
     name = "blocked_120"
     display_name = "Blocked 120"
     category = NodeCategory.TOOL
-    description = "测试用: 输出 blocked 标记"
+    description = "测试用: 输出 blocked 标记"  # i18n: user-facing
     icon = "⛔"
     default_label = "Blocked"
 
@@ -121,8 +121,8 @@ class TestEngineLogs:
         run_id = "run-120-ok"
         await eng.execute(wf, execution_id=run_id)
         text = [r.getMessage() for r in caplog.records]
-        # issue #187: run start 行追加 hitl_mode/hitl_timeout 字段
-        # issue #189: run start 行追加 concurrency/executors 字段
+        # issue #187: the run start line gains hitl_mode/hitl_timeout fields
+        # issue #189: the run start line gains concurrency/executors fields
         assert (
             f"[{run_id}] run start: workflow=log-wf nodes=1 hitl_mode=headless hitl_timeout=1800s "
             "concurrency=1 executors={'simple': 1}"
@@ -152,7 +152,7 @@ class TestEngineLogs:
         eng = WorkflowEngine(permission_manager=_DenyAll())
         execution = await eng.execute(_wf("echo_120"), execution_id="run-120-deny")
         warns = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-        assert any("verdict=gated" in m and "权限拒绝" in m for m in warns)
+        assert any("verdict=gated" in m and "权限拒绝" in m for m in warns)  # i18n: user-facing
         assert execution.status.value == "failed"
 
 

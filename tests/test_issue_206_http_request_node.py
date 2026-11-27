@@ -1,7 +1,8 @@
-"""issue #206: http_request 节点 — DAG 内调用外部 REST API。
+"""issue #206: http_request node — call external REST APIs from within a DAG.
 
-MockTransport 离线桩: 无真实网络, 校验方法/请求体/模板解析/非 2xx 失败语义;
-另覆盖注册、HIGH_RISK 名单、url: scope 权限。
+MockTransport offline stub: no real network; verifies method/request body/template
+resolution/non-2xx failure semantics; also covers registration, the HIGH_RISK list,
+and url: scope permissions.
 """
 
 from __future__ import annotations
@@ -40,13 +41,13 @@ def _bind(node, handler):
 
 class TestTemplateResolution:
     def test_nested_dict_and_list(self):
-        ctx = {"task": {"id": 42, "tags": ["a", "b"]}, "name": "张三"}
+        ctx = {"task": {"id": 42, "tags": ["a", "b"]}, "name": "张三"}  # i18n: user-facing
         out = resolve_template(
             {"id": "${task.id}", "list": ["${name}", "${task.tags}"], "keep": 7},
             ctx,
         )
         assert out["id"] == "42"
-        assert out["list"][0] == "张三"
+        assert out["list"][0] == "张三"  # i18n: user-facing
         assert json.loads(out["list"][1]) == ["a", "b"]
         assert out["keep"] == 7
 
@@ -54,7 +55,7 @@ class TestTemplateResolution:
         with caplog.at_level(logging.WARNING, logger="fusion_cowork.nodes.tools.http_request_node"):
             out = resolve_template("Bearer ${missing.token}", {"a": 1})
         assert out == "Bearer ${missing.token}"
-        assert any("模板变量未命中" in r.message for r in caplog.records)
+        assert any("模板变量未命中" in r.message for r in caplog.records)  # i18n: user-facing
 
     def test_lookup_scalar_dict_list(self):
         assert _lookup("a", {"a": 1}, "${a}") == "1"
@@ -138,17 +139,17 @@ class TestHttpRequestExecution:
         node = _make_node({})
         r1 = await node.execute({})
         assert r1.status.value == "failed"
-        assert "缺少 url" in r1.error
+        assert "缺少 url" in r1.error  # i18n: user-facing
         node2 = _make_node({"url": "file:///etc/passwd"})
         r2 = await node2.execute({})
         assert r2.status.value == "failed"
-        assert "非法 URL" in r2.error
+        assert "非法 URL" in r2.error  # i18n: user-facing
 
     async def test_unsupported_method(self):
         node = _make_node({"url": "http://127.0.0.1:11480/api", "method": "TRACE"})
         result = await node.execute({})
         assert result.status.value == "failed"
-        assert "不支持的 HTTP 方法" in result.error
+        assert "不支持的 HTTP 方法" in result.error  # i18n: user-facing
 
     async def test_timeout_failure(self):
         def handler(request: httpx.Request) -> httpx.Response:
@@ -158,7 +159,7 @@ class TestHttpRequestExecution:
         _bind(node, handler)
         result = await node.execute({})
         assert result.status.value == "failed"
-        assert "超时" in result.error
+        assert "超时" in result.error  # i18n: user-facing
 
     async def test_connection_failure(self):
         def handler(request: httpx.Request) -> httpx.Response:
@@ -168,7 +169,7 @@ class TestHttpRequestExecution:
         _bind(node, handler)
         result = await node.execute({})
         assert result.status.value == "failed"
-        assert "连接失败" in result.error
+        assert "连接失败" in result.error  # i18n: user-facing
 
     async def test_inputs_url_overrides_params(self):
         seen = {}

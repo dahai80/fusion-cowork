@@ -1,4 +1,4 @@
-"""issue #187: HITL 默认开启 + 有界超时自动拒绝 + completed_with_denials 终态 + 一次性批准不落规则。"""
+"""issue #187: HITL default ON + bounded timeout auto-deny + completed_with_denials terminal state + approve-once persists no rule."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class _ProbeNode(BaseNode):
     name = HITL_NODE
     display_name = "HITL Probe 187"
     category = NodeCategory.TOOL
-    description = "测试用: 高风险探针 (#187)"
+    description = "测试用: 高风险探针 (#187)"  # i18n: user-facing
     icon = "🧪"
     default_label = "Probe"
 
@@ -36,7 +36,7 @@ class _LowNode(BaseNode):
     name = LOW_NODE
     display_name = "Low Probe 187"
     category = NodeCategory.TOOL
-    description = "测试用: 低风险探针"
+    description = "测试用: 低风险探针"  # i18n: user-facing
     icon = "1️⃣"
     default_label = "Low"
 
@@ -81,7 +81,7 @@ def _denied(execution) -> bool:
 
 
 class TestHitlDefaults:
-    # issue #187: FUSION_COWORK_HITL_PAUSE 语义翻转 — 默认 ON, 显式 off 值才关闭
+    # issue #187: FUSION_COWORK_HITL_PAUSE semantics flipped — default ON, only explicit off values disable
     @pytest.mark.parametrize(
         "raw,expected",
         [
@@ -132,11 +132,11 @@ class TestHitlFlow:
         deadline = eng.hitl_deadline(exec_id)
         assert deadline is not None and deadline > time.time()
         execution = await asyncio.wait_for(task, timeout=5)
-        # 超时 → 自动拒绝 → 非 continue_on_error 节点 → run 失败
+        # Timeout -> auto-deny -> non continue_on_error node -> run fails
         assert execution.status == WorkflowStatus.FAILED
         assert _denied(execution)
         assert _ProbeNode.calls == 0
-        # 滞留待审批项被清理, 截止时间被弹出
+        # Stale pending approval cleaned up, deadline popped
         assert pm_no_guard.list_pending() == []
         assert eng.hitl_deadline(exec_id) is None
         assert not eng.hitl_pending(exec_id)
@@ -150,7 +150,7 @@ class TestHitlFlow:
             if n.name == HITL_NODE:
                 n.config.continue_on_error = True
         execution = await eng.execute(wf, execution_id="run-187-cwd")
-        # continue_on_error 高风险节点不进 HITL, deny-fast 跳过; run 完成但带否决
+        # continue_on_error high-risk node skips HITL with deny-fast; run completes but with denials
         assert execution.status == WorkflowStatus.COMPLETED_WITH_DENIALS
         assert execution.status.value == "completed_with_denials"
         assert _denied(execution)
@@ -170,7 +170,7 @@ class TestHitlFlow:
     async def test_release_pending_once_no_rule_persist(self, pm_no_guard):
         _ProbeNode.calls = 0
         eng = WorkflowEngine(permission_manager=pm_no_guard)
-        # run1: 暂停 → 一次性批准 (不落规则) → 原地续跑成功
+        # run1: pause -> approve-once (no rule persisted) -> resume in place succeeds
         exec1 = "run-187-once-1"
         task = asyncio.create_task(eng.execute(_wf(), execution_id=exec1))
         assert await _wait_hitl(eng, exec1)
@@ -184,18 +184,18 @@ class TestHitlFlow:
         execution = await asyncio.wait_for(task, timeout=5)
         assert execution.status == WorkflowStatus.SUCCESS
         assert _ProbeNode.calls == 1
-        # run2: 同一 PermissionManager, 规则未持久化 → 再次暂停
+        # run2: same PermissionManager, rule not persisted -> pauses again
         _ProbeNode.calls = 0
         exec2 = "run-187-once-2"
         task = asyncio.create_task(eng.execute(_wf(), execution_id=exec2))
-        assert await _wait_hitl(eng, exec2), "一次性批准不应留下持久规则"
-        # 收尾: confirm_guard 落规则后唤醒
+        assert await _wait_hitl(eng, exec2), "一次性批准不应留下持久规则"  # i18n: user-facing
+        # Wrap up: confirm_guard persists a rule then wakes the run
         action_id2 = pm_no_guard.list_pending()[0]["action_id"]
         await pm_no_guard.confirm_guard(action_id2, approved=True, approved_by="test")
         eng.resolve_hitl(exec2, True)
         execution = await asyncio.wait_for(task, timeout=5)
         assert execution.status == WorkflowStatus.SUCCESS
-        # run3: 规则已持久化 → 不再暂停
+        # run3: rule already persisted -> no more pausing
         _ProbeNode.calls = 0
         execution = await eng.execute(_wf(), execution_id="run-187-once-3")
         assert execution.status == WorkflowStatus.SUCCESS
@@ -251,11 +251,11 @@ class TestWebWiring:
                     break
                 time.sleep(0.05)
             assert hitl
-            # run 详情带 hitl_pending + hitl_deadline (默认 1800s)
+            # Run detail carries hitl_pending + hitl_deadline (default 1800s)
             detail = client.get(f"/api/runs/{run_id}", headers=auth).json()
             assert detail["hitl_pending"] is True
             assert detail["hitl_deadline"] > time.time() + 1700
-            # 刷新页面语义: pending 队列仍在, 页面重载可恢复审批卡
+            # Page-reload semantics: pending queue survives, reload can restore the approval card
             pending = client.get("/api/permissions/pending", headers=auth).json()["approvals"]
             assert len(pending) == 1 and pending[0]["execution_id"] == run_id
             action_id = pending[0]["action_id"]
@@ -273,7 +273,7 @@ class TestWebWiring:
                 time.sleep(0.05)
             assert detail["status"] == "success", detail
             assert _ProbeNode.calls == 1
-            # 规则未持久化 — 同一工作流再跑一次仍暂停
+            # Rule not persisted — rerunning the same workflow pauses again
             _ProbeNode.calls = 0
             run2 = client.post("/api/runs", json={"workflow_id": wf_id}, headers=auth).json()["run_id"]
             hitl2 = False
@@ -282,8 +282,8 @@ class TestWebWiring:
                     hitl2 = True
                     break
                 time.sleep(0.05)
-            assert hitl2, "once 批准不应持久化规则"
-            # 收尾 run2, 避免悬挂任务
+            assert hitl2, "once 批准不应持久化规则"  # i18n: user-facing
+            # Wrap up run2 to avoid a dangling task
             action2 = client.get("/api/permissions/pending", headers=auth).json()["approvals"][0]["action_id"]
             client.post(f"/api/permissions/pending/{action2}/confirm", json={"approved": False}, headers=auth)
             for _ in range(200):

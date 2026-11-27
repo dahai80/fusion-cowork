@@ -1,4 +1,4 @@
-"""issue #226: 终态 run 从指定步骤重跑 — 新 run 链回原 run (labels.resume_of), 已完成步骤快照续跑, 校验/终态守卫。"""
+"""issue #226: resume a terminal run from a given step — new run links back to the original (labels.resume_of), completed-step snapshots carried over, validation/terminal guards."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import_all_nodes()
 
 STATIC_KEY = "test-key-226"
 
-# 低风险纯逻辑节点 — 离线确定性成功, 无 HITL/LLM 依赖
+# Low-risk pure-logic nodes — deterministic offline success, no HITL/LLM dependency
 WF_DEF = {
     "name": "wf-226",
     "nodes": [
@@ -53,7 +53,7 @@ def _wait_terminal(tc, run_id, timeout=8.0):
         if r.status_code == 200 and r.json()["status"] not in ("running", "pending"):
             return r.json()
         time.sleep(0.05)
-    raise AssertionError("run 未在超时内进入终态")
+    raise AssertionError("run 未在超时内进入终态")  # i18n: user-facing
 
 
 class TestResumeFrom:
@@ -65,7 +65,7 @@ class TestResumeFrom:
         orig = _wait_terminal(tc, orig_id)
         assert orig["status"] == "success" and len(orig["steps"]) == 3
 
-        # 从 n2 重跑: n1 的成功快照续跑, n2/n3 真正重执行
+        # Resume from n2: n1's successful snapshot carried over, n2/n3 re-executed for real
         r = tc.post(f"/api/runs/{orig_id}/resume-from", json={"node_id": "n2"}, headers=_headers())
         assert r.status_code == 200, r.text
         body = r.json()
@@ -75,11 +75,11 @@ class TestResumeFrom:
         assert body["snapshot_steps"] == 1
 
         rec = _wait_terminal(tc, new_id)
-        # 新 run 链回原 run, workspace 归属继承
+        # New run links back to the original, workspace ownership inherited
         assert rec["labels"]["resume_of"] == orig_id
         assert rec["source"] == "resume"
         assert rec["status"] == "success"
-        # 快照步 + 重跑步都在时间线上 (n1 快照, n2/n3 重执行)
+        # Snapshot step + re-run steps both on the timeline (n1 snapshot, n2/n3 re-executed)
         assert [s["node_id"] for s in rec["steps"]] == ["n1", "n2", "n3"]
 
     def test_resume_from_never_executed_node_full_rerun(self, client):
@@ -87,7 +87,8 @@ class TestResumeFrom:
         r = tc.post("/api/runs", json={"workflow": WF_DEF, "name": "rv226b"}, headers=_headers())
         orig_id = r.json()["run_id"]
         _wait_terminal(tc, orig_id)
-        # 未知节点 → 400; 已存在但未执行的场景用终态 run 的首节点 → 快照 0 全量重跑
+        # Unknown node -> 400; the exists-but-never-executed case uses the first node of a
+        # terminal run -> 0 snapshot steps, full rerun
         r = tc.post(f"/api/runs/{orig_id}/resume-from", json={"node_id": "n1"}, headers=_headers())
         assert r.status_code == 200, r.text
         assert r.json()["snapshot_steps"] == 0
@@ -113,7 +114,7 @@ class TestResumeFrom:
 
     def test_resume_from_not_terminal_409(self, client):
         tc, app = client
-        # 种子 running run — 不允许重跑
+        # Seed a running run — rerun not allowed
         registry = app.state.run_registry
         registry._runs["run_226_live"] = {
             "run_id": "run_226_live",
@@ -137,8 +138,8 @@ class TestResumeFrom:
         assert r.status_code == 404
 
     def test_resume_from_dict_nodes_template_shape(self, client):
-        # issue #410: template 来源 run 的 workflow_def.nodes 是 dict (node_id -> node),
-        # resume-from 曾经 AttributeError 500 — 两种形态都必须可重跑
+        # issue #410: template-sourced runs store workflow_def.nodes as a dict (node_id -> node),
+        # resume-from used to raise AttributeError 500 — both shapes must be resumable
         tc, app = client
         dict_wf = {
             "name": "wf-226-dict",

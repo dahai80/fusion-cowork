@@ -1,4 +1,4 @@
-"""#115 W10/B5: Runs 详情产物预览 — 步骤输出提取 + /api/runs/{id}/artifacts。"""
+"""#115 W10/B5: Runs detail artifact preview — step output extraction + /api/runs/{id}/artifacts."""
 
 from __future__ import annotations
 

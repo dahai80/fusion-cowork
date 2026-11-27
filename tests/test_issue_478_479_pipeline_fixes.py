@@ -68,7 +68,7 @@ class TestProductLifecycleTemplate478:
         assert n12.config.params["issue_number"] == "${step.n6.result.number}"
 
     def test_n7_n8_keep_shorthand(self):
-        # 手术式修改: n7/n8 的上游就是 issue_create (信封有 number), 保持速记不动
+        # Surgical change: n7/n8's upstream is issue_create itself (envelope has number), keep the shorthand
         wf = TemplateManager().template_to_workflow("product_lifecycle")
         assert wf.nodes["n7"].config.params["issue_number"] == "${result.number}"
         assert wf.nodes["n8"].config.params["issue_number"] == "${result.number}"
@@ -82,7 +82,7 @@ class TestProductLifecycleTemplate478:
         assert "${step.n3.result.artifacts.0|" in n9_input
 
     def test_rendered_template_resolves_with_empty_artifacts(self):
-        # 端到端: replay-dev 座位 artifacts=[] 场景 — n3 参数插值后无残留引用
+        # End-to-end: replay-dev seat with artifacts=[] — no residual refs after n3 param interpolation
         wf = TemplateManager().template_to_workflow("product_lifecycle")
         ba_report = "PRD-CONTENT-478"
         passed = {
@@ -107,7 +107,7 @@ class TestGateStringCoercion479:
         eng = self._engine(True)
         wf = Workflow(name="wf-479")
         gate = NodeRegistry.create("approval_gate", node_id="n_gate")
-        gate.config.params = {"prompt": "闸门 A", "require_review": "false"}
+        gate.config.params = {"prompt": "闸门 A", "require_review": "false"}  # i18n: user-facing
         wf.add_node(gate)
         ex = await eng.execute(wf, execution_id="run_479_strfalse")
         assert ex.status.value == "success"
@@ -121,7 +121,7 @@ class TestGateStringCoercion479:
             eng = self._engine(True)
             wf = Workflow(name=f"wf-479-{i}")
             gate = NodeRegistry.create("approval_gate", node_id="n_gate")
-            gate.config.params = {"prompt": "闸门", "require_review": val}
+            gate.config.params = {"prompt": "闸门", "require_review": val}  # i18n: user-facing
             wf.add_node(gate)
             ex = await eng.execute(wf, execution_id=f"run_479_{i}")
             assert ex.status.value == "success", f"require_review={val!r} should auto-pass"
@@ -133,28 +133,28 @@ class TestGateStringCoercion479:
         eng = self._engine(False)
         wf = Workflow(name="wf-479-true")
         gate = NodeRegistry.create("approval_gate", node_id="n_gate")
-        gate.config.params = {"prompt": "闸门 A", "require_review": "true"}
+        gate.config.params = {"prompt": "闸门 A", "require_review": "true"}  # i18n: user-facing
         wf.add_node(gate)
         ex = await eng.execute(wf, execution_id="run_479_strtrue")
-        # headless (hitl_pause=False): 字符串 "true" 不该误判为免评审 — 照常权限拒绝
+        # headless (hitl_pause=False): string "true" must not be misjudged as review-exempt — permission-denied as usual
         assert ex.status.value == "failed"
         assert ex.steps[-1].status == NodeStatus.DENIED
 
     async def test_bool_false_still_auto_passes(self, monkeypatch):
-        # 回归锚: #413 原 boolean 行为不因 #479 强转改变
+        # Regression anchor: #413 original boolean behavior unchanged by the #479 coercion
         monkeypatch.delenv("FUSION_COWORK_HITL_PAUSE", raising=False)
         monkeypatch.delenv("FUSION_GUARD_ENABLED", raising=False)
         eng = self._engine(True)
         wf = Workflow(name="wf-479-bool")
         gate = NodeRegistry.create("approval_gate", node_id="n_gate")
-        gate.config.params = {"prompt": "闸门 B", "require_review": False}
+        gate.config.params = {"prompt": "闸门 B", "require_review": False}  # i18n: user-facing
         wf.add_node(gate)
         ex = await eng.execute(wf, execution_id="run_479_boolfalse")
         assert ex.status.value == "success"
         assert ex.steps[-1].output_data.get("auto_passed") is True
 
     async def test_gate_node_accepts_string_false(self):
-        # 节点自身分支 (ops_nodes) 早接受字符串形态 — 引擎对齐后两端一致
+        # The node's own branch (ops_nodes) already accepted string form — engine alignment makes both ends consistent
         from fusion_cowork.engine.node import NodeConfig
 
         n = NodeRegistry.create("approval_gate", config=NodeConfig(params={"prompt": "g", "require_review": "false"}))

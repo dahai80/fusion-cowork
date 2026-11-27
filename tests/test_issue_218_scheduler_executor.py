@@ -1,9 +1,9 @@
-"""issue #218: web_api 定时任务执行器必须满足 TaskScheduler 的零参调用约定。
+"""issue #218: the web_api scheduled-task executor must satisfy TaskScheduler's zero-arg call convention.
 
-旧签名 _exec(task_id) 与 scheduler._run_task 的 await executor() 不匹配,
-cron/interval 任务每次触发都 TypeError, 连败 5 次被置 FAILED 且不产生任何 run。
-回归锚点: 触发一次任务, fail_count 必须为 0 且 run 真实创建并执行。
-"""
+The old _exec(task_id) signature mismatches scheduler._run_task's await executor(); cron/interval
+tasks raised TypeError on every fire, and after 5 consecutive failures the task was marked FAILED
+with no run produced. Regression anchor: firing a task once must leave fail_count at 0 and actually
+create and execute a run."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ class _SchedProbeNode(BaseNode):
     name = PROBE_NODE
     display_name = "Sched Probe 218"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "测试用: 低风险调度探针 (#218)"
     icon = "🧪"
     default_label = "Probe"
@@ -75,7 +76,7 @@ class TestSchedulerExecutorSignature:
             await sched._run_task(task_id)
 
             task = sched.get_task(task_id)
-            assert task.fail_count == 0, f"触发失败: fail_count={task.fail_count}"
+            assert task.fail_count == 0, f"触发失败: fail_count={task.fail_count}"  # i18n: user-facing
             assert task.run_count == 1
             runs = []
             for _ in range(100):
@@ -83,7 +84,7 @@ class TestSchedulerExecutorSignature:
                 if runs and runs[0].get("status") != "running":
                     break
                 await asyncio.sleep(0.02)
-            assert runs, "执行器未产生任何 run"
+            assert runs, "执行器未产生任何 run"  # i18n: user-facing
             assert runs[0]["status"] == "success", runs[0]
             assert runs[0]["source"] == ""
             assert _SchedProbeNode.calls == 1
@@ -108,7 +109,7 @@ class TestSchedulerExecutorSignature:
                 headers=auth,
             ).json()["id"]
             executor = sched._executors[task_id]
-            # TaskScheduler._run_task 的调用约定: await executor() — 零参
+            # TaskScheduler._run_task call convention: await executor() — zero args
             params = inspect.signature(executor).parameters
             required = [p for p in params.values() if p.default is inspect.Parameter.empty]
-            assert not required, f"executor 声明了必填参数: {list(params)}"
+            assert not required, f"executor 声明了必填参数: {list(params)}"  # i18n: user-facing

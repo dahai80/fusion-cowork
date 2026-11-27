@@ -122,19 +122,19 @@ class TestSchemaParamsCoerceAndRun:
             "/contract-review",
             {"contract_path": "~/c.md", "max_issues": "5", "deep": "yes", "tags": "a, b", "strictness": "high"},
         )
-        assert "error" not in result or result.get("error") != "参数校验失败"
+        assert "error" not in result or result.get("error") != "参数校验失败"  # i18n: user-facing
 
     async def test_missing_required_param_rejected(self):
         registry = SkillPackageRegistry()
         registry.register(parse_markdown(SHARED_PACK))
         result = await registry.run("/contract-review", {})
-        assert result.get("error") == "参数校验失败"
+        assert result.get("error") == "参数校验失败"  # i18n: user-facing
 
     async def test_enum_out_of_range_rejected(self):
         registry = SkillPackageRegistry()
         registry.register(parse_markdown(SHARED_PACK))
         result = await registry.run("/contract-review", {"contract_path": "c.md", "strictness": "banana"})
-        assert result.get("error") == "参数校验失败"
+        assert result.get("error") == "参数校验失败"  # i18n: user-facing
 
 
 class TestBuiltinContractReviewSharedFormat:
@@ -147,14 +147,14 @@ class TestBuiltinContractReviewSharedFormat:
         assert pkg.handler == "contract_review"
         by_name = {p.name: p for p in pkg.params}
         assert by_name["contract_path"].required is True
-        assert by_name["playbook_query"].default == "合同审查要点"
+        assert by_name["playbook_query"].default == "合同审查要点"  # i18n: user-facing
 
     async def test_builtin_registry_discovers_and_runs(self):
         registry = get_package_registry(reload=True)
         pkg = registry.get("/contract-review")
         assert pkg is not None
         data = pkg.to_dict()
-        assert data["params"], "结构化表单 schema 必须从 parameters 派生"
+        assert data["params"], "结构化表单 schema 必须从 parameters 派生"  # i18n: user-facing
         assert data["allowed_tools"]
 
 

@@ -1,13 +1,14 @@
-"""issue #172 + #173/#174: /api/models 冷缓存 200 envelope + shell_registry raw_key 签发密钥提取。
+"""issue #172 + #173/#174: /api/models cold-cache 200 envelope + shell_registry raw_key issued-key extraction.
 
 #173/#174 Contract:
-- fusion-gateway K1 签发响应 (writeShellKeyResponse) 明文字段是 raw_key (顶层或 data 嵌套),
-  _extract_issued_key 必须识别, 否则 fm- 密钥只展示一次即静默丢失。
-- 旧字段名 (api_key/issued_key/key/module_key) 保留兼容 (见 test_issue_168)。
+- The fusion-gateway K1 issuance response (writeShellKeyResponse) carries the plaintext under raw_key
+  (top level or nested in data); _extract_issued_key must recognize it, otherwise the fm- key is shown
+  once and then silently lost.
+- Legacy field names (api_key/issued_key/key/module_key) stay back-compatible (see test_issue_168).
 
 #172 Contract:
-- /api/models 模型客户端缺失 (mlx=None) → 200 + unavailable=True 空列表 envelope, 不再 503。
-- 前端轮询拿到 200 即不重试, 消除 shell tab 内 503 刷屏。
+- /api/models with a missing models client (mlx=None) → 200 + unavailable=True empty-list envelope, no more 503.
+- Frontend polling gets a 200 and stops retrying, eliminating the 503 spam in the shell tab.
 """
 
 import asyncio
@@ -69,7 +70,7 @@ class TestRawKeyIssuance:
         assert _extract_issued_key({"raw_key": "fm-new", "api_key": "old"}) == "fm-new"
 
     async def test_gateway_shaped_response_persists_key(self, monkeypatch, _key_path):
-        # issue #173 复现路径: 真实网关只回 raw_key, 之前被静默丢弃
+        # issue #173 reproduction path: the real gateway returns only raw_key, previously silently dropped
         monkeypatch.setenv("FUSION_SHELL_GATEWAY_URL", "http://gw")
         monkeypatch.setenv("FUSION_ADMIN_KEY", "admin-secret")
         issued = {
@@ -106,7 +107,7 @@ class TestModelsUnavailableEnvelope:
     def test_no_mlx_client_returns_200_envelope(self, tmp_path, monkeypatch):
         client = _build_client(tmp_path, tmp_path / "workflows", monkeypatch, SimpleNamespace(mlx=None))
         resp = client.get("/api/models")
-        assert resp.status_code == 200, "mlx 客户端缺失应返回 200 envelope (issue #172), 而非 503"
+        assert resp.status_code == 200, "mlx 客户端缺失应返回 200 envelope (issue #172), 而非 503"  # i18n: user-facing
         body = resp.json()
         assert body["models"] == []
         assert body["count"] == 0

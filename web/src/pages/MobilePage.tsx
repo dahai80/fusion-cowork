@@ -21,18 +21,18 @@ export function MobilePage() {
         try {
             const res = await api.deliver(runId);
             if (res.delivered) {
-                sdk.toast.show({ level: 'success', message: t('已投递到桌面', 'Delivered to desktop') });
+                sdk.toast.show({ level: 'success', message: t('已投递到桌面', 'Delivered to desktop') }); // i18n: user-facing
             } else {
                 sdk.toast.show({
                     level: 'warning',
-                    message: t('桌面设备不在线, 未送达', 'Desktop device offline, not delivered'),
+                    message: t('桌面设备不在线, 未送达', 'Desktop device offline, not delivered'), // i18n: user-facing
                 });
             }
         } catch (e) {
             console.error('[cowork-web] deliver failed', e);
             sdk.toast.show({
                 level: 'error',
-                message: t('投递失败 (同步未启用)', 'Deliver failed (sync not enabled)'),
+                message: t('投递失败 (同步未启用)', 'Deliver failed (sync not enabled)'), // i18n: user-facing
             });
         }
     }
@@ -43,14 +43,14 @@ export function MobilePage() {
             else if (action === 'resume') await api.resumeRun(runId);
             else await api.cancelRun(runId);
             const label = t(
-                action === 'pause' ? '已暂停' : action === 'resume' ? '已恢复' : '已取消',
+                action === 'pause' ? '已暂停' : action === 'resume' ? '已恢复' : '已取消', // i18n: user-facing
                 action === 'pause' ? 'Paused' : action === 'resume' ? 'Resumed' : 'Cancelled'
             );
             sdk.toast.show({ level: 'success', message: label });
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] takeover failed', action, e);
-            sdk.toast.show({ level: 'error', message: t('接管操作失败', 'Takeover action failed') });
+            sdk.toast.show({ level: 'error', message: t('接管操作失败', 'Takeover action failed') }); // i18n: user-facing
         }
     }
 
@@ -59,20 +59,22 @@ export function MobilePage() {
             await api.confirmApproval(actionId, approved);
             sdk.toast.show({
                 level: 'success',
-                message: approved ? t('已允许', 'Approved') : t('已拒绝', 'Denied'),
+                message: approved ? t('已允许', 'Approved') : t('已拒绝', 'Denied'), // i18n: user-facing
             });
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] approval decision failed', e);
-            sdk.toast.show({ level: 'error', message: t('审批提交失败', 'Approval failed') });
+            sdk.toast.show({ level: 'error', message: t('审批提交失败', 'Approval failed') }); // i18n: user-facing
         }
     }
 
     return (
         <div className="mx-auto max-w-md space-y-3">
-            <div className="text-sm font-medium text-text-primary">{t('运行概览', 'Runs overview')}</div>
+            <div className="text-sm font-medium text-text-primary">
+                {t('运行概览', 'Runs overview') /* i18n: user-facing */}
+            </div>
             {ov.runs.length === 0 ? (
-                <EmptyState title={t('暂无运行', 'No runs')} />
+                <EmptyState title={t('暂无运行', 'No runs') /* i18n: user-facing */} />
             ) : (
                 ov.runs.map((r) => (
                     <div key={r.run_id} className="rounded-lg border border-border bg-bg-elevated p-3">
@@ -86,7 +88,7 @@ export function MobilePage() {
                             className="w-full rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-bg-muted"
                             onClick={() => void deliver(r.run_id)}
                         >
-                            {t('投递到桌面', 'Deliver to desktop')}
+                            {t('投递到桌面', 'Deliver to desktop') /* i18n: user-facing */}
                         </button>
                         {(r.status === 'running' || r.status === 'paused') && (
                             <div className="flex gap-2 pt-2">
@@ -96,7 +98,7 @@ export function MobilePage() {
                                         className="flex-1 rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-bg-muted"
                                         onClick={() => void takeover(r.run_id, 'pause')}
                                     >
-                                        {t('暂停', 'Pause')}
+                                        {t('暂停', 'Pause') /* i18n: user-facing */}
                                     </button>
                                 )}
                                 {r.status === 'paused' && (
@@ -105,7 +107,7 @@ export function MobilePage() {
                                         className="flex-1 rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-bg-muted"
                                         onClick={() => void takeover(r.run_id, 'resume')}
                                     >
-                                        {t('恢复', 'Resume')}
+                                        {t('恢复', 'Resume') /* i18n: user-facing */}
                                     </button>
                                 )}
                                 <button
@@ -113,7 +115,7 @@ export function MobilePage() {
                                     className="flex-1 rounded-md border border-border px-2 py-1 text-xs text-error hover:bg-bg-muted"
                                     onClick={() => void takeover(r.run_id, 'cancel')}
                                 >
-                                    {t('取消', 'Cancel')}
+                                    {t('取消', 'Cancel') /* i18n: user-facing */}
                                 </button>
                             </div>
                         )}
@@ -121,10 +123,12 @@ export function MobilePage() {
                 ))
             )}
             <div className="pt-1 text-sm font-medium text-text-primary">
-                {t('待审批', 'Pending approvals')} ({ov.pending_approvals.length})
+                {t('待审批', 'Pending approvals') /* i18n: user-facing */} ({ov.pending_approvals.length})
             </div>
             {ov.pending_approvals.length === 0 ? (
-                <div className="text-xs text-text-muted">{t('无待审批项', 'Nothing pending')}</div>
+                <div className="text-xs text-text-muted">
+                    {t('无待审批项', 'Nothing pending') /* i18n: user-facing */}
+                </div>
             ) : (
                 ov.pending_approvals.map((a) => (
                     <div key={a.action_id} className="rounded-md border border-border bg-bg-elevated px-3 py-2">
@@ -138,14 +142,14 @@ export function MobilePage() {
                                 className="flex-1 rounded-md border border-border px-2 py-1 text-xs text-error hover:bg-bg-muted"
                                 onClick={() => void decide(a.action_id, false)}
                             >
-                                {t('拒绝', 'Deny')}
+                                {t('拒绝', 'Deny') /* i18n: user-facing */}
                             </button>
                             <button
                                 type="button"
                                 className="flex-1 rounded-md border border-border px-2 py-1 text-xs text-success hover:bg-bg-muted"
                                 onClick={() => void decide(a.action_id, true)}
                             >
-                                {t('允许', 'Allow')}
+                                {t('允许', 'Allow') /* i18n: user-facing */}
                             </button>
                         </div>
                     </div>

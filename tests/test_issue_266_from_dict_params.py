@@ -1,4 +1,4 @@
-"""issue #266: from_dict 丢弃模板/API 顶层 params — HITL 批准恢复后节点空参数重跑。"""
+"""issue #266: from_dict drops template/API top-level params — after HITL approval resume, nodes re-ran with empty params."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ class TestHitlResumeWithParams:
         pm = eng._permission_manager
         details = pm.find_pending_by_execution("run_266a")
         assert details is not None
-        # 待审批卡应带真实参数 (修复前 params={} — 节点参数在反序列化时已丢失)
+        # The pending approval card should carry the real params (before the fix params={} — node params were lost during deserialization)
         assert details["params"].get("command") == "echo hello-266"
         eng.resolve_hitl("run_266a", True, once=True)
         execution = await task

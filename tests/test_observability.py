@@ -1,4 +1,4 @@
-"""可观测性测试 (v0.4.0 Stage 4)."""
+"""Observability tests (v0.4.0 Stage 4)."""
 
 from __future__ import annotations
 
@@ -136,14 +136,14 @@ class TestHealth:
         assert called["n"] == 1
 
     def test_check_disk(self):
-        # 阈值须高于当前实际占用, 否则满盘机器本地 fail (CI runner 低占用不触发)
+        # The threshold must be above the current actual usage, otherwise this fails locally on a full disk (CI runners with low usage do not trigger)
         import shutil as _sh
 
         cur = int(_sh.disk_usage("/").used / _sh.disk_usage("/").total * 100)
         r = HealthCheck.check_disk(cur + 10)
         assert r["ok"] is True
         assert "pct" in r
-        # 阈值低于当前占用 → ok=False, 验比较逻辑
+        # Threshold below current usage → ok=False, verifying the comparison logic
         r_down = HealthCheck.check_disk(max(1, cur - 1))
         assert r_down["ok"] is False
 

@@ -1,6 +1,6 @@
-"""Stage 7 混沌 — DB 断连熔断 open + 降级; 飞行中 SIGTERM 优雅 drain。
+"""Stage 7 chaos — DB outage circuit-breaker open + degradation; in-flight SIGTERM graceful drain.
 
-@ pytest.mark.chaos。
+@ pytest.mark.chaos.
 """
 
 from __future__ import annotations
@@ -24,18 +24,18 @@ class TestCircuitBreakerChaos:
             call_count["n"] += 1
             raise ConnectionError("DB gone")
 
-        # 连续失败达阈值 -> open
+        # consecutive failures reach the threshold -> open
         for _ in range(3):
             with pytest.raises(ConnectionError):
                 await cb.call(flaky_db_call)
 
         assert cb.is_open() is True
 
-        # open 后不再调底层, 直接抛 CircuitOpenError (降级不挂底层)
+        # once open the underlying call is not invoked; CircuitOpenError raised directly (degradation does not hit the backend)
         before = call_count["n"]
         with pytest.raises(CircuitOpenError):
             await cb.call(flaky_db_call)
-        assert call_count["n"] == before, "熔断 open 后不应再调底层"
+        assert call_count["n"] == before, "熔断 open 后不应再调底层"  # i18n: user-facing
 
     async def test_half_open_recovery_after_timeout(self, monkeypatch):
         cb = CircuitBreaker(name="db", failure_threshold=2, recovery_timeout=1.0)
@@ -51,7 +51,7 @@ class TestCircuitBreakerChaos:
                 await cb.call(fail)
         assert cb.is_open()
 
-        # 推进时间过恢复窗口 -> half_open
+        # advance time past the recovery window -> half_open
         t[0] += 2.0
 
         async def ok():
@@ -64,7 +64,7 @@ class TestCircuitBreakerChaos:
 
 class TestGracefulDrain:
     async def test_in_flight_tasks_drain_on_signal(self):
-        # 模拟优雅 drain: 收到信号后等飞行中任务完成再退出
+        # simulate graceful drain: after the signal, wait for in-flight tasks to finish before exiting
         drained = {"done": False}
 
         async def long_task():
@@ -79,7 +79,7 @@ class TestGracefulDrain:
         assert drained["done"] is True
 
     async def test_drain_timeout_force_cancels(self):
-        # 超过宽限期仍未完成 -> 强制 cancel (防卡死)
+        # still unfinished past the grace period -> force cancel (anti-deadlock)
         stuck_done = {"cancelled": False}
 
         async def stuck_task():

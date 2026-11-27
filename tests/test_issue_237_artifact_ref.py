@@ -1,4 +1,4 @@
-"""issue #237: Artifacts GUI 深链 artifact_ref — 状态区分 + 失败提示 + run 上下文透传。"""
+"""issue #237: Artifacts GUI deep link artifact_ref — status distinction + failure hint + run context passthrough."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ CARD = {
     "type": "report",
     "kind": "document",
     "current_version": 3,
-    "summary": "十月对账异常项汇总",
+    "summary": "十月对账异常项汇总",  # i18n: user-facing
     "source_module": "fusion-doc",
 }
 
@@ -59,8 +59,8 @@ class TestFetchStatus:
         assert card and card["artifact_id"] == "art_1"
 
     def test_engine_artifact_envelope_unwraps_fields(self):
-        # issue #243: fusion-artifacts-engine 实测单卡返回 {"artifact": {...}},
-        # 只认 {data:…} 会得到全空卡片。
+        # issue #243: fusion-artifacts-engine observed returning a single card as {"artifact": {...}},
+        # accepting only {data:…} yields an all-empty card.
         from fusion_cowork.server import web_api
 
         card, status = asyncio.run(
@@ -161,7 +161,7 @@ class TestRunContextCarriesArtifact:
             return {"run_id": "run_stub", "status": "running"}
 
         monkeypatch.setattr(client.app.state.run_registry, "start", _record_start)
-        ref_text = "[Artifact: Q3 Report | ID: art_1 | Version: v3 | Type: report | Summary: 十月对账异常项汇总]"
+        ref_text = "[Artifact: Q3 Report | ID: art_1 | Version: v3 | Type: report | Summary: 十月对账异常项汇总]"  # i18n: user-facing
         body = {
             "name": "from artifact",
             "workflow": {"name": "wf", "nodes": [{"id": "n1", "name": "echo_probe_237", "config": {}}], "edges": []},

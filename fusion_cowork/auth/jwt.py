@@ -1,11 +1,11 @@
-"""JWT 校验 (v0.4.0 Stage 2) — PyJWT HS256/RS256, 从 claim 提取 tenant_id/user_id。
+"""JWT verification (v0.4.0 Stage 2) — PyJWT HS256/RS256, extracts tenant_id/user_id from claims.
 
-校验外部签发 token:
+Verifies externally issued tokens:
 - HS256: env FUSION_JWT_SECRET (shared secret)
-- RS256: env FUSION_JWKS_URL (远程拉取公钥, 可选 cache) 或 FUSION_JWT_PUBLIC_KEY (PEM 文件/内容)
-- claim 映射: tenant_id (tenant_id/tid/tenant)、user_id (sub/user_id/uid)、scopes (scope/scopes, 空格或列表)
+- RS256: env FUSION_JWKS_URL (remotely fetched public keys, optional cache) or FUSION_JWT_PUBLIC_KEY (PEM file/content)
+- claim mapping: tenant_id (tenant_id/tid/tenant), user_id (sub/user_id/uid), scopes (scope/scopes, space-separated or list)
 
-失败返 None + 日志 (不泄 token 原文, 仅记前 8 char 指纹 + 原因)。
+Failure returns None + log (never leaks the raw token; only logs an 8-char fingerprint + reason).
 """
 
 from __future__ import annotations
@@ -25,10 +25,10 @@ _JWKS_CACHE_TTL = 600  # 10 min
 
 
 def get_default_verifier() -> JWTVerifier:
-    """单例 JWTVerifier (按 env 配置构造, 未配 secret/jwks → 空 verifier, verify_token 恒返 None)。
+    """Singleton JWTVerifier (constructed from env config; no secret/jwks configured → empty verifier, verify_token always returns None).
 
-    issue #88: FUSION_IDENTITY_ENABLED=1 → 返 _IdentityJWTAdapter (委托 fusion-identity /verify),
-    透明服务所有 get_default_verifier 消费方 (mcp_http/space api/rate_limit)。
+    issue #88: FUSION_IDENTITY_ENABLED=1 → returns _IdentityJWTAdapter (delegating to fusion-identity /verify),
+    transparently serving all get_default_verifier consumers (mcp_http/space api/rate_limit).
     """
     global _DEFAULT_VERIFIER
     if _DEFAULT_VERIFIER is None:
@@ -38,18 +38,18 @@ def get_default_verifier() -> JWTVerifier:
             client = get_identity_client()
             if client is not None:
                 _DEFAULT_VERIFIER = _IdentityJWTAdapter(client)
-                logger.info("JWTVerifier 单例 → fusion-identity 适配器 (FUSION_IDENTITY_ENABLED=1)")
+                logger.info("JWTVerifier singleton → fusion-identity adapter (FUSION_IDENTITY_ENABLED=1)")
                 return _DEFAULT_VERIFIER
         except Exception as e:
-            logger.warning(f"identity 适配器构造失败, 回退本地 JWT: {e}")
+            logger.warning(f"Identity adapter construction failed, falling back to local JWT: {e}")
         _DEFAULT_VERIFIER = JWTVerifier.from_env()
     return _DEFAULT_VERIFIER
 
 
 class JWTVerifier:
-    """JWT 校验器 — HS256/RS256 双模。
+    """JWT verifier — HS256/RS256 dual mode.
 
-    未配 secret/public_key/jwks_url → inactive, verify_token 恒返 None (走静态 fallback)。
+    No secret/public_key/jwks_url configured → inactive, verify_token always returns None (static fallback applies).
     """
 
     def __init__(
@@ -74,11 +74,11 @@ class JWTVerifier:
         self._active = bool(secret or public_key or jwks_url)
         if self._active:
             mode = "HS256" if secret else "RS256"
-            logger.info(f"JWTVerifier 已启用 (alg={mode}, issuer={issuer or '-'}, aud={audience or '-'})")
+            logger.info(f"JWTVerifier enabled (alg={mode}, issuer={issuer or '-'}, aud={audience or '-'})")
 
     @classmethod
     def from_env(cls) -> JWTVerifier:
-        """从 env 构造 (未配 → inactive)。"""
+        """Construct from env (unconfigured → inactive)."""
         return cls(
             secret=os.environ.get("FUSION_JWT_SECRET"),
             public_key=os.environ.get("FUSION_JWT_PUBLIC_KEY"),
@@ -93,23 +93,23 @@ class JWTVerifier:
         return self._active
 
     async def verify_token_async(self, token: str) -> Optional[TenantPrincipal]:
-        """异步校验 (JWKS 远程拉取可能阻塞 → 线程池跑)。返 TenantPrincipal 或 None。"""
+        """Async verification (remote JWKS fetch may block → run in a thread pool). Returns TenantPrincipal or None."""
         import asyncio
 
         return await asyncio.to_thread(self.verify_token, token)
 
     def verify_token(self, token: str) -> Optional[TenantPrincipal]:
-        """同步校验 token → TenantPrincipal | None。失败日志 + None, 不抛。"""
+        """Synchronously verify token → TenantPrincipal | None. Failure logs + returns None, never raises."""
         if not self._active:
             return None
         if not token or not isinstance(token, str):
-            logger.warning("JWT 校验失败: token 缺失")
+            logger.warning("JWT verification failed: token missing")
             return None
         fingerprint = token[:8] if len(token) >= 8 else "?"
         try:
             import jwt as pyjwt
         except ImportError:
-            logger.error("JWT 校验失败: pyjwt 未安装 (pip install 'fusion-cowork[cloud]')")
+            logger.error("JWT verification failed: pyjwt not installed (pip install 'fusion-cowork[cloud]')")
             return None
         decode_kwargs: Dict[str, Any] = {"algorithms": self._algorithms, "leeway": self._leeway}
         if self._issuer:
@@ -126,27 +126,29 @@ class JWTVerifier:
                 kid = unverified.get("kid", "")
                 pub = self._get_jwks_key(kid)
                 if not pub:
-                    logger.warning(f"JWT 校验失败: JWKS 无 kid={kid or '-'} (fp={fingerprint})")
+                    logger.warning(f"JWT verification failed: JWKS has no kid={kid or '-'} (fp={fingerprint})")
                     return None
                 payload = pyjwt.decode(token, pub, **decode_kwargs)
             else:
-                logger.warning("JWT 校验失败: verifier 未配 secret/public_key/jwks")
+                logger.warning("JWT verification failed: verifier missing secret/public_key/jwks")
                 return None
         except pyjwt.ExpiredSignatureError:
-            logger.warning(f"JWT 校验失败: token 过期 (fp={fingerprint})")
+            logger.warning(f"JWT verification failed: token expired (fp={fingerprint})")
             return None
         except pyjwt.InvalidTokenError as e:
-            logger.warning(f"JWT 校验失败: {type(e).__name__} (fp={fingerprint})")
+            logger.warning(f"JWT verification failed: {type(e).__name__} (fp={fingerprint})")
             return None
         principal = self._extract_claims(payload)
-        logger.info(f"JWT 校验通过: tenant={principal.tenant_id} user={principal.user_id} (fp={fingerprint})")
+        logger.info(
+            f"JWT verification passed: tenant={principal.tenant_id} user={principal.user_id} (fp={fingerprint})"
+        )
         return principal
 
-    # ── claim 提取 ──
+    # ── claim extraction ──
 
     @staticmethod
     def _extract_claims(payload: Dict[str, Any]) -> TenantPrincipal:
-        """从 payload 提取 tenant_id + user_id → TenantPrincipal。"""
+        """Extract tenant_id + user_id from payload → TenantPrincipal."""
         tid = payload.get("tenant_id") or payload.get("tid") or payload.get("tenant") or DEFAULT_TENANT
         uid = payload.get("user_id") or payload.get("uid") or payload.get("sub") or LOCAL_USER
         return TenantPrincipal(tenant_id=str(tid), user_id=str(uid))
@@ -154,7 +156,7 @@ class JWTVerifier:
     # ── JWKS ──
 
     def _get_jwks_key(self, kid: str) -> Optional[str]:
-        """从 JWKS (cache) 取公钥 PEM。无 → None。"""
+        """Get the public key PEM from JWKS (cached). Missing → None."""
         if not self._jwks_url:
             return None
         now = time.time()
@@ -165,9 +167,9 @@ class JWTVerifier:
                 with urllib.request.urlopen(self._jwks_url, timeout=5) as resp:
                     self._jwks_cache = json.loads(resp.read().decode("utf-8"))
                 self._jwks_fetched_at = now
-                logger.info(f"JWKS 拉取成功: {self._jwks_url} keys={len(self._jwks_cache.get('keys', []))}")
+                logger.info(f"JWKS fetch succeeded: {self._jwks_url} keys={len(self._jwks_cache.get('keys', []))}")
             except Exception as e:
-                logger.warning(f"JWKS 拉取失败: {e}")
+                logger.warning(f"JWKS fetch failed: {e}")
                 return None
         for key in self._jwks_cache.get("keys", []):
             if key.get("kid") == kid:
@@ -176,16 +178,17 @@ class JWTVerifier:
 
                     return RSAAlgorithm.from_jwk(json.dumps(key))
                 except Exception as e:
-                    logger.warning(f"JWKS key 解析失败 kid={kid}: {e}")
+                    logger.warning(f"JWKS key parse failed kid={kid}: {e}")
                     return None
         return None
 
 
 class _IdentityJWTAdapter(JWTVerifier):
-    """issue #88: fusion-identity 委托适配器 — verify_token 转 IdentityClient.verify。
+    """issue #88: fusion-identity delegation adapter — verify_token routes to IdentityClient.verify.
 
-    继承 JWTVerifier 以保持 active/verify_token_async 接口兼容;
-    verify_token 不本地解码 JWT, 全委托 fusion-identity 服务端校验 (唯一签发者)。
+    Inherits JWTVerifier to keep the active/verify_token_async interface compatible;
+    verify_token never decodes the JWT locally, fully delegating verification to the
+    fusion-identity server (the sole issuer).
     """
 
     def __init__(self, identity_client):
@@ -195,7 +198,7 @@ class _IdentityJWTAdapter(JWTVerifier):
 
     def verify_token(self, token: str) -> Optional[TenantPrincipal]:
         if not token or not isinstance(token, str):
-            logger.warning("identity JWT 校验失败: token 缺失")
+            logger.warning("identity JWT verification failed: token missing")
             return None
         result = self._identity_client.verify(token)
         if result is None:

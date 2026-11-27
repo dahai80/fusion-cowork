@@ -23,12 +23,12 @@ export function SessionsPage() {
 
     // Web capability completion: fork session / cleanup expired sessions
     async function forkSession() {
-        const sid = prompt(t('会话 ID', 'Session ID'));
+        const sid = prompt(t('会话 ID', 'Session ID')); // i18n: user-facing
         if (!sid) return;
-        const stepRaw = prompt(t('起始步骤 (留空从头)', 'From step (blank = start)'), '');
+        const stepRaw = prompt(t('起始步骤 (留空从头)', 'From step (blank = start)'), ''); // i18n: user-facing
         try {
             const resp = await api.forkSession(sid.trim(), stepRaw ? Number(stepRaw) : undefined);
-            setNote(t(`已派生会话 ${resp.session_id}`, `Forked session ${resp.session_id}`));
+            setNote(t(`已派生会话 ${resp.session_id}`, `Forked session ${resp.session_id}`)); // i18n: user-facing
             retry.manualRetry();
         } catch (e) {
             setNote(e instanceof Error ? e.message : String(e));
@@ -36,12 +36,12 @@ export function SessionsPage() {
     }
 
     async function cleanupSessions() {
-        const daysRaw = prompt(t('过期天数', 'Expire days'), '30');
+        const daysRaw = prompt(t('过期天数', 'Expire days'), '30'); // i18n: user-facing
         if (daysRaw === null) return;
         const days = Number(daysRaw) || 30;
         try {
             const resp = await api.cleanupSessions(days);
-            setNote(t(`已清理 ${resp.removed} 个过期会话`, `Removed ${resp.removed} expired sessions`));
+            setNote(t(`已清理 ${resp.removed} 个过期会话`, `Removed ${resp.removed} expired sessions`)); // i18n: user-facing
             retry.manualRetry();
         } catch (e) {
             setNote(e instanceof Error ? e.message : String(e));
@@ -53,18 +53,25 @@ export function SessionsPage() {
 
     const sessions = retry.data?.sessions ?? [];
     const sourceLabel: Record<SessionSource, string> = {
-        engine: t('执行', 'Run'),
-        space: t('协作空间', 'Space'),
-        scheduler: t('调度', 'Schedule'),
+        engine: t('执行', 'Run'), // i18n: user-facing
+        space: t('协作空间', 'Space'), // i18n: user-facing
+        scheduler: t('调度', 'Schedule'), // i18n: user-facing
     };
 
     return (
         <div className="mx-auto max-w-4xl">
             <div className="flex items-end justify-between pb-3">
                 <div>
-                    <div className="text-lg font-medium text-text-primary">{t('会话', 'Sessions')}</div>
+                    <div className="text-lg font-medium text-text-primary">
+                        {t('会话', 'Sessions') /*// i18n: user-facing*/}
+                    </div>
                     <div className="text-xs text-text-muted">
-                        {t('执行会话 / 协作空间 / 调度历史统一列表', 'Runs, spaces and scheduler history')}
+                        {
+                            t(
+                                '执行会话 / 协作空间 / 调度历史统一列表', // i18n: user-facing
+                                'Runs, spaces and scheduler history'
+                            ) /*// i18n: user-facing*/
+                        }
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -73,16 +80,16 @@ export function SessionsPage() {
                         value={source}
                         onChange={(e) => setSource(e.target.value as '' | SessionSource)}
                     >
-                        <option value="">{t('全部来源', 'All sources')}</option>
-                        <option value="engine">{t('执行', 'Run')}</option>
-                        <option value="space">{t('协作空间', 'Space')}</option>
-                        <option value="scheduler">{t('调度', 'Schedule')}</option>
+                        <option value="">{t('全部来源', 'All sources') /*// i18n: user-facing*/}</option>
+                        <option value="engine">{t('执行', 'Run') /*// i18n: user-facing*/}</option>
+                        <option value="space">{t('协作空间', 'Space') /*// i18n: user-facing*/}</option>
+                        <option value="scheduler">{t('调度', 'Schedule') /*// i18n: user-facing*/}</option>
                     </select>
                     <div className="text-xs text-text-muted">{sessions.length}</div>
                 </div>
             </div>
             {sessions.length === 0 ? (
-                <EmptyState title={t('暂无会话', 'No sessions')} />
+                <EmptyState title={t('暂无会话', 'No sessions')} /> // i18n: user-facing
             ) : (
                 <div className="space-y-2">
                     {sessions.map((s: SessionInfo) => (
@@ -129,14 +136,14 @@ export function SessionsPage() {
                     className="rounded-md border border-border px-3 py-1 text-xs text-text-secondary hover:bg-bg-muted"
                     onClick={() => void forkSession()}
                 >
-                    {t('派生会话', 'Fork session')}
+                    {t('派生会话', 'Fork session') /*// i18n: user-facing*/}
                 </button>
                 <button
                     type="button"
                     className="rounded-md border border-border px-3 py-1 text-xs text-text-secondary hover:bg-bg-muted"
                     onClick={() => void cleanupSessions()}
                 >
-                    {t('清理过期会话', 'Cleanup expired')}
+                    {t('清理过期会话', 'Cleanup expired') /*// i18n: user-facing*/}
                 </button>
                 {note && <span className="text-xs text-text-muted">{note}</span>}
             </div>

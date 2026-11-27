@@ -1,6 +1,6 @@
-"""issue #185: mcp_client 节点 — Streamable HTTP initialize/initialized/tools/call 三段式调用外部 MCP 工具。
+"""issue #185: mcp_client node — Streamable HTTP initialize/initialized/tools/call three-step invocation of external MCP tools.
 
-MockTransport 离线桩: 无真实服务器, 校验协议序列 + 会话头透传 + SSE 响应解析 + 错误路径。
+MockTransport offline stub: no real server; validates the protocol sequence + session header passthrough + SSE response parsing + error paths.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def _handler_sse():
                 "jsonrpc": "2.0",
                 "id": 2,
                 "result": {
-                    "content": [{"type": "text", "text": "任务列表为空"}],
+                    "content": [{"type": "text", "text": "任务列表为空"}],  # i18n: user-facing
                     "isError": False,
                 },
             }
@@ -67,10 +67,10 @@ class TestMcpClientNode:
         node._client = lambda timeout: httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=timeout)
         result = await node.execute(inputs)
         assert result.status.value == "success"
-        assert result.data["result"] == "任务列表为空"
+        assert result.data["result"] == "任务列表为空"  # i18n: user-facing
         methods = [b.get("method") for _, b in calls]
         assert methods == ["initialize", "notifications/initialized", "tools/call"]
-        # initialize 请求不带会话头, tools/call 带
+        # initialize request carries no session header, tools/call does
         assert "Mcp-Session-Id" not in calls[0][0].headers
         assert calls[2][0].headers.get("Mcp-Session-Id") == "sess-abc-123"
 
@@ -110,7 +110,7 @@ class TestMcpClientNode:
                 json={
                     "jsonrpc": "2.0",
                     "id": 2,
-                    "result": {"content": [{"type": "text", "text": "配额不足"}], "isError": True},
+                    "result": {"content": [{"type": "text", "text": "配额不足"}], "isError": True},  # i18n: user-facing
                 },
             )
 
@@ -118,7 +118,7 @@ class TestMcpClientNode:
         node._client = lambda timeout: httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=timeout)
         result = await node.execute(inputs)
         assert result.status.value == "failed"
-        assert "配额不足" in result.error
+        assert "配额不足" in result.error  # i18n: user-facing
 
     async def test_connection_failure_visible(self):
         def handler(request: httpx.Request) -> httpx.Response:
@@ -128,7 +128,7 @@ class TestMcpClientNode:
         node._client = lambda timeout: httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=timeout)
         result = await node.execute(inputs)
         assert result.status.value == "failed"
-        assert "MCP 连接失败" in result.error
+        assert "MCP 连接失败" in result.error  # i18n: user-facing
 
     async def test_missing_params_fail_fast(self):
         node, inputs = _make_node({"tool": "task_list"})
@@ -137,7 +137,7 @@ class TestMcpClientNode:
         node2, _ = _make_node({"url": "ftp://x/mcp", "tool": "t"})
         result2 = await node2.execute({})
         assert result2.status.value == "failed"
-        assert "非法 URL" in result2.error
+        assert "非法 URL" in result2.error  # i18n: user-facing
 
     async def test_extra_headers_forwarded(self):
         seen = {}
@@ -179,11 +179,11 @@ class TestRegistrationAndPermissions:
     async def test_url_scope_permission_matching(self):
         pm = PermissionManager()
         pm.approve("mcp_client", scope="url:http://127.0.0.1:11483/**")
-        # 命中授权 URL
+        # Authorized URL hit
         assert await pm.check("mcp_client", "execute", {"url": "http://127.0.0.1:11483/mcp"}) is True
-        # 其他服务不放行
+        # Other services not allowed through
         assert await pm.check("mcp_client", "execute", {"url": "http://127.0.0.1:9999/mcp"}) is False
-        # 其他节点名不受该规则影响
+        # Other node names unaffected by this rule
         assert await pm.check("shell_exec", "execute") is False
 
     def test_permission_url_scope_unit(self):

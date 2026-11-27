@@ -127,10 +127,10 @@ describe('pitch cards (#244 R1)', () => {
     it('offers the three anthropic-style pitches', () => {
         const pitches = capabilityPitches();
         expect(pitches.map((p) => p.key)).toEqual(['skill', 'connector', 'subagent']);
-        expect(pitches.map((p) => p.title.zh)).toEqual(['技能', '连接器', '子代理']);
-        expect(pitches[0].desc.zh).toContain('领域知识');
-        expect(pitches[1].desc.zh).toContain('已在用的工具');
-        expect(pitches[2].desc.zh).toContain('专项任务');
+        expect(pitches.map((p) => p.title.zh)).toEqual(['技能', '连接器', '子代理']); // i18n: user-facing
+        expect(pitches[0].desc.zh).toContain('领域知识'); // i18n: user-facing
+        expect(pitches[1].desc.zh).toContain('已在用的工具'); // i18n: user-facing
+        expect(pitches[2].desc.zh).toContain('专项任务'); // i18n: user-facing
     });
 
     it('hides pitches once anything is installed in the workspace', () => {

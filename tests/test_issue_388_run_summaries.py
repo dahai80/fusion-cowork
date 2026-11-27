@@ -1,9 +1,10 @@
-"""issue #388: 终态 run 摘要持久化 — source/labels 落库 + 终态摘要行 + 保留期清理。
+"""issue #388: terminal run summary persistence — source/labels persisted + terminal summary rows + retention cleanup.
 
-- run_states schema v3: +source/labels 列 (v2 库幂等迁移)
-- 终态先落 run_summaries 摘要行 (每步耗时/归因), 活跃行照删 —
-  daemon 重启后 GET /api/runs/{id} 走摘要兜底, 下游按 run 时长对账
-- prune_summaries 保留期 (默认 90 天) 清理; recover_persisted 启动时执行
+- run_states schema v3: +source/labels columns (idempotent migration from v2 DBs)
+- On terminal, a run_summaries summary row is written first (per-step durations/attribution),
+  active rows still deleted — after a daemon restart GET /api/runs/{id} falls back to the
+  summary, downstream reconciles by run duration
+- prune_summaries retention period (default 90 days) cleanup; recover_persisted runs it at startup
 """
 
 import time
@@ -48,7 +49,7 @@ class TestSchemaV3:
         store.close()
 
     def test_v2_db_migrates_idempotent(self, tmp_path):
-        # 手造 v2 库 (无 source/labels 列) → 打开即迁移, 数据保留
+        # Hand-build a v2 DB (no source/labels columns) -> migrated on open, data preserved
         import sqlite3
 
         p = tmp_path / "v2.db"

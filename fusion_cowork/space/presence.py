@@ -1,10 +1,10 @@
-"""成员 presence + 实时光标 — 协作空间实时状态层。
+"""Member presence + realtime cursors — collaboration space realtime state layer.
 
-Presence: 成员在线/离线状态, 基于 heartbeat 时间戳判定 (超时阈值默认 60s)。
-Cursor: 成员实时光标位置 (x, y, target_id), 内存态, 不持久化。
+Presence: member online/offline state, determined by heartbeat timestamps (timeout threshold defaults to 60s).
+Cursor: member realtime cursor position (x, y, target_id), in-memory only, not persisted.
 
-事件通过 EventEmitter 推送: space:{id}:presence, space:{id}:cursor。
-降级: EventEmitter 未注入时仅维护内存态, 不推送 (静默)。
+Events are pushed via EventEmitter: space:{id}:presence, space:{id}:cursor.
+Degradation: when EventEmitter is not injected, only in-memory state is maintained, no push (silent).
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ class PresenceManager:
         self._states: Dict[str, Dict[str, PresenceState]] = {}
         self._emitter = event_emitter
         self._timeout = timeout
-        logger.debug(f"PresenceManager 初始化, timeout={timeout}s")
+        logger.debug(f"PresenceManager initialized, timeout={timeout}s")
 
     def heartbeat(
         self, space_id: str, user_id: str, display_name: str = "", extras: Optional[Dict[str, Any]] = None
@@ -113,13 +113,13 @@ class PresenceManager:
         return True
 
     def _gc(self, states: Dict[str, PresenceState]) -> None:
-        # R-6: 旧版仅置 online=False 不删除 → ghost presence 永驻 (内存泄漏 + 假在线)。
-        # 超时直接删除条目, 像离开一样清理。
+        # R-6: the old version only set online=False without deleting → ghost presence persisted forever (memory leak + fake online).
+        # Expired entries are deleted directly on timeout, cleaned up as if the user left.
         now = time.time()
         expired = [uid for uid, st in states.items() if now - st.last_heartbeat > self._timeout]
         for uid in expired:
             del states[uid]
-            logger.debug(f"presence GC 过期移除 user={uid} (超 {self._timeout}s 未心跳)")
+            logger.debug(f"presence GC expired removal user={uid} (no heartbeat for over {self._timeout}s)")
         return len(expired)
 
     def _emit(self, space_id: str, kind: str, data: Dict[str, Any]) -> None:
@@ -131,4 +131,4 @@ class PresenceManager:
                 data=data,
             )
         except Exception as e:
-            logger.warning(f"presence 事件推送失败: {e}")
+            logger.warning(f"presence event push failed: {e}")

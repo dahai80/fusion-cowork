@@ -1,7 +1,7 @@
-"""issue #422: 历史项目比对 (match 节点) 基础原语 — 数据驱动条件跳过 skip_if。
+"""issue #422: historical project comparison (match node) base primitives — data-driven conditional skip skip_if.
 
-verdict 分支路由需要引擎支持: 上游节点输出 (如 match verdict=extend) 命中
-node.config.skip_if 全部条件时, 本节点记 SKIPPED 不执行不进权限/HITL。
+Verdict branch routing needs engine support: when an upstream node's output (e.g. match verdict=extend)
+matches all node.config.skip_if conditions, this node records SKIPPED — not executed, not admitted into permission/HITL.
 """
 
 from __future__ import annotations
@@ -71,10 +71,10 @@ class TestSkipIfPrimitive:
         assert _skip_if_hit([{"path": "verdict", "in": ["extend", "base"]}], {}, {"verdict": "base"})
         assert not _skip_if_hit([{"path": "verdict", "in": ["extend"]}], {}, {"verdict": "new"})
         assert _skip_if_hit([{"path": "x", "not_in": ["new"]}], {}, {})
-        # source 指定上游节点输出; 上游缺输出 = 条件不中 (fail-closed, 不误跳)
+        # source points at an upstream node's output; missing upstream output = condition not met (fail-closed, no accidental skip)
         assert not _skip_if_hit([{"source": "m1", "path": "verdict", "equals": "new"}], {}, {})
         assert _skip_if_hit([{"source": "m1", "path": "verdict", "equals": "new"}], {"m1": {"verdict": "new"}}, {})
-        # 多条件须全中
+        # multiple conditions must all match
         assert not _skip_if_hit(
             [{"path": "verdict", "equals": "new"}, {"path": "score", "equals": 0.9}],
             {},
@@ -102,7 +102,7 @@ class TestSkipIfPrimitive:
         assert wf2.nodes["down1"].config.skip_if == [{"source": "m1", "path": "verdict", "equals": "new"}]
 
     async def test_skipped_node_not_permission_gated(self):
-        # skip 在权限检查之前 — 高风险节点命中 skip_if 不产生 HITL 暂停
+        # skip happens before the permission check — a high-risk node hitting skip_if produces no HITL pause
         from fusion_cowork.engine.permission_manager import PermissionManager
 
         engine = WorkflowEngine(permission_manager=PermissionManager(), hitl_pause=True)
@@ -142,7 +142,7 @@ def _reverdict_wf() -> Workflow:
 
 class TestOverrideOutputDirective:
     async def test_override_output_flows_downstream(self):
-        # issue #422 改判: 覆盖已执行节点输出, 下游 ${step.<id>.<path>} 插值取新值
+        # issue #422 overturn: overwrite an executed node's output; downstream ${step.<id>.<path>} interpolation picks up the new value
         import asyncio
 
         engine = WorkflowEngine()
@@ -162,7 +162,7 @@ class TestOverrideOutputDirective:
         assert steps["sink"].output_data["value"] == "new"
         markers = [s for s in res.steps if s.user_correction]
         assert len(markers) == 1
-        assert "覆盖输出" in (markers[0].summary or "")
+        assert "覆盖输出" in (markers[0].summary or "")  # i18n: user-facing
 
     async def test_override_output_before_target_executed_ignored(self):
         import asyncio
@@ -173,7 +173,7 @@ class TestOverrideOutputDirective:
         await asyncio.sleep(0.01)
         assert engine.pause("exec-ov2") is True
         await asyncio.sleep(0.1)
-        # 目标 sink 未执行 — 覆盖拒绝 (fail-closed, 下游拿原值, 不落修正标记)
+        # target sink not executed — overwrite rejected (fail-closed, downstream keeps the original value, no correction marker recorded)
         assert engine.add_directive(
             "exec-ov2", {"action": "override_output", "node_id": "sink", "merge": {"verdict": "new"}}
         )

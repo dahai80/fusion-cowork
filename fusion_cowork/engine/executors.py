@@ -86,11 +86,13 @@ async def _uds_call(method: str, params: Dict[str, Any], timeout: float) -> Dict
         except Exception:
             pass
     if not raw:
+        # i18n: user-facing
         raise RuntimeError(f"agent-studio 返回空响应: {method}")
     frame = json.loads(raw.decode())
     if isinstance(frame, dict) and frame.get("error"):
         err = frame["error"]
         message = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+        # i18n: user-facing
         raise RuntimeError(f"agent-studio RPC 错误 {method}: {message}")
     result = frame.get("result", {}) if isinstance(frame, dict) else {}
     return result if isinstance(result, dict) else {}
@@ -154,8 +156,9 @@ async def _agent_via_uds(node: BaseNode, task: str, params: Dict[str, Any], time
     if not isinstance(report, dict):
         return NodeResult(
             status=NodeStatus.FAILED,
+            # i18n: user-facing
             error=f"agent-studio 未返回 report: {str(result)[:200]}",
-            summary="agent 运行失败",
+            summary="agent 运行失败",  # i18n: user-facing
             data={"executor": EXECUTOR_AGENT, "transport": "uds"},
         )
     turns = int(report.get("turns", 0) or 0)
@@ -167,7 +170,7 @@ async def _agent_via_uds(node: BaseNode, task: str, params: Dict[str, Any], time
             transcript = await _uds_call("subagent.transcript", {"agent_id": agent_id}, 30.0)
             tool_calls = _count_tool_calls(transcript.get("transcript", {}) if isinstance(transcript, dict) else {})
         except Exception as exc:
-            logger.warning("AgentExecutor 读取 transcript 失败 (tool_calls 记为 0): %s", exc)
+            logger.warning("AgentExecutor failed to read transcript (tool_calls counted as 0): %s", exc)
     data = {
         "executor": EXECUTOR_AGENT,
         "transport": "uds",
@@ -189,13 +192,13 @@ async def _agent_via_uds(node: BaseNode, task: str, params: Dict[str, Any], time
     if not report.get("ok"):
         return NodeResult(
             status=NodeStatus.FAILED,
-            error=str(report.get("error", "") or "agent 运行未成功"),
+            error=str(report.get("error", "") or "agent 运行未成功"),  # i18n: user-facing
             data=data,
-            summary=f"agent 运行失败 (turns={turns})",
+            summary=f"agent 运行失败 (turns={turns})",  # i18n: user-facing
         )
-    summary = f"agent 完成 turns={turns} tool_calls={tool_calls} tokens={tokens}"
+    summary = f"agent 完成 turns={turns} tool_calls={tool_calls} tokens={tokens}"  # i18n: user-facing
     if report.get("partial"):
-        summary += " (未达 max_turns 上限, 标记 partial)"
+        summary += " (未达 max_turns 上限, 标记 partial)"  # i18n: user-facing
     return NodeResult(status=NodeStatus.SUCCESS, data=data, summary=summary)
 
 
@@ -206,8 +209,9 @@ async def _agent_via_http(node: BaseNode, task: str, params: Dict[str, Any], tim
     if not agent_id and not graph_id:
         return NodeResult(
             status=NodeStatus.FAILED,
+            # i18n: user-facing
             error="agent 执行器缺少 agent (agent-studio agent id) 或 graph_id",
-            summary="参数不完整",
+            summary="参数不完整",  # i18n: user-facing
             data={"executor": EXECUTOR_AGENT, "transport": "http"},
         )
     ignored = [
@@ -222,7 +226,7 @@ async def _agent_via_http(node: BaseNode, task: str, params: Dict[str, Any], tim
     ]
     if ignored:
         logger.warning(
-            "AgentExecutor http 通道不支持逐节点覆盖 %s, 本次运行按 agent-studio 中该 agent 的定义执行",
+            "AgentExecutor http transport does not support per-node overrides %s, this run follows the agent definition in agent-studio as-is",
             ignored,
         )
     payload: Dict[str, Any] = {"goal": task, "title": str(params.get("title") or f"cowork {node.name}")}
@@ -241,8 +245,9 @@ async def _agent_via_http(node: BaseNode, task: str, params: Dict[str, Any], tim
         if not run_id:
             return NodeResult(
                 status=NodeStatus.FAILED,
+                # i18n: user-facing
                 error=f"agent-studio 未返回 run_id: {submitted}",
-                summary="提交失败",
+                summary="提交失败",  # i18n: user-facing
                 data={"executor": EXECUTOR_AGENT, "transport": "http"},
             )
         status = ""
@@ -255,12 +260,13 @@ async def _agent_via_http(node: BaseNode, task: str, params: Dict[str, Any], tim
                 try:
                     await client.post(f"/v1/runs/{run_id}/cancel")
                 except Exception as exc:
-                    logger.warning("AgentExecutor 取消 run %s 失败: %s", run_id, exc)
+                    logger.warning("AgentExecutor failed to cancel run %s: %s", run_id, exc)
                 return NodeResult(
                     status=NodeStatus.FAILED,
+                    # i18n: user-facing
                     error=f"等待 run {run_id} 终态超时 ({wait:.0f}s), 已尽力取消",
                     data={"executor": EXECUTOR_AGENT, "transport": "http", "run_id": run_id, "status": status},
-                    summary="等待终态超时",
+                    summary="等待终态超时",  # i18n: user-facing
                 )
             await asyncio.sleep(_AS_POLL_INTERVAL)
         result = (await client.get(f"/v1/runs/{run_id}/result")).json()
@@ -278,12 +284,16 @@ async def _agent_via_http(node: BaseNode, task: str, params: Dict[str, Any], tim
     logger.info("AgentExecutor http done node=%s run_id=%s status=%s events=%s", node.name, run_id, status, events)
     if status != "completed":
         error = (
-            str(result.get("last_error", "") or f"run {run_id} 终态 {status}") if isinstance(result, dict) else status
+            str(result.get("last_error", "") or f"run {run_id} 终态 {status}")  # i18n: user-facing
+            if isinstance(result, dict)
+            else status  # i18n: user-facing
         )
+        # i18n: user-facing
         return NodeResult(status=NodeStatus.FAILED, error=error, data=data, summary=f"agent 运行 {status}")
     return NodeResult(
         status=NodeStatus.SUCCESS,
         data=data,
+        # i18n: user-facing
         summary=f"agent 完成 run={run_id} events={events} (http 通道不提供 turns)",
     )
 
@@ -297,8 +307,9 @@ class AgentExecutor:
         if not task:
             return NodeResult(
                 status=NodeStatus.FAILED,
+                # i18n: user-facing
                 error="agent 执行器缺少任务文本 (input/task/prompt)",
-                summary="参数不完整",
+                summary="参数不完整",  # i18n: user-facing
                 data={"executor": EXECUTOR_AGENT},
             )
         timeout = float(node.config.timeout or 0)
@@ -308,19 +319,21 @@ class AgentExecutor:
                 return await _agent_via_uds(node, task, params, timeout)
             return await _agent_via_http(node, task, params, timeout)
         except FileNotFoundError as exc:
-            logger.error("AgentExecutor 找不到 agent-studio daemon socket %s: %s", _as_socket_path(), exc)
+            logger.error("AgentExecutor cannot find agent-studio daemon socket %s: %s", _as_socket_path(), exc)
             return NodeResult(
                 status=NodeStatus.FAILED,
+                # i18n: user-facing
                 error=f"agent-studio daemon socket 不可用 ({_as_socket_path()}): {exc}",
-                summary="agent 运行时不可用",
+                summary="agent 运行时不可用",  # i18n: user-facing
                 data={"executor": EXECUTOR_AGENT, "transport": transport},
             )
         except Exception as exc:
-            logger.exception("AgentExecutor 执行异常 node=%s", node.name)
+            logger.exception("AgentExecutor execution error node=%s", node.name)
             return NodeResult(
                 status=NodeStatus.FAILED,
+                # i18n: user-facing
                 error=f"agent 执行异常: {exc}",
-                summary="执行异常",
+                summary="执行异常",  # i18n: user-facing
                 data={"executor": EXECUTOR_AGENT, "transport": transport},
             )
 
@@ -335,7 +348,7 @@ def get_executor(name: str) -> NodeExecutor:
     key = str(name or EXECUTOR_SIMPLE).strip().lower()
     executor = _EXECUTORS.get(key)
     if executor is None:
-        logger.warning(f"未知节点执行器 {name!r}, 回退 {EXECUTOR_SIMPLE}")
+        logger.warning(f"Unknown node executor {name!r}, falling back to {EXECUTOR_SIMPLE}")
         return _EXECUTORS[EXECUTOR_SIMPLE]
     return executor
 

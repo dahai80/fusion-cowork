@@ -34,7 +34,7 @@ class TestCapabilitiesSignal:
     def test_embedding_capability_wins(self):
         from fusion_cowork.ai.nl_parser import _is_chat_model
 
-        # bge-m3: modality=text (无 engine_type 时会误判 chat), capabilities 纠正
+        # bge-m3: modality=text (without engine_type it would be misjudged as chat), capabilities corrects it
         m = {"id": "bge-m3", "modality": "text", "capabilities": {"embedding": True}}
         assert _is_chat_model(m) is False
 

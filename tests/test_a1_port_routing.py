@@ -1,4 +1,4 @@
-"""A-1 端口路由测试 — edge.source_output/target_input 非默认端口按端口取值落键。"""
+"""A-1 port routing tests — edge.source_output/target_input lands values by port for non-default ports."""
 
 from __future__ import annotations
 
@@ -18,14 +18,14 @@ from fusion_cowork.engine.workflow import Workflow, WorkflowEngine, WorkflowStat
 
 @register_node
 class MockFanoutNode(BaseNode):
-    """扇出节点: 输出多个命名端口。"""
+    """Fanout node: outputs multiple named ports."""
 
     name = "mock_fanout"
-    display_name = "Mock 扇出"
+    display_name = "Mock 扇出"  # i18n: user-facing
     category = NodeCategory.IO
-    description = "测试用: 多端口输出"
+    description = "测试用: 多端口输出"  # i18n: user-facing
     icon = "🧪"
-    default_label = "Mock 扇出"
+    default_label = "Mock 扇出"  # i18n: user-facing
 
     def get_params_schema(self) -> dict:
         return {"type": "object", "properties": {}}
@@ -33,21 +33,21 @@ class MockFanoutNode(BaseNode):
     async def execute(self, inputs: dict) -> NodeResult:
         return NodeResult(
             status=NodeStatus.SUCCESS,
-            data={"alpha": "A值", "beta": "B值", "output": "默认全量"},
-            summary="扇出",
+            data={"alpha": "A值", "beta": "B值", "output": "默认全量"},  # i18n: user-facing
+            summary="扇出",  # i18n: user-facing
         )
 
 
 @register_node
 class MockPortReaderNode(BaseNode):
-    """读 target_input 键的节点。"""
+    """Node that reads the target_input key."""
 
     name = "mock_port_reader"
-    display_name = "Mock 端口读取"
+    display_name = "Mock 端口读取"  # i18n: user-facing
     category = NodeCategory.IO
-    description = "测试用: 读指定输入键"
+    description = "测试用: 读指定输入键"  # i18n: user-facing
     icon = "🧪"
-    default_label = "Mock 端口读取"
+    default_label = "Mock 端口读取"  # i18n: user-facing
 
     def get_params_schema(self) -> dict:
         return {"type": "object", "properties": {}}
@@ -56,12 +56,12 @@ class MockPortReaderNode(BaseNode):
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"received": json.dumps(inputs, ensure_ascii=False)},
-            summary="读取",
+            summary="读取",  # i18n: user-facing
         )
 
 
 def _build_wf(edges):
-    wf = Workflow(name="端口路由测试")
+    wf = Workflow(name="端口路由测试")  # i18n: user-facing
     wf.add_node(MockFanoutNode(node_id="src1"))
     wf.add_node(MockFanoutNode(node_id="src2"))
     wf.add_node(MockPortReaderNode(node_id="dst"))
@@ -77,26 +77,26 @@ def _received(exec_result):
 
 @pytest.mark.asyncio
 async def test_default_edge_full_merge_backward_compat():
-    # 默认 edge (output→input): 全量合并上游, 现有节点读 inputs.get("data") 仍工作
-    wf = Workflow(name="默认合并")
+    # Default edge (output→input): full merge of upstream, existing nodes reading inputs.get("data") still work
+    wf = Workflow(name="默认合并")  # i18n: user-facing
     wf.add_node(MockFanoutNode(node_id="src"))
     wf.add_node(MockPortReaderNode(node_id="dst"))
-    wf.connect("src", "dst")  # 默认 output→input
+    wf.connect("src", "dst")  # default output→input
 
     engine = WorkflowEngine()
     exec_result = await engine.execute(wf)
     assert exec_result.status == WorkflowStatus.SUCCESS
     received = _received(exec_result)
-    # 默认合并: 上游全部键 (alpha/beta/output) 都应出现在 dst 输入
-    assert received.get("alpha") == "A值"
-    assert received.get("beta") == "B值"
-    assert received.get("output") == "默认全量"
+    # Default merge: all upstream keys (alpha/beta/output) should appear in dst inputs
+    assert received.get("alpha") == "A值"  # i18n: user-facing
+    assert received.get("beta") == "B值"  # i18n: user-facing
+    assert received.get("output") == "默认全量"  # i18n: user-facing
 
 
 @pytest.mark.asyncio
 async def test_nondefault_port_routes_specific_output():
-    # 显式端口 edge (source_output=alpha → target_input=left_in): 只落 alpha 值到 left_in
-    wf = Workflow(name="端口路由")
+    # Explicit port edge (source_output=alpha → target_input=left_in): only alpha lands in left_in
+    wf = Workflow(name="端口路由")  # i18n: user-facing
     wf.add_node(MockFanoutNode(node_id="src"))
     wf.add_node(MockPortReaderNode(node_id="dst"))
     wf.connect("src", "dst", source_output="alpha", target_input="left_in")
@@ -105,16 +105,16 @@ async def test_nondefault_port_routes_specific_output():
     exec_result = await engine.execute(wf)
     assert exec_result.status == WorkflowStatus.SUCCESS
     received = _received(exec_result)
-    assert received.get("left_in") == "A值", "非默认端口应按 source_output 取值落 target_input"
-    # 默认全合并的键不应污染进来
-    assert "beta" not in received, "非指定端口值不应出现"
-    assert "alpha" not in received, "原端口名不应残留 (已路由到 left_in)"
+    assert received.get("left_in") == "A值", "非默认端口应按 source_output 取值落 target_input"  # i18n: user-facing
+    # Keys from the default full merge must not leak in
+    assert "beta" not in received, "非指定端口值不应出现"  # i18n: user-facing
+    assert "alpha" not in received, "原端口名不应残留 (已路由到 left_in)"  # i18n: user-facing
 
 
 @pytest.mark.asyncio
 async def test_two_fanout_edges_no_cross_contamination():
-    # 两个扇出源分别路由到不同 target_input, 互不污染
-    wf = Workflow(name="双源端口")
+    # Two fanout sources routed to different target_inputs, no cross-contamination
+    wf = Workflow(name="双源端口")  # i18n: user-facing
     wf.add_node(MockFanoutNode(node_id="s1"))
     wf.add_node(MockFanoutNode(node_id="s2"))
     wf.add_node(MockPortReaderNode(node_id="dst"))
@@ -125,15 +125,15 @@ async def test_two_fanout_edges_no_cross_contamination():
     exec_result = await engine.execute(wf)
     assert exec_result.status == WorkflowStatus.SUCCESS
     received = _received(exec_result)
-    assert received.get("in1") == "A值"
-    assert received.get("in2") == "B值"
-    assert "alpha" not in received and "beta" not in received, "原端口名不应残留"
+    assert received.get("in1") == "A值"  # i18n: user-facing
+    assert received.get("in2") == "B值"  # i18n: user-facing
+    assert "alpha" not in received and "beta" not in received, "原端口名不应残留"  # i18n: user-facing
 
 
 @pytest.mark.asyncio
 async def test_missing_source_output_key_skipped():
-    # source_output 指向不存在的键 → val=None → 跳过 (不落空键)
-    wf = Workflow(name="缺失端口")
+    # source_output pointing at a missing key → val=None → skipped (no empty key landed)
+    wf = Workflow(name="缺失端口")  # i18n: user-facing
     wf.add_node(MockFanoutNode(node_id="src"))
     wf.add_node(MockPortReaderNode(node_id="dst"))
     wf.connect("src", "dst", source_output="nonexistent", target_input="in_x")
@@ -142,25 +142,25 @@ async def test_missing_source_output_key_skipped():
     exec_result = await engine.execute(wf)
     assert exec_result.status == WorkflowStatus.SUCCESS
     received = _received(exec_result)
-    assert "in_x" not in received, "源端口无值时应跳过, 不落 None"
+    assert "in_x" not in received, "源端口无值时应跳过, 不落 None"  # i18n: user-facing
 
 
 @pytest.mark.asyncio
 async def test_mixed_default_and_explicit_edges():
-    # 一条默认合并 + 一条显式端口 → 两类行为共存
-    wf = Workflow(name="混合端口")
+    # One default merge + one explicit port → both behaviors coexist
+    wf = Workflow(name="混合端口")  # i18n: user-facing
     wf.add_node(MockFanoutNode(node_id="s1"))
     wf.add_node(MockFanoutNode(node_id="s2"))
     wf.add_node(MockPortReaderNode(node_id="dst"))
-    wf.connect("s1", "dst")  # 默认全合并 s1
-    wf.connect("s2", "dst", source_output="beta", target_input="from_s2")  # 只取 s2.beta
+    wf.connect("s1", "dst")  # default full merge from s1
+    wf.connect("s2", "dst", source_output="beta", target_input="from_s2")  # only take s2.beta
 
     engine = WorkflowEngine()
     exec_result = await engine.execute(wf)
     assert exec_result.status == WorkflowStatus.SUCCESS
     received = _received(exec_result)
-    # s1 默认合并: alpha/beta/output 都在
-    assert received.get("alpha") == "A值"
-    assert received.get("output") == "默认全量"
-    # s2 显式端口: beta 路由到 from_s2 (覆盖 s1 默认合并的 beta, 因为后到)
-    assert received.get("from_s2") == "B值"
+    # s1 default merge: alpha/beta/output all present
+    assert received.get("alpha") == "A值"  # i18n: user-facing
+    assert received.get("output") == "默认全量"  # i18n: user-facing
+    # s2 explicit port: beta routed to from_s2 (overrides s1's default-merged beta, last-write-wins)
+    assert received.get("from_s2") == "B值"  # i18n: user-facing

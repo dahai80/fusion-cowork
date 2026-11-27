@@ -1,4 +1,4 @@
-"""IO 节点 — 文件输入/输出操作。"""
+"""IO nodes — file input/output operations."""
 
 from __future__ import annotations
 
@@ -21,38 +21,46 @@ logger = logging.getLogger(__name__)
 
 @register_node
 class FileInputNode(BaseNode):
-    """文件输入节点 — 读取文件列表或目录内容作为工作流输入。"""
+    """File input node — read a file list or directory contents as workflow input."""
 
     name = "file_input"
-    display_name = "文件输入"
+    display_name = "文件输入"  # i18n: user-facing
     category = NodeCategory.IO
-    description = "读取文件列表或目录内容作为工作流数据源"
+    description = "读取文件列表或目录内容作为工作流数据源"  # i18n: user-facing
     icon = "📂"
-    default_label = "文件输入"
+    default_label = "文件输入"  # i18n: user-facing
 
     inputs = [
-        {"key": "path", "label": "路径", "type": "string", "optional": True},
+        {"key": "path", "label": "路径", "type": "string", "optional": True},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "files", "label": "文件列表", "type": "list[file]"},
-        {"key": "total_count", "label": "文件总数", "type": "integer"},
-        {"key": "total_size", "label": "总大小", "type": "string"},
+        {"key": "files", "label": "文件列表", "type": "list[file]"},  # i18n: user-facing
+        {"key": "total_count", "label": "文件总数", "type": "integer"},  # i18n: user-facing
+        {"key": "total_size", "label": "总大小", "type": "string"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "default": "~", "description": "输入路径（文件或目录）"},
-                "recursive": {"type": "boolean", "default": True, "description": "递归子目录"},
-                "file_patterns": {"type": "string", "default": "*", "description": "文件过滤模式，逗号分隔"},
-                "max_files": {"type": "integer", "default": 5000, "description": "最大文件数"},
+                "path": {
+                    "type": "string",
+                    "default": "~",
+                    "description": "输入路径（文件或目录）",  # i18n: user-facing
+                },  # i18n: user-facing
+                "recursive": {"type": "boolean", "default": True, "description": "递归子目录"},  # i18n: user-facing
+                "file_patterns": {
+                    "type": "string",
+                    "default": "*",
+                    "description": "文件过滤模式，逗号分隔",  # i18n: user-facing
+                },  # i18n: user-facing
+                "max_files": {"type": "integer", "default": 5000, "description": "最大文件数"},  # i18n: user-facing
                 "include_hidden": {"type": "boolean", "default": False},
                 "sort_by": {
                     "type": "string",
                     "enum": ["name", "date", "size", "type", ""],
                     "default": "name",
-                    "description": "排序方式",
+                    "description": "排序方式",  # i18n: user-facing
                 },
                 "sort_order": {"type": "string", "enum": ["asc", "desc"], "default": "asc"},
             },
@@ -64,11 +72,11 @@ class FileInputNode(BaseNode):
         input_path = inputs.get("path", params.get("path", ""))
 
         if not input_path:
-            return NodeResult(status=NodeStatus.FAILED, error="未指定输入路径")
+            return NodeResult(status=NodeStatus.FAILED, error="未指定输入路径")  # i18n: user-facing
 
         path = Path(input_path).expanduser()
         if not path.exists():
-            return NodeResult(status=NodeStatus.FAILED, error=f"路径不存在: {input_path}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"路径不存在: {input_path}")  # i18n: user-facing
 
         from ...security import get_scoped_folder_manager
 
@@ -76,8 +84,8 @@ class FileInputNode(BaseNode):
         if not scope.ensure_allowed(path):
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"沙箱拒绝越界读取: {path}",
-                summary="授权文件夹外路径被拦截",
+                error=f"沙箱拒绝越界读取: {path}",  # i18n: user-facing
+                summary="授权文件夹外路径被拦截",  # i18n: user-facing
             )
 
         recursive = params.get("recursive", True)
@@ -110,8 +118,8 @@ class FileInputNode(BaseNode):
                 if len(files) >= max_files:
                     break
 
-        # 排序
-        # 排序
+        # Sort
+        # Sort
         reverse = sort_order == "desc"
         if sort_by == "name":
             files.sort(key=lambda f: Path(f).name.lower(), reverse=reverse)
@@ -133,7 +141,7 @@ class FileInputNode(BaseNode):
                 "total_size_bytes": total_size,
                 "source_path": str(path),
             },
-            summary=f"读取 {len(files)} 个文件 ({self._format_size(total_size)})",
+            summary=f"读取 {len(files)} 个文件 ({self._format_size(total_size)})",  # i18n: user-facing
         )
 
     def _format_size(self, size_bytes: int) -> str:
@@ -146,29 +154,37 @@ class FileInputNode(BaseNode):
 
 @register_node
 class FileOutputNode(BaseNode):
-    """文件输出节点 — 将工作流结果写入文件。"""
+    """File output node — write workflow results to a file."""
 
     name = "file_output"
-    display_name = "文件输出"
+    display_name = "文件输出"  # i18n: user-facing
     category = NodeCategory.IO
-    description = "将工作流处理结果写入文件"
+    description = "将工作流处理结果写入文件"  # i18n: user-facing
     icon = "💾"
-    default_label = "文件输出"
+    default_label = "文件输出"  # i18n: user-facing
 
     inputs = [
-        {"key": "data", "label": "输出数据", "type": "any"},
-        {"key": "output_path", "label": "输出路径", "type": "string", "optional": True},
+        {"key": "data", "label": "输出数据", "type": "any"},  # i18n: user-facing
+        {"key": "output_path", "label": "输出路径", "type": "string", "optional": True},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "file_path", "label": "输出文件路径", "type": "string"},
+        {"key": "file_path", "label": "输出文件路径", "type": "string"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "output_path": {"type": "string", "default": "~/Desktop/Output", "description": "输出目录"},
-                "file_name": {"type": "string", "default": "report_{date}", "description": "输出文件名（不含扩展名）"},
+                "output_path": {
+                    "type": "string",
+                    "default": "~/Desktop/Output",
+                    "description": "输出目录",  # i18n: user-facing
+                },  # i18n: user-facing
+                "file_name": {
+                    "type": "string",
+                    "default": "report_{date}",
+                    "description": "输出文件名（不含扩展名）",  # i18n: user-facing
+                },  # i18n: user-facing
                 "format": {"type": "string", "enum": ["json", "text", "markdown", "csv"], "default": "json"},
                 "overwrite": {"type": "boolean", "default": False},
             },
@@ -191,8 +207,8 @@ class FileOutputNode(BaseNode):
         if not scope.ensure_allowed(out_dir):
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"沙箱拒绝越界写入: {out_dir}",
-                summary="授权文件夹外路径被拦截",
+                error=f"沙箱拒绝越界写入: {out_dir}",  # i18n: user-facing
+                summary="授权文件夹外路径被拦截",  # i18n: user-facing
             )
 
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -212,8 +228,8 @@ class FileOutputNode(BaseNode):
         if not scope.ensure_allowed(out_path):
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"沙箱拒绝越界写入: {out_path}",
-                summary="授权文件夹外路径被拦截",
+                error=f"沙箱拒绝越界写入: {out_path}",  # i18n: user-facing
+                summary="授权文件夹外路径被拦截",  # i18n: user-facing
             )
 
         try:
@@ -233,18 +249,18 @@ class FileOutputNode(BaseNode):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"file_path": str(out_path), "format": fmt, "size": out_path.stat().st_size},
-                summary=f"已输出到 {out_path.name}",
+                summary=f"已输出到 {out_path.name}",  # i18n: user-facing
             )
         except Exception as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"写入失败: {e}",
-                summary="写入失败",
+                error=f"写入失败: {e}",  # i18n: user-facing
+                summary="写入失败",  # i18n: user-facing
             )
 
     def _to_markdown(self, data: Any) -> str:
         if isinstance(data, dict):
-            lines = ["# 处理报告\n"]
+            lines = ["# 处理报告\n"]  # i18n: user-facing
             for k, v in data.items():
                 lines.append(f"## {k}")
                 if isinstance(v, (list, dict)):
@@ -254,9 +270,9 @@ class FileOutputNode(BaseNode):
                 lines.append("")
             return "\n".join(lines)
         if isinstance(data, list):
-            lines = ["# 处理报告\n"]
+            lines = ["# 处理报告\n"]  # i18n: user-facing
             for i, item in enumerate(data):
-                lines.append(f"## 条目 {i + 1}")
+                lines.append(f"## 条目 {i + 1}")  # i18n: user-facing
                 lines.append(f"```json\n{json.dumps(item, ensure_ascii=False, indent=2)}\n```")
                 lines.append("")
             return "\n".join(lines)

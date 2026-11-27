@@ -1,4 +1,4 @@
-"""A-1 调度任务持久化测试 — save→load 往返, restart 不丢定时任务。"""
+"""A-1 scheduler task persistence tests — save→load round-trip, restart keeps cron tasks."""
 
 from __future__ import annotations
 
@@ -16,12 +16,12 @@ def test_add_cron_task_persists_to_disk(tmp_path):
     store = tmp_path / "tasks.json"
     sched = _make_scheduler(store)
     tid = sched.add_cron_task(
-        name="夜跑清理",
+        name="夜跑清理",  # i18n: user-facing
         workflow_id="wf_1",
         cron_expression="0 21 * * *",
         executor=lambda: None,
     )
-    assert store.exists(), "add_cron_task 后应立即落地 JSON"
+    assert store.exists(), "add_cron_task 后应立即落地 JSON"  # i18n: user-facing
     data = json.loads(store.read_text(encoding="utf-8"))
     assert len(data) == 1
     assert data[0]["id"] == tid
@@ -31,38 +31,38 @@ def test_add_cron_task_persists_to_disk(tmp_path):
 
 
 def test_persist_atomic_no_half_file(tmp_path):
-    # E-4: 落地用 tmp+os.replace, 中途崩溃不留半截 .tmp
+    # E-4: persisted via tmp+os.replace, a mid-write crash leaves no half-written .tmp
     store = tmp_path / "tasks.json"
     sched = _make_scheduler(store)
     sched.add_cron_task(name="t", workflow_id="wf", cron_expression="0 0 * * *", executor=lambda: None)
-    assert not (tmp_path / "tasks.json.tmp").exists(), "原子写后应无残留 .tmp"
+    assert not (tmp_path / "tasks.json.tmp").exists(), "原子写后应无残留 .tmp"  # i18n: user-facing
 
 
 def test_load_restores_tasks_after_restart(tmp_path):
     store = tmp_path / "tasks.json"
-    # 模拟应用第一次: 建任务 + 落地
+    # Simulate first app run: create tasks + persist
     sched1 = _make_scheduler(store)
     tid = sched1.add_cron_task(
-        name="每日备份",
+        name="每日备份",  # i18n: user-facing
         workflow_id="wf_bak",
         cron_expression="30 3 * * *",
         executor=lambda: None,
     )
     sched1.add_interval_task(
-        name="心跳",
+        name="心跳",  # i18n: user-facing
         workflow_id="wf_hb",
         minutes=5,
         executor=lambda: None,
     )
     assert len(json.loads(store.read_text(encoding="utf-8"))) == 2
 
-    # 模拟 restart: 新实例 (executor 丢失, 待重注册)
+    # Simulate restart: new instance (executors lost, pending re-registration)
     sched2 = _make_scheduler(store)
     restored = sched2.load_tasks()
-    assert restored == 2, f"应恢复 2 个任务, 实际 {restored}"
+    assert restored == 2, f"应恢复 2 个任务, 实际 {restored}"  # i18n: user-facing
     t = sched2.get_task(tid)
     assert t is not None
-    assert t.name == "每日备份"
+    assert t.name == "每日备份"  # i18n: user-facing
     assert t.trigger_type == "cron"
     assert t.trigger_config["cron"] == "30 3 * * *"
     # P1-12 (audit 0912): restored ACTIVE task without an executor is
@@ -78,12 +78,14 @@ def test_load_warns_missing_executor_but_task_restored(tmp_path, caplog):
 
     store = tmp_path / "tasks.json"
     sched1 = _make_scheduler(store)
-    tid = sched1.add_cron_task(name="无执行器", workflow_id="wf", cron_expression="0 0 * * *", executor=lambda: None)
+    tid = sched1.add_cron_task(
+        name="无执行器", workflow_id="wf", cron_expression="0 0 * * *", executor=lambda: None  # i18n: user-facing
+    )  # i18n: user-facing
     sched2 = _make_scheduler(store)
     with caplog.at_level(logging.WARNING):
         sched2.load_tasks()
-    assert sched2.get_task(tid) is not None, "无 executor 也应恢复任务定义"
-    assert any("暂无 executor" in r.message for r in caplog.records), "应记 WARN 提示重注册"
+    assert sched2.get_task(tid) is not None, "无 executor 也应恢复任务定义"  # i18n: user-facing
+    assert any("暂无 executor" in r.message for r in caplog.records), "应记 WARN 提示重注册"  # i18n: user-facing
 
 
 def test_register_executor_makes_task_runnable(tmp_path, caplog):
@@ -91,45 +93,51 @@ def test_register_executor_makes_task_runnable(tmp_path, caplog):
 
     store = tmp_path / "tasks.json"
     sched1 = _make_scheduler(store)
-    tid = sched1.add_cron_task(name="重注册", workflow_id="wf", cron_expression="0 0 * * *", executor=lambda: None)
+    tid = sched1.add_cron_task(
+        name="重注册", workflow_id="wf", cron_expression="0 0 * * *", executor=lambda: None  # i18n: user-facing
+    )  # i18n: user-facing
     sched2 = _make_scheduler(store)
     sched2.load_tasks()
     with caplog.at_level(logging.INFO):
         sched2.register_executor(tid, lambda: None)
-    assert any("executor 已注册" in r.message for r in caplog.records)
+    assert any("executor 已注册" in r.message for r in caplog.records)  # i18n: user-facing
 
 
 def test_pause_resume_persists_status(tmp_path):
     store = tmp_path / "tasks.json"
     sched = _make_scheduler(store)
-    tid = sched.add_cron_task(name="可暂停", workflow_id="wf", cron_expression="0 0 * * *", executor=lambda: None)
+    tid = sched.add_cron_task(
+        name="可暂停", workflow_id="wf", cron_expression="0 0 * * *", executor=lambda: None  # i18n: user-facing
+    )  # i18n: user-facing
     assert sched.pause_task(tid)
     data = json.loads(store.read_text(encoding="utf-8"))
-    assert data[0]["status"] == "paused", "pause 应落地 paused"
+    assert data[0]["status"] == "paused", "pause 应落地 paused"  # i18n: user-facing
     assert sched.resume_task(tid)
     data = json.loads(store.read_text(encoding="utf-8"))
-    assert data[0]["status"] == "active", "resume 应落地 active"
-    assert data[0]["fail_count"] == 0, "resume 应重置 fail_count"
+    assert data[0]["status"] == "active", "resume 应落地 active"  # i18n: user-facing
+    assert data[0]["fail_count"] == 0, "resume 应重置 fail_count"  # i18n: user-facing
 
 
 def test_remove_task_persists_removal(tmp_path):
     store = tmp_path / "tasks.json"
     sched = _make_scheduler(store)
-    tid = sched.add_cron_task(name="待删", workflow_id="wf", cron_expression="0 0 * * *", executor=lambda: None)
+    tid = sched.add_cron_task(
+        name="待删", workflow_id="wf", cron_expression="0 0 * * *", executor=lambda: None  # i18n: user-facing
+    )  # i18n: user-facing
     assert sched.remove_task(tid)
     data = json.loads(store.read_text(encoding="utf-8"))
-    assert len(data) == 0, "remove 应从持久化移除"
+    assert len(data) == 0, "remove 应从持久化移除"  # i18n: user-facing
 
 
 def test_load_ignores_completed_failed_keeps_record(tmp_path):
-    # COMPLETED/FAILED 不重建 job, 但定义留记录供查询
+    # COMPLETED/FAILED do not rebuild the job, but the definition is kept for querying
     store = tmp_path / "tasks.json"
     store.write_text(
         json.dumps(
             [
                 {
                     "id": "task_done",
-                    "name": "已完成",
+                    "name": "已完成",  # i18n: user-facing
                     "workflow_id": "wf",
                     "trigger_type": "cron",
                     "trigger_config": {"cron": "0 0 * * *"},
@@ -148,9 +156,9 @@ def test_load_ignores_completed_failed_keeps_record(tmp_path):
     )
     sched = _make_scheduler(store)
     restored = sched.load_tasks()
-    assert restored == 1, "已完成任务也应恢复定义"
+    assert restored == 1, "已完成任务也应恢复定义"  # i18n: user-facing
     assert sched.get_task("task_done").status == TaskStatus.COMPLETED
-    assert "task_done" not in sched._job_map, "COMPLETED 不重建 APScheduler job"
+    assert "task_done" not in sched._job_map, "COMPLETED 不重建 APScheduler job"  # i18n: user-facing
 
 
 def test_load_corrupt_json_returns_zero(tmp_path, caplog):
@@ -161,11 +169,11 @@ def test_load_corrupt_json_returns_zero(tmp_path, caplog):
     sched = _make_scheduler(store)
     with caplog.at_level(logging.WARNING):
         assert sched.load_tasks() == 0
-    assert any("加载调度任务失败" in r.message for r in caplog.records)
+    assert any("加载调度任务失败" in r.message for r in caplog.records)  # i18n: user-facing
 
 
 def test_default_store_path_when_empty():
-    # 空路径 → 用 _DEFAULT_STORE_PATH (~/.fusion-cowork/...)
+    # Empty path → falls back to _DEFAULT_STORE_PATH (~/.fusion-cowork/...)
     sched = TaskScheduler(task_store_path="")
     from fusion_cowork.engine.scheduler import _DEFAULT_STORE_PATH
 

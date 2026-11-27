@@ -1,19 +1,23 @@
-# Run 级 fusion-memory 集成 — 启动召回注入 + 结束轨迹写回 (cowork issue #157 / fusion-memory#20)。
+# Run-level fusion-memory integration — startup recall injection + end-of-run trajectory write-back (cowork issue #157 / fusion-memory#20).
 #
-# Run 启动: retrieve 召回相关长期记忆, 经 initial_input["memory_context"] 注入首节点输入。
-# Run 结束 (success): WorkflowExecution 步骤 + 结果构建 Interaction, commit 到 fusion-memory,
-# 进入短期记忆, 由三线调度按复用晋升长期 (fusion-memory 引擎侧已实现)。
+# Run start: retrieve relevant long-term memories, injected into the first node's input via
+# initial_input["memory_context"].
+# Run end (success): the WorkflowExecution steps + result build an Interaction, committed to
+# fusion-memory, enters short-term memory, promoted to long-term by the three-tier scheduler
+# based on reuse (already implemented on the fusion-memory engine side).
 #
-# 设计约束:
-# - 零冲击降级: 未配 FUSION_MEMORY_API_KEY → from_env 返 None, 集成整体关闭, 行为与旧版一致。
-# - 服务不可用不打断 run: 桥内异常一律 warn + None, 调用方记入 run record (fail-visible)。
-# - 离线硬约束: 仅 HTTP 到本机 fm-server (默认 http://127.0.0.1:11435), 不连云。
+# Design constraints:
+# - Zero-impact degradation: without FUSION_MEMORY_API_KEY, from_env returns None, the whole
+#   integration is off, behavior identical to the previous version.
+# - Service unavailability never breaks a run: bridge exceptions always warn + None; the caller
+#   records it in the run record (fail-visible).
+# - Offline hard constraint: HTTP only to the local fm-server (default http://127.0.0.1:11435), never cloud.
 #
-# wire 契约对齐 fusion-memory clients/python/fusion_memory_client.py + fm-core interaction.rs:
-# Interaction={id, session_id, tenant?, turns, timestamp(u64 epoch 秒), metadata};
+# Wire contract aligned with fusion-memory clients/python/fusion_memory_client.py + fm-core interaction.rs:
+# Interaction={id, session_id, tenant?, turns, timestamp(u64 epoch seconds), metadata};
 # Turn={turn_idx, user_message, assistant_message, tool_calls}; ToolCall={name, args, result_summary};
-# ContextBlock 文本字段为 turns_text (fm-core context.rs)。
-# commit 结果契约: {"memory_ids": [...], "failed_turns": [...]} (fm-server P1-1)。
+# ContextBlock text field is turns_text (fm-core context.rs).
+# commit result contract: {"memory_ids": [...], "failed_turns": [...]} (fm-server P1-1).
 
 from __future__ import annotations
 
@@ -29,9 +33,9 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _DEFAULT_BASE_URL = "http://127.0.0.1:11435"
-# 单字段内容上限: 节点输出可能巨大, 截断防炸记忆库嵌入
+# Per-field content cap: node outputs can be huge, truncated to avoid blowing up memory-store embeddings
 _FIELD_CAP = 4000
-# tool_calls 步骤数上限: 大 DAG 全量序列化过长
+# tool_calls step cap: fully serializing a large DAG is too long
 _MAX_TOOL_CALLS = 64
 
 
@@ -40,14 +44,14 @@ def get_base_url() -> str:
 
 
 def _compact(value: Any) -> str:
-    # 任意输出压成可读短文本: dict/list 走 JSON, 其余 str()。失败兜底 repr。
+    # Compact any output into readable short text: dict/list via JSON, everything else str(). Falls back to repr on failure.
     try:
         if isinstance(value, (dict, list)):
             text = json.dumps(value, ensure_ascii=False, default=str)
         else:
             text = str(value)
     except Exception as e:
-        logger.warning(f"输出序列化失败, 用 repr 兜底: {e}")
+        logger.warning(f"Output serialization failed, falling back to repr: {e}")
         text = repr(value)
     return text[:_FIELD_CAP]
 
@@ -57,7 +61,7 @@ def _status_text(status: Any) -> str:
 
 
 class MemoryBridge:
-    # Run 级记忆桥。方法永不 raise — 失败降级返回 None, 由调用方记录。
+    # Run-level memory bridge. Methods never raise — failures degrade to None, caller records.
 
     def __init__(self, base_url: str, api_key: str, timeout: float = 10.0) -> None:
         self._base_url = base_url.rstrip("/")
@@ -66,10 +70,10 @@ class MemoryBridge:
 
     @classmethod
     def from_env(cls) -> Optional[MemoryBridge]:
-        # 未配 FUSION_MEMORY_API_KEY → None, 集成整体关闭 (零冲击降级)。
+        # Without FUSION_MEMORY_API_KEY -> None, the whole integration is off (zero-impact degradation).
         key = os.environ.get("FUSION_MEMORY_API_KEY", "").strip()
         if not key:
-            logger.info("FUSION_MEMORY_API_KEY 未配置, run 级记忆集成关闭")
+            logger.info("FUSION_MEMORY_API_KEY not configured, run-level memory integration disabled")
             return None
         return cls(get_base_url(), key)
 
@@ -86,7 +90,7 @@ class MemoryBridge:
         return data.get("result")
 
     async def retrieve_context(self, query: str, top_k: int = 8, token_budget: int = 2048) -> Optional[str]:
-        # Run 启动召回相关记忆, 返回拼接文本 (注入首节点输入)。失败/空 → None。
+        # Run start: recall relevant memories, return the joined text (injected into the first node input). Failure/empty -> None.
         if not query.strip():
             return None
         try:
@@ -101,7 +105,7 @@ class MemoryBridge:
                     {"text": query, "top_k": top_k, "token_budget": token_budget, "aggregate": True},
                 )
         except Exception as e:
-            logger.warning(f"memory retrieve 失败 (降级继续): {e}")
+            logger.warning(f"memory retrieve failed (degrading, continuing): {e}")
             return None
         blocks = result.get("blocks", []) if isinstance(result, dict) else []
         lines: List[str] = []
@@ -110,9 +114,9 @@ class MemoryBridge:
             if text:
                 lines.append(text)
         if not lines:
-            logger.info("memory retrieve 空结果 (首次运行属预期)")
+            logger.info("memory retrieve empty result (expected on first run)")
             return None
-        logger.info(f"memory retrieve 召回 {len(lines)} 块 (total_tokens={result.get('total_tokens', 0)})")
+        logger.info(f"memory retrieve recalled {len(lines)} blocks (total_tokens={result.get('total_tokens', 0)})")
         return "\n\n".join(lines)[:_FIELD_CAP]
 
     @staticmethod
@@ -126,7 +130,7 @@ class MemoryBridge:
         error: str = "",
         execution_id: str = "",
     ) -> Dict[str, Any]:
-        # WorkflowExecution → fm-core Interaction。单 turn: user=任务, assistant=结果, tool_calls=步骤。
+        # WorkflowExecution -> fm-core Interaction. Single turn: user=task, assistant=result, tool_calls=steps.
         tool_calls: List[Dict[str, Any]] = []
         for s in steps[:_MAX_TOOL_CALLS]:
             name = getattr(s, "node_display_name", "") or getattr(s, "node_name", "") or getattr(s, "node_id", "")
@@ -136,7 +140,7 @@ class MemoryBridge:
                 summary = _compact(getattr(s, "output_data", None))
             tool_calls.append({"name": name, "args": {}, "result_summary": f"[{status}] {summary}"[:_FIELD_CAP]})
         user_message = f"{workflow_name}: {description}".strip(": ")
-        assistant_message = (result_summary or error or "(无输出)")[:_FIELD_CAP]
+        assistant_message = (result_summary or error or "(无输出)")[:_FIELD_CAP]  # i18n: user-facing
         return {
             "id": f"cowork_{uuid.uuid4().hex[:12]}",
             "session_id": session_id,
@@ -157,7 +161,7 @@ class MemoryBridge:
         }
 
     async def write_back(self, interaction: Dict[str, Any]) -> Optional[List[str]]:
-        # Run 结束写回。失败 → warn + None (run 已终态, 不重试; 召回不到属预期降级)。
+        # Run end write-back. Failure -> warn + None (run already terminal, no retry; empty recall is an expected degradation).
         try:
             async with httpx.AsyncClient(
                 base_url=self._base_url,
@@ -170,15 +174,15 @@ class MemoryBridge:
                     {"session_id": interaction["session_id"], "interaction": interaction},
                 )
         except Exception as e:
-            logger.warning(f"memory commit 失败 (降级): {e}")
+            logger.warning(f"memory commit failed (degraded): {e}")
             return None
         if isinstance(result, dict):
             ids = result.get("memory_ids", [])
             failed = result.get("failed_turns", [])
             if failed:
-                logger.warning(f"memory commit 部分 turn 失败: {failed}")
+                logger.warning(f"memory commit partially failed turns: {failed}")
         elif isinstance(result, list):
-            # 旧契约兼容: 纯数组
+            # Legacy contract compatibility: plain array
             ids = result
         else:
             ids = []

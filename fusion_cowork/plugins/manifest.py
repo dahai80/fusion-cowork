@@ -19,9 +19,9 @@ class PluginManifest:
     dependencies: List[str] = field(default_factory=list)
     entry_point: str = "plugin"
     sandbox: bool = False
-    # LO-7: 插件声明节点执行超时 (秒); 0 = 用沙箱默认 (120s), >0 覆盖默认
+    # LO-7: plugin-declared node execution timeout (seconds); 0 = sandbox default (120s), >0 overrides it
     timeout_seconds: float = 0.0
-    # Stage 7: Ed25519 签名 (base64 urlsafe), 空 = 未签名; require_signing 时拒
+    # Stage 7: Ed25519 signature (base64 urlsafe), empty = unsigned; rejected when require_signing is on
     signature: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
@@ -47,13 +47,13 @@ class PluginManifest:
         if timeout_seconds < 0:
             timeout_seconds = 0.0
         name = data.get("name", "")
-        # E-13: name 空或含路径分隔符 → target=plugins_dir 或目录穿越, rmtree 删插件根。
+        # E-13: empty name or name with path separators → target=plugins_dir or path traversal, rmtree deletes the plugin root.
         if not name or not name.strip():
-            logger.error("插件清单 name 为空, 拒绝 (防 target=plugins_dir 越界删除)")
-            raise ValueError("插件清单 name 不可为空")
+            logger.error("Manifest name is empty, refusing (guards against target=plugins_dir out-of-bounds deletion)")
+            raise ValueError("插件清单 name 不可为空")  # i18n: user-facing
         if "/" in name or "\\" in name or name in (".", ".."):
-            logger.error(f"插件清单 name 含路径分隔符/遍历符: {name!r}, 拒绝")
-            raise ValueError(f"插件清单 name 非法: {name!r}")
+            logger.error(f"Manifest name contains path separators/traversal: {name!r}, refusing")
+            raise ValueError(f"插件清单 name 非法: {name!r}")  # i18n: user-facing
         return cls(
             name=name,
             version=data.get("version", "0.1.0"),
@@ -73,11 +73,11 @@ class PluginManifest:
             raw = path.read_text(encoding="utf-8")
             data = json.loads(raw)
             manifest = cls.from_dict(data)
-            logger.info(f"加载插件清单: {manifest.name} v{manifest.version}")
+            logger.info(f"Loaded plugin manifest: {manifest.name} v{manifest.version}")
             return manifest
         except json.JSONDecodeError as e:
-            logger.error(f"插件清单 JSON 解析失败 {path}: {e}")
+            logger.error(f"Plugin manifest JSON parse failed {path}: {e}")
             return None
         except Exception as e:
-            logger.error(f"加载插件清单失败 {path}: {e}")
+            logger.error(f"Plugin manifest load failed {path}: {e}")
             return None

@@ -1,4 +1,4 @@
-"""issue #261: 画布模板资产 — 发布/导入/导出/删除 REST + 隔离 templates_dir。"""
+"""issue #261: canvas template assets — publish/import/export/delete REST + isolated templates_dir."""
 
 from __future__ import annotations
 
@@ -111,6 +111,6 @@ class TestTemplateDelete:
             lst = tc.get("/api/templates", headers=HDR).json()
             builtin = [t for t in lst["templates"] if not str(t.get("id", "")).startswith("custom_")]
             if not builtin:
-                pytest.skip("无内置模板")
+                pytest.skip("无内置模板")  # i18n: user-facing
             r = tc.delete(f"/api/templates/{builtin[0]['id']}", headers=HDR)
             assert r.status_code == 400

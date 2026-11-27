@@ -1,17 +1,17 @@
-"""Stage 2 输入净化测试 — CR-6/7/13bc/CR-4/CR-14/MD-18/HI-11。
+"""Stage 2 input sanitization tests — CR-6/7/13bc/CR-4/CR-14/MD-18/HI-11.
 
-- CR-6/7: ShellExec 默认 exec 列表 (不起 shell), shell=True 显式
-- MD-18: PythonREPL AST walk 拒危险 import/call
-- CR-13c: PythonREPL 变量名标识符校验
-- CR-13b: nl_parser 节点名剔除未注册
-- CR-4: store.update_space/update_member 列白名单
-- CR-14: cdp navigate scheme + evaluate_js gate + host 限 localhost + token header
-- HI-11: AppleScript 转义 (单引号注入 / 双引号注入)
+- CR-6/7: ShellExec default exec list (no shell), shell=True explicit
+- MD-18: PythonREPL AST walk rejects dangerous import/call
+- CR-13c: PythonREPL variable name identifier validation
+- CR-13b: nl_parser strips unregistered node names
+- CR-4: store.update_space/update_member column whitelist
+- CR-14: cdp navigate scheme + evaluate_js gate + host limited to localhost + token header
+- HI-11: AppleScript escaping (single-quote injection / double-quote injection)
 """
 
 import pytest
 
-# 触发节点注册 (cdp/macos 模块在 import 时 @register_node)
+# Trigger node registration (cdp/macos modules @register_node at import time)
 import fusion_cowork.nodes
 from fusion_cowork.engine.node import NodeConfig, NodeRegistry, NodeStatus
 from fusion_cowork.nodes.tools.tool_nodes import (
@@ -22,13 +22,13 @@ from fusion_cowork.nodes.tools.tool_nodes import (
 fusion_cowork.nodes.import_all_nodes()
 
 
-# ── CR-6/7: ShellExec exec 列表 (默认 shell=False) ──
+# ── CR-6/7: ShellExec exec list (default shell=False) ──
 
 
 class TestShellExecExecList:
     @pytest.mark.asyncio
     async def test_default_shell_false_exec_list(self):
-        # shell=False (默认) 走 exec 列表, 命令含 shell 元字符不会注入
+        # shell=False (default) goes through the exec list, commands with shell metacharacters are not injected
         node = NodeRegistry.create(
             "shell_exec",
             config=NodeConfig(
@@ -45,8 +45,8 @@ class TestShellExecExecList:
 
     @pytest.mark.asyncio
     async def test_shell_false_rejects_shell_metachar_as_arg(self):
-        # shell=False: "echo hi; echo PWN" 曾被 shlex 拆为字面 argv (注入安全但静默错义);
-        # issue #319: 元字符在 shell=False 下提前响亮拒绝 — 调用方要么简化命令要么显式 shell=True
+        # shell=False: "echo hi; echo PWN" used to be split by shlex into literal argv (injection-safe but silently wrong);
+        # issue #319: metacharacters are rejected loudly up front under shell=False — callers either simplify the command or set shell=True explicitly
         node = NodeRegistry.create(
             "shell_exec",
             config=NodeConfig(
@@ -64,7 +64,7 @@ class TestShellExecExecList:
 
     @pytest.mark.asyncio
     async def test_shell_true_explicit_runs_shell(self):
-        # 显式 shell=True 仍可执行 (保留向后兼容, 记 WARNING)
+        # Explicit shell=True still executes (kept for backward compat, logs WARNING)
         node = NodeRegistry.create(
             "shell_exec",
             config=NodeConfig(
@@ -101,15 +101,15 @@ class TestShellExecExecList:
 
 class TestPythonCodeASTCheck:
     def test_blocks_dangerous_import(self):
-        # subprocess 在黑名单 → 拒
+        # subprocess is blacklisted → reject
         assert _check_python_code("import subprocess") is not None
 
     def test_os_system_attr_blocked_even_if_os_imported(self):
-        # os 不在黑名单, 但 os.system() 调用被 AST 拒
+        # os is not blacklisted, but the os.system() call is rejected by the AST walk
         assert _check_python_code("import os\nos.system('ls')") is not None
 
     def test_os_safe_call_allowed(self):
-        # os.getcwd() 安全 → 放行
+        # os.getcwd() is safe → allow
         assert _check_python_code("import os\nos.getcwd()") is None
 
     def test_blocks_dangerous_from_import(self):
@@ -128,11 +128,11 @@ class TestPythonCodeASTCheck:
         assert _check_python_code("import math\nmath.sqrt(4)") is None
 
     def test_syntax_error_passes_through(self):
-        # 语法错误交子进程报错, 不在此拦截
+        # Syntax errors are surfaced by the subprocess, not intercepted here
         assert _check_python_code("this is not python !!!") is None
 
 
-# ── CR-13c: PythonREPL 变量名校验 ──
+# ── CR-13c: PythonREPL variable name validation ──
 
 
 class TestReplVarValidation:
@@ -145,14 +145,17 @@ class TestReplVarValidation:
 
     def test_rejects_non_identifier(self):
         err = _validate_repl_variables({"bad name": 1})
+        # i18n: user-facing
         assert err is not None and "标识符" in err
 
     def test_rejects_digit_start(self):
         err = _validate_repl_variables({"1var": 1})
+        # i18n: user-facing
         assert err is not None and "标识符" in err
 
     def test_rejects_injection_chars(self):
         err = _validate_repl_variables({"x; rm -rf /": 1})
+        # i18n: user-facing
         assert err is not None and "标识符" in err
 
     @pytest.mark.asyncio
@@ -171,7 +174,7 @@ class TestReplVarValidation:
         assert result.status == NodeStatus.FAILED
 
 
-# ── CR-4: store 列白名单 ──
+# ── CR-4: store column whitelist ──
 
 
 class TestStoreColumnWhitelist:
@@ -199,7 +202,7 @@ class TestStoreColumnWhitelist:
             updated_at=now,
         )
         await store.create_space(sp)
-        # 非白名单列 (SQL 注入尝试) 应被拒, 合法列更新生效
+        # Non-whitelisted columns (SQL injection attempt) should be rejected, legitimate column updates take effect
         updated = await store.update_space(
             "sp1",
             name="renamed",
@@ -267,6 +270,7 @@ class TestCDPSecurity:
     def test_host_rejected_non_localhost(self):
         from fusion_cowork.nodes.browser.cdp_client import CDPClient
 
+        # i18n: user-facing
         with pytest.raises(ValueError, match="非本机"):
             CDPClient(host="192.168.1.1", port=9222)
 
@@ -312,6 +316,7 @@ class TestCDPSecurity:
         from fusion_cowork.nodes.browser.cdp_client import CDPClient
 
         c = CDPClient(host="127.0.0.1", port=9222)
+        # i18n: user-facing
         with pytest.raises(PermissionError, match="确认"):
             await c.evaluate_js("1+1")
 
@@ -329,9 +334,10 @@ class TestCDPSecurity:
             "cdp_evaluate",
             config=NodeConfig(params={"script": "1+1"}),
         )
-        # 不连真 CDP, allow_js 缺省 False → 在连接前即被拒
+        # No real CDP connection, allow_js defaults False → rejected before connecting
         result = await node.execute({})
         assert result.status == NodeStatus.FAILED
+        # i18n: user-facing
         assert "授权" in result.error or "确认" in result.error
 
     @pytest.mark.asyncio
@@ -370,12 +376,12 @@ class TestCDPSecurity:
         assert captured["headers"].get("Authorization") == "Bearer mytok"
 
 
-# ── HI-11: AppleScript 转义 (shell 单引号 + AppleScript 双引号) ──
+# ── HI-11: AppleScript escaping (shell single quotes + AppleScript double quotes) ──
 
 
 class TestAppleScriptEscaping:
     def _shell_quote_count(self, cmd: str) -> int:
-        # 将 break-quote 序列 '"'"' 视为占位, 计剩余裸单引号 (须偶数 = 边界闭合)
+        # Treat the break-quote sequence '"'"' as a placeholder, count remaining bare single quotes (must be even = boundaries closed)
         return cmd.replace("'\"'\"'", "\x00").count("'")
 
     @pytest.mark.asyncio
@@ -398,7 +404,7 @@ class TestAppleScriptEscaping:
         node = sn.NotificationNode(config=NodeConfig(params={"title": "x' ; echo PWN", "message": "m"}))
         result = await node.execute({})
         assert result.status == NodeStatus.SUCCESS
-        # 裸单引号须偶数 (shell 引号边界完整闭合, 注入的 ; echo PWN 落在字符串内)
+        # Bare single quotes must be even (shell quote boundaries fully closed, injected ; echo PWN stays inside the string)
         assert self._shell_quote_count(captured["cmd"]) % 2 == 0
 
     @pytest.mark.asyncio
@@ -420,10 +426,10 @@ class TestAppleScriptEscaping:
         monkeypatch.setattr(sn.asyncio, "create_subprocess_shell", fake_shell)
         node = sn.AppLifecycleNode(config=NodeConfig(params={"action": "check", "app_name": 'Calc" ; say hi'}))
         await node.execute({})
-        # osascript 调用 (含 app_name 插值) 的双引号须被转义, 单引号边界闭合
+        # Double quotes in the osascript call (with app_name interpolation) must be escaped, single-quote boundaries closed
         osascript_cmd = next((c for c in captured if "osascript" in c), "")
         assert '\\"' in osascript_cmd
         assert self._shell_quote_count(osascript_cmd) % 2 == 0
-        # pgrep 调用的单引号边界也须闭合 (第二处注入点)
+        # Single-quote boundaries in the pgrep call must also be closed (second injection point)
         pgrep_cmd = next((c for c in captured if "pgrep" in c), "")
         assert self._shell_quote_count(pgrep_cmd) % 2 == 0

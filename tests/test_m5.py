@@ -1,4 +1,4 @@
-"""M5 里程碑测试 — Benchmark + 端到端 + Agent 真实执行 + Hook 集成 + SDK/Headless。"""
+"""M5 milestone tests — Benchmark + end-to-end + real Agent execution + Hook integration + SDK/Headless."""
 
 import asyncio
 import json
@@ -35,13 +35,13 @@ class TestCapabilityMatrix:
     def test_categories(self):
         m = CapabilityMatrix()
         cats = m.categories()
-        assert "桌面自动化" in cats
-        assert "AI 能力" in cats
-        assert "离线/隐私" in cats
+        assert "桌面自动化" in cats  # i18n: user-facing
+        assert "AI 能力" in cats  # i18n: user-facing
+        assert "离线/隐私" in cats  # i18n: user-facing
 
     def test_by_category(self):
         m = CapabilityMatrix()
-        ai = m.by_category("AI 能力")
+        ai = m.by_category("AI 能力")  # i18n: user-facing
         assert len(ai) == 4
 
     def test_parity_score(self):
@@ -197,25 +197,25 @@ class TestReportRenderer:
         r = ReportRenderer(CapabilityMatrix())
         md = r.render_markdown()
         assert "Claude Cowork vs Fusion-Cowork" in md
-        assert "总览" in md
+        assert "总览" in md  # i18n: user-facing
 
     def test_markdown_has_categories(self):
         r = ReportRenderer(CapabilityMatrix())
         md = r.render_markdown()
-        assert "桌面自动化" in md
-        assert "AI 能力" in md
+        assert "桌面自动化" in md  # i18n: user-facing
+        assert "AI 能力" in md  # i18n: user-facing
 
     def test_markdown_has_desk_unique(self):
         r = ReportRenderer(CapabilityMatrix())
         md = r.render_markdown()
-        assert "Fusion-Cowork 独有优势" in md
+        assert "Fusion-Cowork 独有优势" in md  # i18n: user-facing
 
     def test_markdown_with_benchmark(self):
         runner = BenchmarkRunner(warmup=0, repeats=1)
         runner._results.append(BenchmarkResult(node_name="test", status="success", latency_ms=42.5))
         r = ReportRenderer(CapabilityMatrix(), runner=runner)
         md = r.render_markdown()
-        assert "性能基准" in md
+        assert "性能基准" in md  # i18n: user-facing
         assert "42.5" in md
 
     def test_html_report(self):
@@ -247,7 +247,7 @@ class TestReportRenderer:
             os.unlink(path)
 
 
-# ── 端到端: MCP 全链路 ──
+# ── End-to-end: MCP full chain ──
 
 
 class TestE2EMCP:
@@ -276,7 +276,7 @@ class TestE2EMCP:
         assert result.get("isError") or "denied" in json.dumps(result)
 
 
-# ── 端到端: DeskRPC + Engine + Session + Event ──
+# ── End-to-end: DeskRPC + Engine + Session + Event ──
 
 
 class TestE2EDeskRPC:
@@ -300,7 +300,7 @@ class TestE2EDeskRPC:
     @pytest.mark.asyncio
     async def test_health(self):
         r = await self.rpc._dispatch({"jsonrpc": "2.0", "id": 1, "method": "desk.health", "params": {}})
-        # v0.4.0 Stage 4: 深度 /health, MLX 未起 → degraded 不阻断
+        # v0.4.0 Stage 4: deep /health, MLX not up → degraded without blocking
         assert r["result"]["status"] in ("ok", "degraded")
 
     @pytest.mark.asyncio
@@ -343,7 +343,7 @@ class TestE2EDeskRPC:
         assert r["error"]["code"] == -32601
 
 
-# ── 端到端: WorkflowEngine + Permission + Hook + Session + Event ──
+# ── End-to-end: WorkflowEngine + Permission + Hook + Session + Event ──
 
 
 class TestE2EWorkflowFull:
@@ -399,7 +399,7 @@ class TestE2EWorkflowFull:
         assert result.status in (WorkflowStatus.CANCELLED, WorkflowStatus.SUCCESS)
 
 
-# ── CLI Benchmark 命令 ──
+# ── CLI Benchmark command ──
 
 
 class TestCLIBenchmark:
@@ -442,7 +442,7 @@ class TestCLIBenchmark:
             os.unlink(path)
 
 
-# ── W13: Agent 真实执行层 ──
+# ── W13: Agent real execution layer ──
 
 
 class TestAgentRuntime:
@@ -553,7 +553,7 @@ class TestAgentOrchestratorEnhanced:
         assert bus is not None
 
 
-# ── W14: Hook 生命周期集成 ──
+# ── W14: Hook lifecycle integration ──
 
 
 class TestHookNewEvents:

@@ -1,10 +1,10 @@
-"""#122: 旧库 (pre-v0.4, 无 tenant_id 列) 上 SpaceStore 初始化不再崩溃。
+"""#122: SpaceStore initialization no longer crashes on a legacy DB (pre-v0.4, no tenant_id columns).
 
 Contract:
-- 建旧库表 (spaces/space_messages/space_members 无 tenant_id) + 种子行;
-- SpaceStore.initialize() 不抛 OperationalError (v1 ADD COLUMN 先于 tenant 索引);
-- 初始化后 tenant_id 列已补 + 4 条 tenant 索引存在;
-- 新空间可在迁移后创建。
+- Build legacy tables (spaces/space_messages/space_members without tenant_id) + seed rows;
+- SpaceStore.initialize() raises no OperationalError (v1 ADD COLUMN runs before tenant indexes);
+- After initialization the tenant_id columns are added + the 4 tenant indexes exist;
+- New spaces can be created after migration.
 """
 
 from __future__ import annotations

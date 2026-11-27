@@ -1,9 +1,10 @@
-"""issue #352/#353: 管道重跑幂等 + claude_dispatch 权限模式。
+"""issue #352/#353: pipeline rerun idempotency + claude_dispatch permission mode.
 
-- #352: repo_scaffold 空目录复用 / overwrite 复写 / 报错带补救提示; github_api
-  issue_create 同标题开放 issue 幂等复用不重建
-- #353: claude_dispatch 默认 --permission-mode bypassPermissions (headless -p
-  下需审批工具被自动拒绝, 交付契约结构性不可达)
+- #352: repo_scaffold reuses an empty dir / overwrite rewrites in place / failure errors
+  carry a remediation hint; github_api issue_create idempotently reuses an open issue
+  with the same title instead of recreating
+- #353: claude_dispatch defaults to --permission-mode bypassPermissions (under headless -p,
+  approval-requiring tools are auto-denied, making the delivery contract structurally unreachable)
 """
 
 import stat
@@ -25,7 +26,7 @@ class TestRepoScaffoldIdempotent:
         base = tmp_path / "biz"
         base.mkdir()
         target = base / "ai-probe"
-        target.mkdir()  # 空目录 (此前一次失败遗留)
+        target.mkdir()  # empty dir (leftover from an earlier failure)
         res = await _scaffold_node(base_dir=str(base)).execute({})
         assert res.status.value == "success"
         assert res.data["reused"] is True
@@ -52,7 +53,7 @@ class TestRepoScaffoldIdempotent:
         assert res.status.value == "success"
         assert res.data["reused"] is False
         assert (target / "pyproject.toml").exists()
-        assert (target / "stale.txt").exists()  # 复写脚手架, 不清既有产出
+        assert (target / "stale.txt").exists()  # rewrites the scaffold, does not clear existing output
 
     async def test_fresh_scaffold_still_works(self, tmp_path):
         base = tmp_path / "biz"

@@ -1,7 +1,8 @@
-"""issue #465: 波边界动态变更 — remove_node / retarget_edge 指令 + 结构化拒绝。
+"""issue #465: wave-boundary dynamic mutation — remove_node / retarget_edge directives + structured rejections.
 
-波边界才生效 (防线 4): 波内目标 mid_wave 结构化拒绝; 已执行 already_executed;
-节点/边不存在 unknown_target; 字段缺失 bad_directive。API 409/400 透传。
+Directives only take effect at wave boundaries (defense line 4): in-wave targets rejected mid_wave;
+already executed rejected already_executed; missing node/edge rejected unknown_target; missing fields
+rejected bad_directive. API passes through 409/400.
 """
 
 from __future__ import annotations
@@ -80,7 +81,7 @@ class TestValidateMutation:
         assert ok is False
         err = eng.pop_directive_error("r")
         assert err is not None and err["code"] == "mid_wave"
-        assert ids[1] in wf.nodes, "拒绝的指令不得改变工作流"
+        assert ids[1] in wf.nodes, "拒绝的指令不得改变工作流"  # i18n: user-facing
 
     def test_already_executed_rejected(self):
         _setup()
@@ -176,7 +177,7 @@ class TestLiveRun:
         execution = await asyncio.wait_for(task, timeout=10)
         assert execution.status.value == "success", execution.error
         ran = {s.node_id for s in execution.steps if s.status == NodeStatus.SUCCESS}
-        assert ids[2] not in ran, "被移除节点不得执行"
+        assert ids[2] not in ran, "被移除节点不得执行"  # i18n: user-facing
         assert ids[1] in ran
 
     async def test_retarget_edge_run_succeeds(self):
@@ -228,13 +229,13 @@ class TestApiRoute:
                 if "g" in eng._wave_running.get(run_id, set()):
                     break
                 asyncio.run(asyncio.sleep(0.02))
-            # 波内目标 (gate465 执行中) → 结构化拒绝
+            # in-wave target (gate465 executing) -> structured rejection
             r2 = client.post(
                 f"/api/runs/{run_id}/directive", json={"action": "remove_node", "node_id": "g"}, headers=headers
             )
             assert r2.status_code == 409, r2.text
             assert r2.json()["detail"]["code"] == "mid_wave"
-            # 字段缺失 → 400
+            # missing fields -> 400
             r3 = client.post(f"/api/runs/{run_id}/directive", json={"action": "remove_node"}, headers=headers)
             assert r3.status_code == 400
             assert r3.json()["detail"]["code"] == "bad_directive"

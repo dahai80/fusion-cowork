@@ -437,6 +437,7 @@ class TestSharePersistence:
     @pytest.mark.asyncio
     async def test_invalid_code_rejected(self, artifact_setup):
         svc, _ = artifact_setup
+        # i18n: user-facing
         with pytest.raises(ValueError, match="无效"):
             await svc.resolve_share("share_sp", "share_nope")
 
@@ -687,6 +688,7 @@ class TestAtomicMemberCapacity:
             joined_at="2026-01-01T00:00:00",
             last_active="2026-01-01T00:00:00",
         )
+        # i18n: user-facing
         with pytest.raises(ValueError, match="已满"):
             await member_store.add_member_checked(m3, max_members=2)
 
@@ -792,7 +794,7 @@ class TestAwaitableResultHandling:
 
 
 class TestPlanRetrospective:
-    """方案二③: plan terminal snapshot lands in the trajectory jsonl."""
+    """Scheme 2③: plan terminal snapshot lands in the trajectory jsonl."""
 
     def test_write_plan_retrospective_snapshot_shape(self):
         from fusion_cowork.orchestrator import trajectory_writer as tw
@@ -910,7 +912,7 @@ class TestDashboardArchiveVisibility:
 
 
 class TestV2SchemeOne:
-    """方案一: honest terminal states — no_executor fails, retry uses a fresh
+    """Scheme 1: honest terminal states — no_executor fails, retry uses a fresh
     plan, negative depends_on is rejected by the schema validator."""
 
     class ShellEcho:
@@ -941,6 +943,7 @@ class TestV2SchemeOne:
         t = orch.add_task(plan.plan_id, "ghost", "run", {"prompt": "x"})
         # clear the DEFAULT_EXECUTORS fallback too, so _execute_task really
         # reaches the no_executor branch (otherwise NodeExecutor runs and
+        # i18n: user-facing
         # fails with "缺少 node_name 参数" — also a failure, but not ours)
         with mock.patch.dict("fusion_cowork.orchestrator.executors.DEFAULT_EXECUTORS", {}, clear=True):
             result = await orch.execute_plan(plan.plan_id)
@@ -979,6 +982,7 @@ class TestV2SchemeOne:
         orch.register_agent(Agent(agent_id="planner", name="planner", role=AgentRole.PLANNER))
         orch.register_executor("planner", FakePlanner())
         # the parsed subtask targets executor_shell — register agent + executor
+        # i18n: user-facing
         # or the plan correctly fails with "Agent 不存在" (honest failure)
         TestPlanFailurePropagation._register(orch, "executor_shell", TestV2SchemeOne.ShellEcho())
         result = await orch.run_standard_pipeline({"prompt": "v2 retry drill", "description": "v2 retry"})
@@ -987,7 +991,7 @@ class TestV2SchemeOne:
         plan = orch._plans[result["plan_id"]]
         assert all(t.status != "failed" for t in plan.tasks), [t.status for t in plan.tasks]
         # the original plan was superseded, not left "partial"
-        # (v4 方案③: the dead plan object is dropped from _plans; its
+        # (v4 scheme ③: the dead plan object is dropped from _plans; its
         # violation history now lives on the successor's superseded_history)
         final = orch._plans[result["plan_id"]]
         assert final.superseded_history, "supersede history must transfer to the successor"
@@ -996,7 +1000,7 @@ class TestV2SchemeOne:
 
 
 class TestV2SchemeTwo:
-    """方案二: presence reflects submit/plan paths, chain_agents delegates."""
+    """Scheme 2: presence reflects submit/plan paths, chain_agents delegates."""
 
     @pytest.mark.asyncio
     async def test_presence_busy_during_plan_execution(self):
@@ -1031,7 +1035,7 @@ class TestV2SchemeTwo:
 
 
 class TestV2SchemeThree:
-    """方案三: stream_message guard, acceptance trajectory, plan-task acceptance."""
+    """Scheme 3: stream_message guard, acceptance trajectory, plan-task acceptance."""
 
     def test_stream_message_has_interrupt_guard(self):
         import inspect
@@ -1039,6 +1043,7 @@ class TestV2SchemeThree:
         from fusion_cowork.space.chat import SpaceChatService
 
         src = inspect.getsource(SpaceChatService.stream_message)
+        # i18n: user-facing
         assert "响应中断" in src and "except Exception" in src
 
     def test_get_task_falls_back_to_plan_tasks(self):
@@ -1089,7 +1094,7 @@ class TestV2SchemeThree:
 
 
 class TestSchemeFiveRoles:
-    """方案五: business role registry — single source for planner catalog,
+    """Scheme 5: business role registry — single source for planner catalog,
     schema validation (role ids accepted, executor contract enforced), and
     acceptor auto-bind at materialization."""
 
@@ -1100,6 +1105,7 @@ class TestSchemeFiveRoles:
         assert "shell_operator" in reg.role_ids()
         assert reg.executor_for("shell_operator") == "executor_shell"
         catalog = reg.prompt_catalog()
+        # i18n: user-facing
         assert "默认验收人" in catalog and "交付物" in catalog
 
     def test_registry_rejects_unknown_executor(self):
@@ -1301,7 +1307,7 @@ class TestPlannerRetryHardening:
         result = await orch.run_standard_pipeline({"prompt": "retry3 drill", "description": "retry3"})
         assert result.get("status") == "completed", result
         # exactly two plans were superseded by the two failed attempts
-        # (v4 方案③: dead plans are dropped from _plans; the successor
+        # (v4 scheme ③: dead plans are dropped from _plans; the successor
         # carries the transferred supersede history)
         final = orch._plans[result["plan_id"]]
         assert len(final.superseded_history) == 2, final.superseded_history
@@ -1322,9 +1328,10 @@ class TestPlannerRetryHardening:
         orch.register_executor("planner", AlwaysBad())
         result = await orch.run_standard_pipeline({"prompt": "always-bad drill", "description": "always-bad"})
         # no fake success: loud failure with the accumulated schema problems
+        # i18n: user-facing
         assert "Planner 未产出可解析的任务拆解" in str(result.get("error", ""))
         assert "schema" in str(result.get("error", ""))
-        # all three attempts ran; v4 方案③ drops superseded plans from
+        # all three attempts ran; v4 scheme ③ drops superseded plans from
         # _plans, so verify via the final plan's transferred history
         final = orch._plans.get(result.get("plan_id", ""))
         assert final is not None and len(final.superseded_history) == 2, (
@@ -1335,7 +1342,7 @@ class TestPlannerRetryHardening:
 
 class TestSchemaRuntimeDriftGuard:
     """27B drill: planner picked real nodes but they failed at EXECUTION time
-    with 未指定/缺少 errors because params_schema.required was empty while
+    with unspecified/missing errors because params_schema.required was empty while
     execute() unconditionally rejects missing params. This guard keeps the
     planner contract (driven by params_schema) in sync with runtime behavior.
     Evidence table is derived from execute() source; conditional params
@@ -1386,7 +1393,7 @@ class TestSchemaRuntimeDriftGuard:
 
 
 class TestV3SchemeImplementations:
-    """audit v3 方案一/二/四/五: planner model routing, presence heartbeat,
+    """audit v3 schemes 1/2/4/5: planner model routing, presence heartbeat,
     task_step persistence, retrospective delivery-note fields."""
 
     def test_scheme4_planner_model_routing(self):
@@ -1467,7 +1474,7 @@ class TestV3SchemeImplementations:
 
 
 class TestV4ResourceLifecycle:
-    """audit v4 方案①②③: trajectory retention/rotation, relay step-read
+    """audit v4 schemes ①②③: trajectory retention/rotation, relay step-read
     watermark, superseded-plan dropping — the long-running deployment trio."""
 
     def test_scheme1_retention_and_rotation(self, tmp_path, monkeypatch):

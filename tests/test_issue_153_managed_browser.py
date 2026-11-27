@@ -1,4 +1,4 @@
-"""issue #153: 托管浏览器 — 独立 profile 启动 / 自动 CDP 端口 / cookie 导入 / 节点与 API。"""
+"""issue #153: managed browser — isolated profile launch / automatic CDP port / cookie import / node + API."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from fusion_cowork.engine.node import NodeRegistry
 
 @pytest.fixture(autouse=True)
 def _ensure_nodes_loaded():
-    # 跨测试文件 NodeRegistry 可能被 clear(), 每测试前确保内置节点在册
+    # NodeRegistry may have been clear()ed across test files — re-register built-ins before each test
     if "managed_browser" not in NodeRegistry._registry:
         fusion_cowork.nodes.import_all_nodes()
     yield
@@ -145,7 +145,7 @@ def test_node_reports_clear_error_without_browser(monkeypatch):
     node = NodeRegistry.create("managed_browser", config=NodeConfig(params={"action": "launch"}))
     result = asyncio.run(node.execute({}))
     assert result.status == NodeStatus.FAILED
-    assert "不存在" in result.error
+    assert "不存在" in result.error  # i18n: user-facing
     mb.reset_managed_browser()
 
 

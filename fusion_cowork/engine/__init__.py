@@ -1,19 +1,19 @@
-"""引擎模块导出。
+"""Engine module exports.
 
-整合自 Squish 架构模式：
-- 参数类型强制转换：coerce_param, coerce_params
-- 工具名称别名：NodeRegistry.register_alias, resolve_alias
+Consolidated from the Squish architecture pattern:
+- param type coercion: coerce_param, coerce_params
+- tool name aliases: NodeRegistry.register_alias, resolve_alias
 
-V0.2 新增：
-- 增强调度器：EnhancedScheduler（日历视图、依赖编排、统计报表）
-- 工作流优化器：WorkflowOptimizer（AI 分析、瓶颈检测、自动修复）
+Added in V0.2:
+- enhanced scheduler: EnhancedScheduler (calendar view, dependency orchestration, stats reports)
+- workflow optimizer: WorkflowOptimizer (AI analysis, bottleneck detection, auto-fix)
 
-V0.3 新增：
-- 权限管理：PermissionManager, PermissionLevel, Permission
-- Hook系统：HookManager, HookEvent, HookContext
+Added in V0.3:
+- permission management: PermissionManager, PermissionLevel, Permission
+- hook system: HookManager, HookEvent, HookContext
 
-V0.4 新增：
-- AST Diff 传输：compute_ast_diff, apply_ast_diff（迁移自 fusion-multi-node）
+Added in V0.4:
+- AST diff transport: compute_ast_diff, apply_ast_diff (migrated from fusion-multi-node)
 
 #521 drop-fallback ruling: importing this package asserts fusion-harness
 availability — hooks/permission/compactor/funnels shims hard-import the
@@ -51,7 +51,7 @@ from .session import Session, SessionStore
 from .workflow import Edge, Workflow, WorkflowEngine, WorkflowExecution, WorkflowStatus, WorkflowStep
 
 __all__ = [
-    # 节点
+    # Nodes
     "BaseNode",
     "NodeConfig",
     "NodeResult",
@@ -59,33 +59,33 @@ __all__ = [
     "NodeCategory",
     "NodeRegistry",
     "register_node",
-    # 参数强制转换
+    # Param coercion
     "coerce_param",
     "coerce_params",
     "_coerce_int",
     "_coerce_number",
     "_coerce_bool",
     "_coerce_array",
-    # 工作流
+    # Workflow
     "Workflow",
     "WorkflowEngine",
     "WorkflowExecution",
     "WorkflowStatus",
     "Edge",
     "WorkflowStep",
-    # 调度
+    # Scheduling
     "TaskScheduler",
     "ScheduledTask",
     "TaskStatus",
-    # V0.2 增强调度
+    # V0.2 enhanced scheduler
     "EnhancedScheduler",
     "TaskExecution",
     "TaskDependency",
-    # V0.2 AI 优化
+    # V0.2 AI optimization
     "WorkflowOptimizer",
     "OptimizationSuggestion",
     "WorkflowAnalysis",
-    # V0.3 权限
+    # V0.3 permissions
     "PermissionManager",
     "PermissionLevel",
     "Permission",
@@ -98,22 +98,22 @@ __all__ = [
     "EventDomain",
     "LLMFunnel",
     "ToolFunnel",
-    # V0.3 Hook
+    # V0.3 hooks
     "HookManager",
     "HookEvent",
     "HookContext",
-    # V0.3 会话
+    # V0.3 sessions
     "Session",
     "SessionStore",
-    # V0.3 事件
+    # V0.3 events
     "EventType",
     "WorkflowEvent",
     "EventEmitter",
-    # M4 结构化输出
+    # M4 structured output
     "OutputSchema",
     # V0.4 AST Diff
     "compute_ast_diff",
     "apply_ast_diff",
-    # issue #191: 运行控制状态持久层
+    # issue #191: run-control state persistence layer
     "RunStateStore",
 ]

@@ -1,4 +1,4 @@
-"""Business role registry (audit v2 方案五).
+"""Business role registry (audit v2 scheme 5).
 
 Upgrades "roles" from executor aliases to business role definitions:
 duties / deliverables / default acceptor / executor mapping. The planner
@@ -97,7 +97,9 @@ class RoleRegistry:
         lines = []
         for r in sorted(self._roles.values(), key=lambda x: x.role_id):
             duties = "; ".join(r.duties) if r.duties else r.display_name
+            # i18n: user-facing
             acc = f", 默认验收人={r.acceptor}" if r.acceptor else ""
+            # i18n: user-facing
             lines.append(f"- {r.role_id} (executor={r.executor}{acc}): {duties}; 交付物: {r.deliverables}")
         return "\n".join(lines)
 
@@ -122,49 +124,67 @@ def seed_default_roles(registry: RoleRegistry) -> None:
     defaults = [
         BusinessRole(
             "task_planner",
+            # i18n: user-facing
             "任务规划",
             "executor_mlx",
+            # i18n: user-facing
             duties=["理解业务需求", "拆解为可执行子任务", "识别依赖与验收标准"],
+            # i18n: user-facing
             deliverables="结构化子任务清单 (JSON)",
             acceptor="coordinator",
         ),
         BusinessRole(
             "coordinator",
+            # i18n: user-facing
             "协调者",
             "executor_mlx",
+            # i18n: user-facing
             duties=["接收拆解结果", "分派执行", "汇总进展并对最终结果兜底"],
+            # i18n: user-facing
             deliverables="执行编排与进展说明",
             acceptor="",
         ),
         BusinessRole(
             "shell_operator",
+            # i18n: user-facing
             "命令行执行",
             "executor_shell",
+            # i18n: user-facing
             duties=["按要求执行 shell 命令", "回报真实输出与退出码"],
+            # i18n: user-facing
             deliverables="命令输出 (stdout/stderr/returncode)",
             acceptor="coordinator",
         ),
         BusinessRole(
             "node_operator",
+            # i18n: user-facing
             "节点执行",
             "executor_node",
+            # i18n: user-facing
             duties=["按 catalog 执行指定工作流节点", "回报节点结果数据"],
+            # i18n: user-facing
             deliverables="节点结果数据",
             acceptor="coordinator",
         ),
         BusinessRole(
             "workflow_builder",
+            # i18n: user-facing
             "工作流执行",
             "executor_workflow",
+            # i18n: user-facing
             duties=["构建/执行完整工作流或模板"],
+            # i18n: user-facing
             deliverables="工作流执行结果",
             acceptor="coordinator",
         ),
         BusinessRole(
             "result_reviewer",
+            # i18n: user-facing
             "结果分析",
             "executor_mlx",
+            # i18n: user-facing
             duties=["汇总各子任务结果", "对照验收标准质检", "给出结论与风险提示"],
+            # i18n: user-facing
             deliverables="分析结论与风险提示",
             acceptor="",
         ),

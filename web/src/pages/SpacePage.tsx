@@ -33,14 +33,14 @@ export function SpacePage() {
         setCreating(true);
         try {
             const sp = await api.createSpace({ name: name.trim(), description: description.trim() });
-            sdk.toast.show({ level: 'success', message: t('空间已创建', 'Space created') });
+            sdk.toast.show({ level: 'success', message: t('空间已创建', 'Space created') }); // i18n: user-facing
             setName('');
             setDescription('');
             setSelected(sp.id);
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] space create failed', e);
-            sdk.toast.show({ level: 'error', message: t('创建失败', 'Create failed') });
+            sdk.toast.show({ level: 'error', message: t('创建失败', 'Create failed') }); // i18n: user-facing
         } finally {
             setCreating(false);
         }
@@ -53,7 +53,7 @@ export function SpacePage() {
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] space delete failed', e);
-            sdk.toast.show({ level: 'error', message: t('删除失败', 'Delete failed') });
+            sdk.toast.show({ level: 'error', message: t('删除失败', 'Delete failed') }); // i18n: user-facing
         }
     }
 
@@ -61,19 +61,21 @@ export function SpacePage() {
         <div className="mx-auto flex max-w-5xl gap-4">
             <div className="w-56 shrink-0">
                 <div className="flex items-end justify-between pb-2">
-                    <div className="text-sm font-medium text-text-primary">{t('协作空间', 'Spaces')}</div>
+                    <div className="text-sm font-medium text-text-primary">
+                        {t('协作空间', 'Spaces') /*// i18n: user-facing*/}
+                    </div>
                     <div className="text-xs text-text-muted">{spaces.length}</div>
                 </div>
                 <div className="flex flex-col gap-1 pb-2">
                     <input
                         className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
-                        placeholder={t('空间名称', 'Space name')}
+                        placeholder={t('空间名称', 'Space name')} // i18n: user-facing
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                     />
                     <input
                         className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
-                        placeholder={t('描述 (可选)', 'Description (optional)')}
+                        placeholder={t('描述 (可选)', 'Description (optional)')} // i18n: user-facing
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
                     />
@@ -83,11 +85,11 @@ export function SpacePage() {
                         disabled={creating || !name.trim()}
                         onClick={() => void create()}
                     >
-                        {creating ? t('创建中…', 'Creating…') : t('新建空间', 'New space')}
+                        {creating ? t('创建中…', 'Creating…') /*// i18n: user-facing*/ : t('新建空间', 'New space')}
                     </button>
                 </div>
                 {spaces.length === 0 ? (
-                    <EmptyState title={t('暂无空间', 'No spaces')} />
+                    <EmptyState title={t('暂无空间', 'No spaces')} /> // i18n: user-facing
                 ) : (
                     <div className="flex flex-col gap-1">
                         {spaces.map((sp: SpaceInfo) => (
@@ -124,8 +126,8 @@ export function SpacePage() {
                     <SpaceDetail spaceId={selected} />
                 ) : (
                     <EmptyState
-                        title={t('选择一个空间', 'Pick a space')}
-                        description={t('左侧选择或新建协作空间', 'Select or create a space on the left')}
+                        title={t('选择一个空间', 'Pick a space')} // i18n: user-facing
+                        description={t('左侧选择或新建协作空间', 'Select or create a space on the left')} // i18n: user-facing
                     />
                 )}
             </div>
@@ -137,7 +139,7 @@ function SpaceDetail({ spaceId }: { spaceId: string }) {
     const t = useT();
     const [tab, setTab] = useState<Tab>('messages');
     const [artifactPreview, setArtifactPreview] = useState<SpaceArtifact | null>(null);
-    // #149: 产物就地修订 — 预览内选中文本触发
+    // #149: in-place artifact revision — triggered by selected text in the preview
     const [selText, setSelText] = useState('');
 
     const members = useAutoRetry(() => api.spaceMembers(spaceId), [spaceId]);
@@ -153,18 +155,18 @@ function SpaceDetail({ spaceId }: { spaceId: string }) {
             setArtifactPreview(await api.spaceArtifact(spaceId, aid));
         } catch (e) {
             console.error('[cowork-web] artifact open failed', e);
-            sdk.toast.show({ level: 'error', message: t('打开失败', 'Open failed') });
+            sdk.toast.show({ level: 'error', message: t('打开失败', 'Open failed') }); // i18n: user-facing
         }
     }
 
     async function changeRole(userId: string, role: string) {
         try {
             await api.updateSpaceMemberRole(spaceId, userId, role);
-            sdk.toast.show({ level: 'success', message: t('角色已更新', 'Role updated') });
+            sdk.toast.show({ level: 'success', message: t('角色已更新', 'Role updated') }); // i18n: user-facing
             members.manualRetry();
         } catch (e) {
             console.error('[cowork-web] role update failed', e);
-            sdk.toast.show({ level: 'error', message: t('角色更新失败', 'Role update failed') });
+            sdk.toast.show({ level: 'error', message: t('角色更新失败', 'Role update failed') }); // i18n: user-facing
         }
     }
 
@@ -177,15 +179,15 @@ function SpaceDetail({ spaceId }: { spaceId: string }) {
             members.manualRetry();
         } catch (e) {
             console.error('[cowork-web] member remove failed', e);
-            sdk.toast.show({ level: 'error', message: t('移除失败', 'Remove failed') });
+            sdk.toast.show({ level: 'error', message: t('移除失败', 'Remove failed') }); // i18n: user-facing
         }
     }
 
     const tabs: { key: Tab; label: string }[] = [
-        { key: 'messages', label: t('聊天', 'Chat') },
-        { key: 'members', label: t('成员', 'Members') },
-        { key: 'artifacts', label: t('产物', 'Artifacts') },
-        { key: 'knowledge', label: t('知识库', 'Knowledge') },
+        { key: 'messages', label: t('聊天', 'Chat') }, // i18n: user-facing
+        { key: 'members', label: t('成员', 'Members') }, // i18n: user-facing
+        { key: 'artifacts', label: t('产物', 'Artifacts') }, // i18n: user-facing
+        { key: 'knowledge', label: t('知识库', 'Knowledge') }, // i18n: user-facing
     ];
 
     return (
@@ -212,7 +214,7 @@ function SpaceDetail({ spaceId }: { spaceId: string }) {
             {tab === 'members' ? (
                 <div className="space-y-1 py-2">
                     {(members.data ?? []).length === 0 ? (
-                        <EmptyState title={t('暂无成员', 'No members')} />
+                        <EmptyState title={t('暂无成员', 'No members')} /> // i18n: user-facing
                     ) : (
                         (members.data ?? []).map((m) => (
                             <div
@@ -268,7 +270,7 @@ function SpaceDetail({ spaceId }: { spaceId: string }) {
                                         setSelText('');
                                     }}
                                 >
-                                    {t('关闭', 'Close')}
+                                    {t('关闭', 'Close') /*// i18n: user-facing*/}
                                 </button>
                             </div>
                             <pre
@@ -283,13 +285,14 @@ function SpaceDetail({ spaceId }: { spaceId: string }) {
                             {selText ? (
                                 <div className="mt-2">
                                     <div className="mb-1 rounded bg-bg-muted px-2 py-1 text-[11px] text-text-secondary">
-                                        {t('已选', 'Selected')} {selText.length} {t('字符', 'chars')}
+                                        {t('已选', 'Selected') /*// i18n: user-facing*/} {selText.length}{' '}
+                                        {t('字符', 'chars')}
                                         <button
                                             type="button"
                                             className="ml-2 rounded px-1 text-[10px] text-text-muted hover:bg-bg-elevated"
                                             onClick={() => setSelText('')}
                                         >
-                                            {t('清除', 'Clear')}
+                                            {t('清除', 'Clear') /*// i18n: user-facing*/}
                                         </button>
                                     </div>
                                     <ArtifactRevise
@@ -306,7 +309,7 @@ function SpaceDetail({ spaceId }: { spaceId: string }) {
                             ) : null}
                         </div>
                     ) : (artifacts.data ?? []).length === 0 ? (
-                        <EmptyState title={t('暂无产物', 'No artifacts')} />
+                        <EmptyState title={t('暂无产物', 'No artifacts')} /> // i18n: user-facing
                     ) : (
                         <div className="space-y-1">
                             {(artifacts.data ?? []).map((a) => (
@@ -352,13 +355,13 @@ function MemberMatrix({ spaceId }: { spaceId: string }) {
     return (
         <details className="rounded-md border border-border bg-bg px-2 py-1.5">
             <summary className="cursor-pointer text-xs text-text-secondary">
-                {t('权限矩阵 (角色 x 动作)', 'Permission matrix (role x action)')}
+                {t('权限矩阵 (角色 x 动作)', 'Permission matrix (role x action)') /*// i18n: user-facing*/}
             </summary>
             <div className="mt-2 overflow-x-auto">
                 <table className="w-full border-collapse text-left text-[11px]">
                     <thead>
                         <tr className="text-text-secondary">
-                            <th className="py-1 pr-3 font-medium">{t('动作', 'Action')}</th>
+                            <th className="py-1 pr-3 font-medium">{t('动作', 'Action') /*// i18n: user-facing*/}</th>
                             {retry.data.roles.map((r) => (
                                 <th key={r} className="py-1 pr-3 font-medium">
                                     {r}
@@ -421,10 +424,10 @@ function KbPanel({ spaceId }: { spaceId: string }) {
         try {
             const r = await api.saveSpaceInstructions(spaceId, instr);
             setInstr(r.instructions || '');
-            sdk.toast.show({ level: 'success', message: t('空间指令已保存', 'Instructions saved') });
+            sdk.toast.show({ level: 'success', message: t('空间指令已保存', 'Instructions saved') }); // i18n: user-facing
         } catch (e) {
             console.error('[cowork-web] space instructions save failed', e);
-            sdk.toast.show({ level: 'error', message: t('保存失败', 'Save failed') });
+            sdk.toast.show({ level: 'error', message: t('保存失败', 'Save failed') }); // i18n: user-facing
         } finally {
             setSavingInstr(false);
         }
@@ -440,7 +443,7 @@ function KbPanel({ spaceId }: { spaceId: string }) {
             status.manualRetry();
         } catch (e) {
             console.error('[cowork-web] kb toggle failed', e);
-            sdk.toast.show({ level: 'error', message: t('知识库操作失败', 'KB operation failed') });
+            sdk.toast.show({ level: 'error', message: t('知识库操作失败', 'KB operation failed') }); // i18n: user-facing
         }
     }
 
@@ -453,7 +456,7 @@ function KbPanel({ spaceId }: { spaceId: string }) {
             console.error('[cowork-web] kb search failed', e);
             sdk.toast.show({
                 level: 'error',
-                message: t('检索失败 (需 fusion-kb 在线)', 'Search failed (fusion-kb required)'),
+                message: t('检索失败 (需 fusion-kb 在线)', 'Search failed (fusion-kb required)'), // i18n: user-facing
             });
         } finally {
             setSearching(false);
@@ -463,17 +466,19 @@ function KbPanel({ spaceId }: { spaceId: string }) {
     return (
         <div className="space-y-2 py-2">
             <div className="rounded-lg border border-border bg-bg-elevated p-3">
-                <div className="text-xs font-medium text-text-primary">{t('空间指令', 'Space instructions')}</div>
+                <div className="text-xs font-medium text-text-primary">
+                    {t('空间指令', 'Space instructions') /*// i18n: user-facing*/}
+                </div>
                 <div className="mt-1 text-[10px] text-text-muted">
                     {t(
-                        '注入该空间所有 agent 聊天的 system prompt',
+                        '注入该空间所有 agent 聊天的 system prompt', // i18n: user-facing
                         'Injected into every agent chat system prompt in this space'
                     )}
                 </div>
                 <textarea
                     className="min-h-20 w-full rounded-md border border-border bg-bg px-2 py-1.5 text-xs text-text-primary"
                     placeholder={t(
-                        '例: 用中文回答, 引用知识库内容时标注来源',
+                        '例: 用中文回答, 引用知识库内容时标注来源', // i18n: user-facing
                         'e.g. answer in Chinese, cite KB sources'
                     )}
                     value={instr}
@@ -487,13 +492,17 @@ function KbPanel({ spaceId }: { spaceId: string }) {
                         disabled={!instrLoaded || savingInstr}
                         onClick={() => void saveInstructions()}
                     >
-                        {savingInstr ? t('保存中…', 'Saving…') : t('保存指令', 'Save instructions')}
+                        {savingInstr
+                            ? t('保存中…', 'Saving…') /*// i18n: user-facing*/
+                            : t('保存指令', 'Save instructions')}
                     </button>
                 </div>
             </div>
             <div className="flex items-center gap-2">
                 <span className="text-xs text-text-secondary">
-                    {status.data?.bound ? t('已绑定知识库', 'KB bound') : t('未绑定知识库', 'No KB bound')}
+                    {status.data?.bound
+                        ? t('已绑定知识库', 'KB bound') /*// i18n: user-facing*/
+                        : t('未绑定知识库', 'No KB bound')}
                 </span>
                 {status.data?.bound ? (
                     <button
@@ -501,7 +510,7 @@ function KbPanel({ spaceId }: { spaceId: string }) {
                         className="rounded-md border border-border px-2 py-0.5 text-xs text-text-primary hover:bg-bg-muted"
                         onClick={() => void bind(true)}
                     >
-                        {t('解绑', 'Unbind')}
+                        {t('解绑', 'Unbind') /*// i18n: user-facing*/}
                     </button>
                 ) : (
                     <button
@@ -509,14 +518,14 @@ function KbPanel({ spaceId }: { spaceId: string }) {
                         className="rounded-md border border-border px-2 py-0.5 text-xs text-text-primary hover:bg-bg-muted"
                         onClick={() => void bind(false)}
                     >
-                        {t('绑定知识库', 'Bind KB')}
+                        {t('绑定知识库', 'Bind KB') /*// i18n: user-facing*/}
                     </button>
                 )}
             </div>
             <div className="flex gap-2">
                 <input
                     className="min-w-0 flex-1 rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
-                    placeholder={t('检索知识库…', 'Search knowledge base…')}
+                    placeholder={t('检索知识库…', 'Search knowledge base…')} // i18n: user-facing
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     onKeyDown={(e) => {
@@ -529,19 +538,21 @@ function KbPanel({ spaceId }: { spaceId: string }) {
                     disabled={searching || !query.trim()}
                     onClick={() => void search()}
                 >
-                    {searching ? t('检索中…', 'Searching…') : t('检索', 'Search')}
+                    {searching ? t('检索中…', 'Searching…') /*// i18n: user-facing*/ : t('检索', 'Search')}
                 </button>
             </div>
             {results ? (
                 <div className="space-y-1">
                     {results.length === 0 ? (
-                        <div className="text-xs text-text-muted">{t('无结果', 'No results')}</div>
+                        <div className="text-xs text-text-muted">
+                            {t('无结果', 'No results') /*// i18n: user-facing*/}
+                        </div>
                     ) : (
                         results.map((r, i) => (
                             <div key={i} className="rounded-md border border-border bg-bg p-2">
                                 <div className="flex items-center justify-between">
                                     <span className="text-xs font-medium text-text-primary">
-                                        {r.document_name || t('文档', 'Document')}
+                                        {r.document_name || t('文档', 'Document') /*// i18n: user-facing*/}
                                     </span>
                                     {typeof r.score === 'number' ? (
                                         <span className="font-mono text-[10px] text-text-muted">
@@ -560,9 +571,13 @@ function KbPanel({ spaceId }: { spaceId: string }) {
                 </div>
             ) : null}
             <div className="pt-1">
-                <div className="pb-1 text-xs text-text-secondary">{t('文档列表', 'Documents')}</div>
+                <div className="pb-1 text-xs text-text-secondary">
+                    {t('文档列表', 'Documents') /*// i18n: user-facing*/}
+                </div>
                 {(docs.data ?? []).length === 0 ? (
-                    <div className="text-xs text-text-muted">{t('暂无文档', 'No documents')}</div>
+                    <div className="text-xs text-text-muted">
+                        {t('暂无文档', 'No documents') /*// i18n: user-facing*/}
+                    </div>
                 ) : (
                     <div className="space-y-1">
                         {(docs.data ?? []).map((d, i) => (
@@ -610,7 +625,7 @@ function ArtifactReviewBadge({ artifact }: { artifact: SpaceArtifact }) {
                     : 'rounded bg-status-error-bg px-1.5 py-0.5 text-[10px] text-status-error'
             }
         >
-            {review.status === 'approved' ? t('已通过', 'Approved') : t('已退回', 'Rejected')}
+            {review.status === 'approved' ? t('已通过', 'Approved') /*// i18n: user-facing*/ : t('已退回', 'Rejected')}
         </span>
     );
 }
@@ -627,13 +642,13 @@ function ArtifactReviewButtons({
         setBusy(true);
         try {
             await api.reviewArtifact(spaceId, artifactId, approved);
-            sdk.toast.show({ level: 'success', message: approved ? t('已通过', 'Approved') : t('已退回', 'Rejected') });
+            sdk.toast.show({ level: 'success', message: approved ? t('已通过', 'Approved') : t('已退回', 'Rejected') }); // i18n: user-facing
             onDone();
         } catch (e) {
             console.error('[cowork-web] artifact review failed', e);
             sdk.toast.show({
                 level: 'error',
-                message: t('审查失败 (需空间 owner/admin)', 'Review failed (owner/admin only)'),
+                message: t('审查失败 (需空间 owner/admin)', 'Review failed (owner/admin only)'), // i18n: user-facing
             });
         } finally {
             setBusy(false);
@@ -647,7 +662,7 @@ function ArtifactReviewButtons({
                 className="rounded border border-border px-1.5 py-0.5 text-[10px] text-text-secondary hover:bg-bg-muted disabled:opacity-50"
                 onClick={() => void review(true)}
             >
-                {t('通过', 'Approve')}
+                {t('通过', 'Approve') /*// i18n: user-facing*/}
             </button>
             <button
                 type="button"
@@ -655,13 +670,13 @@ function ArtifactReviewButtons({
                 className="rounded border border-border px-1.5 py-0.5 text-[10px] text-text-secondary hover:bg-bg-muted disabled:opacity-50"
                 onClick={() => void review(false)}
             >
-                {t('退回', 'Reject')}
+                {t('退回', 'Reject') /*// i18n: user-facing*/}
             </button>
         </span>
     );
 }
 
-// #149: 产物就地 AI 修订 — 选区 → AI 改写 → block 级接受/拒绝 → 写回 (审计入 revision_history)
+// #149: in-place AI artifact revision — selection → AI rewrite → block-level accept/reject → write-back (audited into revision_history)
 function ArtifactRevise({
     spaceId,
     artifactId,
@@ -693,7 +708,7 @@ function ArtifactRevise({
             console.error('[cowork-web] artifact revise failed', e);
             sdk.toast.show({
                 level: 'error',
-                message: e instanceof Error ? e.message : t('修订失败', 'Revise failed'),
+                message: e instanceof Error ? e.message : t('修订失败', 'Revise failed'), // i18n: user-facing
             });
         } finally {
             setBusy(false);
@@ -710,11 +725,11 @@ function ArtifactRevise({
                 model: result.model,
                 accepted_blocks: [...accepted],
             });
-            sdk.toast.show({ level: 'success', message: t('修订已应用', 'Revision applied') });
+            sdk.toast.show({ level: 'success', message: t('修订已应用', 'Revision applied') }); // i18n: user-facing
             onDone();
         } catch (e) {
             console.error('[cowork-web] artifact apply failed', e);
-            sdk.toast.show({ level: 'error', message: e instanceof Error ? e.message : t('应用失败', 'Apply failed') });
+            sdk.toast.show({ level: 'error', message: e instanceof Error ? e.message : t('应用失败', 'Apply failed') }); // i18n: user-facing
         } finally {
             setApplying(false);
         }
@@ -734,7 +749,7 @@ function ArtifactRevise({
             <div className="flex items-center gap-1">
                 <input
                     className="min-w-0 flex-1 rounded border border-border bg-bg px-2 py-1 text-xs text-text-primary"
-                    placeholder={t('修改要求, 例: 更简洁', 'Instruction, e.g.: make it terser')}
+                    placeholder={t('修改要求, 例: 更简洁', 'Instruction, e.g.: make it terser')} // i18n: user-facing
                     value={instruction}
                     onChange={(e) => setInstruction(e.target.value)}
                 />
@@ -744,14 +759,14 @@ function ArtifactRevise({
                     disabled={busy}
                     onClick={() => void revise()}
                 >
-                    {busy ? t('生成中…', 'Working…') : t('AI 修改', 'Revise with AI')}
+                    {busy ? t('生成中…', 'Working…') /*// i18n: user-facing*/ : t('AI 修改', 'Revise with AI')}
                 </button>
                 <button
                     type="button"
                     className="rounded border border-border px-2 py-1 text-xs text-text-secondary hover:bg-bg-muted"
                     onClick={onClear}
                 >
-                    {t('放弃', 'Discard')}
+                    {t('放弃', 'Discard') /*// i18n: user-facing*/}
                 </button>
             </div>
             {result ? (
@@ -768,7 +783,9 @@ function ArtifactRevise({
                                     {b.tag}
                                 </label>
                             ) : (
-                                <div className="text-[10px] text-text-muted">{t('未改动', 'unchanged')}</div>
+                                <div className="text-[10px] text-text-muted">
+                                    {t('未改动', 'unchanged') /*// i18n: user-facing*/}
+                                </div>
                             )}
                             {b.old && b.tag !== 'insert' ? (
                                 <pre className="whitespace-pre-wrap font-mono text-[10px] text-error/80">{b.old}</pre>
@@ -780,7 +797,7 @@ function ArtifactRevise({
                     ))}
                     <div className="flex items-center justify-end gap-1">
                         <span className="mr-auto text-[10px] text-text-muted">
-                            {t('接受', 'Accepted')} {accepted.size}/
+                            {t('接受', 'Accepted') /*// i18n: user-facing*/} {accepted.size}/
                             {result.diff_blocks.filter((b) => b.tag !== 'equal').length}
                         </span>
                         <button
@@ -789,7 +806,9 @@ function ArtifactRevise({
                             disabled={applying || accepted.size === 0}
                             onClick={() => void apply()}
                         >
-                            {applying ? t('应用中…', 'Applying…') : t('应用所选', 'Apply selected')}
+                            {applying
+                                ? t('应用中…', 'Applying…') /*// i18n: user-facing*/
+                                : t('应用所选', 'Apply selected')}
                         </button>
                     </div>
                 </div>

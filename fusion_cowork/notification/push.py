@@ -1,8 +1,9 @@
-"""移动推送通知 — P2-5。
+"""Mobile push notification - P2-5.
 
-支持 Bark (iOS/macOS 自建) 与 ntfy (跨平台自建/公共)。未配置 server 时
-降级到本地 macOS Notification Center (osascript), 结果标明降级。
-配置来源: ConfigCenter push.bark_url / push.ntfy_url / push.ntfy_token。
+Supports Bark (self-hosted iOS/macOS) and ntfy (cross-platform self-hosted/public).
+When no server is configured, falls back to the local macOS Notification Center
+(osascript), with the result flagged as degraded.
+Config sources: ConfigCenter push.bark_url / push.ntfy_url / push.ntfy_token.
 """
 
 from __future__ import annotations
@@ -58,7 +59,7 @@ def resolve_config(
     priority: str = "",
     group: str = "",
 ) -> PushConfig:
-    """合并显式参数与 ConfigCenter 配置, 显式参数优先。"""
+    """Merge explicit arguments with ConfigCenter config, explicit arguments win."""
     from ..config_center import ConfigCenter
 
     cc = ConfigCenter.get_instance()
@@ -95,13 +96,14 @@ async def push(
     priority: str = "",
     group: str = "",
 ) -> PushResult:
-    """发送移动推送, 自动选择 provider, 失败/无配置时降级本地通知。"""
+    """Send a mobile push, auto-select the provider, degrade to local notification on failure / no config."""
     if not message:
-        return PushResult(success=False, error="推送内容不能为空")
+        # i18n: user-facing
+        return PushResult(success=False, error="推送内容不能为空")  # i18n: user-facing
 
     cfg = resolve_config(provider, url, token, sound, priority, group)
     prov = cfg.resolved_provider()
-    logger.info(f"推送 provider={prov} title={title!r}")
+    logger.info(f"push provider={prov} title={title!r}")
 
     if prov == "bark":
         return await _push_bark(cfg, title, message)
@@ -135,7 +137,7 @@ async def _push_bark(cfg: PushConfig, title: str, message: str) -> PushResult:
                 data={"status_code": resp.status_code, "url": str(resp.url)},
             )
     except Exception as e:
-        logger.error(f"Bark 推送失败, 降级本地: {e}")
+        logger.error(f"Bark push failed, degrading to local: {e}")
         return await _push_local(title, message, degraded_from="bark", err=str(e))
 
 
@@ -159,12 +161,12 @@ async def _push_ntfy(cfg: PushConfig, title: str, message: str) -> PushResult:
                 data={"status_code": resp.status_code, "topic": topic},
             )
     except Exception as e:
-        logger.error(f"ntfy 推送失败, 降级本地: {e}")
+        logger.error(f"ntfy push failed, degrading to local: {e}")
         return await _push_local(title, message, degraded_from="ntfy", err=str(e))
 
 
 async def _push_local(title: str, message: str, degraded_from: str = "", err: str = "") -> PushResult:
-    """降级: 发 macOS 本地通知。"""
+    """Degraded: send a macOS local notification."""
     title_e = title.replace('"', '\\"')
     msg_e = message.replace('"', '\\"')
     script = f'display notification "{msg_e}" with title "{title_e}"'
@@ -181,13 +183,15 @@ async def _push_local(title: str, message: str, degraded_from: str = "", err: st
             provider=LOCAL_FALLBACK,
             degraded=bool(degraded_from),
             response="local notification sent" if ok else stderr.decode()[:300],
-            error=err if err else ("" if ok else "本地通知失败"),
+            # i18n: user-facing
+            error=err if err else ("" if ok else "本地通知失败"),  # i18n: user-facing
             data={"degraded_from": degraded_from},
         )
     except Exception as e:
         return PushResult(
             success=False,
             provider=LOCAL_FALLBACK,
-            error=f"本地通知失败: {e}",
+            # i18n: user-facing
+            error=f"本地通知失败: {e}",  # i18n: user-facing
             degraded=bool(degraded_from),
         )

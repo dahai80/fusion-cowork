@@ -47,17 +47,18 @@ export default function SystemPage() {
 
     const rows: [string, string][] = info
         ? [
-              ['版本', info.version],
+              ['版本', info.version], // i18n: user-facing
               ['Python', info.python],
-              ['平台', info.platform],
-              ['节点数', String(info.node_count)],
-              ['磁盘剩余', info.disk_free_gb !== null ? `${info.disk_free_gb} / ${info.disk_total_gb} GB` : '…'],
+              ['平台', info.platform], // i18n: user-facing
+              ['节点数', String(info.node_count)], // i18n: user-facing
+              ['磁盘剩余', info.disk_free_gb !== null ? `${info.disk_free_gb} / ${info.disk_total_gb} GB` : '…'], // i18n: user-facing
               ['PID', String(info.pid)],
           ]
         : [];
 
     return (
         <div className="mx-auto max-w-4xl space-y-4 p-4">
+            {/*// i18n: user-facing*/}
             <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">系统</h1>
             {error && (
                 <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
@@ -81,10 +82,11 @@ export default function SystemPage() {
 
             <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
                 <div className="mb-2 flex items-center justify-between">
+                    {/*// i18n: user-facing*/}
                     <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">桌面 / 下载清理</span>
                     <label className="flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400">
                         <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} />
-                        预览模式
+                        预览模式{/*// i18n: user-facing*/}
                     </label>
                 </div>
                 <button
@@ -93,11 +95,12 @@ export default function SystemPage() {
                     onClick={() => void clean()}
                     className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm disabled:opacity-50"
                 >
+                    {/*// i18n: user-facing*/}
                     {busy ? '执行中…' : dryRun ? '预览清理' : '执行清理'}
                 </button>
                 {!dryRun && (
                     <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-                        执行模式会移动真实文件 — 先跑预览确认。
+                        执行模式会移动真实文件 — 先跑预览确认。{/*// i18n: user-facing*/}
                     </p>
                 )}
                 {Object.keys(outputs).length > 0 && (

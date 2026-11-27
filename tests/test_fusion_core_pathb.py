@@ -7,7 +7,7 @@ import pytest
 import fusion_cowork.ai.mlx_client as mc
 from fusion_cowork.ai.mlx_client import FusionMLXClient
 
-# 模块级快照真实环境 flag (CI 无 fusion-core=False, 本地有=True). 每测试 finally 还原此值, 杜绝全局污染.
+# module-level snapshot of the real-environment flag (CI without fusion-core=False, local with=True). Each test restores it in finally, eliminating global pollution.
 _ORIG_HAS_FUSION_CORE = mc._HAS_FUSION_CORE
 
 
@@ -106,8 +106,8 @@ async def test_core_path_dh3_empty_content_guard():
 
 @pytest.mark.asyncio
 async def test_import_guard_flag_resolved():
-    # flag 须 bool, 且与 _with_retry/_get_async_client 绑定一致 (True→非None, False→None).
-    # CI 无 fusion-core 时=False, 本地有=True, 双环境都该过.
+    # the flag must be bool and consistent with the _with_retry/_get_async_client bindings (True->not None, False->None).
+    # CI without fusion-core is False, local with it is True; both environments must pass.
     assert isinstance(mc._HAS_FUSION_CORE, bool)
     if mc._HAS_FUSION_CORE:
         assert mc._with_retry is not None

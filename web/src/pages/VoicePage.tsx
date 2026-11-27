@@ -146,6 +146,7 @@ export default function VoicePage() {
 
     return (
         <div className="mx-auto max-w-4xl space-y-4 p-4">
+            {/* i18n: user-facing */}
             <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">语音面板</h1>
             <div className="text-xs text-zinc-500 dark:text-zinc-400">{status}</div>
             {error && (
@@ -157,13 +158,19 @@ export default function VoicePage() {
             <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
                 <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                        麦克风会话{' '}
+                        麦克风会话 {/*// i18n: user-facing*/}
                         <span
                             className={
                                 connState === 'live' ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400'
                             }
                         >
-                            {connState === 'live' ? '● live' : connState === 'connecting' ? '连接中…' : '未连接'}
+                            {
+                                connState === 'live'
+                                    ? '● live'
+                                    : connState === 'connecting'
+                                      ? '连接中…' // i18n: user-facing
+                                      : '未连接' /* i18n: user-facing */
+                            }
                         </span>
                     </span>
                     {connState === 'live' ? (
@@ -172,7 +179,7 @@ export default function VoicePage() {
                             onClick={stopSession}
                             className="rounded-xl border border-zinc-200/80 px-4 py-2 text-sm shadow-sm dark:border-zinc-700"
                         >
-                            停止
+                            停止{/*// i18n: user-facing*/}
                         </button>
                     ) : (
                         <button
@@ -180,16 +187,17 @@ export default function VoicePage() {
                             onClick={() => void startSession()}
                             className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm"
                         >
-                            开始收音
+                            开始收音{/*// i18n: user-facing*/}
                         </button>
                     )}
                 </div>
                 <p className="mt-2 text-xs text-zinc-400">
-                    浏览器采集 16k PCM 推送到 fusion-speech WS ingress; TTS 回包自动播放。
+                    浏览器采集 16k PCM 推送到 fusion-speech WS ingress; TTS 回包自动播放。{/*// i18n: user-facing*/}
                 </p>
             </div>
 
             <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+                {/* i18n: user-facing */}
                 <div className="mb-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">识别结果</div>
                 {interim && <div className="text-xs italic text-zinc-400">{interim}</div>}
                 <ul className="space-y-1 text-sm dark:text-zinc-200">
@@ -199,18 +207,19 @@ export default function VoicePage() {
                         </li>
                     ))}
                     {finals.length === 0 && !interim && (
-                        <li className="text-xs text-zinc-400">暂无 — 开始收音后说话</li>
+                        <li className="text-xs text-zinc-400">暂无 — 开始收音后说话{/*// i18n: user-facing*/}</li>
                     )}
                 </ul>
             </div>
 
             <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+                {/* i18n: user-facing */}
                 <div className="mb-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">TTS 合成</div>
                 <div className="flex gap-2">
                     <input
                         value={speakText}
                         onChange={(e) => setSpeakText(e.target.value)}
-                        placeholder="要朗读的文本"
+                        placeholder="要朗读的文本" // i18n: user-facing
                         className="flex-1 rounded-xl border border-zinc-200/80 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
                     />
                     <button
@@ -219,7 +228,7 @@ export default function VoicePage() {
                         onClick={speak}
                         className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm disabled:opacity-50"
                     >
-                        朗读
+                        朗读{/*// i18n: user-facing*/}
                     </button>
                 </div>
             </div>

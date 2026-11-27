@@ -1,7 +1,7 @@
-"""issue #453: shell_exec HITL approve-once — 节点必须原地执行, run 不得谎报 success。
+"""issue #453: shell_exec HITL approve-once — the node must execute in place, the run must not falsely report success.
 
-Repro: 高风险 tool 节点 HITL 暂停 → POST /api/permissions/pending/{id}/confirm
-{"approved": true, "once": true} → 观察节点是否真的执行。
+Repro: high-risk tool node pauses on HITL -> POST /api/permissions/pending/{id}/confirm
+{"approved": true, "once": true} -> observe whether the node actually executed.
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ class TestToolHitlApproveExecutes:
             assert terminal[-1]["status"] == "success", terminal[-1]
 
     def test_approve_with_persisted_rule_executes_node(self, pm_hitl, tmp_path, monkeypatch):
-        # 非 once 批准 — confirm_guard 落规则后原地复查必须放行
+        # Non-once approval — after confirm_guard persists a rule the in-place recheck must let the node run
         from fastapi.testclient import TestClient
 
         from fusion_cowork.server import web_api
@@ -131,8 +131,8 @@ class TestToolHitlApproveExecutes:
 
 
 class _RaceHookManager:
-    # 审批在引擎发 hitl_pending 通知期间早到 (resolve_hitl set 事件) —
-    # 模拟真实 webhook/邮件回调快于引擎进入 evt.wait 的竞态窗口
+    # Approval arrives early, during the engine's hitl_pending notification (resolve_hitl set event) —
+    # simulates a real webhook/mail callback racing ahead of the engine entering evt.wait
 
     def __init__(self, engine: WorkflowEngine):
         self._engine = engine
@@ -151,8 +151,9 @@ class _RaceHookManager:
 
 class TestEarlyApprovalRace:
     def test_early_approval_during_hook_fire_not_lost(self, pm_hitl, tmp_path, monkeypatch):
-        # issue #453: 早到批准曾被进入等待循环前的 evt.clear() 吞掉 —
-        # run 挂到 HITL 超时被自动拒绝, 节点永不执行。修复后早到决定必须放行
+        # issue #453: early approvals used to be swallowed by evt.clear() before the wait loop —
+        # the run hung until HITL timeout auto-denied and the node never executed. After the fix
+        # an early decision must be honored
         from fastapi.testclient import TestClient
 
         from fusion_cowork.server import web_api

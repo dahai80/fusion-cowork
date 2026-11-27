@@ -1,4 +1,4 @@
-"""Benchmark — Claude Cowork vs Fusion-Cowork 功能对比与性能度量。"""
+"""Benchmark — Claude Cowork vs Fusion-Cowork capability comparison and performance measurement."""
 
 from .matrix import Capability, CapabilityLevel, CapabilityMatrix
 from .report import ReportRenderer

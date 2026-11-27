@@ -1,14 +1,15 @@
-"""TrainerNode 单元测试 — fusion-trainer CLI 子进程封装节点。
+"""TrainerNode unit tests — fusion-trainer CLI subprocess wrapper node.
 
-只测参数校验 / bin 解析 / method 白名单等 fail-visible 路径，
-不真实启动 fusion-trainer（避免依赖真实模型，符合离线测试约束）。
+Only exercises fail-visible paths such as param validation / bin resolution /
+method whitelist; never actually launches fusion-trainer (no dependency on real
+models, per the offline-test constraint).
 """
 
 from __future__ import annotations
 
 import pytest
 
-import fusion_cowork.nodes.ecosystem  # noqa: F401  触发 @register_node
+import fusion_cowork.nodes.ecosystem  # noqa: F401  triggers @register_node
 from fusion_cowork import NODE_NAME_ALIASES
 from fusion_cowork.engine.node import NodeCategory, NodeConfig, NodeRegistry, NodeStatus
 from fusion_cowork.nodes.ecosystem.trainer_node import (
@@ -23,7 +24,7 @@ _MISSING_BIN = "/nonexistent/fusion-trainer-bin-for-test"
 
 @pytest.fixture(autouse=True)
 def _force_missing_bin(monkeypatch):
-    # 指向不存在的 bin，确保 fail-visible，不真正 spawn
+    # Point at a nonexistent bin to guarantee fail-visible without really spawning
     monkeypatch.setenv("FUSION_TRAINER_BIN", _MISSING_BIN)
 
 
@@ -39,22 +40,25 @@ def test_resolve_bin_honors_env(monkeypatch):
 
     monkeypatch.setenv("FUSION_TRAINER_BIN", "/tmp/custom-ft")
     assert _resolve_trainer_bin() == "/tmp/custom-ft"
-    # 删 env 后走 shutil.which("fusion-trainer") — 路径随环境变 (CI 无该 bin),
-    # 故按 which 解析结果断言, 而非硬编码本机 venv 绝对路径
+    # With the env removed, resolution falls through to shutil.which("fusion-trainer") — the path
+    # varies by environment (CI lacks the bin), so assert against the which result instead of
+    # hardcoding this machine's venv absolute path
     monkeypatch.delenv("FUSION_TRAINER_BIN", raising=False)
     resolved = _resolve_trainer_bin()
     found_in_path = _shutil.which("fusion-trainer")
     if found_in_path:
-        assert resolved == found_in_path, f"删 env 后应解析自 PATH: 期望 {found_in_path}, 实际 {resolved}"
+        assert resolved == found_in_path, (
+            f"删 env 后应解析自 PATH: 期望 {found_in_path}, 实际 {resolved}"  # i18n: user-facing
+        )  # i18n: user-facing
     else:
-        # PATH 无 fusion-trainer (如 CI ubuntu) → 应返空串, fail-visible (不造假路径)
-        assert resolved == "", f"PATH 无 fusion-trainer 应回空串, 实际 {resolved!r}"
+        # PATH has no fusion-trainer (e.g. CI ubuntu) → expect an empty string, fail-visible (no fabricated path)
+        assert resolved == "", f"PATH 无 fusion-trainer 应回空串, 实际 {resolved!r}"  # i18n: user-facing
 
 
 def test_aliases_registered():
-    assert NODE_NAME_ALIASES.get("微调") == "fusion_trainer"
-    assert NODE_NAME_ALIASES.get("模型微调") == "fusion_trainer"
-    assert NODE_NAME_ALIASES.get("训练模型") == "fusion_trainer"
+    assert NODE_NAME_ALIASES.get("微调") == "fusion_trainer"  # i18n: user-facing
+    assert NODE_NAME_ALIASES.get("模型微调") == "fusion_trainer"  # i18n: user-facing
+    assert NODE_NAME_ALIASES.get("训练模型") == "fusion_trainer"  # i18n: user-facing
 
 
 def test_build_sft_args_minimal():
@@ -122,14 +126,14 @@ async def test_unsupported_method_fails():
 
 @pytest.mark.asyncio
 async def test_missing_bin_fails_visibly():
-    # bin 不存在时应 fail-visible，不真正 spawn 子进程
+    # With a nonexistent bin, the node must fail visibly and never spawn a subprocess
     node = TrainerNode(
         node_id="t1",
         config=NodeConfig(params={"dataset": "/d.jsonl", "model": "m", "method": "sft"}),
     )
     result = await node.execute({})
     assert result.status == NodeStatus.FAILED
-    assert "fusion-trainer CLI 未找到" in result.error
+    assert "fusion-trainer CLI 未找到" in result.error  # i18n: user-facing
     assert _MISSING_BIN in result.error
 
 
@@ -141,7 +145,7 @@ async def test_grpo_missing_bin_fails_visibly():
     )
     result = await node.execute({})
     assert result.status == NodeStatus.FAILED
-    assert "fusion-trainer CLI 未找到" in result.error
+    assert "fusion-trainer CLI 未找到" in result.error  # i18n: user-facing
 
 
 def test_params_schema_required_fields():

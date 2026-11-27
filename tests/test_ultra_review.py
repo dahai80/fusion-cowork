@@ -20,7 +20,7 @@ def _llm_resp(content):
 
 
 def test_parse_findings_json():
-    raw = '[{"file": "a.py", "line": 10, "severity": "high", "category": "injection", "message": "sql 注入"}]'
+    raw = '[{"file": "a.py", "line": 10, "severity": "high", "category": "injection", "message": "sql 注入"}]'  # i18n: user-facing
     findings = _parse_findings(raw, "security")
     assert len(findings) == 1
     assert findings[0].file == "a.py"
@@ -56,7 +56,7 @@ def test_aggregate_dedup_and_sort():
 def test_fallback_summary():
     contents = {"a.py": "x = 1"}
     md = _fallback_summary(contents)
-    assert "降级模式" in md
+    assert "降级模式" in md  # i18n: user-facing
     assert "a.py" in md
 
 
@@ -73,10 +73,16 @@ def test_run_ultra_review_full_flow(tmp_path):
 
     client = MagicMock()
     security = _llm_resp(
-        '[{"file": "sample.py", "line": 1, "severity": "low", "category": "naming", "message": "命名过短"}]'
+        '[{"file": "sample.py", "line": 1, "severity": "low", "category": "naming", "message": "命名过短"}]'  # i18n: user-facing
     )
     client.chat = AsyncMock(
-        side_effect=[security, _llm_resp("[]"), _llm_resp("[]"), _llm_resp("[]"), _llm_resp("审查总结: 代码简洁")]
+        side_effect=[
+            security,
+            _llm_resp("[]"),
+            _llm_resp("[]"),
+            _llm_resp("[]"),
+            _llm_resp("审查总结: 代码简洁"),  # i18n: user-facing
+        ]  # i18n: user-facing
     )
     client.list_models = AsyncMock(return_value=[{"id": "test-model"}])
 
@@ -87,7 +93,7 @@ def test_run_ultra_review_full_flow(tmp_path):
     assert len(report.findings) == 1
     assert report.findings[0].severity == "low"
     assert report.degraded is False
-    assert "审查总结" in report.summary
+    assert "审查总结" in report.summary  # i18n: user-facing
 
 
 def test_run_ultra_review_llm_fail_degrades(tmp_path):
@@ -102,21 +108,21 @@ def test_run_ultra_review_llm_fail_degrades(tmp_path):
 
     assert report.degraded is True
     assert len(report.findings) == 0
-    assert "降级模式" in report.summary
+    assert "降级模式" in report.summary  # i18n: user-facing
     assert str(f) in report.files_reviewed
 
 
 def test_run_ultra_review_no_paths():
     report = asyncio.run(run_ultra_review([]))
     assert report.error != ""
-    assert "未指定" in report.error
+    assert "未指定" in report.error  # i18n: user-facing
 
 
 def test_run_ultra_review_invalid_lens(tmp_path):
     report = asyncio.run(run_ultra_review([str(tmp_path)], lenses=["nonexistent"]))
-    assert "未知审查视角" in report.error
+    assert "未知审查视角" in report.error  # i18n: user-facing
 
 
 def test_run_ultra_review_nonexistent_file(tmp_path):
     report = asyncio.run(run_ultra_review([str(tmp_path / "nope.py")], mlx_client=MagicMock()))
-    assert "无可审查文件" in report.error
+    assert "无可审查文件" in report.error  # i18n: user-facing

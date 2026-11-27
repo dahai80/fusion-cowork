@@ -110,7 +110,7 @@ class TestAttribution:
         assert execution.status.value == "failed"
         gate_step = _blocked_step(execution, "g1")
         assert gate_step.output_data["hitl_attribution"]["decided_by"] == "web"
-        assert "拒绝" in gate_step.summary
+        assert "拒绝" in gate_step.summary  # i18n: user-facing
 
     @pytest.mark.asyncio
     async def test_no_attribution_keeps_step_clean(self):

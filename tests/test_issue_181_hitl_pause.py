@@ -1,4 +1,4 @@
-"""issue #181: HITL — 高风险节点本地待审批时引擎暂停在节点边界, confirm 后原地续跑 (只重跑被闸节点)。"""
+"""issue #181: HITL — while a high-risk node awaits local approval the engine pauses at the node boundary and resumes in place after confirm (only the gated node re-runs)."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ class _ProbeNode(BaseNode):
     name = HITL_NODE
     display_name = "HITL Probe"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "测试用: 高风险探针"
     icon = "🧪"
     default_label = "Probe"
@@ -35,6 +36,7 @@ class _PreNode(BaseNode):
     name = "hitl_pre_181"
     display_name = "HITL Pre"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "测试用: 闸前节点 (验证不被重跑)"
     icon = "1️⃣"
     default_label = "Pre"
@@ -53,7 +55,7 @@ def pm_no_guard(monkeypatch):
     from fusion_cowork.security import guard as guard_mod
 
     monkeypatch.setattr(guard_mod, "guard_enabled", lambda: False)
-    # 探针节点不在静态 HIGH_RISK_NODES 里 — 动态并入, 避免与真实 shell_exec 注册冲突
+    # The probe node is not in static HIGH_RISK_NODES — merged in dynamically to avoid clashing with real shell_exec registration
     from fusion_cowork.engine import permission_manager
 
     monkeypatch.setattr(permission_manager, "HIGH_RISK_NODES", permission_manager.HIGH_RISK_NODES | {HITL_NODE})
@@ -79,14 +81,14 @@ async def _wait_hitl(engine: WorkflowEngine, exec_id: str, timeout: float = 5.0)
 
 
 class TestHitlPause:
-    # issue #187: 默认翻转为 ON — 无 env/参数时高风险节点进 HITL 等待
+    # issue #187: default flipped to ON — with no env/param, high-risk nodes enter HITL wait
     async def test_default_on_pauses(self, pm_no_guard):
         _ProbeNode.calls = 0
         eng = WorkflowEngine(permission_manager=pm_no_guard)
         assert eng._hitl_pause is True
         exec_id = "run-187-default-on"
         task = asyncio.create_task(eng.execute(_wf(), execution_id=exec_id))
-        assert await _wait_hitl(eng, exec_id), "默认配置应进入 HITL 等待"
+        assert await _wait_hitl(eng, exec_id), "默认配置应进入 HITL 等待"  # i18n: user-facing
         action_id = pm_no_guard.list_pending()[0]["action_id"]
         await pm_no_guard.confirm_guard(action_id, approved=True, approved_by="test")
         eng.resolve_hitl(exec_id, True)
@@ -110,8 +112,8 @@ class TestHitlPause:
         eng = WorkflowEngine(permission_manager=pm_no_guard, hitl_pause=True)
         exec_id = "run-181-approve"
         task = asyncio.create_task(eng.execute(_wf(), execution_id=exec_id))
-        assert await _wait_hitl(eng, exec_id), "run 未进入 HITL 等待"
-        # 待审批项在队列中, 携带 execution_id
+        assert await _wait_hitl(eng, exec_id), "run 未进入 HITL 等待"  # i18n: user-facing
+        # The pending item is in the queue, carrying execution_id
         pending = pm_no_guard.list_pending()
         assert len(pending) == 1
         assert pending[0]["execution_id"] == exec_id
@@ -121,7 +123,7 @@ class TestHitlPause:
         execution = await asyncio.wait_for(task, timeout=5)
         assert execution.status.value == "success"
         assert _ProbeNode.calls == 1
-        # 闸前节点只跑过一次 — 原地续跑, 不重放整个 run
+        # The pre-gate node ran only once — resumed in place, the whole run is not replayed
         assert _PreNode.calls == 1
 
     async def test_pause_then_reject_fails_run(self, pm_no_guard):
@@ -147,7 +149,7 @@ class TestHitlPause:
                 n.config.continue_on_error = True
         exec_id = "run-181-coe"
         execution = await eng.execute(wf, execution_id=exec_id)
-        # continue_on_error 节点不进 HITL 等待, 走原 deny-fast 跳过路径
+        # continue_on_error nodes skip the HITL wait and take the original deny-fast skip path
         assert engine_denied_step(execution)
         assert _ProbeNode.calls == 0
         assert not eng.hitl_pending(exec_id)
@@ -157,7 +159,7 @@ class TestHitlPause:
         _ProbeNode.calls = 0
         eng = WorkflowEngine(permission_manager=pm_no_guard)
         assert eng._hitl_pause is True
-        # issue #187: "1" 仍为显式 ON; 其余任意非 off 值也按 ON 处理
+        # issue #187: "1" is still explicit ON; any other non-off value is treated as ON
         exec_id = "run-181-env"
         task = asyncio.create_task(eng.execute(_wf(), execution_id=exec_id))
         assert await _wait_hitl(eng, exec_id)
@@ -204,14 +206,14 @@ class TestWebWiring:
             assert run_resp.status_code == 202, run_resp.text
             run_id = run_resp.json()["run_id"]
 
-            # 等待 run 进入 HITL 等待点 (后台任务跑在 TestClient portal 事件循环上)
+            # Wait for the run to reach the HITL wait point (the background task runs on the TestClient portal event loop)
             hitl = False
             for _ in range(200):
                 if eng.hitl_pending(run_id):
                     hitl = True
                     break
                 time.sleep(0.05)
-            assert hitl, "run 未进入 HITL 等待"
+            assert hitl, "run 未进入 HITL 等待"  # i18n: user-facing
 
             detail = client.get(f"/api/runs/{run_id}", headers=auth).json()
             assert detail.get("hitl_pending") is True

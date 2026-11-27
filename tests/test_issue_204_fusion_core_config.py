@@ -17,7 +17,7 @@ class TestClientKeyResolution:
         assert FusionMLXClient().api_key == "ck-canonical"
 
     def test_legacy_alias_still_resolved_via_fusion_core(self, monkeypatch):
-        # legacy 别名链收敛在 fusion-core 内 (client_key), 本仓不再手写
+        # the legacy alias chain is consolidated inside fusion-core (client_key); this repo no longer hand-writes it
         pytest.importorskip("fusion_core")
         from fusion_cowork.ai.mlx_client import FusionMLXClient
 
@@ -48,7 +48,7 @@ class TestClientKeyResolution:
             FusionMLXClient()
 
     def test_fallback_without_fusion_core_reads_canonical_only(self, monkeypatch):
-        # 裸装 (无 fusion-core): 回退路径只认规范名 FUSION_CLIENT_KEY
+        # bare install (no fusion-core): the fallback path only recognizes the canonical FUSION_CLIENT_KEY
         monkeypatch.setitem(sys.modules, "fusion_core.config", None)
         from fusion_cowork.ai.mlx_client import _client_api_key
 
@@ -68,7 +68,7 @@ class TestShellRegistryAdminKey:
         assert shell_registry.shell_registration_enabled() is True
 
     def test_url_missing_short_circuits_before_admin_key_resolution(self, monkeypatch):
-        # URL 未配置时不触发 admin key 解析 — prod 缺 key 也不是错误
+        # no admin key resolution triggered when the URL is unconfigured — a missing key in prod is not an error either
         from fusion_cowork.server import shell_registry
 
         monkeypatch.delenv("FUSION_SHELL_GATEWAY_URL", raising=False)
@@ -77,8 +77,8 @@ class TestShellRegistryAdminKey:
         assert shell_registry.shell_registration_enabled() is False
 
     def test_legacy_admin_key_name_not_read(self, monkeypatch):
-        # FUSION_GATEWAY_ADMIN_KEY 是 contract-external (config-conventions §6),
-        # 收敛后本仓任何路径都不再读取
+        # FUSION_GATEWAY_ADMIN_KEY is contract-external (config-conventions §6);
+        # after consolidation no path in this repo reads it anymore
         from fusion_cowork.server import shell_registry
 
         monkeypatch.setenv("FUSION_SHELL_GATEWAY_URL", "http://127.0.0.1:11432")
@@ -108,7 +108,7 @@ class TestShellRegistryAdminKey:
 
 class TestLegacyRefsGone:
     def test_no_local_resolver_defs(self):
-        # 验收: 解析逻辑只住在 fusion-core, 本仓不得再定义 _resolve*key
+        # acceptance: resolution logic lives only in fusion-core; this repo must not define _resolve*key again
         import subprocess
 
         out = subprocess.run(

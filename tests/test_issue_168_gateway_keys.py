@@ -135,7 +135,7 @@ class TestRegistryLoopIssuesKey:
         await _drive(client, {"id": "fusion-cowork"})
         urls = [c["url"] for c in client.calls]
         assert "/heartbeat" in urls[1]
-        assert urls[2].endswith("/shell/manifests")  # 401 后重注册
+        assert urls[2].endswith("/shell/manifests")  # re-register after 401
         assert client.calls[2]["headers"]["Authorization"] == "Bearer admin-secret"
 
 

@@ -5,9 +5,9 @@ import type { RunRecord } from '../src/api';
 import { buildContextChips, buildReferenceItems, composerApprovalVariant } from '../src/composer';
 import { isTerminalRunStatus } from '../src/runstatus';
 
-// issue #240 R2: paused-run feed 契约 — runs_get 的 hitl_pending 字段一路映射到
-// composer 禁用 + ⏸ 徽标。后端「真实暂停的 run 返回 hitl_pending=true」由
-// tests/test_issue_187_hitl_default.py 覆盖; 这里锁定前端消费端不吞字段。
+// issue #240 R2: paused-run feed contract — the runs_get hitl_pending field maps all the way through to
+// composer disabled + ⏸ badge. "A genuinely paused run returns hitl_pending=true" is covered by
+// tests/test_issue_187_hitl_default.py; this pins the frontend consumer so it does not swallow the field.
 
 function record(over: Partial<RunRecord>): RunRecord {
     return {
@@ -36,11 +36,11 @@ describe('paused-run hitl feed (#240 R2)', () => {
             <Composer
                 {...BASE}
                 disabled={variant.disabled}
-                contextChips={buildContextChips({ waitingApproval: variant.waitingApproval, waitingLabel: '等待审批' })}
+                contextChips={buildContextChips({ waitingApproval: variant.waitingApproval, waitingLabel: '等待审批' })} // i18n: user-facing
                 ariaLabel="run instruction"
             />
         );
-        expect(html).toContain('⏸ 等待审批');
+        expect(html).toContain('⏸ 等待审批'); // i18n: user-facing
         expect(html).toMatch(/<textarea[^>]*disabled/);
     });
 
@@ -70,6 +70,6 @@ describe('run-view @ palette offers all three kinds (#240 R1)', () => {
         );
         expect(items.map((i) => i.key)).toEqual(['directory:sp1', 'task:run_9', 'artifact:art_1']);
         for (const item of items) item.onClick?.();
-        expect(tokens).toEqual(['@目录:Finance', '@任务:October reconciliation', '@产物:Q3 Report']);
+        expect(tokens).toEqual(['@目录:Finance', '@任务:October reconciliation', '@产物:Q3 Report']); // i18n: user-facing
     });
 });

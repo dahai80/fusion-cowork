@@ -1,11 +1,11 @@
-"""Fusion-Cowork CLI 入口 — 命令行界面。
+"""Fusion-Cowork CLI entry — command-line interface.
 
-提供完整的命令行操作：
-- 模板列表/搜索/运行
-- 自然语言生成工作流
-- 工作流执行
-- 定时任务管理
-- AI 服务状态
+Provides full command-line operations:
+- Template list/search/run
+- Natural-language workflow generation
+- Workflow execution
+- Scheduled task management
+- AI service status
 """
 
 from __future__ import annotations
@@ -39,8 +39,8 @@ from .engine import (
 )
 from .engine.lifecycle import get_lifecycle_bus
 
-# LO-3: nodes.browser/input_nodes 顶层 import 耦合 — 移入用到的命令函数内延迟导入,
-# 防 nodes.browser 将来拉缺失可选依赖致 import fusion_cowork.cli 全坏 (每个子命令挂)
+# LO-3: nodes.browser/input_nodes top-level import coupling — moved into the command functions
+# that need them as lazy imports, so a future missing optional dep in nodes.browser cannot break import fusion_cowork.cli entirely (every subcommand was at risk)
 from .templates import TemplateManager
 from .utils.logger import setup_logger
 
@@ -48,9 +48,9 @@ logger = logging.getLogger(__name__)
 
 
 def _set_process_title(title: str) -> None:
-    # issue #203: 长驻进程在 ps/Activity Monitor 里必须显示 "fusion-cowork <role>",
-    # 不能是裸的 homebrew "Python"。优先 fusion_core.proc (共享 helper), 裸装无
-    # fusion-core 时直接试 setproctitle, 两者都不可用则降级 debug 日志 (标题保持默认)。
+    # issue #203: long-running processes must show "fusion-cowork <role>" in ps/Activity Monitor,
+    # not a bare homebrew "Python". Prefer fusion_core.proc (shared helper); when installed bare
+    # without fusion-core, try setproctitle directly; if neither works, degrade to a debug log (title stays default).
     try:
         from fusion_core.proc import set_process_title
 
@@ -67,7 +67,7 @@ def _set_process_title(title: str) -> None:
         logger.debug("setproctitle unavailable, process title stays default (%s): %s", title, exc)
 
 
-# 全局实例 — 延迟初始化避免测试污染
+# Global instances — lazy init avoids test pollution
 _engine = None
 _scheduler = None
 _template_mgr = None
@@ -89,7 +89,7 @@ def _build_runtime():
 
             space_store = SpaceStore()
         except Exception as e:
-            logger.warning(f"SpaceStore 构建失败 (desk.space.* 将不可用): {e}")
+            logger.warning(f"SpaceStore build failed (desk.space.* will be unavailable): {e}")
         _runtime = {
             "permission_manager": permission_manager,
             "hook_manager": hook_manager,
@@ -97,7 +97,7 @@ def _build_runtime():
             "event_emitter": event_emitter,
             "space_store": space_store,
         }
-        logger.info("运行时管理器已构建: permission/hook/session/event/space")
+        logger.info("Runtime manager built: permission/hook/session/event/space")
     return _runtime
 
 
@@ -140,16 +140,16 @@ def _cleanup_mlx_client():
     if _mlx_client is None:
         return
     try:
-        # LO-1: asyncio.get_event_loop() py3.12 弃用且无 running loop 时报错;
-        # atexit 跑在主线程无 loop, 用 asyncio.run 起新 loop 跑 close coroutine
+        # LO-1: asyncio.get_event_loop() is deprecated on py3.12 and errors when no loop is running;
+        # atexit runs on the main thread with no loop, so use asyncio.run to spin a fresh loop for the close coroutine
         try:
             asyncio.get_running_loop()
-            # 有 running loop (不应出现在 atexit, 但防御): 派 task 不阻塞
+            # running loop present (should not happen in atexit, but defensive): schedule a task without blocking
             asyncio.ensure_future(_mlx_client.close())
         except RuntimeError:
             asyncio.run(_mlx_client.close())
     except Exception as e:
-        logger.debug(f"清理 mlx_client 失败: {e}")
+        logger.debug(f"Failed to clean up mlx_client: {e}")
     finally:
         _mlx_client = None
 
@@ -158,7 +158,7 @@ atexit.register(_cleanup_mlx_client)
 
 
 class RichConsole:
-    """简易终端输出（无需 rich 依赖的降级方案）。"""
+    """Simple terminal output (fallback without the rich dependency)."""
 
     @staticmethod
     def echo(msg: str = "", fg: str = "", bold: bool = False) -> None:
@@ -194,20 +194,20 @@ class RichConsole:
 
     @staticmethod
     def print_table(headers: List[str], rows: List[List[str]]) -> None:
-        """打印简单表格。"""
-        # 计算列宽
+        """Print a simple table."""
+        # compute column widths
         col_widths = [len(h) for h in headers]
         for row in rows:
             for i, cell in enumerate(row):
                 if i < len(col_widths):
                     col_widths[i] = max(col_widths[i], len(str(cell)))
 
-        # 表头
+        # header
         header_line = "  ".join(h.ljust(col_widths[i]) for i, h in enumerate(headers))
         click.echo(header_line)
         click.echo("-" * len(header_line))
 
-        # 数据行
+        # data rows
         for row in rows:
             click.echo("  ".join(str(cell).ljust(col_widths[i]) for i, cell in enumerate(row)))
 
@@ -215,24 +215,24 @@ class RichConsole:
 console = RichConsole()
 
 
-# ── CLI 主命令组 ──
+# ── CLI main command group ──
 
 
 @click.group()
-@click.option("--verbose", "-v", is_flag=True, help="详细输出")
-@click.option("--log-file", default="", help="日志文件路径")
+@click.option("--verbose", "-v", is_flag=True, help="详细输出")  # i18n: user-facing
+@click.option("--log-file", default="", help="日志文件路径")  # i18n: user-facing
 @click.option(
     "--max-budget-usd",
     "max_budget_usd",
     default=0.0,
     type=float,
-    help="Token 预算上限 (USD), 超限中止 LLM 调用 (0=不限)",
+    help="Token 预算上限 (USD), 超限中止 LLM 调用 (0=不限)",  # i18n: user-facing
 )
 @click.version_option(version=__version__, prog_name=__app_name__)
 def cli(verbose: bool, log_file: str, max_budget_usd: float):
-    """Fusion-Cowork — macOS 原生、纯本地离线、零代码桌面智能自动化平台。
+    """Fusion-Cowork — macOS-native, fully local offline, zero-code desktop intelligent automation platform.
 
-    让 Mac 自己干活，本地 AI 全自动桌面办公。
+    Lets the Mac do the work itself: local AI fully automates desktop office tasks.
     """
     level = logging.DEBUG if verbose else logging.INFO
     setup_logger(level=level, log_file=log_file, verbose=verbose)
@@ -241,51 +241,51 @@ def cli(verbose: bool, log_file: str, max_budget_usd: float):
         from .ai import get_budget_tracker
 
         get_budget_tracker(max_budget_usd=max_budget_usd, enforce=True)
-        logger.info(f"已启用 Token 预算上限: ${max_budget_usd:.4f}")
+        logger.info(f"Token budget cap enabled: ${max_budget_usd:.4f}")
 
-    # 注册工具名称别名（吸纳自 Squish tool_name_map.py 模式）
+    # register tool name aliases (adopted from the Squish tool_name_map.py pattern)
     _register_node_aliases()
 
 
 def _register_node_aliases():
-    """注册节点别名映射，支持用户友好的中文名称查找。
+    """Register node alias mappings, enabling user-friendly Chinese name lookups.
 
-    整合自 Squish tool_name_map.py 的 VSCODE_TO_BACKEND 映射模式。
+    Adapted from the Squish tool_name_map.py VSCODE_TO_BACKEND mapping pattern.
     """
     for alias, target in NODE_NAME_ALIASES.items():
         NodeRegistry.register_alias(alias, target)
 
 
-# ── 模板命令 ──
+# ── Template commands ──
 
 
 @cli.group()
 def template():
-    """模板管理：列出、搜索、运行自动化模板。"""
+    """Template management: list, search, and run automation templates."""
     pass
 
 
 @template.command("list")
-@click.option("--category", "-c", default="", help="按分类筛选")
-@click.option("--tag", "-t", default="", help="按标签筛选")
-@click.option("--search", "-s", default="", help="搜索关键词")
+@click.option("--category", "-c", default="", help="按分类筛选")  # i18n: user-facing
+@click.option("--tag", "-t", default="", help="按标签筛选")  # i18n: user-facing
+@click.option("--search", "-s", default="", help="搜索关键词")  # i18n: user-facing
 def list_templates(category: str, tag: str, search: str):
-    """列出可用模板。"""
+    """List available templates."""
     if search:
         templates = _get_template_mgr().search_templates(search)
     else:
         templates = _get_template_mgr().list_templates(category=category, tag=tag)
 
     if not templates:
-        console.print_warning("没有找到匹配的模板")
+        console.print_warning("没有找到匹配的模板")  # i18n: user-facing
         return
 
-    console.print_header(f"模板列表 ({len(templates)} 个)")
+    console.print_header(f"模板列表 ({len(templates)} 个)")  # i18n: user-facing
 
-    # 按分类分组
+    # group by category
     categories = {}
     for tpl in templates:
-        cat = tpl.get("category", "其他")
+        cat = tpl.get("category", "其他")  # i18n: user-facing
         if cat not in categories:
             categories[cat] = []
         categories[cat].append(tpl)
@@ -303,58 +303,62 @@ def list_templates(category: str, tag: str, search: str):
                     tpl.get("estimated_time", ""),
                 ]
             )
-        console.print_table(["ID", "名称", "难度", "预计时间"], rows)
+        console.print_table(["ID", "名称", "难度", "预计时间"], rows)  # i18n: user-facing
 
-    click.echo("\n💡 使用 'fusion-cowork template run <id>' 运行模板")
-    click.echo("💡 使用 'fusion-cowork template show <id>' 查看详情")
+    click.echo("\n💡 使用 'fusion-cowork template run <id>' 运行模板")  # i18n: user-facing
+    click.echo("💡 使用 'fusion-cowork template show <id>' 查看详情")  # i18n: user-facing
 
 
 @template.command("show")
 @click.argument("template_id")
 def show_template(template_id: str):
-    """查看模板详情。"""
+    """View template details."""
     tpl = _get_template_mgr().get_template(template_id)
     if not tpl:
-        console.print_error(f"模板不存在: {template_id}")
+        console.print_error(f"模板不存在: {template_id}")  # i18n: user-facing
         return
 
     console.print_header(f"📄 {tpl.get('name', '')}")
-    click.echo(f"  描述: {tpl.get('description', '')}")
-    click.echo(f"  分类: {tpl.get('category', '')}")
-    click.echo(f"  标签: {', '.join(tpl.get('tags', []))}")
-    click.echo(f"  难度: {tpl.get('difficulty', '')}")
-    click.echo(f"  预计时间: {tpl.get('estimated_time', '')}")
+    click.echo(f"  描述: {tpl.get('description', '')}")  # i18n: user-facing
+    click.echo(f"  分类: {tpl.get('category', '')}")  # i18n: user-facing
+    click.echo(f"  标签: {', '.join(tpl.get('tags', []))}")  # i18n: user-facing
+    click.echo(f"  难度: {tpl.get('difficulty', '')}")  # i18n: user-facing
+    click.echo(f"  预计时间: {tpl.get('estimated_time', '')}")  # i18n: user-facing
     if tpl.get("needs_ai"):
-        click.echo("  🤖 需要 AI 模型 (fusion-mlx)")
+        click.echo("  🤖 需要 AI 模型 (fusion-mlx)")  # i18n: user-facing
 
-    # 显示工作流节点
+    # show workflow nodes
     workflow = tpl.get("workflow", {})
     nodes = workflow.get("nodes", [])
     edges = workflow.get("edges", [])
 
-    click.echo(f"\n  工作流: {workflow.get('name', '')}")
-    click.echo(f"  📋 节点 ({len(nodes)} 个):")
+    click.echo(f"\n  工作流: {workflow.get('name', '')}")  # i18n: user-facing
+    click.echo(f"  📋 节点 ({len(nodes)} 个):")  # i18n: user-facing
     for node in nodes:
         params = node.get("config", {}).get("params", {})
         param_str = ", ".join(f"{k}={v}" for k, v in params.items() if not isinstance(v, (dict, list)))
         click.echo(f"    ├─ {node.get('id')}: {node.get('name')} ({param_str[:80]})")
-    click.echo(f"  🔗 连接 ({len(edges)} 条)")
+    click.echo(f"  🔗 连接 ({len(edges)} 条)")  # i18n: user-facing
     for edge in edges:
         click.echo(f"    ├─ {edge.get('source_id')} → {edge.get('target_id')}")
 
-    click.echo(f"\n💡 运行: fusion-cowork template run {template_id}")
+    click.echo(f"\n💡 运行: fusion-cowork template run {template_id}")  # i18n: user-facing
 
 
 @template.command("run")
 @click.argument("template_id")
-@click.option("--dry-run", "-n", is_flag=True, help="预览模式")
-@click.option("--params", "-p", default="", help="覆盖参数 JSON (按节点 id)")
-@click.option("--vars", "-v", "template_vars", default="", help="模板级参数 JSON (替换节点配置里的 ${param.X})")
-@click.option("--resume", "session_id", default="", help="断点续跑: 指定 session_id, 跳过已完成步骤从断点续跑")
+@click.option("--dry-run", "-n", is_flag=True, help="预览模式")  # i18n: user-facing
+@click.option("--params", "-p", default="", help="覆盖参数 JSON (按节点 id)")  # i18n: user-facing
+@click.option(
+    "--vars", "-v", "template_vars", default="", help="模板级参数 JSON (替换节点配置里的 ${param.X})"  # i18n: user-facing
+)  # i18n: user-facing
+@click.option(
+    "--resume", "session_id", default="", help="断点续跑: 指定 session_id, 跳过已完成步骤从断点续跑"  # i18n: user-facing
+)  # i18n: user-facing
 def run_template(template_id: str, dry_run: bool, params: str, template_vars: str, session_id: str):
-    """运行模板。
+    """Run a template.
 
-    --resume <session_id>: 从指定会话断点续跑 (跳过已完成节点)。
+    --resume <session_id>: resume from the given session checkpoint (skips completed nodes).
     """
     asyncio.run(_async_run_template(template_id, dry_run, params, session_id, template_vars))
 
@@ -362,65 +366,65 @@ def run_template(template_id: str, dry_run: bool, params: str, template_vars: st
 async def _async_run_template(
     template_id: str, dry_run: bool, params_json: str, resume_session_id: str = "", template_vars_json: str = ""
 ):
-    console.print_header(f"🚀 运行模板: {template_id}")
+    console.print_header(f"🚀 运行模板: {template_id}")  # i18n: user-facing
 
-    # issue #287: 节点注册 — CLI 进程不经过 serve 的 import_all_nodes, 治理模板等
-    # 生态节点 (github_api/approval_gate/http_request) 会报未知节点类型
+    # issue #287: node registration — the CLI process does not go through serve's import_all_nodes, so governance
+    # ecosystem nodes (github_api/approval_gate/http_request) would report unknown node type
     from .nodes import import_all_nodes
 
     import_all_nodes()
 
-    # issue #287: 模板级参数 — ${param.X} 在装配期替换, 不再硬编码 org/repo
+    # issue #287: template-level params — ${param.X} substituted at assembly time, no hardcoded org/repo
     template_vars: Dict[str, Any] = {}
     if template_vars_json:
         try:
             parsed_vars = json.loads(template_vars_json)
             if not isinstance(parsed_vars, dict):
-                console.print_error("模板参数 JSON 须为对象")
+                console.print_error("模板参数 JSON 须为对象")  # i18n: user-facing
                 return
             template_vars = parsed_vars
         except json.JSONDecodeError as e:
-            console.print_error(f"模板参数 JSON 解析失败: {e}")
+            console.print_error(f"模板参数 JSON 解析失败: {e}")  # i18n: user-facing
             return
 
-    # 加载模板
+    # load template
     wf = _get_template_mgr().template_to_workflow(template_id, param_values=template_vars)
     if not wf:
-        console.print_error(f"模板不存在: {template_id}")
+        console.print_error(f"模板不存在: {template_id}")  # i18n: user-facing
         return
 
-    # 覆盖参数
+    # override params
     if params_json:
         try:
             overrides = json.loads(params_json)
             for node_id, node_params in overrides.items():
                 if node_id in wf.nodes:
                     wf.nodes[node_id].config.params.update(node_params)
-                    console.print_info(f"已覆盖节点 {node_id} 参数")
+                    console.print_info(f"已覆盖节点 {node_id} 参数")  # i18n: user-facing
         except json.JSONDecodeError as e:
-            console.print_error(f"参数 JSON 解析失败: {e}")
+            console.print_error(f"参数 JSON 解析失败: {e}")  # i18n: user-facing
             return
 
-    # 校验
+    # validate
     errors = wf.validate()
     if errors:
-        console.print_error("工作流校验失败:")
+        console.print_error("工作流校验失败:")  # i18n: user-facing
         for e in errors:
             console.print_error(f"  - {e}")
         return
 
-    # 显示工作流
-    click.echo(f"\n工作流: {wf.name}")
+    # show workflow
+    click.echo(f"\n工作流: {wf.name}")  # i18n: user-facing
     for nid, node in wf.nodes.items():
         console.print_info(f"  {node.icon} {node.config.label or node.display_name} ({node.name})")
     click.echo()
 
     if dry_run:
-        console.print_success("预览模式，未实际执行")
+        console.print_success("预览模式，未实际执行")  # i18n: user-facing
         click.echo(f"  JSON: {wf.to_json()}")
         return
 
-    # 断点续跑: 加载已完成步骤快照 (P1-2)
+    # resume: load the completed-step snapshot (P1-2)
     resume_steps = None
     if resume_session_id:
         from fusion_cowork.engine.session import SessionStore
@@ -428,26 +432,26 @@ async def _async_run_template(
         store = SessionStore()
         payload = store.resume(resume_session_id)
         if not payload:
-            console.print_error(f"恢复失败, 会话不存在: {resume_session_id}")
+            console.print_error(f"恢复失败, 会话不存在: {resume_session_id}")  # i18n: user-facing
             return
         resume_steps = payload.get("steps_snapshot") or []
-        console.print_info(f"断点续跑: 从会话 {resume_session_id} 恢复 {len(resume_steps)} 步")
+        console.print_info(f"断点续跑: 从会话 {resume_session_id} 恢复 {len(resume_steps)} 步")  # i18n: user-facing
 
-    # 执行工作流
-    console.print_info("正在执行...")
+    # execute workflow
+    console.print_info("正在执行...")  # i18n: user-facing
     execution = await _get_engine().execute(wf, resume_steps=resume_steps)
 
-    # 输出结果
+    # output results
     if execution.status == WorkflowStatus.SUCCESS:
-        console.print_success(f"✅ 执行成功! ({execution.total_time:.2f}s)")
+        console.print_success(f"✅ 执行成功! ({execution.total_time:.2f}s)")  # i18n: user-facing
     elif execution.status == WorkflowStatus.FAILED:
-        console.print_error(f"❌ 执行失败: {execution.error}")
+        console.print_error(f"❌ 执行失败: {execution.error}")  # i18n: user-facing
     elif execution.status == WorkflowStatus.CANCELLED:
-        console.print_warning("⏹️ 已取消")
+        console.print_warning("⏹️ 已取消")  # i18n: user-facing
     else:
-        console.print_info(f"状态: {execution.status.value}")
+        console.print_info(f"状态: {execution.status.value}")  # i18n: user-facing
 
-    # 显示步骤摘要
+    # show step summary
     click.echo()
     for step in execution.steps:
         status_icon = {
@@ -467,29 +471,29 @@ async def _async_run_template(
         click.echo(f"\n  📊 {execution.result_summary}")
 
 
-# ── AI 命令 ──
+# ── AI commands ──
 
 
 @cli.group()
 def ai():
-    """AI 能力：自然语言生成流程、AI 服务管理。"""
+    """AI capabilities: natural-language workflow generation, AI service management."""
     pass
 
 
 @ai.command("generate")
 @click.argument("prompt")
-@click.option("--model", "-m", default="", help="fusion-mlx 模型名称")
+@click.option("--model", "-m", default="", help="fusion-mlx 模型名称")  # i18n: user-facing
 def generate_workflow(prompt: str, model: str):
-    """用自然语言描述生成自动化工作流。
+    """Generate an automated workflow from a natural-language description.
 
-    示例: fusion-cowork ai generate "帮我把桌面所有 PDF 按主题分类归档"
+    Example: fusion-cowork ai generate "sort all PDFs on the desktop into topic folders"
     """
     asyncio.run(_async_generate(prompt, model))
 
 
 @ai.command("cost")
 def ai_cost():
-    """查看当前会话 Token 预算与成本记账。"""
+    """View the current session token budget and cost accounting."""
     from .ai import get_budget_tracker
 
     budget = get_budget_tracker()
@@ -497,30 +501,30 @@ def ai_cost():
 
 
 async def _async_generate(prompt: str, model: str):
-    console.print_header("🤖 AI 生成工作流")
+    console.print_header("🤖 AI 生成工作流")  # i18n: user-facing
 
-    # 检查 fusion-mlx 是否可用
+    # check whether fusion-mlx is available
     health = await _get_mlx_client().health()
     if not health:
-        console.print_warning("⚠️  fusion-mlx 未运行，将使用本地规则引擎")
-        console.print_info("   启动: fusion-mlx 或 MLX 服务")
-        console.print_info("   将使用模板匹配模式")
+        console.print_warning("⚠️  fusion-mlx 未运行，将使用本地规则引擎")  # i18n: user-facing
+        console.print_info("   启动: fusion-mlx 或 MLX 服务")  # i18n: user-facing
+        console.print_info("   将使用模板匹配模式")  # i18n: user-facing
 
-    # 生成工作流
+    # generate workflow
     generator = NLWorkflowGenerator(_get_mlx_client(), model=model)
     result = await generator.generate(prompt)
 
     error = result.get("error")
     if error:
-        console.print_error(f"生成失败: {error}")
+        console.print_error(f"生成失败: {error}")  # i18n: user-facing
         if result.get("raw_output"):
-            click.echo(f"\n原始输出:\n{result['raw_output']}")
+            click.echo(f"\n原始输出:\n{result['raw_output']}")  # i18n: user-facing
         return
 
-    # 显示生成结果
-    click.echo(f"\n📋 工作流: {result.get('name', '')}")
-    click.echo(f"   描述: {result.get('description', '')}")
-    click.echo(f"   节点 ({len(result.get('nodes', []))} 个):")
+    # show generated result
+    click.echo(f"\n📋 工作流: {result.get('name', '')}")  # i18n: user-facing
+    click.echo(f"   描述: {result.get('description', '')}")  # i18n: user-facing
+    click.echo(f"   节点 ({len(result.get('nodes', []))} 个):")  # i18n: user-facing
 
     for node in result.get("nodes", []):
         params = node.get("config", {}).get("params", {})
@@ -530,93 +534,97 @@ async def _async_generate(prompt: str, model: str):
     for edge in result.get("edges", []):
         click.echo(f"     └─ {edge.get('source_id')} → {edge.get('target_id')}")
 
-    click.echo("\n💡 运行: fusion-cowork workflow run <保存的工作流文件>")
+    click.echo("\n💡 运行: fusion-cowork workflow run <保存的工作流文件>")  # i18n: user-facing
 
 
 @ai.command("status")
 def ai_status():
-    """检查 fusion-mlx 和 AI 服务状态。"""
+    """Check fusion-mlx and AI service status."""
     asyncio.run(_async_ai_status())
 
 
 async def _async_ai_status():
-    console.print_header("🔌 AI 服务状态")
+    console.print_header("🔌 AI 服务状态")  # i18n: user-facing
 
-    # 检查 fusion-mlx
+    # check fusion-mlx
     mlx_ok = await _get_mlx_client().health()
     if mlx_ok:
-        console.print_success("✅ fusion-mlx: 运行中")
+        console.print_success("✅ fusion-mlx: 运行中")  # i18n: user-facing
         try:
             models = await _get_mlx_client().list_models()
             if models:
-                click.echo(f"   可用模型: {', '.join(m.get('id', m.get('model', '?')) for m in models[:5])}")
+                click.echo(
+                    f"   可用模型: {', '.join(m.get('id', m.get('model', '?')) for m in models[:5])}"  # i18n: user-facing
+                )  # i18n: user-facing
         except Exception:
             pass
     else:
-        console.print_warning("⚠️  fusion-mlx: 未运行")
-        click.echo("   启动: 请启动 fusion-mlx 服务 (引擎 11434, 网关 11432)")
+        console.print_warning("⚠️  fusion-mlx: 未运行")  # i18n: user-facing
+        click.echo("   启动: 请启动 fusion-mlx 服务 (引擎 11434, 网关 11432)")  # i18n: user-facing
 
-    # 检查融合 KB
+    # check fusion KB
     from .ai import KBClient
 
     kb = KBClient()
     kb_ok = await kb.health()
     if kb_ok:
-        console.print_success("✅ Fusion-KB: 运行中")
+        console.print_success("✅ Fusion-KB: 运行中")  # i18n: user-facing
     else:
-        console.print_info("ℹ️  Fusion-KB: 未运行 (可选)")
+        console.print_info("ℹ️  Fusion-KB: 未运行 (可选)")  # i18n: user-facing
     await kb.close()
 
 
-# ── 工作流命令 ──
+# ── Workflow commands ──
 
 
 @cli.group()
 def workflow():
-    """工作流管理：执行、查看、管理。"""
+    """Workflow management: execute, view, manage."""
     pass
 
 
 @workflow.command("run")
 @click.argument("workflow_file", type=click.Path(exists=True))
-@click.option("--dry-run", "-n", is_flag=True, help="预览模式")
-@click.option("--resume", "session_id", default="", help="断点续跑: 指定 session_id, 跳过已完成步骤从断点续跑")
+@click.option("--dry-run", "-n", is_flag=True, help="预览模式")  # i18n: user-facing
+@click.option(
+    "--resume", "session_id", default="", help="断点续跑: 指定 session_id, 跳过已完成步骤从断点续跑"  # i18n: user-facing
+)  # i18n: user-facing
 def run_workflow_file(workflow_file: str, dry_run: bool, session_id: str):
-    """从 JSON 文件加载并执行工作流。
+    """Load and execute a workflow from a JSON file.
 
-    --resume <session_id>: 从指定会话断点续跑 (跳过已完成节点)。
+    --resume <session_id>: resume from the given session checkpoint (skips completed nodes).
     """
     asyncio.run(_async_run_workflow_file(workflow_file, dry_run, session_id))
 
 
 async def _async_run_workflow_file(workflow_file: str, dry_run: bool, resume_session_id: str = ""):
-    console.print_header(f"🚀 执行工作流: {workflow_file}")
+    console.print_header(f"🚀 执行工作流: {workflow_file}")  # i18n: user-facing
 
     try:
         with open(workflow_file, encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:
-        console.print_error(f"加载工作流文件失败: {e}")
+        console.print_error(f"加载工作流文件失败: {e}")  # i18n: user-facing
         return
 
     wf = Workflow.from_dict(data)
 
     errors = wf.validate()
     if errors:
-        console.print_error("工作流校验失败:")
+        console.print_error("工作流校验失败:")  # i18n: user-facing
         for e in errors:
             console.print_error(f"  - {e}")
         return
 
-    click.echo(f"\n工作流: {wf.name}")
+    click.echo(f"\n工作流: {wf.name}")  # i18n: user-facing
     for nid, node in wf.nodes.items():
         console.print_info(f"  {node.icon} {node.config.label or node.display_name}")
 
     if dry_run:
-        console.print_success("预览模式，未实际执行")
+        console.print_success("预览模式，未实际执行")  # i18n: user-facing
         return
 
-    # 断点续跑: 加载已完成步骤快照 (P1-2)
+    # resume: load the completed-step snapshot (P1-2)
     resume_steps = None
     if resume_session_id:
         from fusion_cowork.engine.session import SessionStore
@@ -624,18 +632,18 @@ async def _async_run_workflow_file(workflow_file: str, dry_run: bool, resume_ses
         store = SessionStore()
         payload = store.resume(resume_session_id)
         if not payload:
-            console.print_error(f"恢复失败, 会话不存在: {resume_session_id}")
+            console.print_error(f"恢复失败, 会话不存在: {resume_session_id}")  # i18n: user-facing
             return
         resume_steps = payload.get("steps_snapshot") or []
-        console.print_info(f"断点续跑: 从会话 {resume_session_id} 恢复 {len(resume_steps)} 步")
+        console.print_info(f"断点续跑: 从会话 {resume_session_id} 恢复 {len(resume_steps)} 步")  # i18n: user-facing
 
-    console.print_info("正在执行...")
+    console.print_info("正在执行...")  # i18n: user-facing
     execution = await _get_engine().execute(wf, resume_steps=resume_steps)
 
     if execution.status == WorkflowStatus.SUCCESS:
-        console.print_success(f"✅ 执行成功! ({execution.total_time:.2f}s)")
+        console.print_success(f"✅ 执行成功! ({execution.total_time:.2f}s)")  # i18n: user-facing
     elif execution.status == WorkflowStatus.FAILED:
-        console.print_error(f"❌ 执行失败: {execution.error}")
+        console.print_error(f"❌ 执行失败: {execution.error}")  # i18n: user-facing
 
     for step in execution.steps:
         status_icon = {
@@ -657,13 +665,13 @@ async def _async_run_workflow_file(workflow_file: str, dry_run: bool, resume_ses
 
 @workflow.command("list")
 def list_workflows():
-    """列出最近执行的工作流。"""
+    """List recently executed workflows."""
     executions = _get_engine().list_executions(limit=20)
     if not executions:
-        console.print_info("暂无工作流执行记录")
+        console.print_info("暂无工作流执行记录")  # i18n: user-facing
         return
 
-    console.print_header("最近执行记录")
+    console.print_header("最近执行记录")  # i18n: user-facing
     rows = []
     for exec_ in executions:
         status_icon = {
@@ -683,28 +691,28 @@ def list_workflows():
                 time.strftime("%H:%M:%S", time.localtime(exec_.started_at)),
             ]
         )
-    console.print_table(["ID", "名称", "状态", "耗时", "时间"], rows)
+    console.print_table(["ID", "名称", "状态", "耗时", "时间"], rows)  # i18n: user-facing
 
 
-# ── 定时任务命令 ──
+# ── Scheduled task commands ──
 
 
 @cli.group()
 def schedule():
-    """定时任务管理：创建、列出、管理定时自动化任务。"""
+    """Scheduled task management: create, list, and manage scheduled automation tasks."""
     pass
 
 
 @schedule.command("list")
 def list_schedules():
-    """列出所有定时任务。"""
+    """List all scheduled tasks."""
     tasks = _get_scheduler().list_tasks()
     if not tasks:
-        console.print_info("暂无定时任务")
-        console.print_info("使用 'fusion-cowork schedule add' 添加定时任务")
+        console.print_info("暂无定时任务")  # i18n: user-facing
+        console.print_info("使用 'fusion-cowork schedule add' 添加定时任务")  # i18n: user-facing
         return
 
-    console.print_header("定时任务列表")
+    console.print_header("定时任务列表")  # i18n: user-facing
     rows = []
     for task in tasks:
         status_icon = "✅" if task.status == TaskStatus.ACTIVE else "⏸️"
@@ -714,103 +722,103 @@ def list_schedules():
                 task.id[:12],
                 task.name[:25],
                 f"{status_icon} {task.status.value}",
-                f"{task.run_count}次",
+                f"{task.run_count}次",  # i18n: user-facing
                 next_run,
             ]
         )
-    console.print_table(["ID", "名称", "状态", "执行", "下次运行"], rows)
+    console.print_table(["ID", "名称", "状态", "执行", "下次运行"], rows)  # i18n: user-facing
 
 
 @schedule.command("add")
-@click.option("--name", "-n", required=True, help="任务名称")
-@click.option("--cron", "-c", required=True, help="Cron 表达式 (如: 0 21 * * *)")
-@click.option("--template", "-t", required=True, help="要运行的模板 ID")
-@click.option("--description", "-d", default="", help="任务描述")
+@click.option("--name", "-n", required=True, help="任务名称")  # i18n: user-facing
+@click.option("--cron", "-c", required=True, help="Cron 表达式 (如: 0 21 * * *)")  # i18n: user-facing
+@click.option("--template", "-t", required=True, help="要运行的模板 ID")  # i18n: user-facing
+@click.option("--description", "-d", default="", help="任务描述")  # i18n: user-facing
 def add_schedule(name: str, cron: str, template: str, description: str):
-    """添加定时任务。"""
+    """Add a scheduled task."""
     task_id = _get_scheduler().add_cron_task(
         name=name,
         workflow_id=template,
         cron_expression=cron,
-        executor=lambda: console.print_info(f"执行定时任务: {name}"),
-        description=description or f"定时执行模板 {template}",
+        executor=lambda: console.print_info(f"执行定时任务: {name}"),  # i18n: user-facing
+        description=description or f"定时执行模板 {template}",  # i18n: user-facing
     )
-    console.print_success(f"✅ 已添加定时任务: {name} ({task_id[:12]})")
+    console.print_success(f"✅ 已添加定时任务: {name} ({task_id[:12]})")  # i18n: user-facing
     console.print_info(f"   Cron: {cron}")
-    console.print_info(f"   模板: {template}")
+    console.print_info(f"   模板: {template}")  # i18n: user-facing
 
 
 @schedule.command("remove")
 @click.argument("task_id")
 def remove_schedule(task_id: str):
-    """删除定时任务。"""
+    """Delete a scheduled task."""
     if _get_scheduler().remove_task(task_id):
-        console.print_success(f"已删除任务: {task_id}")
+        console.print_success(f"已删除任务: {task_id}")  # i18n: user-facing
     else:
-        console.print_error(f"任务不存在: {task_id}")
+        console.print_error(f"任务不存在: {task_id}")  # i18n: user-facing
 
 
 @schedule.command("start")
 def start_scheduler():
-    """启动调度器。"""
+    """Start the scheduler."""
     _get_scheduler().start()
-    console.print_success("✅ 调度器已启动")
+    console.print_success("✅ 调度器已启动")  # i18n: user-facing
 
 
 @schedule.command("stop")
 def stop_scheduler():
-    """停止调度器。"""
+    """Stop the scheduler."""
     _get_scheduler().shutdown()
-    console.print_info("⏹️ 调度器已停止")
+    console.print_info("⏹️ 调度器已停止")  # i18n: user-facing
 
 
-# ── 系统命令 ──
+# ── System commands ──
 
 
 @cli.group()
 def system():
-    """系统工具：清理、监控、信息。"""
+    """System tools: cleanup, monitoring, info."""
     pass
 
 
 @system.command("info")
 def system_info():
-    """显示系统信息。"""
+    """Show system information."""
     import platform
 
-    console.print_header("🖥️  Fusion-Cowork 系统信息")
-    click.echo(f"  版本: {__version__}")
+    console.print_header("🖥️  Fusion-Cowork 系统信息")  # i18n: user-facing
+    click.echo(f"  版本: {__version__}")  # i18n: user-facing
     click.echo(f"  Python: {sys.version.split()[0]}")
-    click.echo(f"  平台: {platform.system()} {platform.machine()}")
+    click.echo(f"  平台: {platform.system()} {platform.machine()}")  # i18n: user-facing
     click.echo(f"  Apple Silicon: {platform.machine() == 'arm64'}")
-    click.echo(f"  工作目录: {os.getcwd()}")
-    click.echo(f"  数据目录: {Path.home() / '.fusion-cowork'}")
+    click.echo(f"  工作目录: {os.getcwd()}")  # i18n: user-facing
+    click.echo(f"  数据目录: {Path.home() / '.fusion-cowork'}")  # i18n: user-facing
 
-    # 注册节点统计
+    # registered node stats
     nodes = NodeRegistry.list()
-    click.echo(f"  注册节点: {len(nodes)} 个")
+    click.echo(f"  注册节点: {len(nodes)} 个")  # i18n: user-facing
     cats = {}
     for n in nodes:
         cat = n.get("category", "other")
         cats[cat] = cats.get(cat, 0) + 1
     for cat, count in cats.items():
-        click.echo(f"    ├─ {cat}: {count} 个")
+        click.echo(f"    ├─ {cat}: {count} 个")  # i18n: user-facing
 
-    # 模板统计
+    # template stats
     templates = _get_template_mgr().list_templates()
-    click.echo(f"  内置模板: {len(templates)} 个")
+    click.echo(f"  内置模板: {len(templates)} 个")  # i18n: user-facing
 
 
 @system.command("scope")
 @click.argument("folders", required=False)
-@click.option("--enforce/--no-enforce", default=None, help="是否启用沙箱拦截")
+@click.option("--enforce/--no-enforce", default=None, help="是否启用沙箱拦截")  # i18n: user-facing
 def system_scope(folders, enforce):
-    """查看或设置授权工作文件夹 (Scoped Folder) 沙箱。
+    """View or set the authorized working folder (Scoped Folder) sandbox.
 
     \b
-    fusion-cowork system scope                          # 查看当前配置
-    fusion-cowork system scope ~/Cowork_Workspace       # 设置授权文件夹
-    fusion-cowork system scope ~/a,~/b --enforce        # 多文件夹 + 启用拦截
+    fusion-cowork system scope                          # view current config
+    fusion-cowork system scope ~/Cowork_Workspace       # set authorized folder
+    fusion-cowork system scope ~/a,~/b --enforce        # multiple folders + enable enforcement
     """
     from .config_center import ConfigCenter
     from .security import get_scoped_folder_manager, reset_scoped_folder_manager
@@ -819,34 +827,34 @@ def system_scope(folders, enforce):
     if folders is None and enforce is None:
         cur = cc.get("workspace.scoped_folder", "")
         enf = cc.get("workspace.enforce_scope", False)
-        console.print_info(f"授权文件夹: {cur or '(未设置)'}")
-        console.print_info(f"沙箱拦截: {'启用' if enf else '关闭'}")
+        console.print_info(f"授权文件夹: {cur or '(未设置)'}")  # i18n: user-facing
+        console.print_info(f"沙箱拦截: {'启用' if enf else '关闭'}")  # i18n: user-facing
         return
     if folders is not None:
         cc.set("workspace.scoped_folder", folders)
-        console.print_result(f"授权文件夹已设置: {folders}")
+        console.print_result(f"授权文件夹已设置: {folders}")  # i18n: user-facing
     if enforce is not None:
         cc.set("workspace.enforce_scope", enforce)
-        console.print_result(f"沙箱拦截已{'启用' if enforce else '关闭'}")
+        console.print_result(f"沙箱拦截已{'启用' if enforce else '关闭'}")  # i18n: user-facing
     reset_scoped_folder_manager()
     mgr = get_scoped_folder_manager()
-    console.print_info(f"生效: enforce={mgr.enforce} scopes={[str(s) for s in mgr.scopes]}")
+    console.print_info(f"生效: enforce={mgr.enforce} scopes={[str(s) for s in mgr.scopes]}")  # i18n: user-facing
 
 
 @system.command("clean")
-@click.option("--dry-run", "-n", is_flag=True, default=True, help="预览模式")
-@click.option("--force", "-f", is_flag=True, help="强制清理")
+@click.option("--dry-run", "-n", is_flag=True, default=True, help="预览模式")  # i18n: user-facing
+@click.option("--force", "-f", is_flag=True, help="强制清理")  # i18n: user-facing
 def system_clean(dry_run: bool, force: bool):
-    """快速清理桌面和下载文件夹。"""
+    """Quickly clean the desktop and downloads folder."""
     if force:
         dry_run = False
     asyncio.run(_async_system_clean(dry_run))
 
 
 async def _async_system_clean(dry_run: bool):
-    console.print_header(f"🧹 系统清理 ({'预览' if dry_run else '执行'})")
+    console.print_header(f"🧹 系统清理 ({'预览' if dry_run else '执行'})")  # i18n: user-facing
 
-    # 桌面清理
+    # desktop cleanup
     from .nodes.macos import DesktopCleanNode
 
     desktop = DesktopCleanNode(
@@ -863,9 +871,9 @@ async def _async_system_clean(dry_run: bool):
         )()
     )
     result = await desktop.execute({})
-    console.print_info(f"  桌面: {result.summary}")
+    console.print_info(f"  桌面: {result.summary}")  # i18n: user-facing
 
-    # 下载整理
+    # download organization
     from .nodes.macos import DownloadOrganizerNode
 
     download = DownloadOrganizerNode(
@@ -882,75 +890,75 @@ async def _async_system_clean(dry_run: bool):
         )()
     )
     result = await download.execute({})
-    console.print_info(f"  下载: {result.summary}")
+    console.print_info(f"  下载: {result.summary}")  # i18n: user-facing
 
     if not dry_run:
-        console.print_success("✅ 清理完成")
+        console.print_success("✅ 清理完成")  # i18n: user-facing
     else:
-        console.print_info("💡 使用 --force 或 -f 执行实际清理")
+        console.print_info("💡 使用 --force 或 -f 执行实际清理")  # i18n: user-facing
 
 
-# ── 浏览器命令 ──
+# ── Browser commands ──
 
 
 @cli.group()
 def browser():
-    """内嵌浏览器管理：启动、打开、自动化。"""
+    """Embedded browser management: start, open, automate."""
     pass
 
 
 @browser.command("start")
-@click.option("--build", "-b", is_flag=True, help="先构建再启动")
+@click.option("--build", "-b", is_flag=True, help="先构建再启动")  # i18n: user-facing
 def browser_start(build: bool):
-    """启动 Fusion 内嵌浏览器。"""
+    """Start the Fusion embedded browser."""
     asyncio.run(_async_browser_start(build))
 
 
 async def _async_browser_start(build: bool):
     from .nodes.browser import BrowserManager
 
-    console.print_header("🌐 Fusion 内嵌浏览器")
+    console.print_header("🌐 Fusion 内嵌浏览器")  # i18n: user-facing
 
     if build:
-        console.print_info("正在构建...")
+        console.print_info("正在构建...")  # i18n: user-facing
         if BrowserManager.build():
-            console.print_success("构建成功")
+            console.print_success("构建成功")  # i18n: user-facing
         else:
-            console.print_error("构建失败")
+            console.print_error("构建失败")  # i18n: user-facing
             return
 
     if BrowserManager.launch():
-        console.print_success("✅ 浏览器已启动")
-        console.print_info("   支持 fusion:// 私有协议:")
-        console.print_info("   ├─ fusion://start/ — 起始页")
-        console.print_info("   ├─ fusion://kb/ — 知识库管理")
-        console.print_info("   ├─ fusion://model/ — 模型管理")
-        console.print_info("   └─ fusion://automation/ — 自动化工作流")
+        console.print_success("✅ 浏览器已启动")  # i18n: user-facing
+        console.print_info("   支持 fusion:// 私有协议:")  # i18n: user-facing
+        console.print_info("   ├─ fusion://start/ — 起始页")  # i18n: user-facing
+        console.print_info("   ├─ fusion://kb/ — 知识库管理")  # i18n: user-facing
+        console.print_info("   ├─ fusion://model/ — 模型管理")  # i18n: user-facing
+        console.print_info("   └─ fusion://automation/ — 自动化工作流")  # i18n: user-facing
     else:
-        console.print_error("启动失败，请先构建: fusion-cowork browser build")
+        console.print_error("启动失败，请先构建: fusion-cowork browser build")  # i18n: user-facing
 
 
 @browser.command("build")
 def browser_build():
-    """构建 Fusion 内嵌浏览器。"""
+    """Build the Fusion embedded browser."""
     asyncio.run(_async_browser_build())
 
 
 async def _async_browser_build():
     from .nodes.browser import BrowserManager
 
-    console.print_header("🔨 构建 Fusion 内嵌浏览器")
-    console.print_info("正在编译 Swift 原生浏览器...")
+    console.print_header("🔨 构建 Fusion 内嵌浏览器")  # i18n: user-facing
+    console.print_info("正在编译 Swift 原生浏览器...")  # i18n: user-facing
     if BrowserManager.build():
-        console.print_success("✅ 构建成功")
+        console.print_success("✅ 构建成功")  # i18n: user-facing
     else:
-        console.print_error("❌ 构建失败")
+        console.print_error("❌ 构建失败")  # i18n: user-facing
 
 
 @browser.command("open")
 @click.argument("url")
 def browser_open(url: str):
-    """在浏览器中打开 URL。"""
+    """Open a URL in the browser."""
     asyncio.run(_async_browser_open(url))
 
 
@@ -960,32 +968,32 @@ async def _async_browser_open(url: str):
     client = BrowserClient()
     try:
         _result = await client.open_url(url)
-        console.print_success(f"已打开: {url}")
+        console.print_success(f"已打开: {url}")  # i18n: user-facing
     except Exception as e:
-        console.print_error(f"打开失败: {e}")
-        console.print_info("请先启动浏览器: fusion-cowork browser start")
+        console.print_error(f"打开失败: {e}")  # i18n: user-facing
+        console.print_info("请先启动浏览器: fusion-cowork browser start")  # i18n: user-facing
     finally:
         await client.close()
 
 
 @browser.command("status")
 def browser_status():
-    """检查浏览器状态。"""
+    """Check browser status."""
     from .nodes.browser import BrowserClient
 
     client = BrowserClient()
     if client.is_running():
-        console.print_success("✅ 浏览器正在运行")
+        console.print_success("✅ 浏览器正在运行")  # i18n: user-facing
     else:
-        console.print_warning("⚠️ 浏览器未运行")
-        console.print_info("启动: fusion-cowork browser start")
+        console.print_warning("⚠️ 浏览器未运行")  # i18n: user-facing
+        console.print_info("启动: fusion-cowork browser start")  # i18n: user-facing
 
 
 @browser.command("extract")
 @click.argument("url", required=False)
-@click.option("--to-file", "-o", default="", help="保存到文件")
+@click.option("--to-file", "-o", default="", help="保存到文件")  # i18n: user-facing
 def browser_extract(url: str = "", to_file: str = ""):
-    """提取网页文本内容。"""
+    """Extract web page text content."""
     asyncio.run(_async_browser_extract(url, to_file))
 
 
@@ -999,25 +1007,25 @@ async def _async_browser_extract(url: str, to_file: str):
     if result.status == NodeStatus.SUCCESS:
         text = result.data.get("text", "")
         length = result.data.get("text_length", 0)
-        console.print_success(f"提取完成: {length} 字符")
+        console.print_success(f"提取完成: {length} 字符")  # i18n: user-facing
         if to_file:
             Path(to_file).write_text(text, encoding="utf-8")
-            console.print_info(f"已保存到: {to_file}")
+            console.print_info(f"已保存到: {to_file}")  # i18n: user-facing
         else:
             click.echo()
             click.echo(text[:2000])
             if len(text) > 2000:
-                click.echo(f"\n... (共 {len(text)} 字符，使用 --to-file 保存完整内容)")
+                click.echo(f"\n... (共 {len(text)} 字符，使用 --to-file 保存完整内容)")  # i18n: user-facing
     else:
-        console.print_error(f"提取失败: {result.error}")
+        console.print_error(f"提取失败: {result.error}")  # i18n: user-facing
 
 
-# ── MCP 服务 ──
+# ── MCP service ──
 
 
 @cli.group("mcp")
 def mcp():
-    """MCP 服务管理 — 对接 Claude Desktop/Code。"""
+    """MCP service management — integrates with Claude Desktop/Code."""
     pass
 
 
@@ -1027,12 +1035,12 @@ def mcp():
     "-t",
     type=click.Choice(["stdio", "http", "streamable"]),
     default="stdio",
-    help="传输模式 (stdio/http/streamable)",
+    help="传输模式 (stdio/http/streamable)",  # i18n: user-facing
 )
-@click.option("--host", "-h", default="127.0.0.1", help="HTTP 监听地址")
-@click.option("--port", "-p", default=11438, type=int, help="HTTP 监听端口")
+@click.option("--host", "-h", default="127.0.0.1", help="HTTP 监听地址")  # i18n: user-facing
+@click.option("--port", "-p", default=11438, type=int, help="HTTP 监听端口")  # i18n: user-facing
 def mcp_serve(transport: str, host: str, port: int):
-    """启动 MCP 服务 — 供 Claude Code / Claude Desktop 调用。"""
+    """Start the MCP service — called by Claude Code / Claude Desktop."""
     from .server.mcp_server import MCPServer
 
     rt = _build_runtime()
@@ -1044,34 +1052,36 @@ def mcp_serve(transport: str, host: str, port: int):
     )
     emitter = rt["event_emitter"]
     if transport == "stdio":
-        console.print_info("MCP 服务启动 (stdio 模式) — 等待 Claude Code 连接...")
+        console.print_info("MCP 服务启动 (stdio 模式) — 等待 Claude Code 连接...")  # i18n: user-facing
         asyncio.run(server.serve_stdio())
     elif transport == "streamable":
-        console.print_info(f"MCP 服务启动 (Streamable HTTP 2025-03-26 模式) — {host}:{port}")
+        console.print_info(f"MCP 服务启动 (Streamable HTTP 2025-03-26 模式) — {host}:{port}")  # i18n: user-facing
         asyncio.run(server.serve_streamable_http(event_emitter=emitter))
     else:
-        console.print_info(f"MCP 服务启动 (HTTP 模式) — {host}:{port}")
+        console.print_info(f"MCP 服务启动 (HTTP 模式) — {host}:{port}")  # i18n: user-facing
         asyncio.run(server.serve_http(event_emitter=emitter))
 
 
-# ── Desk RPC 服务 ──
+# ── Desk RPC service ──
 
 
 @cli.group("desk")
 def desk():
-    """Desk RPC 服务管理 — 对接 Fusion-Studio GUI。"""
+    """Desk RPC service management — integrates with the Fusion-Studio GUI."""
     pass
 
 
 @desk.command("rpc")
-@click.option("--sock", "-s", default="/tmp/fusion-cowork.sock", help="UDS 路径")
-@click.option("--http-port", default=11438, show_default=True, help="HTTP 端口 (/rpc /health /mcp /sse); 0=不启动 HTTP")
+@click.option("--sock", "-s", default="/tmp/fusion-cowork.sock", help="UDS 路径")  # i18n: user-facing
+@click.option(
+    "--http-port", default=11438, show_default=True, help="HTTP 端口 (/rpc /health /mcp /sse); 0=不启动 HTTP"  # i18n: user-facing
+)  # i18n: user-facing
 def desk_rpc(sock: str, http_port: int):
-    """启动 Desk RPC 服务 — 供 Fusion-Studio 调用。
+    """Start the Desk RPC service — for Fusion-Studio to call.
 
-    默认同时启动 UDS (desk.*) + HTTP (/rpc /health /mcp /sse) 双通道。
-    HTTP 通道承载 fusion-studio PluginBridge 的 plugins/* 集成面板 (issue #48)。
-    --http-port 0 可禁用 HTTP (仅 UDS)。
+    Starts both channels by default: UDS (desk.*) + HTTP (/rpc /health /mcp /sse).
+    The HTTP channel hosts the fusion-studio PluginBridge plugins/* integration panel (issue #48).
+    --http-port 0 disables HTTP (UDS only).
     """
     _set_process_title("fusion-cowork desk-rpc")
     from .server.desk_rpc import DeskRPCServer
@@ -1090,7 +1100,7 @@ def desk_rpc(sock: str, http_port: int):
         import signal
 
         await rpc.start()
-        console.print_success(f"Desk RPC 服务已启动 (UDS): {sock}")
+        console.print_success(f"Desk RPC 服务已启动 (UDS): {sock}")  # i18n: user-facing
 
         http_task = None
         if http_port > 0:
@@ -1100,7 +1110,7 @@ def desk_rpc(sock: str, http_port: int):
         stop_event = asyncio.Event()
 
         def _request_stop():
-            console.print_info("收到停止信号, 开始优雅关停...")
+            console.print_info("收到停止信号, 开始优雅关停...")  # i18n: user-facing
             stop_event.set()
 
         for sig in (signal.SIGTERM, signal.SIGINT):
@@ -1109,7 +1119,7 @@ def desk_rpc(sock: str, http_port: int):
             except (NotImplementedError, RuntimeError):
                 pass
 
-        console.print_info("等待 Fusion-Studio 连接... (Ctrl+C 停止)")
+        console.print_info("等待 Fusion-Studio 连接... (Ctrl+C 停止)")  # i18n: user-facing
         try:
             await stop_event.wait()
         except asyncio.CancelledError:
@@ -1122,7 +1132,7 @@ def desk_rpc(sock: str, http_port: int):
                 except (asyncio.CancelledError, Exception):
                     pass
             await rpc.stop()
-            console.print_info("Desk RPC 服务已停止")
+            console.print_info("Desk RPC 服务已停止")  # i18n: user-facing
 
     async def _serve_http(port: int):
         try:
@@ -1138,37 +1148,43 @@ def desk_rpc(sock: str, http_port: int):
                 permission_manager=rt["permission_manager"],
                 hook_manager=rt["hook_manager"],
             )
-            console.print_success(f"Desk HTTP 服务已启动: {bind_host}:{port} (/rpc /health /mcp /sse)")
+            console.print_success(
+                f"Desk HTTP 服务已启动: {bind_host}:{port} (/rpc /health /mcp /sse)"  # i18n: user-facing
+            )  # i18n: user-facing
             await mcp.serve_http(event_emitter=rt["event_emitter"])
         except ImportError:
-            console.print_warning("HTTP 通道未启动 (缺 [web] 依赖): pip install fusion-cowork[web]; 仅 UDS 可用")
+            console.print_warning(
+                "HTTP 通道未启动 (缺 [web] 依赖): pip install fusion-cowork[web]; 仅 UDS 可用"  # i18n: user-facing
+            )  # i18n: user-facing
         except Exception as e:
-            console.print_warning(f"HTTP 通道启动失败 ({e}); 仅 UDS 可用")
+            console.print_warning(f"HTTP 通道启动失败 ({e}); 仅 UDS 可用")  # i18n: user-facing
 
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
-        console.print_info("Desk RPC 服务已停止")
+        console.print_info("Desk RPC 服务已停止")  # i18n: user-facing
 
 
 @cli.group("web")
 def web():
-    """Union Web 模块 (issue #94) — DAG 工作流画布 UI 后端。"""
+    """Union Web module (issue #94) — DAG workflow canvas UI backend."""
 
 
 @web.command("serve")
-@click.option("--port", default=11461, show_default=True, help="Web API HTTP 端口 (port-registry: fusion-cowork-web)")
-@click.option("--host", default=None, help="绑定地址 (默认 FUSION_BIND_HOST 或 127.0.0.1)")
+@click.option(
+    "--port", default=11461, show_default=True, help="Web API HTTP 端口 (port-registry: fusion-cowork-web)"  # i18n: user-facing
+)  # i18n: user-facing
+@click.option("--host", default=None, help="绑定地址 (默认 FUSION_BIND_HOST 或 127.0.0.1)")  # i18n: user-facing
 def web_serve(port: int, host: str):
-    """启动 Web API 服务 — REST (nodes/workflows/runs) + web/dist 静态托管。
+    """Start the Web API service — REST (nodes/workflows/runs) + web/dist static hosting.
 
-    鉴权: FUSION_COWORK_WEB_API_KEY 配置后, 所有 /api 路径要求
-    Authorization: Bearer 或 x-api-key (gateway /shell 代理注入); 未配置放行
-    (默认仅本机绑定)。
-    shell 注册 (issue #97): FUSION_SHELL_GATEWAY_URL + FUSION_ADMIN_KEY
-    同时配置时, 后台任务向网关注册 web/manifest.json 并心跳保活。
-    跨设备同步 (#123): FUSION_COWORK_CROSS_SYNC=1 时启动 CrossDeviceSync
-    (W22 /api/deliver 通道), 参数走 FUSION_COWORK_SYNC_HOST/PORT/TOKEN/CERT/KEY。
+    Auth: when FUSION_COWORK_WEB_API_KEY is set, all /api paths require
+    Authorization: Bearer or x-api-key (injected by the gateway /shell proxy);
+    unset allows (localhost bind only by default).
+    Shell registration (issue #97): when FUSION_SHELL_GATEWAY_URL + FUSION_ADMIN_KEY
+    are both set, a background task registers web/manifest.json with the gateway and heartbeats.
+    Cross-device sync (#123): with FUSION_COWORK_CROSS_SYNC=1, starts CrossDeviceSync
+    (W22 /api/deliver channel), configured via FUSION_COWORK_SYNC_HOST/PORT/TOKEN/CERT/KEY.
     """
     _set_process_title(f"fusion-cowork web :{port}")
     import asyncio
@@ -1181,32 +1197,34 @@ def web_serve(port: int, host: str):
         from .server.sync import cross_sync_from_env
         from .server.web_api import auth_configured, create_web_app
     except ImportError:
-        console.print_warning("Web API 未启动 (缺 [web] 依赖): pip install fusion-cowork[web]")
+        console.print_warning("Web API 未启动 (缺 [web] 依赖): pip install fusion-cowork[web]")  # i18n: user-facing
         return
 
     cross_sync = cross_sync_from_env()
 
     app = create_web_app(cross_sync=cross_sync)
-    console.print_success(f"Cowork Web API 已启动: {bind_host}:{port} (/api /health)")
+    console.print_success(f"Cowork Web API 已启动: {bind_host}:{port} (/api /health)")  # i18n: user-facing
     if not auth_configured():
-        console.print_warning("FUSION_COWORK_WEB_API_KEY 未配置 — 鉴权放行 (仅建议本机绑定使用)")
+        console.print_warning("FUSION_COWORK_WEB_API_KEY 未配置 — 鉴权放行 (仅建议本机绑定使用)")  # i18n: user-facing
     register_enabled = shell_registration_enabled()
     if not register_enabled:
-        console.print_info("shell 网关注册未启用 (FUSION_SHELL_GATEWAY_URL / FUSION_ADMIN_KEY 未配置)")
+        console.print_info(
+            "shell 网关注册未启用 (FUSION_SHELL_GATEWAY_URL / FUSION_ADMIN_KEY 未配置)"  # i18n: user-facing
+        )  # i18n: user-facing
 
     async def _serve():
         scheduler = getattr(app.state, "scheduler", None)
         if scheduler:
             scheduler.start()
-            console.print_info("任务调度器已启动 (定时任务生效)")
+            console.print_info("任务调度器已启动 (定时任务生效)")  # i18n: user-facing
         if cross_sync:
             try:
                 await cross_sync.start()
                 console.print_info(
-                    f"跨设备同步已启动: {cross_sync.host}:{cross_sync.port} (device={cross_sync.device_id})"
+                    f"跨设备同步已启动: {cross_sync.host}:{cross_sync.port} (device={cross_sync.device_id})"  # i18n: user-facing
                 )
             except Exception as e:
-                logger.warning(f"跨设备同步启动失败 (/api/deliver 将不可用): {e}")
+                logger.warning(f"Cross-device sync failed to start (/api/deliver will be unavailable): {e}")
         registry_task = asyncio.create_task(shell_registry_loop()) if register_enabled else None
         config = uvicorn.Config(app, host=bind_host, port=port, log_level="info")
         server = uvicorn.Server(config)
@@ -1219,22 +1237,22 @@ def web_serve(port: int, host: str):
                 try:
                     await cross_sync.stop()
                 except Exception as e:
-                    logger.warning(f"跨设备同步停止异常: {e}")
+                    logger.warning(f"Cross-device sync stop error: {e}")
             if scheduler:
                 scheduler.shutdown(wait=False)
             space_store = getattr(app.state, "space_store", None)
             if space_store:
                 await space_store.close()
-                console.print_info("协作空间存储已关闭")
+                console.print_info("协作空间存储已关闭")  # i18n: user-facing
 
     asyncio.run(_serve())
 
 
-# ── 团队消息面 (issue #190) ──
+# ── Team messaging (issue #190) ──
 
 
 def _team_api(method: str, path: str, payload=None):
-    # 状态/生命周期走 daemon HTTP; 花名册与信箱直连 SQLite (daemon 不在也能收发)
+    # status/lifecycle go through the daemon HTTP; roster and mailbox hit SQLite directly (send/receive works even without the daemon)
     import httpx
 
     base = os.environ.get("FUSION_COWORK_WEB_URL", "http://127.0.0.1:11461").rstrip("/")
@@ -1246,10 +1264,10 @@ def _team_api(method: str, path: str, payload=None):
         with httpx.Client(timeout=10.0) as client:
             resp = client.request(method, f"{base}{path}", json=payload, headers=headers)
     except httpx.HTTPError as e:
-        console.print_warning(f"Web API 不可达 ({base}): {e} — 先 fusion-cowork web serve")
+        console.print_warning(f"Web API 不可达 ({base}): {e} — 先 fusion-cowork web serve")  # i18n: user-facing
         return None
     if resp.status_code >= 400:
-        console.print_error(f"Web API {method} {path} 失败: {resp.status_code} {resp.text[:200]}")
+        console.print_error(f"Web API {method} {path} 失败: {resp.status_code} {resp.text[:200]}")  # i18n: user-facing
         return None
     try:
         return resp.json()
@@ -1259,17 +1277,17 @@ def _team_api(method: str, path: str, payload=None):
 
 @cli.group("team")
 def team():
-    """团队消息 — 花名册 / durable 信箱 / 消费池 (issue #190)。"""
+    """Team messaging — roster / durable mailbox / consumer pool (issue #190)."""
 
 
 @team.command("register")
 @click.argument("agent_id")
-@click.option("--workflow", "workflow_id", required=True, help="收件后执行的工作流定义 id")
-@click.option("--name", default="", help="显示名 (默认 = agent_id)")
-@click.option("--team", "team_name", default="", help="所属团队")
-@click.option("--disable", is_flag=True, help="登记为停用 (登记但不消费)")
+@click.option("--workflow", "workflow_id", required=True, help="收件后执行的工作流定义 id")  # i18n: user-facing
+@click.option("--name", default="", help="显示名 (默认 = agent_id)")  # i18n: user-facing
+@click.option("--team", "team_name", default="", help="所属团队")  # i18n: user-facing
+@click.option("--disable", is_flag=True, help="登记为停用 (登记但不消费)")  # i18n: user-facing
 def team_register(agent_id, workflow_id, name, team_name, disable):
-    """登记一个常驻消费 agent。"""
+    """Register a resident consumer agent."""
     from .orchestrator.team_mailbox import CoworkRoster
 
     try:
@@ -1277,43 +1295,47 @@ def team_register(agent_id, workflow_id, name, team_name, disable):
     except ValueError as e:
         console.print_error(str(e))
         return
-    console.print_success(f"已登记: {row['agent_id']} → workflow {row['workflow_id']} (enabled={bool(row['enabled'])})")
+    console.print_success(
+        f"已登记: {row['agent_id']} → workflow {row['workflow_id']} (enabled={bool(row['enabled'])})"  # i18n: user-facing
+    )  # i18n: user-facing
 
 
 @team.command("roster")
 def team_roster():
-    """列出花名册。"""
+    """List the roster."""
     from .orchestrator.team_mailbox import CoworkRoster
 
     rows = CoworkRoster().list()
     if not rows:
-        console.print_info("花名册为空 — fusion-cowork team register <agent_id> --workflow <id>")
+        console.print_info("花名册为空 — fusion-cowork team register <agent_id> --workflow <id>")  # i18n: user-facing
         return
     for r in rows:
-        state = "启用" if r["enabled"] else "停用"
+        state = "启用" if r["enabled"] else "停用"  # i18n: user-facing
         console.print_result(f"{r['agent_id']:20s} {state}  workflow={r['workflow_id']}  team={r['team']}")
 
 
 @team.command("remove")
 @click.argument("agent_id")
 def team_remove(agent_id):
-    """移除一个消费 agent。"""
+    """Remove a consumer agent."""
     from .orchestrator.team_mailbox import CoworkRoster
 
     if CoworkRoster().remove(agent_id):
-        console.print_success(f"已移除: {agent_id}")
+        console.print_success(f"已移除: {agent_id}")  # i18n: user-facing
     else:
-        console.print_warning(f"未登记: {agent_id}")
+        console.print_warning(f"未登记: {agent_id}")  # i18n: user-facing
 
 
 @team.command("send")
-@click.option("--from", "sender", required=True, help="发送方 agent id")
-@click.option("--to", "recipient", required=True, help="接收方 agent id (可跨仓: agent-studio agent)")
-@click.option("--kind", default="message", show_default=True, help="消息类型")
-@click.option("--team", "team_name", default="", help="团队标签")
+@click.option("--from", "sender", required=True, help="发送方 agent id")  # i18n: user-facing
+@click.option(
+    "--to", "recipient", required=True, help="接收方 agent id (可跨仓: agent-studio agent)"  # i18n: user-facing
+)  # i18n: user-facing
+@click.option("--kind", default="message", show_default=True, help="消息类型")  # i18n: user-facing
+@click.option("--team", "team_name", default="", help="团队标签")  # i18n: user-facing
 @click.argument("body")
 def team_send(sender, recipient, kind, team_name, body):
-    """投递一条 durable 消息 (落 SQLite, at-least-once 送达)。"""
+    """Send a durable message (stored in SQLite, at-least-once delivery)."""
     from .orchestrator.team_mailbox import TeamMailbox
 
     try:
@@ -1321,83 +1343,85 @@ def team_send(sender, recipient, kind, team_name, body):
     except ValueError as e:
         console.print_error(str(e))
         return
-    console.print_success(f"已投递: {msg['message_id']} {sender} → {recipient}")
+    console.print_success(f"已投递: {msg['message_id']} {sender} → {recipient}")  # i18n: user-facing
 
 
 @team.command("inbox")
 @click.argument("agent_id")
-@click.option("--all", "show_all", is_flag=True, help="包含已 ack 的历史消息")
-@click.option("--limit", default=50, show_default=True, help="最多条数")
+@click.option("--all", "show_all", is_flag=True, help="包含已 ack 的历史消息")  # i18n: user-facing
+@click.option("--limit", default=50, show_default=True, help="最多条数")  # i18n: user-facing
 def team_inbox(agent_id, show_all, limit):
-    """查看某 agent 的信箱。"""
+    """View an agent's mailbox."""
     from .orchestrator.team_mailbox import TeamMailbox
 
     messages = TeamMailbox().inbox(agent_id, unread_only=not show_all, limit=limit)
     if not messages:
-        console.print_info(f"{agent_id} 无未读消息")
+        console.print_info(f"{agent_id} 无未读消息")  # i18n: user-facing
         return
     for m in messages:
-        acked = "已读" if m.get("acked_at") else "未读"
+        acked = "已读" if m.get("acked_at") else "未读"  # i18n: user-facing
         console.print_result(f"{m['message_id']}  {m['sender']:20s} {acked}  {m['body'][:80]}")
 
 
 @team.command("status")
 def team_status():
-    """消费池状态 — 活 consumer 数 / 积压深度 / 指标。"""
+    """Consumer pool status — live consumer count / backlog depth / metrics."""
     data = _team_api("GET", "/api/team/status")
     if data is None:
         return
-    console.print_result(f"消费池: {'运行中' if data.get('running') else '已停止'}  轮询 {data.get('poll_interval')}s")
-    console.print_result(f"活 consumer: {data.get('consumers', 0)}")
+    console.print_result(
+        f"消费池: {'运行中' if data.get('running') else '已停止'}  轮询 {data.get('poll_interval')}s"  # i18n: user-facing
+    )  # i18n: user-facing
+    console.print_result(f"活 consumer: {data.get('consumers', 0)}")  # i18n: user-facing
     metrics = data.get("metrics") or {}
     console.print_result(
-        f"积压 {metrics.get('mailbox_depth', 0)} 条 / 最老未 ack {metrics.get('oldest_unacked_age_s', 0)}s "
-        f"/ 已消费 {metrics.get('consumed', 0)} / 回信 {metrics.get('replies_sent', 0)} "
-        f"/ 派发错误 {metrics.get('dispatch_errors', 0)}"
+        f"积压 {metrics.get('mailbox_depth', 0)} 条 / 最老未 ack {metrics.get('oldest_unacked_age_s', 0)}s "  # i18n: user-facing
+        f"/ 已消费 {metrics.get('consumed', 0)} / 回信 {metrics.get('replies_sent', 0)} "  # i18n: user-facing
+        f"/ 派发错误 {metrics.get('dispatch_errors', 0)}"  # i18n: user-facing
     )
     for a in data.get("agents") or []:
         console.print_result(
-            f"  {a['agent_id']:20s} workflow={a['workflow_id']:20s} 积压={a['inbox_depth']} "
-            f"已消费={a['consumed']} 回信={a['replies_sent']}"
+            f"  {a['agent_id']:20s} workflow={a['workflow_id']:20s} 积压={a['inbox_depth']} "  # i18n: user-facing
+            f"已消费={a['consumed']} 回信={a['replies_sent']}"  # i18n: user-facing
         )
 
 
 @team.command("start")
 def team_start():
-    """启动消费池 (daemon 常驻任务)。"""
+    """Start the consumer pool (daemon-resident task)."""
     data = _team_api("POST", "/api/team/pool/start")
     if data is not None:
-        console.print_success(f"消费池: running={data.get('running')}")
+        console.print_success(f"消费池: running={data.get('running')}")  # i18n: user-facing
 
 
 @team.command("stop")
 def team_stop():
-    """停止消费池。"""
+    """Stop the consumer pool."""
     data = _team_api("POST", "/api/team/pool/stop")
     if data is not None:
-        console.print_success(f"消费池: running={data.get('running')}")
+        console.print_success(f"消费池: running={data.get('running')}")  # i18n: user-facing
 
 
-# ── Session 会话管理 ──
+# ── Session management ──
 
 
 @cli.group("session")
 def session():
-    """会话管理 — 查询/恢复/分叉工作流执行会话。"""
+    """Session management — query/resume/fork workflow execution sessions."""
     pass
 
 
 @session.command("list")
-@click.option("--status", "-s", default=None, help="按状态过滤 (created/running/completed/failed)")
-@click.option("--limit", "-n", default=20, help="返回数量")
+@click.option("--status", "-s", default=None, help="按状态过滤 (created/running/completed/failed)")  # i18n: user-facing
+@click.option("--limit", "-n", default=20, help="返回数量")  # i18n: user-facing
 def session_list(status, limit):
-    """列出会话。"""
+    """List sessions."""
     from fusion_cowork.engine.session import SessionStore
 
     store = SessionStore()
     sessions = store.list_sessions(status=status, limit=limit)
     if not sessions:
-        console.print_info("没有会话记录")
+        console.print_info("没有会话记录")  # i18n: user-facing
         return
     for s in sessions:
         console.print_result(f"{s.id}  {s.status:10s}  {s.workflow_name:20s}  {s.created_at:.0f}")
@@ -1406,27 +1430,27 @@ def session_list(status, limit):
 @session.command("show")
 @click.argument("session_id")
 def session_show(session_id):
-    """查看会话详情。"""
+    """View session details."""
     from fusion_cowork.engine.session import SessionStore
 
     store = SessionStore()
     s = store.get(session_id)
     if not s:
-        console.print_error(f"会话不存在: {session_id}")
+        console.print_error(f"会话不存在: {session_id}")  # i18n: user-facing
         return
     console.print_result(json.dumps(store.to_dict(s), indent=2, ensure_ascii=False))
 
 
 @session.command("resumable")
-@click.option("--limit", "-n", default=20, help="返回数量")
+@click.option("--limit", "-n", default=20, help="返回数量")  # i18n: user-facing
 def session_resumable(limit):
-    """列出可恢复的会话 (paused/failed/running)。"""
+    """List resumable sessions (paused/failed/running)."""
     from fusion_cowork.engine.session import SessionStore
 
     store = SessionStore()
     sessions = store.list_resumable(limit=limit)
     if not sessions:
-        console.print_info("没有可恢复的会话")
+        console.print_info("没有可恢复的会话")  # i18n: user-facing
         return
     for s in sessions:
         console.print_result(f"{s.id}  {s.status:10s}  {s.workflow_name:20s}  steps={len(s.steps_snapshot)}")
@@ -1435,109 +1459,109 @@ def session_resumable(limit):
 @session.command("resume")
 @click.argument("session_id")
 def session_resume(session_id):
-    """恢复会话 — 加载快照供重放/续跑。"""
+    """Resume a session — load a snapshot for replay/continuation."""
     from fusion_cowork.engine.session import SessionStore
 
     store = SessionStore()
     payload = store.resume(session_id)
     if not payload:
-        console.print_error(f"恢复失败: {session_id}")
+        console.print_error(f"恢复失败: {session_id}")  # i18n: user-facing
         return
     console.print_result(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 @session.command("fork")
 @click.argument("session_id")
-@click.option("--from-step", "-f", default=0, type=int, help="从第几步开始分叉 (0=全部)")
+@click.option("--from-step", "-f", default=0, type=int, help="从第几步开始分叉 (0=全部)")  # i18n: user-facing
 def session_fork(session_id, from_step):
-    """分叉会话。"""
+    """Fork a session."""
     from fusion_cowork.engine.session import SessionStore
 
     store = SessionStore()
     forked = store.fork(session_id, from_step=from_step)
     if not forked:
-        console.print_error(f"分叉失败: {session_id}")
+        console.print_error(f"分叉失败: {session_id}")  # i18n: user-facing
         return
-    console.print_result(f"已分叉: {forked.id} (from {session_id}, step={from_step})")
+    console.print_result(f"已分叉: {forked.id} (from {session_id}, step={from_step})")  # i18n: user-facing
 
 
 @session.command("delete")
 @click.argument("session_id")
-@click.confirmation_option(prompt="确认删除该会话?")
+@click.confirmation_option(prompt="确认删除该会话?")  # i18n: user-facing
 def session_delete(session_id):
-    """删除会话。"""
+    """Delete a session."""
     from fusion_cowork.engine.session import SessionStore
 
     store = SessionStore()
     if store.delete(session_id):
-        console.print_result(f"已删除: {session_id}")
+        console.print_result(f"已删除: {session_id}")  # i18n: user-facing
     else:
-        console.print_error(f"删除失败: {session_id}")
+        console.print_error(f"删除失败: {session_id}")  # i18n: user-facing
 
 
 @session.command("cleanup")
-@click.option("--days", "-d", default=30, type=int, help="清理多少天前的过期会话")
+@click.option("--days", "-d", default=30, type=int, help="清理多少天前的过期会话")  # i18n: user-facing
 def session_cleanup(days):
-    """清理过期会话。"""
+    """Clean up expired sessions."""
     from fusion_cowork.engine.session import SessionStore
 
     store = SessionStore()
     count = store.cleanup_expired(expire_days=days)
-    console.print_result(f"已清理 {count} 条过期会话")
+    console.print_result(f"已清理 {count} 条过期会话")  # i18n: user-facing
 
 
-# ── Permission 权限管理 ──
+# ── Permission management ──
 
 
 @cli.group("permission")
 def permission():
-    """权限管理 — 查看/审批/拒绝工具权限。"""
+    """Permission management — view/approve/deny tool permissions."""
     pass
 
 
 @permission.command("level")
 @click.argument("level", type=click.Choice(["manual", "auto", "plan", "bypass"]))
 def permission_level(level):
-    """设置权限级别。"""
+    """Set the permission level."""
     from fusion_cowork.engine.permission import PermissionLevel, PermissionManager
 
     pm = PermissionManager()
     pm.level = PermissionLevel(level)
     pm.save()
-    console.print_result(f"权限级别已设为: {level}")
+    console.print_result(f"权限级别已设为: {level}")  # i18n: user-facing
 
 
 @permission.command("approve")
 @click.argument("tool_name")
-@click.option("--scope", "-s", default="*", help="权限范围 (如 'command:git *')")
+@click.option("--scope", "-s", default="*", help="权限范围 (如 'command:git *')")  # i18n: user-facing
 def permission_approve(tool_name, scope):
-    """批准工具权限。"""
+    """Approve a tool permission."""
     from fusion_cowork.engine.permission import PermissionManager
 
     pm = PermissionManager()
     pm.load()
     pm.approve(tool_name, scope=scope)
     pm.save()
-    console.print_result(f"已批准: {tool_name} (scope={scope})")
+    console.print_result(f"已批准: {tool_name} (scope={scope})")  # i18n: user-facing
 
 
 @permission.command("deny")
 @click.argument("tool_name")
-@click.option("--scope", "-s", default="*", help="权限范围")
+@click.option("--scope", "-s", default="*", help="权限范围")  # i18n: user-facing
 def permission_deny(tool_name, scope):
-    """拒绝工具权限。"""
+    """Deny a tool permission."""
     from fusion_cowork.engine.permission import PermissionManager
 
     pm = PermissionManager()
     pm.load()
     pm.deny(tool_name, scope=scope)
     pm.save()
-    console.print_result(f"已拒绝: {tool_name} (scope={scope})")
+    console.print_result(f"已拒绝: {tool_name} (scope={scope})")  # i18n: user-facing
 
 
 @permission.command("list")
 def permission_list():
-    """列出权限规则。"""
+    """List permission rules."""
     from fusion_cowork.engine.permission import PermissionManager
 
     pm = PermissionManager()
@@ -1546,27 +1570,27 @@ def permission_list():
     console.print_result(json.dumps(data, indent=2, ensure_ascii=False))
 
 
-# ── 插件管理命令 ──
+# ── Plugin management commands ──
 
 
 @cli.group("plugin")
 def plugin():
-    """插件管理 — 发现/安装/加载/卸载插件。"""
+    """Plugin management — discover/install/load/unload plugins."""
     pass
 
 
 @plugin.command("list")
 def plugin_list():
-    """列出已发现和已加载的插件。"""
+    """List discovered and loaded plugins."""
     from .plugins import get_plugin_loader
 
     loader = get_plugin_loader()
     discovered = loader.discover()
     if not discovered:
-        console.print_info("没有发现插件")
-        console.print_info("插件目录: ~/.fusion-cowork/plugins/")
+        console.print_info("没有发现插件")  # i18n: user-facing
+        console.print_info("插件目录: ~/.fusion-cowork/plugins/")  # i18n: user-facing
         return
-    console.print_header(f"插件列表 ({len(discovered)} 个)")
+    console.print_header(f"插件列表 ({len(discovered)} 个)")  # i18n: user-facing
     rows = []
     for name, manifest in discovered.items():
         loaded = "✅" if name in loader._loaded else "⏸️"
@@ -1574,39 +1598,39 @@ def plugin_list():
         if len(manifest.nodes) > 3:
             nodes += f" +{len(manifest.nodes) - 3}"
         rows.append([name, manifest.version, loaded, manifest.author or "-", nodes])
-    console.print_table(["名称", "版本", "状态", "作者", "节点"], rows)
+    console.print_table(["名称", "版本", "状态", "作者", "节点"], rows)  # i18n: user-facing
 
 
 @plugin.command("install")
 @click.argument("path")
 def plugin_install(path: str):
-    """从目录、zip 或 URL (http(s)://...zip) 安装插件。"""
+    """Install a plugin from a directory, zip, or URL (http(s)://...zip)."""
     from .plugins import get_plugin_loader
 
     loader = get_plugin_loader()
     try:
         ok = loader.install(path)
         if ok:
-            console.print_success(f"已安装插件: {path}")
+            console.print_success(f"已安装插件: {path}")  # i18n: user-facing
         else:
-            console.print_error(f"安装失败: {path}")
+            console.print_error(f"安装失败: {path}")  # i18n: user-facing
     except Exception as e:
-        console.print_error(f"安装失败: {e}")
+        console.print_error(f"安装失败: {e}")  # i18n: user-facing
 
 
 @plugin.command("uninstall")
 @click.argument("name")
-@click.confirmation_option(prompt="确认卸载该插件?")
+@click.confirmation_option(prompt="确认卸载该插件?")  # i18n: user-facing
 def plugin_uninstall(name: str):
-    """卸载插件。"""
+    """Uninstall a plugin."""
     from .plugins import get_plugin_loader
 
     loader = get_plugin_loader()
     try:
         loader.uninstall(name)
-        console.print_success(f"已卸载插件: {name}")
+        console.print_success(f"已卸载插件: {name}")  # i18n: user-facing
     except Exception as e:
-        console.print_error(f"卸载失败: {e}")
+        console.print_error(f"卸载失败: {e}")  # i18n: user-facing
 
 
 @plugin.command("import-claude-desktop")
@@ -1614,59 +1638,59 @@ def plugin_uninstall(name: str):
     "--config",
     "config_path",
     default="",
-    help="claude_desktop_config.json 路径 (默认 ~/Library/Application Support/Claude/)",
+    help="claude_desktop_config.json 路径 (默认 ~/Library/Application Support/Claude/)",  # i18n: user-facing
 )
 def plugin_import_claude_desktop(config_path: str):
-    """从 Claude Desktop 配置导入 MCP server 为插件。"""
+    """Import an MCP server from the Claude Desktop config as a plugin."""
     from .plugins import get_plugin_loader
 
     loader = get_plugin_loader()
     try:
         imported = loader.import_from_claude_desktop(config_path)
         if imported:
-            console.print_success(f"已从 Claude Desktop 导入 {len(imported)} 个 MCP server:")
+            console.print_success(f"已从 Claude Desktop 导入 {len(imported)} 个 MCP server:")  # i18n: user-facing
             for name in imported:
                 console.print_info(f"  - {name}")
         else:
-            console.print_warning("未发现可导入的 MCP server (配置不存在或 mcpServers 为空)")
+            console.print_warning("未发现可导入的 MCP server (配置不存在或 mcpServers 为空)")  # i18n: user-facing
     except Exception as e:
-        console.print_error(f"导入失败: {e}")
+        console.print_error(f"导入失败: {e}")  # i18n: user-facing
 
 
 @plugin.command("load")
 @click.argument("name")
 def plugin_load(name: str):
-    """加载插件（注册节点）。"""
+    """Load a plugin (registers nodes)."""
     from .plugins import get_plugin_loader
 
     loader = get_plugin_loader()
     try:
         loader.load(name)
-        console.print_success(f"已加载插件: {name}")
+        console.print_success(f"已加载插件: {name}")  # i18n: user-facing
     except Exception as e:
-        console.print_error(f"加载失败: {e}")
+        console.print_error(f"加载失败: {e}")  # i18n: user-facing
 
 
 @plugin.command("unload")
 @click.argument("name")
 def plugin_unload(name: str):
-    """卸载插件（取消注册节点）。"""
+    """Unload a plugin (unregisters nodes)."""
     from .plugins import get_plugin_loader
 
     loader = get_plugin_loader()
     try:
         loader.unload(name)
-        console.print_success(f"已卸载插件节点: {name}")
+        console.print_success(f"已卸载插件节点: {name}")  # i18n: user-facing
     except Exception as e:
-        console.print_error(f"卸载失败: {e}")
+        console.print_error(f"卸载失败: {e}")  # i18n: user-facing
 
 
-# ── 技能命令 ──
+# ── Skill commands ──
 
 
 @cli.group("skill")
 def skill():
-    """技能管理 — 列出/搜索/执行技能。"""
+    """Skill management — list/search/run skills."""
     pass
 
 
@@ -1678,79 +1702,81 @@ def _get_skill_registry():
     try:
         register_user_packs(registry)
     except Exception as e:
-        console.print_warning(f"用户 skill 包加载失败: {e}")
+        console.print_warning(f"用户 skill 包加载失败: {e}")  # i18n: user-facing
     return registry
 
 
 @skill.command("list")
 def skill_list():
-    """列出可用技能。"""
+    """List available skills."""
     registry = _get_skill_registry()
     skills = registry.list_skills()
     if not skills:
-        console.print_info("没有可用技能")
+        console.print_info("没有可用技能")  # i18n: user-facing
         return
-    console.print_header(f"技能列表 ({len(skills)} 个)")
+    console.print_header(f"技能列表 ({len(skills)} 个)")  # i18n: user-facing
     rows = []
     for s in skills:
         aliases = ", ".join(s.aliases) if s.aliases else "-"
         rows.append([s.name, s.description[:40], s.category or "-", aliases])
-    console.print_table(["名称", "描述", "分类", "别名"], rows)
+    console.print_table(["名称", "描述", "分类", "别名"], rows)  # i18n: user-facing
 
 
 @skill.command("run")
 @click.argument("name")
-@click.option("--params", "-p", default="{}", help="参数 JSON")
+@click.option("--params", "-p", default="{}", help="参数 JSON")  # i18n: user-facing
 def skill_run(name: str, params: str):
-    """执行技能。"""
+    """Run a skill."""
     registry = _get_skill_registry()
     try:
         kwargs = json.loads(params) if params else {}
     except json.JSONDecodeError as e:
-        console.print_error(f"参数 JSON 解析失败: {e}")
+        console.print_error(f"参数 JSON 解析失败: {e}")  # i18n: user-facing
         return
     try:
         result = asyncio.run(registry.execute(name, **kwargs))
-        console.print_success(f"技能执行成功: {name}")
+        console.print_success(f"技能执行成功: {name}")  # i18n: user-facing
         if result:
             click.echo(
                 json.dumps(result, indent=2, ensure_ascii=False) if isinstance(result, (dict, list)) else str(result)
             )
     except Exception as e:
-        console.print_error(f"技能执行失败: {e}")
+        console.print_error(f"技能执行失败: {e}")  # i18n: user-facing
 
 
 @skill.command("search")
 @click.argument("query")
 def skill_search(query: str):
-    """搜索技能。"""
+    """Search skills."""
     registry = _get_skill_registry()
     results = registry.search(query)
     if not results:
-        console.print_info(f"未找到匹配 '{query}' 的技能")
+        console.print_info(f"未找到匹配 '{query}' 的技能")  # i18n: user-facing
         return
     for s in results:
         click.echo(f"  {s.name}: {s.description}")
 
 
 @skill.command("create")
-@click.option("--name", required=True, help="技能名 (如 /my-skill)")
-@click.option("--description", "-d", default="", help="技能描述")
-@click.option("--category", "-c", default="custom", help="分类")
-@click.option("--type", "stype", type=click.Choice(["workflow", "node", "script"]), default="node", help="handler 类型")
-@click.option("--template-id", default="", help="workflow 类型: 模板 id")
-@click.option("--node", default="", help="node 类型: 节点名")
-@click.option("--params", default="{}", help="node 类型: 参数 JSON")
-@click.option("--script", default="", help="script 类型: 脚本文件名 (相对包目录)")
-@click.option("--aliases", default="", help="别名, 逗号分隔")
+@click.option("--name", required=True, help="技能名 (如 /my-skill)")  # i18n: user-facing
+@click.option("--description", "-d", default="", help="技能描述")  # i18n: user-facing
+@click.option("--category", "-c", default="custom", help="分类")  # i18n: user-facing
+@click.option(
+    "--type", "stype", type=click.Choice(["workflow", "node", "script"]), default="node", help="handler 类型"  # i18n: user-facing
+)  # i18n: user-facing
+@click.option("--template-id", default="", help="workflow 类型: 模板 id")  # i18n: user-facing
+@click.option("--node", default="", help="node 类型: 节点名")  # i18n: user-facing
+@click.option("--params", default="{}", help="node 类型: 参数 JSON")  # i18n: user-facing
+@click.option("--script", default="", help="script 类型: 脚本文件名 (相对包目录)")  # i18n: user-facing
+@click.option("--aliases", default="", help="别名, 逗号分隔")  # i18n: user-facing
 def skill_create(name, description, category, stype, template_id, node, params, script, aliases):
-    """创建用户自写 skill 包 (持久化到 ~/.fusion-cowork/skills)。"""
+    """Create a user-authored skill pack (persisted to ~/.fusion-cowork/skills)."""
     from .skills import SkillPack, save_skill_pack
 
     try:
         params_dict = json.loads(params) if params else {}
     except json.JSONDecodeError as e:
-        console.print_error(f"参数 JSON 解析失败: {e}")
+        console.print_error(f"参数 JSON 解析失败: {e}")  # i18n: user-facing
         return
     pack = SkillPack(
         name=name,
@@ -1765,90 +1791,90 @@ def skill_create(name, description, category, stype, template_id, node, params, 
     )
     try:
         pdir = save_skill_pack(pack)
-        console.print_success(f"skill 包已创建: {name} -> {pdir}")
+        console.print_success(f"skill 包已创建: {name} -> {pdir}")  # i18n: user-facing
     except Exception as e:
-        console.print_error(f"skill 包创建失败: {e}")
+        console.print_error(f"skill 包创建失败: {e}")  # i18n: user-facing
 
 
 @skill.command("list-packs")
 def skill_list_packs():
-    """列出磁盘上的用户 skill 包。"""
+    """List user skill packs on disk."""
     from .skills import list_skill_packs
 
     packs = list_skill_packs()
     if not packs:
-        console.print_info("没有用户 skill 包")
+        console.print_info("没有用户 skill 包")  # i18n: user-facing
         return
-    console.print_header(f"用户 skill 包 ({len(packs)} 个)")
+    console.print_header(f"用户 skill 包 ({len(packs)} 个)")  # i18n: user-facing
     rows = []
     for p in packs:
         rows.append([p.name, p.type, p.description[:40], ", ".join(p.aliases) or "-"])
-    console.print_table(["名称", "类型", "描述", "别名"], rows)
+    console.print_table(["名称", "类型", "描述", "别名"], rows)  # i18n: user-facing
 
 
 @skill.command("packages")
 def skill_packages():
-    """列出 markdown skill 包 (内置 + 用户目录)。"""
+    """List markdown skill packs (built-in + user dirs)."""
     from .skills import get_package_registry
 
     packages = get_package_registry(reload=True).list_packages()
     if not packages:
-        console.print_info("没有 markdown skill 包")
+        console.print_info("没有 markdown skill 包")  # i18n: user-facing
         return
-    console.print_header(f"markdown skill 包 ({len(packages)} 个)")
+    console.print_header(f"markdown skill 包 ({len(packages)} 个)")  # i18n: user-facing
     rows = [[p.name, p.title or "-", p.category, ", ".join(x.name for x in p.params) or "-"] for p in packages]
-    console.print_table(["名称", "标题", "分类", "参数"], rows)
+    console.print_table(["名称", "标题", "分类", "参数"], rows)  # i18n: user-facing
 
 
 @skill.command("run-package")
 @click.argument("name")
-@click.option("--params", default="", help="参数 JSON, 如 '{\"days\": 7}'")
+@click.option("--params", default="", help="参数 JSON, 如 '{\"days\": 7}'")  # i18n: user-facing
 def skill_run_package(name: str, params: str):
-    """执行 markdown skill 包。"""
+    """Run a markdown skill pack."""
     from .skills import get_package_registry
 
     try:
         values = json.loads(params) if params else {}
     except json.JSONDecodeError as e:
-        console.print_error(f"参数 JSON 解析失败: {e}")
+        console.print_error(f"参数 JSON 解析失败: {e}")  # i18n: user-facing
         return
     result = asyncio.run(get_package_registry().run(name, values))
     if result.get("error"):
-        console.print_error(f"执行失败: {result['error']}")
+        console.print_error(f"执行失败: {result['error']}")  # i18n: user-facing
         for err in result.get("errors", []):
             click.echo(f"  - {err}")
         return
-    console.print_success(result.get("summary", f"已完成: {name}"))
+    console.print_success(result.get("summary", f"已完成: {name}"))  # i18n: user-facing
     click.echo(json.dumps(result.get("data", {}), ensure_ascii=False, indent=2))
 
 
 @skill.command("delete-pack")
 @click.argument("name")
 def skill_delete_pack(name: str):
-    """删除用户 skill 包。"""
+    """Delete a user skill pack."""
     from .skills import delete_skill_pack
 
     if delete_skill_pack(name):
-        console.print_success(f"skill 包已删除: {name}")
+        console.print_success(f"skill 包已删除: {name}")  # i18n: user-facing
     else:
-        console.print_error(f"skill 包不存在: {name}")
+        console.print_error(f"skill 包不存在: {name}")  # i18n: user-facing
 
 
-# ── CDP 命令 ──
+# ── CDP commands ──
 
 
 @cli.group("cdp")
 def cdp():
-    """Chrome DevTools Protocol — 远程控制 Chrome 浏览器。"""
+    """Chrome DevTools Protocol — remote-control the Chrome browser."""
     pass
 
 
 @cdp.command("navigate")
 @click.argument("url")
-@click.option("--host", default="127.0.0.1", help="Chrome 远程调试地址")
-@click.option("--port", default=9222, type=int, help="Chrome 远程调试端口")
+@click.option("--host", default="127.0.0.1", help="Chrome 远程调试地址")  # i18n: user-facing
+@click.option("--port", default=9222, type=int, help="Chrome 远程调试端口")  # i18n: user-facing
 def cdp_navigate(url: str, host: str, port: int):
-    """导航到指定 URL。"""
+    """Navigate to the given URL."""
     from .engine import NodeConfig
     from .nodes.browser import CDPNavigateNode
 
@@ -1864,7 +1890,7 @@ def cdp_navigate(url: str, host: str, port: int):
 @click.option("--host", default="127.0.0.1")
 @click.option("--port", default=9222, type=int)
 def cdp_snapshot(host: str, port: int):
-    """获取页面 a11y 快照。"""
+    """Get the page a11y snapshot."""
     from .engine import NodeConfig
     from .nodes.browser import CDPSnapshotNode
 
@@ -1883,7 +1909,7 @@ def cdp_snapshot(host: str, port: int):
 @click.option("--host", default="127.0.0.1")
 @click.option("--port", default=9222, type=int)
 def cdp_click(backend_node_id: int, host: str, port: int):
-    """点击页面元素 (backendNodeId)。"""
+    """Click a page element (backendNodeId)."""
     from .engine import NodeConfig
     from .nodes.browser import CDPClickNode
 
@@ -1896,12 +1922,12 @@ def cdp_click(backend_node_id: int, host: str, port: int):
 
 
 @cdp.command("fill")
-@click.option("--selector", "-s", required=True, help="CSS 选择器")
-@click.option("--value", "-v", required=True, help="填写值")
+@click.option("--selector", "-s", required=True, help="CSS 选择器")  # i18n: user-facing
+@click.option("--value", "-v", required=True, help="填写值")  # i18n: user-facing
 @click.option("--host", default="127.0.0.1")
 @click.option("--port", default=9222, type=int)
 def cdp_fill(selector: str, value: str, host: str, port: int):
-    """填写表单字段。"""
+    """Fill form fields."""
     from .engine import NodeConfig
     from .nodes.browser import CDPFillNode
 
@@ -1914,11 +1940,11 @@ def cdp_fill(selector: str, value: str, host: str, port: int):
 
 
 @cdp.command("screenshot")
-@click.option("--save", "-o", default="", help="保存路径")
+@click.option("--save", "-o", default="", help="保存路径")  # i18n: user-facing
 @click.option("--host", default="127.0.0.1")
 @click.option("--port", default=9222, type=int)
 def cdp_screenshot(save: str, host: str, port: int):
-    """截取页面截图。"""
+    """Take a page screenshot."""
     from .engine import NodeConfig
     from .nodes.browser import CDPScreenshotNode
 
@@ -1935,7 +1961,7 @@ def cdp_screenshot(save: str, host: str, port: int):
 @click.option("--host", default="127.0.0.1")
 @click.option("--port", default=9222, type=int)
 def cdp_evaluate(script: str, host: str, port: int):
-    """在页面中执行 JavaScript。"""
+    """Execute JavaScript in the page."""
     from .engine import NodeConfig
     from .nodes.browser import CDPEvaluateNode
 
@@ -1949,21 +1975,21 @@ def cdp_evaluate(script: str, host: str, port: int):
         console.print_error(result.summary)
 
 
-# ── Computer Use 命令 ──
+# ── Computer Use commands ──
 
 
 @cli.group("computer-use")
 def computer_use():
-    """Computer Use — 鼠标键盘控制 + AI 闭环。"""
+    """Computer Use — mouse/keyboard control + AI closed loop."""
     pass
 
 
 @computer_use.command("move")
 @click.argument("x", type=int)
 @click.argument("y", type=int)
-@click.option("--duration", "-d", default=0, type=float, help="移动持续时间 (秒)")
+@click.option("--duration", "-d", default=0, type=float, help="移动持续时间 (秒)")  # i18n: user-facing
 def cu_move(x: int, y: int, duration: float):
-    """移动鼠标到指定坐标。"""
+    """Move the mouse to the given coordinates."""
     from .nodes.macos.input_nodes import MouseMoveNode
 
     node = MouseMoveNode(config=NodeConfig(params={"x": x, "y": y, "duration": duration}))
@@ -1975,12 +2001,12 @@ def cu_move(x: int, y: int, duration: float):
 
 
 @computer_use.command("click")
-@click.option("--x", type=int, default=None, help="X 坐标")
-@click.option("--y", type=int, default=None, help="Y 坐标")
+@click.option("--x", type=int, default=None, help="X 坐标")  # i18n: user-facing
+@click.option("--y", type=int, default=None, help="Y 坐标")  # i18n: user-facing
 @click.option("--button", "-b", type=click.Choice(["left", "right", "middle"]), default="left")
-@click.option("--count", "-c", type=int, default=1, help="点击次数")
+@click.option("--count", "-c", type=int, default=1, help="点击次数")  # i18n: user-facing
 def cu_click(x, y, button, count):
-    """鼠标点击。"""
+    """Mouse click."""
     from .nodes.macos.input_nodes import MouseClickNode
 
     params = {"button": button, "click_count": count}
@@ -1997,9 +2023,9 @@ def cu_click(x, y, button, count):
 
 @computer_use.command("type")
 @click.argument("text")
-@click.option("--delay", "-d", default=0, type=float, help="字符间延迟 (秒)")
+@click.option("--delay", "-d", default=0, type=float, help="字符间延迟 (秒)")  # i18n: user-facing
 def cu_type(text: str, delay: float):
-    """键盘输入文本。"""
+    """Type text on the keyboard."""
     from .nodes.macos.input_nodes import KeyboardTypeNode
 
     node = KeyboardTypeNode(config=NodeConfig(params={"text": text, "delay": delay}))
@@ -2012,9 +2038,9 @@ def cu_type(text: str, delay: float):
 
 @computer_use.command("shortcut")
 @click.argument("key")
-@click.option("--modifiers", "-m", multiple=True, help="修饰键 (cmd/shift/ctrl/alt)")
+@click.option("--modifiers", "-m", multiple=True, help="修饰键 (cmd/shift/ctrl/alt)")  # i18n: user-facing
 def cu_shortcut(key: str, modifiers):
-    """键盘快捷键。"""
+    """Keyboard shortcut."""
     from .nodes.macos.input_nodes import KeyboardShortcutNode
 
     node = KeyboardShortcutNode(config=NodeConfig(params={"key": key, "modifiers": list(modifiers)}))
@@ -2027,11 +2053,11 @@ def cu_shortcut(key: str, modifiers):
 
 @computer_use.command("run")
 @click.argument("task")
-@click.option("--max-steps", default=10, type=int, help="最大循环步数")
-@click.option("--step-delay", default=1.0, type=float, help="每步间隔 (秒)")
-@click.option("--model", default="default", help="fusion-mlx 模型名")
+@click.option("--max-steps", default=10, type=int, help="最大循环步数")  # i18n: user-facing
+@click.option("--step-delay", default=1.0, type=float, help="每步间隔 (秒)")  # i18n: user-facing
+@click.option("--model", default="default", help="fusion-mlx 模型名")  # i18n: user-facing
 def cu_run(task: str, max_steps: int, step_delay: float, model: str):
-    """执行 Computer Use 闭环任务。"""
+    """Run a Computer Use closed-loop task."""
     from .nodes.macos.input_nodes import ComputerUseLoopNode
 
     node = ComputerUseLoopNode(
@@ -2054,23 +2080,23 @@ def cu_run(task: str, max_steps: int, step_delay: float, model: str):
         console.print_error(result.error or result.summary)
 
 
-# ── 远程控制命令 ──
+# ── Remote control commands ──
 
 
 @cli.group("remote")
 def remote():
-    """远程控制 — WebSocket 接入 fusion-cowork 会话。"""
+    """Remote control — attach to a fusion-cowork session over WebSocket."""
     pass
 
 
 @remote.command("serve")
-@click.option("--host", "-h", default="127.0.0.1", help="监听地址")
-@click.option("--port", "-p", default=11439, type=int, help="监听端口")
-@click.option("--token", "-t", default="", help="认证令牌 (空则无认证)")
-@click.option("--tls-cert", default="", help="TLS 证书路径 (PEM), 启用 wss://")
-@click.option("--tls-key", default="", help="TLS 私钥路径 (PEM)")
+@click.option("--host", "-h", default="127.0.0.1", help="监听地址")  # i18n: user-facing
+@click.option("--port", "-p", default=11439, type=int, help="监听端口")  # i18n: user-facing
+@click.option("--token", "-t", default="", help="认证令牌 (空则无认证)")  # i18n: user-facing
+@click.option("--tls-cert", default="", help="TLS 证书路径 (PEM), 启用 wss://")  # i18n: user-facing
+@click.option("--tls-key", default="", help="TLS 私钥路径 (PEM)")  # i18n: user-facing
 def remote_serve(host: str, port: int, token: str, tls_cert: str, tls_key: str):
-    """启动远程控制服务 (可选 TLS)。"""
+    """Start the remote control service (optional TLS)."""
     _set_process_title("fusion-cowork remote")
     from .server.remote import RemoteControlServer
 
@@ -2079,14 +2105,14 @@ def remote_serve(host: str, port: int, token: str, tls_cert: str, tls_key: str):
     async def _run():
         await server.start()
         scheme = "wss" if (tls_cert and tls_key) else "ws"
-        console.print_success(f"远程控制服务已启动: {scheme}://{host}:{port}/control")
+        console.print_success(f"远程控制服务已启动: {scheme}://{host}:{port}/control")  # i18n: user-facing
         if token:
             _t = str(token)
-            _shown = f"{_t[:4]}***{_t[-4:]}" if len(_t) > 8 else "(已设置)"
-            console.print_info(f"认证令牌: {_shown}")
+            _shown = f"{_t[:4]}***{_t[-4:]}" if len(_t) > 8 else "(已设置)"  # i18n: user-facing
+            console.print_info(f"认证令牌: {_shown}")  # i18n: user-facing
         if tls_cert and tls_key:
-            console.print_info(f"TLS 已启用: cert={tls_cert}")
-        console.print_info("等待远程连接... (Ctrl+C 停止)")
+            console.print_info(f"TLS 已启用: cert={tls_cert}")  # i18n: user-facing
+        console.print_info("等待远程连接... (Ctrl+C 停止)")  # i18n: user-facing
         try:
             while True:
                 await asyncio.sleep(1)
@@ -2098,21 +2124,21 @@ def remote_serve(host: str, port: int, token: str, tls_cert: str, tls_key: str):
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
-        console.print_info("远程控制服务已停止")
+        console.print_info("远程控制服务已停止")  # i18n: user-facing
 
 
 @remote.command("connect")
 @click.argument("url", default="ws://127.0.0.1:11439/control")
-@click.option("--token", "-t", default="", help="认证令牌")
+@click.option("--token", "-t", default="", help="认证令牌")  # i18n: user-facing
 def remote_connect(url: str, token: str):
-    """连接到远程 fusion-cowork 实例。"""
+    """Connect to a remote fusion-cowork instance."""
     from .server.remote import RemoteControlClient
 
     client = RemoteControlClient(token=token or None)
 
     async def _run():
         await client.connect(url)
-        console.print_success(f"已连接: {url}")
+        console.print_success(f"已连接: {url}")  # i18n: user-facing
         try:
             status = await client.get_status()
             click.echo(json.dumps(status, indent=2, ensure_ascii=False))
@@ -2122,15 +2148,15 @@ def remote_connect(url: str, token: str):
     try:
         asyncio.run(_run())
     except Exception as e:
-        console.print_error(f"连接失败: {e}")
+        console.print_error(f"连接失败: {e}")  # i18n: user-facing
 
 
 @remote.command("submit")
 @click.argument("workflow_file", type=click.Path(exists=True))
-@click.option("--url", default="ws://127.0.0.1:11439/control", help="远程服务地址")
-@click.option("--token", "-t", default="", help="认证令牌")
+@click.option("--url", default="ws://127.0.0.1:11439/control", help="远程服务地址")  # i18n: user-facing
+@click.option("--token", "-t", default="", help="认证令牌")  # i18n: user-facing
 def remote_submit(workflow_file: str, url: str, token: str):
-    """提交工作流到远程 fusion-cowork 执行。"""
+    """Submit a workflow to a remote fusion-cowork for execution."""
     from .server.remote import RemoteControlClient
 
     client = RemoteControlClient(token=token or None)
@@ -2141,67 +2167,67 @@ def remote_submit(workflow_file: str, url: str, token: str):
             with open(workflow_file, encoding="utf-8") as f:
                 workflow = json.load(f)
             task_id = await client.submit_workflow(workflow)
-            console.print_success(f"已提交工作流: {task_id}")
-            click.echo(f"任务 ID: {task_id}")
+            console.print_success(f"已提交工作流: {task_id}")  # i18n: user-facing
+            click.echo(f"任务 ID: {task_id}")  # i18n: user-facing
         finally:
             await client.close()
 
     try:
         asyncio.run(_run())
     except Exception as e:
-        console.print_error(f"提交失败: {e}")
+        console.print_error(f"提交失败: {e}")  # i18n: user-facing
 
 
-# ── Worktree git 隔离命令 ──
+# ── Worktree git isolation commands ──
 
 
 @cli.group("worktree")
 def worktree():
-    """Worktree — git 工作树隔离执行。"""
+    """Worktree — git worktree isolated execution."""
     pass
 
 
 @worktree.command("create")
 @click.argument("name")
-@click.option("--branch", "-b", default="", help="checkout 已有分支 (空则新建 worktree/<name>)")
-@click.option("--repo-root", "-r", default="", help="git 仓库根 (空则自动检测)")
+@click.option("--branch", "-b", default="", help="checkout 已有分支 (空则新建 worktree/<name>)")  # i18n: user-facing
+@click.option("--repo-root", "-r", default="", help="git 仓库根 (空则自动检测)")  # i18n: user-facing
 def worktree_create(name: str, branch: str, repo_root: str):
-    """创建隔离工作树。"""
+    """Create an isolated worktree."""
     from .utils.worktree import WorktreeManager
 
     mgr = WorktreeManager(repo_root=repo_root)
     wt = mgr.create(name, branch=branch)
     if not wt:
-        console.print_error(f"worktree 创建失败: {name}")
+        console.print_error(f"worktree 创建失败: {name}")  # i18n: user-facing
         return
-    console.print_success(f"worktree 已创建: {name}")
+    console.print_success(f"worktree 已创建: {name}")  # i18n: user-facing
     click.echo(json.dumps(wt.to_dict(), indent=2, ensure_ascii=False))
 
 
 @worktree.command("list")
-@click.option("--repo-root", "-r", default="", help="git 仓库根 (空则自动检测)")
+@click.option("--repo-root", "-r", default="", help="git 仓库根 (空则自动检测)")  # i18n: user-facing
 def worktree_list(repo_root: str):
-    """列出所有工作树。"""
+    """List all worktrees."""
     from .utils.worktree import WorktreeManager
 
     mgr = WorktreeManager(repo_root=repo_root)
     wts = mgr.list_worktrees()
-    console.print_header(f"Worktree 列表 ({len(wts)} 个)")
+    console.print_header(f"Worktree 列表 ({len(wts)} 个)")  # i18n: user-facing
     rows = [[w.path, w.branch, w.head[:8]] for w in wts]
-    console.print_table(["路径", "分支", "HEAD"], rows)
+    console.print_table(["路径", "分支", "HEAD"], rows)  # i18n: user-facing
 
 
 @worktree.command("exec")
 @click.argument("name")
 @click.argument("command")
-@click.option("--repo-root", "-r", default="", help="git 仓库根 (空则自动检测)")
-@click.option("--timeout", "-t", default=30, type=int, help="超时 (秒)")
+@click.option("--repo-root", "-r", default="", help="git 仓库根 (空则自动检测)")  # i18n: user-facing
+@click.option("--timeout", "-t", default=30, type=int, help="超时 (秒)")  # i18n: user-facing
 def worktree_exec(name: str, command: str, repo_root: str, timeout: int):
-    """在隔离工作树内执行命令。"""
+    """Execute a command inside an isolated worktree."""
     from .utils.worktree import WorktreeManager
 
     mgr = WorktreeManager(repo_root=repo_root)
-    # 按名称匹配登记现有 worktree
+    # register an existing worktree by name match
     if not mgr.get(name):
         for w in mgr.list_worktrees():
             if Path(w.path).name == name:
@@ -2222,15 +2248,15 @@ def worktree_exec(name: str, command: str, repo_root: str, timeout: int):
         if result.get("stderr"):
             click.echo(result["stderr"], nl=False, err=True)
     except Exception as e:
-        console.print_error(f"执行失败: {e}")
+        console.print_error(f"执行失败: {e}")  # i18n: user-facing
 
 
 @worktree.command("remove")
 @click.argument("name")
-@click.option("--repo-root", "-r", default="", help="git 仓库根 (空则自动检测)")
-@click.option("--force", "-f", is_flag=True, help="强制删除")
+@click.option("--repo-root", "-r", default="", help="git 仓库根 (空则自动检测)")  # i18n: user-facing
+@click.option("--force", "-f", is_flag=True, help="强制删除")  # i18n: user-facing
 def worktree_remove(name: str, repo_root: str, force: bool):
-    """删除隔离工作树。"""
+    """Delete an isolated worktree."""
     from .utils.worktree import WorktreeManager
 
     mgr = WorktreeManager(repo_root=repo_root)
@@ -2240,17 +2266,17 @@ def worktree_remove(name: str, repo_root: str, force: bool):
                 mgr._worktrees[name] = w
                 break
     if mgr.remove(name, force=force):
-        console.print_success(f"worktree 已删除: {name}")
+        console.print_success(f"worktree 已删除: {name}")  # i18n: user-facing
     else:
-        console.print_error(f"worktree 删除失败: {name}")
+        console.print_error(f"worktree 删除失败: {name}")  # i18n: user-facing
 
 
-# ── LSP 代码智能命令 ──
+# ── LSP code intelligence commands ──
 
 
 @cli.group("lsp")
 def lsp():
-    """LSP — 代码智能 (定义/引用/悬停/补全)。"""
+    """LSP — code intelligence (definition/references/hover/completion)."""
     pass
 
 
@@ -2260,12 +2286,12 @@ def _lsp_query_common(action: str, path: str, line: int, character: int, root: s
     try:
         result = asyncio.run(lsp_query(action, path, line, character, root=root))
     except Exception as e:
-        console.print_error(f"LSP 查询失败: {e}")
+        console.print_error(f"LSP 查询失败: {e}")  # i18n: user-facing
         return
     if "error" in result:
         console.print_error(result["error"])
         return
-    console.print_success(f"LSP {action} 结果:")
+    console.print_success(f"LSP {action} 结果:")  # i18n: user-facing
     click.echo(json.dumps(result, indent=2, ensure_ascii=False))
 
 
@@ -2273,9 +2299,9 @@ def _lsp_query_common(action: str, path: str, line: int, character: int, root: s
 @click.argument("path")
 @click.argument("line", type=int)
 @click.argument("character", type=int)
-@click.option("--root", "-r", default="", help="LSP workspace 根 (空则取文件目录)")
+@click.option("--root", "-r", default="", help="LSP workspace 根 (空则取文件目录)")  # i18n: user-facing
 def lsp_definition(path: str, line: int, character: int, root: str):
-    """查询定义位置。"""
+    """Query definition locations."""
     _lsp_query_common("definition", path, line, character, root)
 
 
@@ -2283,9 +2309,9 @@ def lsp_definition(path: str, line: int, character: int, root: str):
 @click.argument("path")
 @click.argument("line", type=int)
 @click.argument("character", type=int)
-@click.option("--root", "-r", default="", help="LSP workspace 根 (空则取文件目录)")
+@click.option("--root", "-r", default="", help="LSP workspace 根 (空则取文件目录)")  # i18n: user-facing
 def lsp_references(path: str, line: int, character: int, root: str):
-    """查询引用位置。"""
+    """Query reference locations."""
     _lsp_query_common("references", path, line, character, root)
 
 
@@ -2293,9 +2319,9 @@ def lsp_references(path: str, line: int, character: int, root: str):
 @click.argument("path")
 @click.argument("line", type=int)
 @click.argument("character", type=int)
-@click.option("--root", "-r", default="", help="LSP workspace 根 (空则取文件目录)")
+@click.option("--root", "-r", default="", help="LSP workspace 根 (空则取文件目录)")  # i18n: user-facing
 def lsp_hover(path: str, line: int, character: int, root: str):
-    """查询悬停信息。"""
+    """Query hover info."""
     _lsp_query_common("hover", path, line, character, root)
 
 
@@ -2303,42 +2329,44 @@ def lsp_hover(path: str, line: int, character: int, root: str):
 @click.argument("path")
 @click.argument("line", type=int)
 @click.argument("character", type=int)
-@click.option("--root", "-r", default="", help="LSP workspace 根 (空则取文件目录)")
+@click.option("--root", "-r", default="", help="LSP workspace 根 (空则取文件目录)")  # i18n: user-facing
 def lsp_completion(path: str, line: int, character: int, root: str):
-    """查询补全项。"""
+    """Query completion items."""
     _lsp_query_common("completion", path, line, character, root)
 
 
-# ── 移动推送命令 ──
+# ── Mobile push commands ──
 
 
 @cli.group("push")
 def push():
-    """移动推送 — Bark/ntfy 跨平台通知 (未配置降级本地)。"""
+    """Mobile push — Bark/ntfy cross-platform notifications (falls back to local when unconfigured)."""
     pass
 
 
 @push.command("send")
 @click.argument("title")
 @click.argument("message")
-@click.option("--provider", "-p", type=click.Choice(["auto", "bark", "ntfy", "local"]), default="auto", help="推送渠道")
+@click.option(
+    "--provider", "-p", type=click.Choice(["auto", "bark", "ntfy", "local"]), default="auto", help="推送渠道"  # i18n: user-facing
+)  # i18n: user-facing
 @click.option("--url", "-u", default="", help="Bark/ntfy server URL")
 @click.option("--token", "-t", default="", help="Bark device key / ntfy topic")
-@click.option("--sound", default="", help="提示音 (Bark)")
-@click.option("--priority", default="", help="优先级 (ntfy 1-5)")
-@click.option("--group", default="", help="分组")
+@click.option("--sound", default="", help="提示音 (Bark)")  # i18n: user-facing
+@click.option("--priority", default="", help="优先级 (ntfy 1-5)")  # i18n: user-facing
+@click.option("--group", default="", help="分组")  # i18n: user-facing
 def push_send(title: str, message: str, provider: str, url: str, token: str, sound: str, priority: str, group: str):
-    """发送移动推送通知。"""
+    """Send a mobile push notification."""
     from .notification import push as do_push
 
     result = asyncio.run(
         do_push(title, message, provider=provider, url=url, token=token, sound=sound, priority=priority, group=group)
     )
     if result.success:
-        tag = " (降级本地)" if result.degraded else ""
-        console.print_success(f"✅ 推送成功 via {result.provider}{tag}")
+        tag = " (降级本地)" if result.degraded else ""  # i18n: user-facing
+        console.print_success(f"✅ 推送成功 via {result.provider}{tag}")  # i18n: user-facing
     else:
-        console.print_error(f"❌ 推送失败: {result.error}")
+        console.print_error(f"❌ 推送失败: {result.error}")  # i18n: user-facing
     click.echo(
         json.dumps(
             {
@@ -2354,118 +2382,122 @@ def push_send(title: str, message: str, provider: str, url: str, token: str, sou
 
 
 @push.command("config")
-@click.option("--bark-url", default=None, help="Bark server URL (如 https://api.day.app)")
-@click.option("--ntfy-url", default=None, help="ntfy server URL (如 https://ntfy.sh)")
+@click.option("--bark-url", default=None, help="Bark server URL (如 https://api.day.app)")  # i18n: user-facing
+@click.option("--ntfy-url", default=None, help="ntfy server URL (如 https://ntfy.sh)")  # i18n: user-facing
 @click.option("--ntfy-token", default=None, help="ntfy topic / token")
-@click.option("--sound", default=None, help="默认提示音")
-@click.option("--priority", default=None, help="默认优先级")
+@click.option("--sound", default=None, help="默认提示音")  # i18n: user-facing
+@click.option("--priority", default=None, help="默认优先级")  # i18n: user-facing
 def push_config(bark_url, ntfy_url, ntfy_token, sound, priority):
-    """查看或设置推送渠道配置 (持久化到 ConfigCenter)。"""
+    """View or set push channel config (persisted to ConfigCenter)."""
     from .config_center import ConfigCenter
 
     cc = ConfigCenter.get_instance()
     if all(v is None for v in (bark_url, ntfy_url, ntfy_token, sound, priority)):
-        console.print_info(f"Bark URL: {cc.get('push.bark_url', '(未设置)')}")
-        console.print_info(f"ntfy URL: {cc.get('push.ntfy_url', '(未设置)')}")
-        # Stage 2: token 脱敏显示 (仅前4后4, 中间 *)
+        console.print_info(f"Bark URL: {cc.get('push.bark_url', '(未设置)')}")  # i18n: user-facing
+        console.print_info(f"ntfy URL: {cc.get('push.ntfy_url', '(未设置)')}")  # i18n: user-facing
+        # Stage 2: token masking for display (first 4 / last 4, middle *)
         _ntfy = cc.get("push.ntfy_token", "") or ""
-        _shown = f"{_ntfy[:4]}***{_ntfy[-4:]}" if len(_ntfy) > 8 else ("(已设置)" if _ntfy else "(未设置)")
+        _shown = (
+            f"{_ntfy[:4]}***{_ntfy[-4:]}" if len(_ntfy) > 8 else ("(已设置)" if _ntfy else "(未设置)")  # i18n: user-facing
+        )  # i18n: user-facing
         console.print_info(f"ntfy Token: {_shown}")
-        console.print_info(f"提示音: {cc.get('push.sound', '(未设置)')}")
-        console.print_info(f"优先级: {cc.get('push.priority', '(未设置)')}")
+        console.print_info(f"提示音: {cc.get('push.sound', '(未设置)')}")  # i18n: user-facing
+        console.print_info(f"优先级: {cc.get('push.priority', '(未设置)')}")  # i18n: user-facing
         return
     if bark_url is not None:
         cc.set("push.bark_url", bark_url)
-        console.print_result(f"Bark URL 已设置: {bark_url}")
+        console.print_result(f"Bark URL 已设置: {bark_url}")  # i18n: user-facing
     if ntfy_url is not None:
         cc.set("push.ntfy_url", ntfy_url)
-        console.print_result(f"ntfy URL 已设置: {ntfy_url}")
+        console.print_result(f"ntfy URL 已设置: {ntfy_url}")  # i18n: user-facing
     if ntfy_token is not None:
         cc.set("push.ntfy_token", ntfy_token)
         _nt = str(ntfy_token)
-        _nshown = f"{_nt[:4]}***{_nt[-4:]}" if len(_nt) > 8 else "(已设置)"
-        console.print_result(f"ntfy Token 已设置: {_nshown}")
+        _nshown = f"{_nt[:4]}***{_nt[-4:]}" if len(_nt) > 8 else "(已设置)"  # i18n: user-facing
+        console.print_result(f"ntfy Token 已设置: {_nshown}")  # i18n: user-facing
     if sound is not None:
         cc.set("push.sound", sound)
     if priority is not None:
         cc.set("push.priority", priority)
 
 
-# ── 深度研究命令 ──
+# ── Deep research commands ──
 
 
 @cli.group("research")
 def research():
-    """深度研究 — 多 Agent 研究 (规划→搜索→合成)。"""
+    """Deep research — multi-agent research (plan -> search -> synthesize)."""
     pass
 
 
 @research.command("run")
 @click.argument("question")
-@click.option("--depth", "-d", type=int, default=3, help="子问题数量 (规划深度)")
-@click.option("--max-sources", "-s", type=int, default=3, help="每子问题最大来源数")
-@click.option("--model", "-m", default="", help="fusion-mlx 模型 (空则自动)")
-@click.option("--output", "-o", default="", help="输出 Markdown 文件路径 (空则打印)")
+@click.option("--depth", "-d", type=int, default=3, help="子问题数量 (规划深度)")  # i18n: user-facing
+@click.option("--max-sources", "-s", type=int, default=3, help="每子问题最大来源数")  # i18n: user-facing
+@click.option("--model", "-m", default="", help="fusion-mlx 模型 (空则自动)")  # i18n: user-facing
+@click.option("--output", "-o", default="", help="输出 Markdown 文件路径 (空则打印)")  # i18n: user-facing
 def research_run(question: str, depth: int, max_sources: int, model: str, output: str):
-    """运行深度研究, 产出带引用的研究报告。"""
+    """Run deep research, producing a cited research report."""
     from .research import run_deep_research
 
-    console.print_header(f"🔍 深度研究: {question}")
+    console.print_header(f"🔍 深度研究: {question}")  # i18n: user-facing
     report = asyncio.run(
         run_deep_research(question, depth=depth, max_sources=max_sources, model=model, mlx_client=_get_mlx_client())
     )
     if report.error and not report.findings:
-        console.print_error(f"❌ 研究失败: {report.error}")
+        console.print_error(f"❌ 研究失败: {report.error}")  # i18n: user-facing
         return
     if report.degraded:
-        console.print_warning("⚠️  LLM 不可用, 使用降级模式 (原始发现汇总)")
-    console.print_info(f"子问题: {len(report.sub_questions)} | 来源: {report.sources_used}")
+        console.print_warning("⚠️  LLM 不可用, 使用降级模式 (原始发现汇总)")  # i18n: user-facing
+    console.print_info(f"子问题: {len(report.sub_questions)} | 来源: {report.sources_used}")  # i18n: user-facing
 
     md = _format_research_report(report)
     if output:
         Path(output).write_text(md, encoding="utf-8")
-        console.print_success(f"✅ 报告已写入: {output}")
+        console.print_success(f"✅ 报告已写入: {output}")  # i18n: user-facing
     else:
         click.echo(md)
 
 
 def _format_research_report(report) -> str:
-    lines = [f"# 深度研究报告: {report.question}", ""]
+    lines = [f"# 深度研究报告: {report.question}", ""]  # i18n: user-facing
     if report.sub_questions:
-        lines.append("## 研究子问题")
+        lines.append("## 研究子问题")  # i18n: user-facing
         for i, sq in enumerate(report.sub_questions, 1):
             lines.append(f"{i}. {sq.question}")
             if sq.rationale:
                 lines.append(f"   _{sq.rationale}_")
         lines.append("")
-    lines.append("## 研究报告")
+    lines.append("## 研究报告")  # i18n: user-facing
     lines.append("")
     lines.append(report.synthesis)
     lines.append("")
     if report.findings:
-        lines.append("## 引用来源")
+        lines.append("## 引用来源")  # i18n: user-facing
         for i, f in enumerate(report.findings, 1):
             lines.append(f"[{i}] {f.title} — {f.url}")
     return "\n".join(lines)
 
 
-# ── 多 Agent 代码审查命令 ──
+# ── Multi-agent code review commands ──
 
 
 @cli.group("review")
 def review():
-    """UltraReview — 多 Agent 代码审查 (安全/正确性/风格/测试)。"""
+    """UltraReview — multi-agent code review (security/correctness/style/tests)."""
     pass
 
 
 @review.command("run")
 @click.argument("paths", nargs=-1)
-@click.option("--model", "-m", default="", help="fusion-mlx 模型 (空则自动)")
-@click.option("--lens", "-l", multiple=True, help="审查视角 (security/correctness/style/tests, 可多次)")
-@click.option("--diff", "use_diff", is_flag=True, help="审查 git diff 变更文件 (忽略 paths)")
-@click.option("--output", "-o", default="", help="输出 Markdown 文件路径 (空则打印)")
+@click.option("--model", "-m", default="", help="fusion-mlx 模型 (空则自动)")  # i18n: user-facing
+@click.option(
+    "--lens", "-l", multiple=True, help="审查视角 (security/correctness/style/tests, 可多次)"  # i18n: user-facing
+)  # i18n: user-facing
+@click.option("--diff", "use_diff", is_flag=True, help="审查 git diff 变更文件 (忽略 paths)")  # i18n: user-facing
+@click.option("--output", "-o", default="", help="输出 Markdown 文件路径 (空则打印)")  # i18n: user-facing
 def review_run(paths, model: str, lens, use_diff: bool, output: str):
-    """运行多视角代码审查。"""
+    """Run a multi-perspective code review."""
     from .review import run_ultra_review
     from .review.ultra_review import collect_git_diff_files
 
@@ -2473,82 +2505,82 @@ def review_run(paths, model: str, lens, use_diff: bool, output: str):
     if use_diff:
         targets = collect_git_diff_files()
         if not targets:
-            console.print_warning("⚠️  git diff 无变更 .py 文件")
+            console.print_warning("⚠️  git diff 无变更 .py 文件")  # i18n: user-facing
             return
-        console.print_info(f"审查 git diff 变更: {len(targets)} 个文件")
+        console.print_info(f"审查 git diff 变更: {len(targets)} 个文件")  # i18n: user-facing
     if not targets:
-        console.print_error("❌ 未指定审查目标 (paths 或 --diff)")
+        console.print_error("❌ 未指定审查目标 (paths 或 --diff)")  # i18n: user-facing
         return
 
     lenses = list(lens) if lens else None
-    console.print_header(f"🔎 UltraReview: {len(targets)} 个目标")
+    console.print_header(f"🔎 UltraReview: {len(targets)} 个目标")  # i18n: user-facing
     report = asyncio.run(run_ultra_review(targets, model=model, mlx_client=_get_mlx_client(), lenses=lenses))
     if report.error and not report.files_reviewed:
-        console.print_error(f"❌ 审查失败: {report.error}")
+        console.print_error(f"❌ 审查失败: {report.error}")  # i18n: user-facing
         return
     if report.degraded:
-        console.print_warning("⚠️  LLM 不可用, 使用降级模式 (文件清单)")
-    console.print_info(f"审查文件: {len(report.files_reviewed)} | 发现: {len(report.findings)}")
+        console.print_warning("⚠️  LLM 不可用, 使用降级模式 (文件清单)")  # i18n: user-facing
+    console.print_info(f"审查文件: {len(report.files_reviewed)} | 发现: {len(report.findings)}")  # i18n: user-facing
 
     md = _format_review_report(report)
     if output:
         Path(output).write_text(md, encoding="utf-8")
-        console.print_success(f"✅ 报告已写入: {output}")
+        console.print_success(f"✅ 报告已写入: {output}")  # i18n: user-facing
     else:
         click.echo(md)
 
 
 def _format_review_report(report) -> str:
-    lines = ["# UltraReview 代码审查报告", "", f"目标: {report.target}", ""]
+    lines = ["# UltraReview 代码审查报告", "", f"目标: {report.target}", ""]  # i18n: user-facing
     if report.files_reviewed:
-        lines.append("## 审查文件")
+        lines.append("## 审查文件")  # i18n: user-facing
         for p in report.files_reviewed:
             lines.append(f"- {p}")
         lines.append("")
     if report.findings:
-        lines.append("## 发现问题")
+        lines.append("## 发现问题")  # i18n: user-facing
         for i, f in enumerate(report.findings, 1):
             lines.append(f"{i}. **[{f.severity.upper()}]** {f.file}:{f.line} — {f.message}  ")
-            lines.append(f"   _视角: {f.lens} | 类别: {f.category}_")
+            lines.append(f"   _视角: {f.lens} | 类别: {f.category}_")  # i18n: user-facing
         lines.append("")
-    lines.append("## 审查总结")
+    lines.append("## 审查总结")  # i18n: user-facing
     lines.append("")
     lines.append(report.summary)
     return "\n".join(lines)
 
 
-# ── Schema 结构化输出命令 ──
+# ── Schema structured output commands ──
 
 
 @cli.group("agent-loop")
 def agent_loop():
-    """交互式对话 Agent Loop — 白话自主拆解多步, 逐步观察决策行动。"""
+    """Interactive conversational agent loop — decomposes plain-language goals into steps, observing/deciding/acting iteratively."""
     pass
 
 
 @agent_loop.command("run")
 @click.argument("prompt")
-@click.option("--model", "-m", default="", help="fusion-mlx 模型 (空则自动)")
-@click.option("--max-steps", default=20, help="最大循环步数")
+@click.option("--model", "-m", default="", help="fusion-mlx 模型 (空则自动)")  # i18n: user-facing
+@click.option("--max-steps", default=20, help="最大循环步数")  # i18n: user-facing
 def agent_loop_run(prompt: str, model: str, max_steps: int):
-    """运行交互式 agent loop (单轮)。"""
+    """Run the interactive agent loop (single turn)."""
     from .agent_loop import AgentLoop
     from .nodes import import_all_nodes
 
     import_all_nodes()
 
     loop = AgentLoop(mlx_client=_get_mlx_client(), model=model, max_steps=max_steps, on_turn=_print_agent_turn)
-    console.print_header(f"🤖 Agent Loop (max {max_steps} 步)")
+    console.print_header(f"🤖 Agent Loop (max {max_steps} 步)")  # i18n: user-facing
     result = asyncio.run(loop.run(prompt))
     if result.degraded:
-        console.print_warning("⚠️  LLM 不可用, 降级模式")
+        console.print_warning("⚠️  LLM 不可用, 降级模式")  # i18n: user-facing
     if result.interrupted:
-        console.print_warning("⚠️  被用户叫停")
-    console.print_info(f"完成={result.completed} 步数={len(result.turns)}")
+        console.print_warning("⚠️  被用户叫停")  # i18n: user-facing
+    console.print_info(f"完成={result.completed} 步数={len(result.turns)}")  # i18n: user-facing
 
 
 def _print_agent_turn(turn):
-    if turn.role == "user" and turn.content.startswith("[补充]"):
+    if turn.role == "user" and turn.content.startswith("[补充]"):  # i18n: user-facing
         console.print_info(turn.content)
         return
     if turn.role == "user":
@@ -2558,57 +2590,59 @@ def _print_agent_turn(turn):
         return
     console.print_info(f"[{turn.action.type}] {turn.action.message}")
     if turn.action.node:
-        click.echo(f"    节点: {turn.action.node} | 参数: {json.dumps(turn.action.params, ensure_ascii=False)}")
+        click.echo(
+            f"    节点: {turn.action.node} | 参数: {json.dumps(turn.action.params, ensure_ascii=False)}"  # i18n: user-facing
+        )  # i18n: user-facing
     if turn.observation:
-        click.echo(f"    观察: {turn.observation[:200]}")
+        click.echo(f"    观察: {turn.observation[:200]}")  # i18n: user-facing
 
 
 @agent_loop.command("chat")
-@click.option("--model", "-m", default="", help="fusion-mlx 模型 (空则自动)")
-@click.option("--max-steps", default=20, help="单轮最大循环步数")
+@click.option("--model", "-m", default="", help="fusion-mlx 模型 (空则自动)")  # i18n: user-facing
+@click.option("--max-steps", default=20, help="单轮最大循环步数")  # i18n: user-facing
 def agent_loop_chat(model: str, max_steps: int):
-    """交互式多轮对话 agent loop (REPL, 输入 quit 退出)。"""
+    """Interactive multi-turn agent loop (REPL, type quit to exit)."""
     from .agent_loop import AgentLoop
     from .nodes import import_all_nodes
 
     import_all_nodes()
 
     loop = AgentLoop(mlx_client=_get_mlx_client(), model=model, max_steps=max_steps, on_turn=_print_agent_turn)
-    console.print_header("🤖 Agent Loop 对话模式 (输入 quit 退出, stop 叫停当前轮)")
+    console.print_header("🤖 Agent Loop 对话模式 (输入 quit 退出, stop 叫停当前轮)")  # i18n: user-facing
     while True:
         try:
-            line = input("你> ").strip()
+            line = input("你> ").strip()  # i18n: user-facing
         except (EOFError, KeyboardInterrupt):
-            click.echo("\n再见")
+            click.echo("\n再见")  # i18n: user-facing
             break
         if not line:
             continue
         if line.lower() == "quit":
-            click.echo("再见")
+            click.echo("再见")  # i18n: user-facing
             break
         if line.lower() == "stop":
             loop.interrupt()
             continue
         result = asyncio.run(loop.run(line))
         if result.degraded:
-            console.print_warning("⚠️  LLM 不可用, 降级模式")
-        console.print_info(f"  完成={result.completed} 步数={len(result.turns)}")
+            console.print_warning("⚠️  LLM 不可用, 降级模式")  # i18n: user-facing
+        console.print_info(f"  完成={result.completed} 步数={len(result.turns)}")  # i18n: user-facing
 
 
-# ── Schema 结构化输出命令 ──
+# ── Schema structured output commands ──
 
 
 @cli.group("collab")
 def collab():
-    """协作层 WebSocket 双向通道 — 实时聊天/光标/presence。"""
+    """Collaboration-layer bidirectional WebSocket — real-time chat/cursor/presence."""
     pass
 
 
 @collab.command("serve")
-@click.option("--host", default="127.0.0.1", help="监听地址")
-@click.option("--port", default=11439, help="监听端口")
+@click.option("--host", default="127.0.0.1", help="监听地址")  # i18n: user-facing
+@click.option("--port", default=11439, help="监听端口")  # i18n: user-facing
 def collab_serve(host: str, port: int):
-    """启动协作 WS 服务 (阻塞)。"""
+    """Start the collaboration WS service (blocking)."""
     from .config_center import ConfigCenter
     from .server.collab_ws import CollabHub
 
@@ -2617,7 +2651,7 @@ def collab_serve(host: str, port: int):
     async def _run():
         hub = CollabHub(auth_token=auth_token)
         server = await hub.serve_ws(host=host, port=port)
-        console.print_success(f"✅ 协作 WS 服务: ws://{host}:{port} (Ctrl+C 退出)")
+        console.print_success(f"✅ 协作 WS 服务: ws://{host}:{port} (Ctrl+C 退出)")  # i18n: user-facing
         try:
             await asyncio.Future()
         finally:
@@ -2627,15 +2661,15 @@ def collab_serve(host: str, port: int):
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
-        click.echo("\n停止")
+        click.echo("\n停止")  # i18n: user-facing
 
 
-# ── Schema 结构化输出命令 ──
+# ── Schema structured output commands ──
 
 
 @cli.group("schema")
 def schema():
-    """结构化输出 — JSON Schema 校验。"""
+    """Structured output — JSON Schema validation."""
     pass
 
 
@@ -2643,7 +2677,7 @@ def schema():
 @click.argument("data_file", type=click.Path(exists=True))
 @click.argument("schema_file", type=click.Path(exists=True))
 def schema_validate(data_file: str, schema_file: str):
-    """校验数据文件是否符合 schema。"""
+    """Validate a data file against a schema."""
     from .engine.schema import OutputSchema
 
     with open(data_file, encoding="utf-8") as f:
@@ -2652,9 +2686,9 @@ def schema_validate(data_file: str, schema_file: str):
         schema = json.load(f)
     valid = OutputSchema.validate(data, schema)
     if valid:
-        console.print_success("✅ 数据符合 schema")
+        console.print_success("✅ 数据符合 schema")  # i18n: user-facing
     else:
-        console.print_error("❌ 数据不符合 schema")
+        console.print_error("❌ 数据不符合 schema")  # i18n: user-facing
         errors = OutputSchema.validate_detailed(data, schema)
         for err in errors:
             click.echo(f"  - {err}")
@@ -2663,10 +2697,10 @@ def schema_validate(data_file: str, schema_file: str):
 @schema.command("check")
 @click.argument("node_name")
 def schema_check(node_name: str):
-    """检查节点的输出 schema。"""
+    """Inspect a node's output schema."""
     node_cls = NodeRegistry.get(node_name)
     if not node_cls:
-        console.print_error(f"未知节点: {node_name}")
+        console.print_error(f"未知节点: {node_name}")  # i18n: user-facing
         return
     node = node_cls()
     params_schema = node.get_params_schema()
@@ -2678,15 +2712,15 @@ def schema_check(node_name: str):
 
 @cli.group("benchmark")
 def benchmark():
-    """功能对比与性能基准。"""
+    """Capability comparison and performance benchmarks."""
     pass
 
 
 @benchmark.command("report")
 @click.option("--format", "fmt", default="markdown", type=click.Choice(["markdown", "html", "json"]))
-@click.option("--output", "-o", default="", help="输出文件路径")
+@click.option("--output", "-o", default="", help="输出文件路径")  # i18n: user-facing
 def benchmark_report(fmt, output):
-    """生成 Claude Cowork vs Fusion-Cowork 对比报告。"""
+    """Generate the Claude Cowork vs Fusion-Cowork comparison report."""
     from fusion_cowork.benchmark import CapabilityMatrix, ReportRenderer
 
     matrix = CapabilityMatrix()
@@ -2700,16 +2734,16 @@ def benchmark_report(fmt, output):
     if output:
         with open(output, "w", encoding="utf-8") as f:
             f.write(content)
-        console.print_result(f"报告已保存: {output}")
+        console.print_result(f"报告已保存: {output}")  # i18n: user-facing
     else:
         click.echo(content)
 
 
 @benchmark.command("run")
-@click.option("--node", "-n", multiple=True, help="要测试的节点名 (可多次指定)")
-@click.option("--repeats", default=3, type=int, help="每个节点重复次数")
+@click.option("--node", "-n", multiple=True, help="要测试的节点名 (可多次指定)")  # i18n: user-facing
+@click.option("--repeats", default=3, type=int, help="每个节点重复次数")  # i18n: user-facing
 def benchmark_run(node, repeats):
-    """运行节点性能基准。"""
+    """Run node performance benchmarks."""
     import asyncio
 
     from fusion_cowork.benchmark import BenchmarkRunner
@@ -2728,9 +2762,9 @@ def benchmark_run(node, repeats):
 
 
 @benchmark.command("orchestration")
-@click.option("--scenario", "-s", multiple=True, help="只跑指定场景 (可多次指定)")
+@click.option("--scenario", "-s", multiple=True, help="只跑指定场景 (可多次指定)")  # i18n: user-facing
 def benchmark_orchestration(scenario):
-    """编排质量基准 — 确定性场景过真实引擎, score=100 为门禁 (issue #466)。"""
+    """Orchestration quality benchmark — deterministic scenarios through the real engine; score=100 is the gate (issue #466)."""
     import json as _json
 
     from fusion_cowork.benchmark.orchestration import OrchestrationBenchmark
@@ -2741,22 +2775,22 @@ def benchmark_orchestration(scenario):
         raise click.exceptions.Exit(1)
 
 
-# ── Space 协作空间 ──
+# ── Space collaboration ──
 
 
 @cli.group("space")
 def space():
-    """协作空间管理 — 创建/列表/归档/成员管理。"""
+    """Collaboration space management — create/list/archive/member management."""
     pass
 
 
 @space.command("create")
 @click.argument("name")
-@click.option("--owner", "-o", default="local_user", help="Owner 用户 ID")
-@click.option("--description", "-d", default="", help="空间描述")
-@click.option("--collab-mode", default="local", help="协作模式 (local/p2p)")
+@click.option("--owner", "-o", default="local_user", help="Owner 用户 ID")  # i18n: user-facing
+@click.option("--description", "-d", default="", help="空间描述")  # i18n: user-facing
+@click.option("--collab-mode", default="local", help="协作模式 (local/p2p)")  # i18n: user-facing
 def space_create(name: str, owner: str, description: str, collab_mode: str):
-    """创建协作空间。"""
+    """Create a collaboration space."""
     asyncio.run(_async_space_create(name, owner, description, collab_mode))
 
 
@@ -2768,20 +2802,20 @@ async def _async_space_create(name: str, owner: str, description: str, collab_mo
     try:
         svc = SpaceService(store)
         space_obj = await svc.create(name=name, owner_id=owner, description=description, collab_mode=collab_mode)
-        console.print_success(f"空间已创建: {space_obj.id}")
-        console.print_result(f"  名称: {space_obj.name}")
+        console.print_success(f"空间已创建: {space_obj.id}")  # i18n: user-facing
+        console.print_result(f"  名称: {space_obj.name}")  # i18n: user-facing
         console.print_result(f"  Owner: {space_obj.owner_id}")
-        console.print_result(f"  状态: {space_obj.status}")
+        console.print_result(f"  状态: {space_obj.status}")  # i18n: user-facing
     finally:
         await store.close()
 
 
 @space.command("list")
-@click.option("--status", "-s", default=None, help="按状态过滤 (active/archived)")
-@click.option("--owner", "-o", default=None, help="按 Owner 过滤")
-@click.option("--limit", "-n", default=20, help="返回数量")
+@click.option("--status", "-s", default=None, help="按状态过滤 (active/archived)")  # i18n: user-facing
+@click.option("--owner", "-o", default=None, help="按 Owner 过滤")  # i18n: user-facing
+@click.option("--limit", "-n", default=20, help="返回数量")  # i18n: user-facing
 def space_list(status, owner, limit):
-    """列出协作空间。"""
+    """List collaboration spaces."""
     asyncio.run(_async_space_list(status, owner, limit))
 
 
@@ -2794,13 +2828,13 @@ async def _async_space_list(status, owner, limit):
         svc = SpaceService(store)
         spaces = await svc.list(status=status, owner_id=owner, limit=limit)
         if not spaces:
-            console.print_info("没有协作空间")
+            console.print_info("没有协作空间")  # i18n: user-facing
             return
-        console.print_header(f"协作空间列表 ({len(spaces)} 个)")
+        console.print_header(f"协作空间列表 ({len(spaces)} 个)")  # i18n: user-facing
         rows = []
         for sp in spaces:
             rows.append([sp.id, sp.name, sp.owner_id, sp.status, sp.collab_mode])
-        console.print_table(["ID", "名称", "Owner", "状态", "协作模式"], rows)
+        console.print_table(["ID", "名称", "Owner", "状态", "协作模式"], rows)  # i18n: user-facing
     finally:
         await store.close()
 
@@ -2808,7 +2842,7 @@ async def _async_space_list(status, owner, limit):
 @space.command("get")
 @click.argument("space_id")
 def space_get(space_id: str):
-    """查看协作空间详情。"""
+    """View collaboration space details."""
     asyncio.run(_async_space_get(space_id))
 
 
@@ -2821,26 +2855,26 @@ async def _async_space_get(space_id: str):
         svc = SpaceService(store)
         sp = await svc.get(space_id)
         if not sp:
-            console.print_error(f"空间不存在: {space_id}")
+            console.print_error(f"空间不存在: {space_id}")  # i18n: user-facing
             return
         console.print_header(f"🚀 {sp.name}")
         click.echo(f"  ID: {sp.id}")
-        click.echo(f"  描述: {sp.description}")
+        click.echo(f"  描述: {sp.description}")  # i18n: user-facing
         click.echo(f"  Owner: {sp.owner_id}")
-        click.echo(f"  状态: {sp.status}")
-        click.echo(f"  协作模式: {sp.collab_mode}")
-        click.echo(f"  KB 绑定: {sp.kb_bind_mode} ({sp.kb_id or '无'})")
-        click.echo(f"  创建: {sp.created_at}")
-        click.echo(f"  更新: {sp.updated_at}")
+        click.echo(f"  状态: {sp.status}")  # i18n: user-facing
+        click.echo(f"  协作模式: {sp.collab_mode}")  # i18n: user-facing
+        click.echo(f"  KB 绑定: {sp.kb_bind_mode} ({sp.kb_id or '无'})")  # i18n: user-facing
+        click.echo(f"  创建: {sp.created_at}")  # i18n: user-facing
+        click.echo(f"  更新: {sp.updated_at}")  # i18n: user-facing
         config = sp.config
-        click.echo("\n  配置:")
-        click.echo(f"    最大成员: {config.max_members}")
-        click.echo(f"    Web 搜索: {'✅' if config.enable_web_search else '❌'}")
-        click.echo(f"    深度研究: {'✅' if config.enable_deep_research else '❌'}")
+        click.echo("\n  配置:")  # i18n: user-facing
+        click.echo(f"    最大成员: {config.max_members}")  # i18n: user-facing
+        click.echo(f"    Web 搜索: {'✅' if config.enable_web_search else '❌'}")  # i18n: user-facing
+        click.echo(f"    深度研究: {'✅' if config.enable_deep_research else '❌'}")  # i18n: user-facing
         click.echo(f"    Computer Use: {'✅' if config.enable_computer_use else '❌'}")
-        click.echo(f"    流式响应: {'✅' if config.stream_response else '❌'}")
+        click.echo(f"    流式响应: {'✅' if config.stream_response else '❌'}")  # i18n: user-facing
         members = await store.list_members(space_id)
-        click.echo(f"\n  成员 ({len(members)} 人):")
+        click.echo(f"\n  成员 ({len(members)} 人):")  # i18n: user-facing
         for m in members:
             click.echo(f"    ├─ {m.display_name} ({m.user_id}) — {m.role}")
     finally:
@@ -2850,7 +2884,7 @@ async def _async_space_get(space_id: str):
 @space.command("archive")
 @click.argument("space_id")
 def space_archive(space_id: str):
-    """归档协作空间。"""
+    """Archive a collaboration space."""
     asyncio.run(_async_space_archive(space_id))
 
 
@@ -2863,23 +2897,23 @@ async def _async_space_archive(space_id: str):
         svc = SpaceService(store)
         result = await svc.archive(space_id)
         if result:
-            console.print_success(f"空间已归档: {space_id}")
+            console.print_success(f"空间已归档: {space_id}")  # i18n: user-facing
         else:
-            console.print_error(f"归档失败: 空间不存在 {space_id}")
+            console.print_error(f"归档失败: 空间不存在 {space_id}")  # i18n: user-facing
     finally:
         await store.close()
 
 
 @space.group("member")
 def space_member():
-    """协作空间成员管理。"""
+    """Collaboration space member management."""
     pass
 
 
 @space_member.command("list")
 @click.argument("space_id")
 def space_member_list(space_id: str):
-    """列出空间成员。"""
+    """List space members."""
     asyncio.run(_async_space_member_list(space_id))
 
 
@@ -2891,25 +2925,25 @@ async def _async_space_member_list(space_id: str):
     try:
         members = await store.list_members(space_id)
         if not members:
-            console.print_info("空间没有成员")
+            console.print_info("空间没有成员")  # i18n: user-facing
             return
-        console.print_header(f"成员列表 ({len(members)} 人)")
+        console.print_header(f"成员列表 ({len(members)} 人)")  # i18n: user-facing
         rows = []
         for m in members:
             rows.append([m.user_id, m.display_name, m.role, m.joined_at[:19]])
-        console.print_table(["用户 ID", "显示名", "角色", "加入时间"], rows)
+        console.print_table(["用户 ID", "显示名", "角色", "加入时间"], rows)  # i18n: user-facing
     finally:
         await store.close()
 
 
 @space_member.command("invite")
 @click.argument("space_id")
-@click.option("--inviter", "-i", default="local_user", help="邀请人 ID")
-@click.option("--role", "-r", default="member", help="成员角色 (member/admin/viewer)")
-@click.option("--max-uses", default=0, type=int, help="最大使用次数 (0=无限)")
-@click.option("--expires-hours", default=0, type=int, help="过期时间 (小时, 0=永不过期)")
+@click.option("--inviter", "-i", default="local_user", help="邀请人 ID")  # i18n: user-facing
+@click.option("--role", "-r", default="member", help="成员角色 (member/admin/viewer)")  # i18n: user-facing
+@click.option("--max-uses", default=0, type=int, help="最大使用次数 (0=无限)")  # i18n: user-facing
+@click.option("--expires-hours", default=0, type=int, help="过期时间 (小时, 0=永不过期)")  # i18n: user-facing
 def space_member_invite(space_id: str, inviter: str, role: str, max_uses: int, expires_hours: int):
-    """生成邀请链接。"""
+    """Generate an invite link."""
     asyncio.run(_async_space_member_invite(space_id, inviter, role, max_uses, expires_hours))
 
 
@@ -2922,8 +2956,8 @@ async def _async_space_member_invite(space_id: str, inviter: str, role: str, max
         perm = SpacePermission(store)
         svc = SpaceMemberService(store, perm)
         code = await svc.invite(space_id, inviter, role=role, max_uses=max_uses, expires_hours=expires_hours)
-        console.print_success(f"邀请码已生成: {code}")
-        console.print_info(f"使用 'fusion-cowork space member join {code}' 加入空间")
+        console.print_success(f"邀请码已生成: {code}")  # i18n: user-facing
+        console.print_info(f"使用 'fusion-cowork space member join {code}' 加入空间")  # i18n: user-facing
     except PermissionError as e:
         console.print_error(str(e))
     finally:
@@ -2932,10 +2966,10 @@ async def _async_space_member_invite(space_id: str, inviter: str, role: str, max
 
 @space_member.command("join")
 @click.argument("invite_code")
-@click.option("--user", "-u", default="local_user", help="用户 ID")
-@click.option("--display-name", "-n", default="", help="显示名")
+@click.option("--user", "-u", default="local_user", help="用户 ID")  # i18n: user-facing
+@click.option("--display-name", "-n", default="", help="显示名")  # i18n: user-facing
 def space_member_join(invite_code: str, user: str, display_name: str):
-    """通过邀请码加入空间。"""
+    """Join a space with an invite code."""
     asyncio.run(_async_space_member_join(invite_code, user, display_name))
 
 
@@ -2948,7 +2982,7 @@ async def _async_space_member_join(invite_code: str, user: str, display_name: st
         perm = SpacePermission(store)
         svc = SpaceMemberService(store, perm)
         member = await svc.join(invite_code, user_id=user, display_name=display_name)
-        console.print_success(f"已加入空间: {member.space_id} (角色: {member.role})")
+        console.print_success(f"已加入空间: {member.space_id} (角色: {member.role})")  # i18n: user-facing
     except ValueError as e:
         console.print_error(str(e))
     finally:
@@ -2958,9 +2992,9 @@ async def _async_space_member_join(invite_code: str, user: str, display_name: st
 @space_member.command("remove")
 @click.argument("space_id")
 @click.argument("user_id")
-@click.option("--operator", "-o", default="local_user", help="操作人 ID")
+@click.option("--operator", "-o", default="local_user", help="操作人 ID")  # i18n: user-facing
 def space_member_remove(space_id: str, user_id: str, operator: str):
-    """移除空间成员。"""
+    """Remove a space member."""
     asyncio.run(_async_space_member_remove(space_id, user_id, operator))
 
 
@@ -2974,9 +3008,9 @@ async def _async_space_member_remove(space_id: str, user_id: str, operator: str)
         svc = SpaceMemberService(store, perm)
         removed = await svc.remove(space_id, user_id, operator_id=operator)
         if removed:
-            console.print_success(f"已移除成员: {user_id}")
+            console.print_success(f"已移除成员: {user_id}")  # i18n: user-facing
         else:
-            console.print_error("移除失败: 成员不存在")
+            console.print_error("移除失败: 成员不存在")  # i18n: user-facing
     except (PermissionError, ValueError) as e:
         console.print_error(str(e))
     finally:
@@ -2988,11 +3022,11 @@ async def _async_space_member_remove(space_id: str, user_id: str, operator: str)
 
 @space.command("chat")
 @click.argument("space_id")
-@click.option("--user", "-u", default="local_user", help="用户 ID")
-@click.option("--agent", "-a", default=None, help="Agent ID (触发 Agent 回复)")
-@click.option("--model", "-m", default=None, help="模型名称")
+@click.option("--user", "-u", default="local_user", help="用户 ID")  # i18n: user-facing
+@click.option("--agent", "-a", default=None, help="Agent ID (触发 Agent 回复)")  # i18n: user-facing
+@click.option("--model", "-m", default=None, help="模型名称")  # i18n: user-facing
 def space_chat(space_id: str, user: str, agent: str, model: str):
-    """交互式共享对话。输入消息后按回车发送，Ctrl+C 退出。"""
+    """Interactive shared chat. Type a message and press Enter to send; Ctrl+C to exit."""
     asyncio.run(_async_space_chat(space_id, user, agent, model))
 
 
@@ -3005,7 +3039,7 @@ async def _async_space_chat(space_id: str, user: str, agent: str, model: str):
     try:
         sp = await store.get_space(space_id)
         if not sp:
-            console.print_error(f"空间不存在: {space_id}")
+            console.print_error(f"空间不存在: {space_id}")  # i18n: user-facing
             return
         perm = SpacePermission(store)
         mlx = FusionMLXClient()
@@ -3055,16 +3089,16 @@ async def _async_space_chat(space_id: str, user: str, agent: str, model: str):
 
 @space.group("knowledge")
 def space_knowledge():
-    """空间知识库管理。"""
+    """Space knowledge base management."""
     pass
 
 
 @space_knowledge.command("bind")
 @click.argument("space_id")
-@click.option("--operator", "-o", default="local_user", help="操作人 ID")
-@click.option("--kb-id", "-k", default=None, help="绑定已有知识库 ID (不传则自动创建)")
+@click.option("--operator", "-o", default="local_user", help="操作人 ID")  # i18n: user-facing
+@click.option("--kb-id", "-k", default=None, help="绑定已有知识库 ID (不传则自动创建)")  # i18n: user-facing
 def space_kb_bind(space_id: str, operator: str, kb_id: str):
-    """绑定知识库到空间。"""
+    """Bind a knowledge base to a space."""
     asyncio.run(_async_space_kb_bind(space_id, operator, kb_id))
 
 
@@ -3077,7 +3111,7 @@ async def _async_space_kb_bind(space_id: str, operator: str, kb_id: str):
         perm = SpacePermission(store)
         kb_svc = SpaceKBService(store, None, perm)
         result = await kb_svc.bind_kb(space_id, operator, kb_id=kb_id)
-        console.print_success(f"知识库已绑定: {result}")
+        console.print_success(f"知识库已绑定: {result}")  # i18n: user-facing
     except PermissionError as e:
         console.print_error(str(e))
     finally:
@@ -3087,7 +3121,7 @@ async def _async_space_kb_bind(space_id: str, operator: str, kb_id: str):
 @space_knowledge.command("status")
 @click.argument("space_id")
 def space_kb_status(space_id: str):
-    """查看空间知识库状态。"""
+    """View space knowledge base status."""
     asyncio.run(_async_space_kb_status(space_id))
 
 
@@ -3101,11 +3135,11 @@ async def _async_space_kb_status(space_id: str):
         kb_svc = SpaceKBService(store, None, perm)
         status = await kb_svc.get_kb_status(space_id)
         if status["bound"]:
-            console.print_header(f"知识库已绑定: {status['kb_id']}")
+            console.print_header(f"知识库已绑定: {status['kb_id']}")  # i18n: user-facing
             docs = status.get("document_count", 0)
-            click.echo(f"  文档数量: {docs}")
+            click.echo(f"  文档数量: {docs}")  # i18n: user-facing
         else:
-            console.print_info("空间未绑定知识库")
+            console.print_info("空间未绑定知识库")  # i18n: user-facing
     finally:
         await store.close()
 
@@ -3113,9 +3147,9 @@ async def _async_space_kb_status(space_id: str):
 @space_knowledge.command("upload")
 @click.argument("space_id")
 @click.argument("file_path")
-@click.option("--operator", "-o", default="local_user", help="操作人 ID")
+@click.option("--operator", "-o", default="local_user", help="操作人 ID")  # i18n: user-facing
 def space_kb_upload(space_id: str, file_path: str, operator: str):
-    """上传文件到空间知识库。"""
+    """Upload files to the space knowledge base."""
     asyncio.run(_async_space_kb_upload(space_id, file_path, operator))
 
 
@@ -3130,11 +3164,11 @@ async def _async_space_kb_upload(space_id: str, file_path: str, operator: str):
         kb_client = KBClient()
         kb_svc = SpaceKBService(store, kb_client, perm)
         result = await kb_svc.upload_document(space_id, operator, file_path)
-        console.print_success(f"文件已上传: {result}")
+        console.print_success(f"文件已上传: {result}")  # i18n: user-facing
     except PermissionError as e:
         console.print_error(str(e))
     except FileNotFoundError:
-        console.print_error(f"文件不存在: {file_path}")
+        console.print_error(f"文件不存在: {file_path}")  # i18n: user-facing
     finally:
         await store.close()
 
@@ -3142,9 +3176,9 @@ async def _async_space_kb_upload(space_id: str, file_path: str, operator: str):
 @space_knowledge.command("search")
 @click.argument("space_id")
 @click.argument("query")
-@click.option("--top-k", "-k", default=5, help="返回结果数量")
+@click.option("--top-k", "-k", default=5, help="返回结果数量")  # i18n: user-facing
 def space_kb_search(space_id: str, query: str, top_k: int):
-    """在空间知识库中搜索。"""
+    """Search the space knowledge base."""
     asyncio.run(_async_space_kb_search(space_id, query, top_k))
 
 
@@ -3160,9 +3194,9 @@ async def _async_space_kb_search(space_id: str, query: str, top_k: int):
         kb_svc = SpaceKBService(store, kb_client, perm)
         results = await kb_svc.search(space_id, query, top_k=top_k)
         if not results:
-            console.print_info("无搜索结果")
+            console.print_info("无搜索结果")  # i18n: user-facing
             return
-        console.print_header(f"搜索结果 ({len(results)} 条)")
+        console.print_header(f"搜索结果 ({len(results)} 条)")  # i18n: user-facing
         for i, r in enumerate(results, 1):
             score = r.get("score", 0)
             content = r.get("content", "")[:150]
@@ -3173,9 +3207,9 @@ async def _async_space_kb_search(space_id: str, query: str, top_k: int):
 
 @space_knowledge.command("unbind")
 @click.argument("space_id")
-@click.option("--operator", "-o", default="local_user", help="操作人 ID")
+@click.option("--operator", "-o", default="local_user", help="操作人 ID")  # i18n: user-facing
 def space_kb_unbind(space_id: str, operator: str):
-    """解除空间知识库绑定。"""
+    """Unbind the space knowledge base."""
     asyncio.run(_async_space_kb_unbind(space_id, operator))
 
 
@@ -3188,7 +3222,7 @@ async def _async_space_kb_unbind(space_id: str, operator: str):
         perm = SpacePermission(store)
         kb_svc = SpaceKBService(store, None, perm)
         await kb_svc.unbind_kb(space_id, operator)
-        console.print_success(f"知识库已解绑: {space_id}")
+        console.print_success(f"知识库已解绑: {space_id}")  # i18n: user-facing
     except PermissionError as e:
         console.print_error(str(e))
     finally:
@@ -3200,14 +3234,14 @@ async def _async_space_kb_unbind(space_id: str, operator: str):
 
 @space.group("agent")
 def space_agent():
-    """空间 Agent 管理。"""
+    """Space agent management."""
     pass
 
 
 @space_agent.command("list")
 @click.argument("space_id")
 def space_agent_list(space_id: str):
-    """列出空间 Agent。"""
+    """List space agents."""
     asyncio.run(_async_space_agent_list(space_id))
 
 
@@ -3223,9 +3257,9 @@ async def _async_space_agent_list(space_id: str):
         rt = SpaceAgentRuntime(store, mlx, perm)
         agents = await rt.list_agents(space_id)
         if not agents:
-            console.print_info("空间没有 Agent")
+            console.print_info("空间没有 Agent")  # i18n: user-facing
             return
-        console.print_header(f"Agent 列表 ({len(agents)} 个)")
+        console.print_header(f"Agent 列表 ({len(agents)} 个)")  # i18n: user-facing
         rows = []
         for a in agents:
             rows.append(
@@ -3237,7 +3271,7 @@ async def _async_space_agent_list(space_id: str):
                     a.get("created_by", ""),
                 ]
             )
-        console.print_table(["ID", "名称", "类型", "RAG", "创建人"], rows)
+        console.print_table(["ID", "名称", "类型", "RAG", "创建人"], rows)  # i18n: user-facing
     finally:
         await store.close()
 
@@ -3245,12 +3279,12 @@ async def _async_space_agent_list(space_id: str):
 @space_agent.command("add")
 @click.argument("space_id")
 @click.argument("name")
-@click.option("--type", "-t", "agent_type", default="assistant", help="Agent 类型")
-@click.option("--prompt", "-p", default="", help="系统提示词")
-@click.option("--rag/--no-rag", default=False, help="启用 RAG")
-@click.option("--operator", "-o", default="local_user", help="操作人 ID")
+@click.option("--type", "-t", "agent_type", default="assistant", help="Agent 类型")  # i18n: user-facing
+@click.option("--prompt", "-p", default="", help="系统提示词")  # i18n: user-facing
+@click.option("--rag/--no-rag", default=False, help="启用 RAG")  # i18n: user-facing
+@click.option("--operator", "-o", default="local_user", help="操作人 ID")  # i18n: user-facing
 def space_agent_add(space_id: str, name: str, agent_type: str, prompt: str, rag: bool, operator: str):
-    """添加 Agent 到空间。"""
+    """Add an agent to a space."""
     asyncio.run(_async_space_agent_add(space_id, name, agent_type, prompt, rag, operator))
 
 
@@ -3272,7 +3306,7 @@ async def _async_space_agent_add(space_id: str, name: str, agent_type: str, prom
             system_prompt=prompt,
             enable_rag=rag,
         )
-        console.print_success(f"Agent 已添加: {result['id']} ({result['name']})")
+        console.print_success(f"Agent 已添加: {result['id']} ({result['name']})")  # i18n: user-facing
     except PermissionError as e:
         console.print_error(str(e))
     finally:
@@ -3282,9 +3316,9 @@ async def _async_space_agent_add(space_id: str, name: str, agent_type: str, prom
 @space_agent.command("remove")
 @click.argument("space_id")
 @click.argument("agent_id")
-@click.option("--operator", "-o", default="local_user", help="操作人 ID")
+@click.option("--operator", "-o", default="local_user", help="操作人 ID")  # i18n: user-facing
 def space_agent_remove(space_id: str, agent_id: str, operator: str):
-    """移除空间 Agent。"""
+    """Remove a space agent."""
     asyncio.run(_async_space_agent_remove(space_id, agent_id, operator))
 
 
@@ -3300,9 +3334,9 @@ async def _async_space_agent_remove(space_id: str, agent_id: str, operator: str)
         rt = SpaceAgentRuntime(store, mlx, perm)
         removed = await rt.remove_agent(space_id, agent_id, operator)
         if removed:
-            console.print_success(f"Agent 已移除: {agent_id}")
+            console.print_success(f"Agent 已移除: {agent_id}")  # i18n: user-facing
         else:
-            console.print_error(f"Agent 不存在: {agent_id}")
+            console.print_error(f"Agent 不存在: {agent_id}")  # i18n: user-facing
     except PermissionError as e:
         console.print_error(str(e))
     finally:
@@ -3313,10 +3347,10 @@ async def _async_space_agent_remove(space_id: str, agent_id: str, operator: str)
 @click.argument("space_id")
 @click.argument("agent_id")
 @click.argument("message")
-@click.option("--user", "-u", default="local_user", help="用户 ID")
-@click.option("--model", "-m", default="", help="模型名称")
+@click.option("--user", "-u", default="local_user", help="用户 ID")  # i18n: user-facing
+@click.option("--model", "-m", default="", help="模型名称")  # i18n: user-facing
 def space_agent_call(space_id: str, agent_id: str, message: str, user: str, model: str):
-    """调用空间 Agent。"""
+    """Invoke a space agent."""
     asyncio.run(_async_space_agent_call(space_id, agent_id, message, user, model))
 
 
@@ -3343,11 +3377,11 @@ async def _async_space_agent_call(space_id: str, agent_id: str, message: str, us
 @space_agent.command("relay")
 @click.argument("space_id")
 @click.argument("message")
-@click.option("--agents", "-a", required=True, help="Agent ID 列表 (逗号分隔)")
-@click.option("--user", "-u", default="local_user", help="用户 ID")
-@click.option("--model", "-m", default="", help="模型名称")
+@click.option("--agents", "-a", required=True, help="Agent ID 列表 (逗号分隔)")  # i18n: user-facing
+@click.option("--user", "-u", default="local_user", help="用户 ID")  # i18n: user-facing
+@click.option("--model", "-m", default="", help="模型名称")  # i18n: user-facing
 def space_agent_relay(space_id: str, message: str, agents: str, user: str, model: str):
-    """多 Agent 接力调用。"""
+    """Multi-agent relay invocation."""
     asyncio.run(_async_space_agent_relay(space_id, message, agents, user, model))
 
 
@@ -3363,7 +3397,7 @@ async def _async_space_agent_relay(space_id: str, message: str, agents: str, use
         rt = SpaceAgentRuntime(store, mlx, perm)
         agent_ids = [a.strip() for a in agents.split(",") if a.strip()]
         results = await rt.chain_agents(space_id, agent_ids, user, message, model=model)
-        console.print_header(f"Agent 接力结果 ({len(results)} 步)")
+        console.print_header(f"Agent 接力结果 ({len(results)} 步)")  # i18n: user-facing
         for i, r in enumerate(results, 1):
             aid = r.get("agent_id", "?")
             if "error" in r:
@@ -3380,24 +3414,24 @@ async def _async_space_agent_relay(space_id: str, message: str, agents: str, use
         await store.close()
 
 
-# ── 数据库命令 (v0.4.0 Stage 3) ──
+# ── Database commands (v0.4.0 Stage 3) ──
 
 
 @cli.group()
 def db():
-    """数据库备份/恢复 + 迁移管理 (postgres 后端)。"""
+    """Database backup/restore + migration management (postgres backend)."""
 
 
 @db.command("backup")
-@click.option("--dsn", default="", help="Postgres DSN (缺则读 env DATABASE_URL / FUSION_PG_DSN)")
-@click.option("--dest", default="", help="备份输出路径 (.sql.gz)")
+@click.option("--dsn", default="", help="Postgres DSN (缺则读 env DATABASE_URL / FUSION_PG_DSN)")  # i18n: user-facing
+@click.option("--dest", default="", help="备份输出路径 (.sql.gz)")  # i18n: user-facing
 def db_backup(dsn: str, dest: str):
-    """pg_dump 备份到 .sql.gz。"""
+    """Back up with pg_dump to .sql.gz."""
     import os
 
     dsn = dsn or os.environ.get("DATABASE_URL", "") or os.environ.get("FUSION_PG_DSN", "")
     if not dsn:
-        console.print_error("缺 DSN — 传 --dsn 或设 env DATABASE_URL")
+        console.print_error("缺 DSN — 传 --dsn 或设 env DATABASE_URL")  # i18n: user-facing
         raise SystemExit(1)
     if not dest:
         from datetime import datetime
@@ -3407,38 +3441,38 @@ def db_backup(dsn: str, dest: str):
 
     mgr = BackupManager(dsn)
     out = mgr.backup(dest)
-    console.print_success(f"备份完成: {out} ({out.stat().st_size} bytes)")
+    console.print_success(f"备份完成: {out} ({out.stat().st_size} bytes)")  # i18n: user-facing
 
 
 @db.command("restore")
-@click.option("--dsn", default="", help="Postgres DSN (缺则读 env DATABASE_URL / FUSION_PG_DSN)")
-@click.option("--src", required=True, help="备份文件 (.sql.gz)")
-@click.option("--confirm", is_flag=True, help="确认覆盖现有数据库 (破坏性)")
+@click.option("--dsn", default="", help="Postgres DSN (缺则读 env DATABASE_URL / FUSION_PG_DSN)")  # i18n: user-facing
+@click.option("--src", required=True, help="备份文件 (.sql.gz)")  # i18n: user-facing
+@click.option("--confirm", is_flag=True, help="确认覆盖现有数据库 (破坏性)")  # i18n: user-facing
 def db_restore(dsn: str, src: str, confirm: bool):
-    """从 .sql.gz 恢复 (破坏性, 需 --confirm)。"""
+    """Restore from .sql.gz (destructive, requires --confirm)."""
     import os
 
     dsn = dsn or os.environ.get("DATABASE_URL", "") or os.environ.get("FUSION_PG_DSN", "")
     if not dsn:
-        console.print_error("缺 DSN — 传 --dsn 或设 env DATABASE_URL")
+        console.print_error("缺 DSN — 传 --dsn 或设 env DATABASE_URL")  # i18n: user-facing
         raise SystemExit(1)
     from .db.backup import BackupManager
 
     mgr = BackupManager(dsn)
     mgr.restore(src, confirm=confirm)
-    console.print_success(f"恢复完成: {src}")
+    console.print_success(f"恢复完成: {src}")  # i18n: user-facing
 
 
 @db.command("migrate")
-@click.option("--dsn", default="", help="Postgres DSN (缺则读 env DATABASE_URL / FUSION_PG_DSN)")
+@click.option("--dsn", default="", help="Postgres DSN (缺则读 env DATABASE_URL / FUSION_PG_DSN)")  # i18n: user-facing
 def db_migrate(dsn: str):
-    """执行待应用的数据库迁移 (版本化, 幂等)。"""
+    """Apply pending database migrations (versioned, idempotent)."""
     import asyncio
     import os
 
     dsn = dsn or os.environ.get("DATABASE_URL", "") or os.environ.get("FUSION_PG_DSN", "")
     if not dsn:
-        console.print_error("缺 DSN — 传 --dsn 或设 env DATABASE_URL")
+        console.print_error("缺 DSN — 传 --dsn 或设 env DATABASE_URL")  # i18n: user-facing
         raise SystemExit(1)
 
     async def _run():
@@ -3448,7 +3482,7 @@ def db_migrate(dsn: str):
 
         conn = await asyncpg.connect(dsn)
         try:
-            # 建基础 schema (迁移依赖表存在)
+            # build the base schema (migrations require the tables to exist)
             from .space.store import _pg_schema_sql
 
             await conn.execute(_pg_schema_sql())
@@ -3464,26 +3498,30 @@ def db_migrate(dsn: str):
 
             runner = MigrationRunner("postgres", executor=_exec, error_class=asyncpg.DuplicateColumnError)
             applied = await runner.run_pending()
-            console.print_success(f"迁移完成: 应用版本 {applied or '(无待应用)'}")
+            console.print_success(f"迁移完成: 应用版本 {applied or '(无待应用)'}")  # i18n: user-facing
         finally:
             await conn.close()
 
     asyncio.run(_run())
 
 
-# ── 主入口 ──
+# ── Main entry ──
 
 
 @cli.command("serve")
-@click.option("--host", default="", help="绑定地址 (默认读 FUSION_BIND_HOST, 再默认 127.0.0.1 单机)")
-@click.option("--port", default=11438, show_default=True, help="HTTP 端口 (/rpc /health /mcp /sse)")
-@click.option("--json-log", "json_log", is_flag=True, help="结构化 JSON 日志 (structlog, 生产)")
-@click.option("--metrics-port", default=0, help="prometheus /metrics 端口 (0=不启)")
+@click.option(
+    "--host", default="", help="绑定地址 (默认读 FUSION_BIND_HOST, 再默认 127.0.0.1 单机)"  # i18n: user-facing
+)  # i18n: user-facing
+@click.option(
+    "--port", default=11438, show_default=True, help="HTTP 端口 (/rpc /health /mcp /sse)"  # i18n: user-facing
+)  # i18n: user-facing
+@click.option("--json-log", "json_log", is_flag=True, help="结构化 JSON 日志 (structlog, 生产)")  # i18n: user-facing
+@click.option("--metrics-port", default=0, help="prometheus /metrics 端口 (0=不启)")  # i18n: user-facing
 def serve(host: str, port: int, json_log: bool, metrics_port: int):
-    """容器/云部署模式 — HTTP 单通道 (无 UDS), 0.0.0.0 绑定, uvicorn 接管 SIGTERM 优雅关停。
+    """Container/cloud deploy mode — HTTP single channel (no UDS), binds 0.0.0.0, uvicorn handles SIGTERM graceful shutdown.
 
-    Dockerfile CMD / k8s ENTRYPOINT 用此命令。
-    本地开发仍用 `desk rpc` (UDS + HTTP 双通道)。
+    Used by Dockerfile CMD / k8s ENTRYPOINT.
+    Local development still uses `desk rpc` (UDS + HTTP dual channel).
     """
     _set_process_title(f"fusion-cowork serve :{port}")
     import asyncio
@@ -3507,11 +3545,13 @@ def serve(host: str, port: int, json_log: bool, metrics_port: int):
         permission_manager=rt["permission_manager"],
         hook_manager=rt["hook_manager"],
     )
-    console.print_success(f"fusion-cowork serve (容器模式): {bind_host}:{port} (/rpc /health /mcp /sse)")
+    console.print_success(
+        f"fusion-cowork serve (容器模式): {bind_host}:{port} (/rpc /health /mcp /sse)"  # i18n: user-facing
+    )  # i18n: user-facing
     try:
         asyncio.run(mcp.serve_http(event_emitter=rt["event_emitter"]))
     except KeyboardInterrupt:
-        console.print_info("服务已停止")
+        console.print_info("服务已停止")  # i18n: user-facing
 
 
 @cli.group()
@@ -3520,7 +3560,7 @@ def mailbox():
 
 
 @mailbox.command("serve")
-@click.option("--interval", "-i", default=300, type=int, help="轮询间隔秒数 (默认 300)")
+@click.option("--interval", "-i", default=300, type=int, help="轮询间隔秒数 (默认 300)")  # i18n: user-facing
 def mailbox_serve(interval):
     """Run the support mailbox agent loop (P0 observe-only)."""
 
@@ -3551,7 +3591,7 @@ def mailbox_serve(interval):
 
 
 def main():
-    """Fusion-Cowork 主入口。"""
+    """Fusion-Cowork main entry."""
     cli()
 
 

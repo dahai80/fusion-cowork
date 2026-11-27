@@ -1,8 +1,8 @@
-"""issue #372: crash 证据日志 + 僵尸 resume 真实重启 + 停滞看门狗。
+"""issue #372: crash evidence logging + zombie resume real restart + stall watchdog.
 
-- recover_persisted crash 恢复日志必须点名崩溃时执行中的节点 (证据, 不再静默)
-- resume() 在引擎无暂停事件 (执行任务已死) 时从快照真实重启, 不再假回 running
-- 停滞看门狗: running 无事件超阈值 → crash-pause + 证据 + 取消死任务
+- recover_persisted crash recovery log must name the node executing at crash time (evidence, no longer silent)
+- resume() with no engine pause events (execution task already dead) genuinely restarts from the snapshot, no longer fakes back to running
+- stall watchdog: running with no events past the threshold -> crash-pause + evidence + cancel the dead task
 """
 
 import asyncio
@@ -29,7 +29,7 @@ class MockOk372(BaseNode):
 
 @pytest.fixture()
 def _mock_node():
-    # 测试期注册/结束注销 — 模块级注册会污染依赖节点清单的其他测试
+    # register for the test / unregister at the end — module-level registration pollutes other tests that depend on the node list
     register_node(MockOk372)
     yield
     NodeRegistry.unregister("mock_ok_372", force=True)

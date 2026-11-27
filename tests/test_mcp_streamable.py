@@ -1,11 +1,11 @@
-"""P2-9 测试 — MCP Streamable HTTP 传输 (2025-03-26 spec)。
+"""P2-9 tests — MCP Streamable HTTP transport (2025-03-26 spec).
 
-单一 /mcp 端点 POST/DELETE/GET:
-- initialize 建 Mcp-Session-Id
-- notifications/initialized 标记会话就绪
+Single /mcp endpoint POST/DELETE/GET:
+- initialize creates Mcp-Session-Id
+- notifications/initialized marks the session ready
 - tools/list, tools/call
-- DELETE 终止会话
-- tools/call + Accept: text/event-stream → SSE 流
+- DELETE terminates the session
+- tools/call + Accept: text/event-stream → SSE stream
 """
 
 import json
@@ -184,5 +184,5 @@ class TestStreamableHealth:
         assert resp.status_code == 200
         body = resp.json()
         assert body["protocol"] == "streamable-2025-03-26"
-        # v0.4.0 Stage 4: 深度 /health, 上游未起 → degraded 不阻断
+        # v0.4.0 Stage 4: deep /health, upstream down → degraded, non-blocking
         assert body["status"] in ("ok", "degraded")

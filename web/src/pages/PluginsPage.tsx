@@ -18,7 +18,7 @@ export function PluginsPage() {
         return (
             <ErrorState
                 message={t(
-                    '插件服务不可用 (需 fusion-plugins-ecosystem)',
+                    '插件服务不可用 (需 fusion-plugins-ecosystem)', // i18n: user-facing
                     'Plugins unavailable (fusion-plugins-ecosystem required)'
                 )}
                 onRetry={retry.manualRetry}
@@ -32,11 +32,11 @@ export function PluginsPage() {
         setBusyId(id);
         try {
             await api.rpc<{ ok: boolean }>('plugins/uninstall', { plugin_id: id });
-            sdk.toast.show({ level: 'success', message: t('已卸载', 'Uninstalled') });
+            sdk.toast.show({ level: 'success', message: t('已卸载', 'Uninstalled') }); // i18n: user-facing
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] plugin uninstall failed', e);
-            sdk.toast.show({ level: 'error', message: t('卸载失败', 'Uninstall failed') });
+            sdk.toast.show({ level: 'error', message: t('卸载失败', 'Uninstall failed') }); // i18n: user-facing
         } finally {
             setBusyId('');
         }
@@ -47,11 +47,11 @@ export function PluginsPage() {
         setBusyId(id);
         try {
             await api.rpc<{ ok: boolean }>('plugins/install', { plugin_id: id });
-            sdk.toast.show({ level: 'success', message: t('已安装并启用', 'Installed and enabled') });
+            sdk.toast.show({ level: 'success', message: t('已安装并启用', 'Installed and enabled') }); // i18n: user-facing
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] plugin install failed', e);
-            sdk.toast.show({ level: 'error', message: t('安装失败', 'Install failed') });
+            sdk.toast.show({ level: 'error', message: t('安装失败', 'Install failed') }); // i18n: user-facing
         } finally {
             setBusyId('');
         }
@@ -60,14 +60,16 @@ export function PluginsPage() {
     return (
         <div className="mx-auto max-w-3xl">
             <div className="flex items-end justify-between pb-2">
-                <div className="text-sm font-medium text-text-primary">{t('插件', 'Plugins')}</div>
+                <div className="text-sm font-medium text-text-primary">
+                    {t('插件', 'Plugins') /* i18n: user-facing */}
+                </div>
                 <div className="text-xs text-text-muted">{plugins.length}</div>
             </div>
             {plugins.length === 0 ? (
                 <EmptyState
-                    title={t('暂无插件', 'No plugins')}
+                    title={t('暂无插件', 'No plugins')} // i18n: user-facing
                     description={t(
-                        '安装 fusion-plugins-ecosystem 后此处展示插件目录',
+                        '安装 fusion-plugins-ecosystem 后此处展示插件目录', // i18n: user-facing
                         'Install fusion-plugins-ecosystem to populate the catalog'
                     )}
                 />
@@ -89,9 +91,9 @@ export function PluginsPage() {
                                         label={
                                             p.installed
                                                 ? p.enabled
-                                                    ? t('已启用', 'enabled')
-                                                    : t('已停用', 'disabled')
-                                                : t('未安装', 'not installed')
+                                                    ? t('已启用', 'enabled') // i18n: user-facing
+                                                    : t('已停用', 'disabled') // i18n: user-facing
+                                                : t('未安装', 'not installed') // i18n: user-facing
                                         }
                                     />
                                 </div>
@@ -109,7 +111,7 @@ export function PluginsPage() {
                                     disabled={busyId === p.id}
                                     onClick={() => void uninstall(p.id)}
                                 >
-                                    {t('卸载', 'Uninstall')}
+                                    {t('卸载', 'Uninstall') /* i18n: user-facing */}
                                 </button>
                             ) : (
                                 <button
@@ -118,7 +120,7 @@ export function PluginsPage() {
                                     disabled={busyId === p.id}
                                     onClick={() => void install(p.id)}
                                 >
-                                    {t('安装', 'Install')}
+                                    {t('安装', 'Install') /* i18n: user-facing */}
                                 </button>
                             )}
                         </div>

@@ -1,4 +1,4 @@
-"""issue #191: 运行控制状态持久化 — paused/directives/步骤快照落 SQLite, daemon 重启 (kill -9 模拟) 后唯一恢复路径续跑。"""
+"""issue #191: run-control state persistence — paused/directives/step snapshots persisted to SQLite; after a daemon restart (kill -9 simulated) the sole recovery path resumes the run."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ class _ProbeNode(BaseNode):
     name = HITL_NODE
     display_name = "HITL Probe 191"
     category = NodeCategory.TOOL
-    description = "测试用: 高风险探针 (#191)"
+    description = "测试用: 高风险探针 (#191)"  # i18n: user-facing
     icon = "🧪"
     default_label = "Probe"
 
@@ -41,7 +41,7 @@ class _LowNode(BaseNode):
     name = LOW_NODE
     display_name = "Low Probe 191"
     category = NodeCategory.TOOL
-    description = "测试用: 低风险探针 (#191)"
+    description = "测试用: 低风险探针 (#191)"  # i18n: user-facing
     icon = "1️⃣"
     default_label = "Low"
 
@@ -65,7 +65,7 @@ def pm_no_guard(monkeypatch):
 
 
 def _wf_def() -> dict:
-    # runs_create 传给 registry.start 的是 record["workflow"] — 扁平 nodes/edges 形状
+    # runs_create passes record["workflow"] to registry.start — flat nodes/edges shape
     return {
         "name": "durable-wf-191",
         "nodes": [
@@ -130,7 +130,7 @@ class TestRunStateStore:
     def test_terminal_rows_are_stale_cleaned_loud(self, tmp_path, caplog):
         store = RunStateStore(tmp_path / "run_states.db")
         store.save({"run_id": "run_b", "status": "running", "created_at": time.time()}, paused_reason="")
-        # 伪造终态残留行
+        # forge a stale terminal row
         with store._lock:
             store._conn.execute(
                 "INSERT OR REPLACE INTO run_states (run_id, status, created_at) VALUES ('run_old', 'success', 1.0)"
@@ -139,7 +139,7 @@ class TestRunStateStore:
         with caplog.at_level("WARNING"):
             rows = store.load_active()
         assert [r["run_id"] for r in rows] == ["run_b"]
-        assert "终态残留行" in caplog.text
+        assert "leftover terminal rows" in caplog.text
         assert store.count() == 1
         store.close()
 
@@ -151,13 +151,13 @@ class TestRunStateStore:
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
         conn.commit()
         conn.close()
-        with pytest.raises(RuntimeError, match="拒绝静默降级读取"):
+        with pytest.raises(RuntimeError, match="拒绝静默降级读取"):  # i18n: user-facing
             RunStateStore(path)
 
 
 class TestCrashRecovery:
     async def test_hitl_crash_recover_approve_completes(self, pm_no_guard, tmp_path):
-        # 上半场: run 在 HITL 边界暂停 (持久化状态 running = kill -9 时刻)
+        # first half: run paused at a HITL boundary (persisted status running = the kill -9 moment)
         _ProbeNode.calls = 0
         _LowNode.calls = 0
         db = tmp_path / "run_states.db"
@@ -167,14 +167,14 @@ class TestCrashRecovery:
         assert await _wait_hitl(engine1, run_id)
         assert _LowNode.calls == 1
         assert reg1.run_store.count() == 1
-        # kill -9: 摘 store + 取消任务
+        # kill -9: drop the store + cancel the task
         reg1.run_store = None
         task = reg1._tasks[run_id]
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
         pm_no_guard.discard_pending_by_execution(run_id)
-        # 下半场: 新引擎 + 新 registry + 同一 SQLite — 启动恢复
+        # second half: new engine + new registry + same SQLite — startup recovery
         engine2, reg2 = _stack(RunStateStore(db), pm_no_guard)
         assert await reg2.recover_persisted() == 1
         rec = reg2.get(run_id)
@@ -182,11 +182,11 @@ class TestCrashRecovery:
         assert rec["status"] == "paused"
         assert rec["paused_reason"] == "crash"
         assert rec["recovered"] is True
-        # 快照含 n1 → 恢复续跑跳过 n1, 直接撞 n2 的 HITL
+        # snapshot contains n1 -> resumed run skips n1 and hits n2's HITL directly
         assert reg2.resume(run_id) is True
         assert await _wait_hitl(engine2, run_id)
-        assert _LowNode.calls == 1, "恢复续跑不应重跑已完成节点"
-        # 审批通过 → run 完成; 终态行出库
+        assert _LowNode.calls == 1, "恢复续跑不应重跑已完成节点"  # i18n: user-facing
+        # approval passes -> run completes; terminal row leaves the store
         action_id = pm_no_guard.list_pending()[0]["action_id"]
         await pm_no_guard.confirm_guard(action_id, approved=True, approved_by="test")
         assert engine2.resolve_hitl(run_id, True)
@@ -204,7 +204,7 @@ class TestCrashRecovery:
         engine1, reg1 = _stack(RunStateStore(db), pm_no_guard)
         run_id = reg1.start(_wf_def(), workflow_id="wf_191")["run_id"]
         assert await _wait_hitl(engine1, run_id)
-        # 停机前排队一条改向指令 (全量 payload 落库)
+        # queue a redirect directive before shutdown (full payload persisted)
         err = reg1.directive(run_id, {"action": "set_params", "node_id": "n2", "params": {"foo": "bar"}})
         assert err is None
         row = RunStateStore(db).load_active()[0]
@@ -216,15 +216,15 @@ class TestCrashRecovery:
         with contextlib.suppress(asyncio.CancelledError):
             await task
         pm_no_guard.discard_pending_by_execution(run_id)
-        # 恢复: 指令重放进新引擎队列, resume 后首个节点边界生效
+        # recovery: directive replayed into the new engine queue; takes effect at the first node boundary after resume
         engine2, reg2 = _stack(RunStateStore(db), pm_no_guard)
         with caplog.at_level(logging.INFO, logger="fusion_cowork.server.web_api"):
             assert await reg2.recover_persisted() == 1
-        assert "恢复期间重放改向指令 1 条" in caplog.text
+        assert "replayed 1 redirection directives during recovery" in caplog.text
         queued = engine2._directives.get(run_id, [])
         assert len(queued) == 1
         assert queued[0].get("params") == {"foo": "bar"}
-        # 收尾: resume → 指令应用 → HITL → 审批 → 完成
+        # wrap-up: resume -> directive applied -> HITL -> approval -> complete
         assert reg2.resume(run_id) is True
         assert await _wait_hitl(engine2, run_id)
         action_id = pm_no_guard.list_pending()[0]["action_id"]
@@ -235,7 +235,7 @@ class TestCrashRecovery:
         reg2.run_store.close()
 
     async def test_manual_paused_row_recovers_as_manual(self, pm_no_guard, tmp_path):
-        # 手工暂停语义: 持久化状态 paused → 恢复不判 crash, paused_reason 保留
+        # manual pause semantics: persisted status paused -> recovery does not judge crash, paused_reason preserved
         db = tmp_path / "run_states.db"
         store = RunStateStore(db)
         store.save(
@@ -266,7 +266,7 @@ class TestCrashRecovery:
         assert reg2.resume("run_manual_191") is True
         status = await _wait_terminal(reg2, "run_manual_191")
         assert status == "success"
-        assert _LowNode.calls == 0, "快照完成的节点不应重跑"
+        assert _LowNode.calls == 0, "快照完成的节点不应重跑"  # i18n: user-facing
         reg2.run_store.close()
 
     async def test_corrupt_row_discarded_loud(self, pm_no_guard, tmp_path, caplog):
@@ -279,7 +279,7 @@ class TestCrashRecovery:
                 "workflow_name": "bad",
                 "status": "paused",
                 "created_at": time.time(),
-                "workflow_def": {"nope": 1},  # Workflow.from_dict 解析失败
+                "workflow_def": {"nope": 1},  # Workflow.from_dict parse failure
                 "steps": [],
                 "directives": [],
                 "memory": False,
@@ -291,7 +291,7 @@ class TestCrashRecovery:
         with caplog.at_level("ERROR", logger="fusion_cowork.server.web_api"):
             assert await reg2.recover_persisted() == 0
         assert "run_bad_191" in caplog.text
-        assert reg2.run_store.count() == 0, "无法解析的行应被废弃删除"
+        assert reg2.run_store.count() == 0, "无法解析的行应被废弃删除"  # i18n: user-facing
         reg2.run_store.close()
 
 
@@ -307,7 +307,7 @@ class TestWebWiring:
         app = web_api.create_web_app(engine=eng, dist_dir=tmp_path / "no-dist", store_root=store_root)
         assert app.state.run_registry.run_store is not None
         assert (store_root / "run_states.db").exists()
-        # startup 事件触发恢复 (活跃行为 0 → 不抛错)
+        # startup event triggers recovery (0 active rows -> no raise)
         with TestClient(app) as client:
             assert client.get("/health").json()["status"] == "ok"
         app.state.run_registry.run_store.close()

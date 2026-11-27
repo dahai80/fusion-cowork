@@ -27,6 +27,7 @@ except ImportError as exc:  # pragma: no cover
 
 class TestKernelExport:
     def test_business_role_to_team_member(self):
+        # i18n: user-facing
         role = BusinessRole("shell_operator", "命令行执行", "executor_shell", duties=["run cmd"], deliverables="stdout")
         member = to_team_member(role)
         assert isinstance(member, TeamMember)

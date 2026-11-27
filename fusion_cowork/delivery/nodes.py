@@ -69,11 +69,11 @@ class CreateOrderNode(BaseNode):
     # S0: allocate ORD-YYYY-NNN + order record from a won lead (idempotent —
     # one order per lead; rerun returns the existing order)
     name = "create_order"
-    display_name = "创建订单"
+    display_name = "创建订单"  # i18n: user-facing
     category = NodeCategory.LOGIC
     description = "won lead -> order record (ORD-YYYY-NNN, idempotent per lead)"
     icon = "package"
-    default_label = "创建订单"
+    default_label = "创建订单"  # i18n: user-facing
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
@@ -133,11 +133,11 @@ class ScaffoldRepoNode(BaseNode):
     # S0: private repo scaffold — idempotent (repo exists -> skip), retry-safe;
     # gh token from env only, never logged
     name = "scaffold_repo"
-    display_name = "脚手架仓库"
+    display_name = "脚手架仓库"  # i18n: user-facing
     category = NodeCategory.LOGIC
     description = "private repo per order: seed commit + labels + branch protection (idempotent)"
     icon = "git-branch"
-    default_label = "仓库脚手架"
+    default_label = "仓库脚手架"  # i18n: user-facing
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
@@ -201,11 +201,11 @@ class DraftSowNode(BaseNode):
     # (Rule 5: templating, not reasoning); stored as a draft, order parks on
     # the human gate (sow_draft stage). Never sent by the system.
     name = "draft_sow"
-    display_name = "SOW草稿"
+    display_name = "SOW草稿"  # i18n: user-facing
     category = NodeCategory.LOGIC
     description = "order -> SOW draft (template fill), parks on human gate"
     icon = "file-text"
-    default_label = "SOW草稿"
+    default_label = "SOW草稿"  # i18n: user-facing
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
@@ -257,11 +257,11 @@ class GenerateInviteNode(BaseNode):
     # draft for the human to send on the original channel — system drafts,
     # human sends; optional ntfy ping "invite ready, awaiting human send"
     name = "generate_invite"
-    display_name = "生成邀请"
+    display_name = "生成邀请"  # i18n: user-facing
     category = NodeCategory.LOGIC
     description = "order -> single-use invite token (hashed, 72h) + invite message draft"
     icon = "ticket"
-    default_label = "生成邀请"
+    default_label = "生成邀请"  # i18n: user-facing
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
@@ -315,11 +315,11 @@ class SyncIssuesNode(BaseNode):
     # SLA scan flags overdue sla-24h/72h issues (notification event, source
     # factory/delivery); issue bodies stay English-only, comms stay in shell
     name = "sync_issues"
-    display_name = "Issue同步"
+    display_name = "Issue同步"  # i18n: user-facing
     category = NodeCategory.LOGIC
     description = "order repos -> GitHub issues sync + SLA overdue scan (hourly)"
     icon = "inbox"
-    default_label = "Issue同步"
+    default_label = "Issue同步"  # i18n: user-facing
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {

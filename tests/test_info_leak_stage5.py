@@ -1,10 +1,10 @@
-"""Stage 5 — 错误处理/信息泄漏测试 (HI-5/13/14/15/4)。
+"""Stage 5 — error handling / information-leak tests (HI-5/13/14/15/4).
 
-- HI-5: trace_id 入响应, str(e)/栈不泄客户端 (desk_rpc + rpc_bridge + mcp_http + mcp_transport)
-- HI-13: collab 128-bit session_id + content ≤16KiB + 剥控制字符 + principal 绑定
-- HI-14: space.update handler 字段白名单 (拒 owner_id/status 劫持) + session metadata ≤64KiB
-- HI-15: syncKnowledge 文件名净化 + base64/解码体积上限 + 扩展名白名单
-- HI-4: rpc_bridge 处理前 params schema 校验 (缺 plugin_id → -32602)
+- HI-5: trace_id returned in responses, str(e)/stack never leaked to clients (desk_rpc + rpc_bridge + mcp_http + mcp_transport)
+- HI-13: collab 128-bit session_id + content <=16KiB + control-char stripping + principal binding
+- HI-14: space.update handler field whitelist (rejects owner_id/status hijack) + session metadata <=64KiB
+- HI-15: syncKnowledge filename sanitization + base64/decoded size caps + extension whitelist
+- HI-4: rpc_bridge params schema validation before dispatch (missing plugin_id → -32602)
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import re
 
 import pytest
 
-# 触发节点注册 (防跨测试污染)
+# Trigger node registration (prevent cross-test pollution)
 import fusion_cowork.nodes.io.file_io
 import fusion_cowork.nodes.tools.tool_nodes  # noqa: F401
 from fusion_cowork.engine.node import NodeRegistry
@@ -29,11 +29,11 @@ def _ensure_nodes_loaded():
         fusion_cowork.nodes.import_all_nodes()
 
 
-# ── HI-5: trace_id 不泄内部栈 ──
+# ── HI-5: trace_id does not leak internal stack ──
 
 
 class TestHI5TraceIdNoLeak:
-    # HI-5: handler 异常 → 客户端仅 trace_id + 通用消息, 不泄 str(e)/栈/绝对路径
+    # HI-5: handler exception → client gets only trace_id + generic message, no str(e)/stack/absolute paths
 
     @pytest.mark.asyncio
     async def test_dispatch_handler_exception_returns_trace_id_not_str(self):
@@ -41,7 +41,7 @@ class TestHI5TraceIdNoLeak:
 
         server = DeskRPCServer()
 
-        # 注入一个必抛异常的 handler
+        # Inject a handler that always raises
         async def _boom(params):
             raise RuntimeError("secret /etc/passwd SQL error http://internal:8080")
 
@@ -51,10 +51,10 @@ class TestHI5TraceIdNoLeak:
         assert err["code"] == -32603
         assert err["message"] == "Internal error"
         tid = err["data"]["trace_id"]
-        # v0.4.0 Stage 4 统一 trace_id 格式: fc_<16hex> (observability.trace)
+        # v0.4.0 Stage 4 unified trace_id format: fc_<16hex> (observability.trace)
         assert isinstance(tid, str) and len(tid) == 19
         assert re.fullmatch(r"fc_[0-9a-f]{16}", tid)
-        # 绝不泄漏内部细节
+        # Never leak internal details
         blob = json.dumps(resp, ensure_ascii=False)
         assert "secret" not in blob
         assert "/etc/passwd" not in blob
@@ -69,14 +69,14 @@ class TestHI5TraceIdNoLeak:
         res = server._internal_error(FileNotFoundError("/Users/dahai/secret/path.db"), method="desk.x")
         assert "trace_id" in res and isinstance(res["trace_id"], str) and len(res["trace_id"]) == 19
         blob = json.dumps(res, ensure_ascii=False)
-        # 绝对路径 + 异常类型名不进响应
+        # Absolute paths + exception type names must not reach the response
         assert "/Users/dahai" not in blob
         assert "FileNotFoundError" not in blob
         assert "secret/path" not in blob
 
     @pytest.mark.asyncio
     async def test_rpc_bridge_dispatch_exception_returns_trace_id(self):
-        # 触发 handler.handle 内部异常 (在 HI-5 try/except 内), 不在 get_plugins_handler
+        # Trigger an exception inside handler.handle (within the HI-5 try/except), not in get_plugins_handler
         from fusion_cowork.server import rpc_bridge
 
         orig_get = rpc_bridge.get_plugins_handler
@@ -89,7 +89,7 @@ class TestHI5TraceIdNoLeak:
             return _FakeHandler()
 
         rpc_bridge.get_plugins_handler = _fake
-        rpc_bridge._DEFAULTS_MOUNTED = True  # 跳过 _mount_defaults (需 lifecycle)
+        rpc_bridge._DEFAULTS_MOUNTED = True  # skip _mount_defaults (needs lifecycle)
         try:
             resp = await rpc_bridge.dispatch_rpc({"jsonrpc": "2.0", "id": 3, "method": "plugins/list", "params": {}})
         finally:
@@ -113,8 +113,8 @@ class TestHI5TraceIdNoLeak:
 
         registry = MCPToolRegistry()
 
-        # call_tool 内部有 try/except 会吞 tool 异常; 直接打 monkeypatch 让 call_tool 抛,
-        # 触发 mcp_http handler 层 HI-5 catch (绕过 registry 内部 catch)
+        # call_tool's internal try/except swallows tool exceptions; monkeypatch call_tool to raise directly,
+        # triggering the mcp_http handler-layer HI-5 catch (bypassing the registry's internal catch)
         async def _boom_call(tool_name, arguments):
             raise RuntimeError("secret stack http://10.0.0.1")
 
@@ -122,7 +122,7 @@ class TestHI5TraceIdNoLeak:
         app = create_http_app(registry)
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            # 先 initialize (legacy /mcp 需 _initialized)
+            # Initialize first (legacy /mcp requires _initialized)
             await client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
             await client.post("/mcp", json={"jsonrpc": "2.0", "method": "initialized", "params": {}})
             r = await client.post(
@@ -141,11 +141,11 @@ class TestHI5TraceIdNoLeak:
         assert "10.0.0.1" not in blob
 
 
-# ── HI-13: collab 会话 ──
+# ── HI-13: collab sessions ──
 
 
 class TestHI13CollabHardening:
-    # HI-13: collab 128-bit session_id + content ≤16KiB + 剥控制字符 + principal 绑定认证身份
+    # HI-13: collab 128-bit session_id + content <=16KiB + control-char stripping + principal-bound identity
 
     @pytest.mark.asyncio
     async def test_collab_join_generates_128bit_session_id(self, tmp_path):
@@ -173,15 +173,15 @@ class TestHI13CollabHardening:
         )
         await store.create_space(sp)
         server = DeskRPCServer(space_store=store)
-        # 攻击者试图以 user_id="admin" 冒充
+        # Attacker tries to impersonate via user_id="admin"
         res = await server._handle_space_collab_join({"space_id": "sp_collab", "user_id": "attacker_admin"})
         assert "error" not in res
         sid = res["session_id"]
-        # 128-bit: sess_ + 32 hex 字符 (token_hex(16))
+        # 128-bit: sess_ + 32 hex chars (token_hex(16))
         assert sid.startswith("sess_")
         hex_part = sid[len("sess_") :]
         assert len(hex_part) == 32 and re.fullmatch(r"[0-9a-f]{32}", hex_part)
-        # principal 绑定认证身份 local_user, 非攻击者注入的 admin
+        # Principal binds to the authenticated identity local_user, not the attacker-injected admin
         sess = server._collab_sessions[sid]
         assert sess["principal"] == "local_user"
         assert sess["user_id"] == "local_user"
@@ -247,10 +247,10 @@ class TestHI13CollabHardening:
         server = DeskRPCServer(space_store=store)
         join = await server._handle_space_collab_join({"space_id": "sp_c3"})
         sid = join["session_id"]
-        # 超 16KiB (16384) → 拒
+        # Over 16KiB (16384) → rejected
         big = "x" * (16 * 1024 + 1)
         res = await server._handle_space_collab_send({"session_id": sid, "content": big})
-        assert res["error"].startswith("消息超")
+        assert res["error"].startswith("消息超")  # i18n: user-facing
         await store.close()
 
     @pytest.mark.asyncio
@@ -281,19 +281,19 @@ class TestHI13CollabHardening:
         server = DeskRPCServer(space_store=store)
         join = await server._handle_space_collab_join({"space_id": "sp_c4"})
         sid = join["session_id"]
-        # 含 C0 控制字符 (保留 \t\n\r, 删 \x00\x07\x1b)
+        # Contains C0 control chars (keep \t\n\r, strip \x00\x07\x1b)
         dirty = "hello\x00world\x07ansi\x1b[2J\tok\nline"
         res = await server._handle_space_collab_send({"session_id": sid, "content": dirty})
         assert res.get("ok") is True
-        # 从 hub 广播事件 (poll) 取回, 校验控制字符已剥
+        # Fetch back from hub broadcast events (poll), verify control chars stripped
         events = await server._handle_space_collab_poll({"session_id": sid})
         chat = next((e for e in events["events"] if e.get("type") == "chat"), None)
         assert chat is not None
         assert "\x00" not in chat["content"]
         assert "\x07" not in chat["content"]
         assert "\x1b" not in chat["content"]
-        assert "\t" in chat["content"]  # tab 保留
-        assert "\n" in chat["content"]  # 换行保留
+        assert "\t" in chat["content"]  # tab preserved
+        assert "\n" in chat["content"]  # newline preserved
         await store.close()
 
     @pytest.mark.asyncio
@@ -303,14 +303,14 @@ class TestHI13CollabHardening:
         server = DeskRPCServer()
         server._collab_sessions["sess_fake"] = {"space_id": "sp", "user_id": "u", "ws": object()}
         res = await server._handle_space_collab_send({"session_id": "sess_fake", "content": 12345})
-        assert res["error"] == "content 必须为字符串"
+        assert res["error"] == "content 必须为字符串"  # i18n: user-facing
 
 
-# ── HI-14: space.update 白名单 + session metadata 上限 ──
+# ── HI-14: space.update whitelist + session metadata cap ──
 
 
 class TestHI14UpdateWhitelist:
-    # HI-14: handler 层 _USER_EDITABLE={name,description} 拒 owner_id/status 劫持; session metadata ≤64KiB
+    # HI-14: handler-layer _USER_EDITABLE={name,description} rejects owner_id/status hijack; session metadata <=64KiB
 
     @pytest.mark.asyncio
     async def test_space_update_rejects_owner_id_hijack(self, tmp_path):
@@ -338,18 +338,18 @@ class TestHI14UpdateWhitelist:
         )
         await store.create_space(sp)
         server = DeskRPCServer(space_store=store)
-        # 攻击者试图夺权: owner_id→attacker + status→ARCHIVED 反归档
+        # Attacker tries to take over: owner_id→attacker + status→ARCHIVED unarchive
         res = await server._handle_space_update(
             {
                 "space_id": "sp_h14a",
                 "updates": {"owner_id": "attacker", "status": "archived", "name": "hijacked"},
             }
         )
-        # 仅 name 生效
+        # Only name takes effect
         assert res["name"] == "hijacked"
         after = await store.get_space("sp_h14a")
-        assert after.owner_id == "local_user"  # 未被夺权
-        assert after.status == SpaceStatus.ACTIVE  # 未被反归档
+        assert after.owner_id == "local_user"  # ownership not hijacked
+        assert after.status == SpaceStatus.ACTIVE  # not unarchived
         await store.close()
 
     @pytest.mark.asyncio
@@ -414,14 +414,14 @@ class TestHI14UpdateWhitelist:
         )
         await store.create_space(sp)
         server = DeskRPCServer(space_store=store)
-        # 全是高危字段 → 无可更新字段
+        # All high-risk fields → nothing updatable
         res = await server._handle_space_update(
             {
                 "space_id": "sp_h14c",
                 "updates": {"owner_id": "x", "status": "z", "kb_id": "k", "collab_mode": "m"},
             }
         )
-        assert res["error"].startswith("无可更新字段")
+        assert res["error"].startswith("无可更新字段")  # i18n: user-facing
         await store.close()
 
     @pytest.mark.asyncio
@@ -434,11 +434,11 @@ class TestHI14UpdateWhitelist:
         store.save(sess)
         server = DeskRPCServer()
         server._session_store = store
-        # 灌超大 metadata (>64KiB)
+        # Stuff oversized metadata (>64KiB)
         big = {"k": "v" * (70 * 1024)}
         res = await server._handle_session_update({"session_id": sess.id, "updates": {"metadata": big}})
-        assert res["error"].startswith("metadata 超")
-        # 确认未被写入
+        assert res["error"].startswith("metadata 超")  # i18n: user-facing
+        # Confirm it was not written
         after = store.get(sess.id)
         assert "k" not in after.metadata
 
@@ -456,22 +456,22 @@ class TestHI14UpdateWhitelist:
         assert res["metadata"]["note"] == "ok"
 
 
-# ── HI-15: syncKnowledge 文件净化 ──
+# ── HI-15: syncKnowledge file sanitization ──
 
 
 class TestHI15SyncKnowledgeSanitize:
-    # HI-15: syncKnowledge 拒路径穿越 + base64 体积上限 + 扩展名白名单 + 解码体积上限
-    # 校验门全在 kb_svc.upload_document (需网络) 之前, 拒绝入 errors[] 不触网
+    # HI-15: syncKnowledge rejects path traversal + base64 size cap + extension whitelist + decoded size cap
+    # All validation gates run before kb_svc.upload_document (needs network); rejections land in errors[] without network
 
     @pytest.mark.asyncio
     async def test_sync_knowledge_neutralizes_path_traversal(self):
-        # _secure_filename 剥 ../ 取 basename: "../../etc/cron.d/x.txt" → "x.txt"
-        # 穿越被中和 (不会以恶意路径进 KB), 而非粗暴拒绝
+        # _secure_filename strips ../ keeping the basename: "../../etc/cron.d/x.txt" → "x.txt"
+        # Traversal is neutralized (never enters the KB as a malicious path) rather than crudely rejected
         from fusion_cowork.server.desk_rpc import _secure_filename
 
         assert _secure_filename("../../etc/cron.d/x.txt") == "x.txt"
         assert _secure_filename("../../../home/user/notes.txt") == "notes.txt"
-        # 纯穿越 / 空名 → 拒 (返空 → handler 拒)
+        # Pure traversal / empty name → rejected (returns empty → handler rejects)
         assert _secure_filename("../../") == ""
         assert _secure_filename("") == ""
         assert _secure_filename("...") == ""
@@ -503,7 +503,7 @@ class TestHI15SyncKnowledgeSanitize:
         await store.create_space(sp)
         server = DeskRPCServer(space_store=store)
         content = base64.b64encode(b"hello").decode()
-        # 空名 → _secure_filename 返空 → "文件名非法或缺失" (不触网)
+        # Empty name → _secure_filename returns empty → handler reports the invalid-or-missing-filename error (no network)
         res = await server._handle_project_sync_knowledge(
             {
                 "space_id": "sp_h15",
@@ -512,7 +512,7 @@ class TestHI15SyncKnowledgeSanitize:
         )
         assert res["synced"] == []
         assert len(res["errors"]) == 1
-        assert "非法" in res["errors"][0]["error"] or "缺失" in res["errors"][0]["error"]
+        assert "非法" in res["errors"][0]["error"] or "缺失" in res["errors"][0]["error"]  # i18n: user-facing
         await store.close()
 
     @pytest.mark.asyncio
@@ -550,7 +550,7 @@ class TestHI15SyncKnowledgeSanitize:
         )
         assert res["synced"] == []
         assert len(res["errors"]) == 1
-        assert "非文本扩展名" in res["errors"][0]["error"]
+        assert "非文本扩展名" in res["errors"][0]["error"]  # i18n: user-facing
         await store.close()
 
     @pytest.mark.asyncio
@@ -579,7 +579,7 @@ class TestHI15SyncKnowledgeSanitize:
         )
         await store.create_space(sp)
         server = DeskRPCServer(space_store=store)
-        # 造 >50MiB 的 base64 (用 'A' 填充, 合法 b64 字符)
+        # Build >50MiB of base64 (padded with 'A', a valid b64 char)
         big_b64 = "A" * (50 * 1024 * 1024 + 100)
         res = await server._handle_project_sync_knowledge(
             {
@@ -589,7 +589,7 @@ class TestHI15SyncKnowledgeSanitize:
         )
         assert res["synced"] == []
         assert len(res["errors"]) == 1
-        assert "base64 超" in res["errors"][0]["error"]
+        assert "base64 超" in res["errors"][0]["error"]  # i18n: user-facing
         await store.close()
 
     @pytest.mark.asyncio
@@ -618,7 +618,7 @@ class TestHI15SyncKnowledgeSanitize:
         )
         await store.create_space(sp)
         server = DeskRPCServer(space_store=store)
-        # 非法 base64 (validate=True 会抛)
+        # Invalid base64 (validate=True raises)
         res = await server._handle_project_sync_knowledge(
             {
                 "space_id": "sp_h15d",
@@ -627,8 +627,8 @@ class TestHI15SyncKnowledgeSanitize:
         )
         assert res["synced"] == []
         assert len(res["errors"]) == 1
-        # decode 异常 → "上传失败" + trace_id (不泄 str(e))
-        assert res["errors"][0]["error"] == "上传失败"
+        # decode exception → upload-failed error + trace_id (no str(e) leak)
+        assert res["errors"][0]["error"] == "上传失败"  # i18n: user-facing
         assert "trace_id" in res["errors"][0]
         await store.close()
 
@@ -660,15 +660,15 @@ class TestHI15SyncKnowledgeSanitize:
         server = DeskRPCServer(space_store=store)
         files = [{"name": f"f{i}.txt", "content": base64.b64encode(b"x").decode()} for i in range(51)]
         res = await server._handle_project_sync_knowledge({"space_id": "sp_h15e", "files": files})
-        assert "不超" in res["error"]
+        assert "不超" in res["error"]  # i18n: user-facing
         await store.close()
 
 
-# ── HI-4: rpc_bridge params 校验 ──
+# ── HI-4: rpc_bridge params validation ──
 
 
 class TestHI4RpcBridgeParamSchema:
-    # HI-4: dispatch_rpc 处理前校验 params schema, 缺 plugin_id → -32602, 不进 handler
+    # HI-4: dispatch_rpc validates params schema before dispatch, missing plugin_id → -32602, never reaches handler
 
     @pytest.mark.asyncio
     async def test_install_missing_plugin_id_rejected(self):
@@ -691,20 +691,20 @@ class TestHI4RpcBridgeParamSchema:
         from fusion_cowork.server.rpc_bridge import dispatch_rpc
 
         resp = await dispatch_rpc({"jsonrpc": "2.0", "id": 3, "method": "plugins/state.get", "params": "not-a-dict"})
-        # params 非 dict → -32602
+        # params not a dict → -32602
         assert resp["error"]["code"] == -32602
-        assert "非对象" in resp["error"]["message"] or "缺失" in resp["error"]["message"]
+        assert "非对象" in resp["error"]["message"] or "缺失" in resp["error"]["message"]  # i18n: user-facing
 
     @pytest.mark.asyncio
     async def test_config_get_no_required_params_passes_schema(self):
-        # config.get 无必填字段 → 过 schema 校验, 进 handler (依赖在 → handler 响应; 缺 → -32603)
+        # config.get has no required fields → passes schema validation, reaches handler (deps present → handler response; absent → -32603)
         from fusion_cowork.server.rpc_bridge import dispatch_rpc, is_plugins_available
 
         resp = await dispatch_rpc({"jsonrpc": "2.0", "id": 4, "method": "plugins/config.get", "params": {}})
-        # 不应被 schema 拦 (不是 -32602)
+        # Must not be blocked by schema (not -32602)
         if resp.get("error", {}).get("code") == -32602:
-            raise AssertionError("config.get 被 schema 误拦")
-        # 进了 handler 层 (依赖在 → 有 result; 缺 → -32603 提示安装)
+            raise AssertionError("config.get 被 schema 误拦")  # i18n: user-facing
+        # Reached the handler layer (deps present → has result; absent → -32603 install hint)
         if is_plugins_available():
             assert "result" in resp or resp.get("error", {}).get("code") != -32602
         else:
@@ -712,7 +712,7 @@ class TestHI4RpcBridgeParamSchema:
 
     @pytest.mark.asyncio
     async def test_install_with_plugin_id_passes_schema(self):
-        # 带合法 plugin_id → 过 schema, 进 handler 层
+        # With a valid plugin_id → passes schema, reaches handler layer
         from fusion_cowork.server.rpc_bridge import dispatch_rpc, is_plugins_available
 
         resp = await dispatch_rpc(
@@ -723,8 +723,8 @@ class TestHI4RpcBridgeParamSchema:
                 "params": {"plugin_id": "caveman_compress"},
             }
         )
-        # 不应 -32602 (schema 通过)
+        # Must not be -32602 (schema passes)
         assert resp.get("error", {}).get("code") != -32602
-        # 进 handler: 依赖在 → 可能 result 或业务 error; 缺 → -32603
+        # Reaches handler: deps present → result or business error; absent → -32603
         if not is_plugins_available():
             assert resp["error"]["code"] == -32603

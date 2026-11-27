@@ -1,7 +1,7 @@
-"""MemoryCommitNode / MemoryRetrieveNode 单元测试 — fusion-memory HTTP 节点。
+"""MemoryCommitNode / MemoryRetrieveNode unit tests — fusion-memory HTTP nodes.
 
-测注册 / 别名 / 参数校验 / fail-visible 鉴权缺失 / HTTP wire 契约 (httpx
-MockTransport 离线桩, 不连真 fusion-memory, 符合离线测试约束)。
+Covers registration / aliases / param validation / fail-visible missing auth / HTTP wire contract (httpx
+MockTransport offline stub, no real fusion-memory connection, per offline-test constraints).
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import json
 import httpx
 import pytest
 
-import fusion_cowork.nodes.ecosystem  # noqa: F401  触发 @register_node
+import fusion_cowork.nodes.ecosystem  # noqa: F401  triggers @register_node
 from fusion_cowork import NODE_NAME_ALIASES
 from fusion_cowork.engine.node import NodeCategory, NodeConfig, NodeRegistry, NodeStatus
 from fusion_cowork.nodes.ecosystem.memory_node import (
@@ -35,9 +35,13 @@ def test_retrieve_node_registered():
 
 
 def test_aliases_registered():
+    # i18n: user-facing
     assert NODE_NAME_ALIASES.get("记忆提交") == "memory_commit"
+    # i18n: user-facing
     assert NODE_NAME_ALIASES.get("提交记忆") == "memory_commit"
+    # i18n: user-facing
     assert NODE_NAME_ALIASES.get("记忆检索") == "memory_retrieve"
+    # i18n: user-facing
     assert NODE_NAME_ALIASES.get("召回记忆") == "memory_retrieve"
 
 
@@ -59,7 +63,7 @@ def test_retrieve_params_schema_required_fields():
 def _make_commit_node(monkeypatch, handler, api_key="test-key"):
     monkeypatch.setenv("FUSION_MEMORY_API_KEY", api_key)
     transport = httpx.MockTransport(handler)
-    # 注入 mock transport: 包装 _rpc 用的 AsyncClient
+    # Inject a mock transport: wrap the AsyncClient used by _rpc
     orig_init = httpx.AsyncClient.__init__
 
     def patched_init(self, *args, **kwargs):

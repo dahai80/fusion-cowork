@@ -1,6 +1,6 @@
-"""issue #462: sub_workflow 节点 — 子 DAG 作为一等节点执行。
+"""issue #462: sub_workflow node — a child DAG executed as a first-class node.
 
-嵌套深度上限、失败/超时传播、参数继承 (params.input)、别名注册。
+Nesting depth cap, failure/timeout propagation, parameter inheritance (params.input), alias registration.
 """
 
 from __future__ import annotations
@@ -50,6 +50,7 @@ class _Fail460(BaseNode):
     default_label = "Fail"
 
     async def execute(self, inputs: dict) -> NodeResult:
+        # i18n: user-facing
         return NodeResult(status=NodeStatus.FAILED, error="fail460 有意失败", summary="fail")
 
 
@@ -69,7 +70,10 @@ class _Slow461(BaseNode):
 
 def _setup():
     import_all_nodes()
+    # i18n: user-facing
+    # i18n: user-facing
     NodeRegistry.register_alias("子工作流", "sub_workflow")
+    # i18n: user-facing
     NodeRegistry.register_alias("工作流嵌套", "sub_workflow")
 
 
@@ -95,7 +99,9 @@ class TestSubWorkflowNode:
     def test_registered_with_alias(self):
         _setup()
         assert NodeRegistry.get("sub_workflow") is not None
+        # i18n: user-facing
         assert NODE_NAME_ALIASES.get("子工作流") == "sub_workflow"
+        # i18n: user-facing
         assert NODE_NAME_ALIASES.get("工作流嵌套") == "sub_workflow"
 
     async def test_child_executes_and_returns_outputs(self):
@@ -110,7 +116,7 @@ class TestSubWorkflowNode:
         assert step.status.value == "success"
         data = step.output_data
         assert data["status"] == "success"
-        # 参数继承: params.input 注入子工作流首节点
+        # Parameter inheritance: params.input injected into the child workflow's first node
         assert data["outputs"]["seed"] == "x", data
         assert data["steps"][0]["node_id"] == "c1"
         assert data["steps"][0]["session_id"] is None or isinstance(data["steps"][0]["session_id"], str)
@@ -125,7 +131,7 @@ class TestSubWorkflowNode:
     async def test_depth_cap_enforced(self):
         _setup()
         eng = _engine()
-        # 子 DAG 内再嵌一层 sub_workflow, depth_cap=1 → 内层在 depth=1 被拒
+        # Nest one more sub_workflow inside the child DAG, depth_cap=1 → inner layer rejected at depth=1
         nested = {
             "nodes": [
                 {
@@ -141,6 +147,7 @@ class TestSubWorkflowNode:
             initial_input={},
         )
         assert exec_result.status.value == "failed"
+        # i18n: user-facing
         assert "嵌套超限" in (exec_result.error or ""), exec_result.error
 
     async def test_depth_cap_success_at_boundary(self):
@@ -170,6 +177,7 @@ class TestSubWorkflowNode:
         node.config.params = {"workflow": _child_def()}
         res = await node.execute({})
         assert res.status.value == "failed"
+        # i18n: user-facing
         assert "引擎" in res.error
 
     async def test_invalid_def_fails(self):
@@ -187,4 +195,5 @@ class TestSubWorkflowNode:
             initial_input={},
         )
         assert exec_result.status.value == "failed"
+        # i18n: user-facing
         assert "超时" in (exec_result.error or ""), exec_result.error

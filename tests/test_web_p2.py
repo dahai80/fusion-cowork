@@ -1,10 +1,10 @@
-"""P2 web 迁移批次 (migration doc §6): space 协作面挂载 + artifacts。
+"""P2 web migration batch (migration doc §6): space collaboration surface mounting + artifacts.
 
 Contract:
-- space_api 挂载 /api/space: CRUD / members / messages / artifacts 全链路
-  (store 注入 tmp data_dir 隔离, mlx/kb 用 fail-soft fake)。
-- artifacts 3 路由: create 201 / list / get 200+404, PermissionError 403。
-- 外层 web 静态密钥鉴权覆盖挂载子应用 (401)。
+- space_api mounts /api/space: CRUD / members / messages / artifacts full chain
+  (store injected with a tmp data_dir for isolation, mlx/kb use fail-soft fakes).
+- artifacts 3 routes: create 201 / list / get 200+404, PermissionError 403.
+- Outer web static-key auth covers the mounted sub-app (401).
 """
 
 from __future__ import annotations
@@ -139,7 +139,7 @@ class TestSpaceSurface:
         assert denied.status_code in (201, 403)
 
     def test_unauthorized_mounted(self, client):
-        # 外层静态密钥中间件覆盖挂载子应用 — 含子应用 /health (仅外层 /health 免鉴权)
+        # Outer static-key middleware covers the mounted sub-app — including the sub-app /health (only the outer /health is auth-exempt)
         assert client.get("/api/space/spaces").status_code == 401
         assert client.get("/api/space/health").status_code == 401
         assert client.get("/api/space/health", headers=_auth(client)).status_code == 200

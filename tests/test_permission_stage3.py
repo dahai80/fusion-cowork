@@ -1,14 +1,14 @@
-"""Stage 3 权限模型+沙箱测试 — CR-16/17/18/2/3/19/20/21/22/23/15。
+"""Stage 3 permission model + sandbox tests — CR-16/17/18/2/3/19/20/21/22/23/15.
 
-- CR-16: PermissionLevel.CONFIRM 默认, check() approve/deny/high-risk/else 顺序
-- CR-17/18: HIGH_RISK_NODES 补全 27 个高危节点
-- CR-2/3: HookEvent.permission_request 带外确认接通 CONFIRM
-- CR-19: ApplyEdit ensure_allowed 拒越界路径
-- CR-20: register 拒插件覆盖已注册节点名 (防劫持)
-- CR-21: sandbox=false 插件无 plugins.trusted 白名单 → 拒绝加载
-- CR-22: _install_zip zip-slip 拒绝 + rmtree 越界拒绝
-- CR-23: env 白名单 + setrlimit fail-closed + seatbelt
-- CR-15: sandbox_runner stdin 有界读 + traceback 不进 RPC
+- CR-16: PermissionLevel.CONFIRM default, check() approve/deny/high-risk/else order
+- CR-17/18: HIGH_RISK_NODES completed with 27 high-risk nodes
+- CR-2/3: HookEvent.permission_request out-of-band confirmation wired to CONFIRM
+- CR-19: ApplyEdit ensure_allowed rejects out-of-scope paths
+- CR-20: register rejects plugin overriding an already-registered node name (anti-hijack)
+- CR-21: sandbox=false plugin without plugins.trusted allowlist -> load refused
+- CR-22: _install_zip zip-slip rejection + rmtree out-of-scope rejection
+- CR-23: env allowlist + setrlimit fail-closed + seatbelt
+- CR-15: sandbox_runner bounded stdin read + no traceback into RPC
 """
 
 import asyncio
@@ -27,13 +27,13 @@ fusion_cowork.nodes.import_all_nodes()
 
 @pytest.fixture(autouse=True)
 def _ensure_nodes_loaded():
-    # 跨测试文件 NodeRegistry 可能被 clear(), 每测试前确保内置节点在册
+    # NodeRegistry may be clear()ed across test files; re-register built-ins before each test
     if "shell_exec" not in NodeRegistry._registry:
         fusion_cowork.nodes.import_all_nodes()
     yield
 
 
-# ── CR-16: CONFIRM 默认 + check() 顺序 ──
+# ── CR-16: CONFIRM default + check() order ──
 
 
 class TestPermissionConfirmDefault:
@@ -49,7 +49,7 @@ class TestPermissionConfirmDefault:
     @pytest.mark.asyncio
     async def test_low_risk_allowed_without_rule(self):
         pm = PermissionManager()
-        # file_input 非高风险 → CONFIRM 放行
+        # file_input is not high-risk -> CONFIRM allows
         assert await pm.check("file_input") is True
 
     @pytest.mark.asyncio
@@ -66,7 +66,7 @@ class TestPermissionConfirmDefault:
 
     @pytest.mark.asyncio
     async def test_approve_takes_precedence_over_high_risk(self):
-        # CR-16: approve 规则移到 high-risk 检查前, 任意 level 命中即放行
+        # CR-16: approve rule moved before the high-risk check; any level match allows
         pm = PermissionManager(level=PermissionLevel.MANUAL)
         pm.approve("python_repl")
         assert await pm.check("python_repl") is True
@@ -79,7 +79,7 @@ class TestPermissionConfirmDefault:
 
     @pytest.mark.asyncio
     async def test_manual_approve_now_effective(self):
-        # CR-16 修复: 旧版 MANUAL approve() 是 no-op, 现在全 level 生效
+        # CR-16 fix: old MANUAL approve() was a no-op; now effective at all levels
         pm = PermissionManager(level=PermissionLevel.MANUAL)
         pm.approve("file_delete")
         assert await pm.check("file_delete") is True
@@ -90,7 +90,7 @@ class TestPermissionConfirmDefault:
         assert await pm.check("file_delete") is False
 
 
-# ── CR-2/3: Hook 带外确认接通 CONFIRM ──
+# ── CR-2/3: Hook out-of-band confirmation wired to CONFIRM ──
 
 
 class TestHookApproval:
@@ -118,7 +118,7 @@ class TestHookApproval:
 
         hm.register(HookEvent.PERMISSION_REQUEST, canceller)
         pm = PermissionManager(hook_manager=hm)
-        # 低风险也须被 hook 拒
+        # low-risk must also be denied by the hook
         assert await pm.check("file_input") is False
 
     @pytest.mark.asyncio
@@ -135,11 +135,11 @@ class TestHookApproval:
         pm = PermissionManager(hook_manager=hm)
         await pm.check("shell_exec")
         await pm.check("file_input")
-        # 最后一次调用 (file_input) high_risk=False
+        # last call (file_input) has high_risk=False
         assert seen["high_risk"] is False
 
 
-# ── CR-17/18: HIGH_RISK_NODES 补全 ──
+# ── CR-17/18: HIGH_RISK_NODES completion ──
 
 
 class TestHighRiskNodesComplete:
@@ -171,25 +171,25 @@ class TestHighRiskNodesComplete:
         "cdp_fill_form",
         "cdp_emulate",
         "cdp_network",
-        "cdp_wait_for",  # E-10: wait_for_function 任意 JS 注入
-        "fetch_url",  # E-11: SSRF 面
+        "cdp_wait_for",  # E-10: wait_for_function arbitrary JS injection
+        "fetch_url",  # E-11: SSRF surface
     }
 
     EXPECTED_LOW_RISK = {"file_input", "file_output", "filter", "loop", "merge", "web_search"}
 
     def test_all_expected_high_risk_present(self):
         missing = self.EXPECTED_HIGH_RISK - HIGH_RISK_NODES
-        assert not missing, f"缺高风险节点: {missing}"
+        assert not missing, f"缺高风险节点: {missing}"  # i18n: user-facing
 
     def test_low_risk_not_in_high_risk(self):
         leaked = self.EXPECTED_LOW_RISK & HIGH_RISK_NODES
-        assert not leaked, f"低风险误入高风险: {leaked}"
+        assert not leaked, f"低风险误入高风险: {leaked}"  # i18n: user-facing
 
     def test_high_risk_names_all_registered(self):
-        # CR-17/18 校验: 高风险名须是真实注册节点 (防拼写错误静默失效)
+        # CR-17/18 check: high-risk names must be real registered nodes (guards against silent typo)
         all_names = {n["name"] for n in NodeRegistry.list()}
         for name in self.EXPECTED_HIGH_RISK:
-            assert name in all_names, f"高风险节点 {name} 未注册 (拼写错误?)"
+            assert name in all_names, f"高风险节点 {name} 未注册 (拼写错误?)"  # i18n: user-facing
 
 
 # ── CR-19: ApplyEdit ensure_allowed ──
@@ -198,7 +198,7 @@ class TestHighRiskNodesComplete:
 class TestApplyEditScope:
     @pytest.mark.asyncio
     async def test_apply_edit_rejects_out_of_scope_path(self, tmp_path, monkeypatch):
-        # scoped_folder 默认允许 tmp_path; 写一个越界绝对路径应被拒
+        # scoped_folder allows tmp_path by default; an out-of-scope absolute path must be rejected
         from fusion_cowork.security import get_scoped_folder_manager
 
         scope = get_scoped_folder_manager()
@@ -211,7 +211,7 @@ class TestApplyEditScope:
         )
         result = await node.execute({})
         assert result.status == NodeStatus.FAILED
-        assert "越界" in result.error or "沙箱" in result.error
+        assert "越界" in result.error or "沙箱" in result.error  # i18n: user-facing
 
     @pytest.mark.asyncio
     async def test_apply_edit_in_scope_dry_run_works(self, tmp_path):
@@ -248,7 +248,7 @@ class TestApplyEditScope:
             ConfigCenter.reset_instance()
 
 
-# ── CR-20: register 拒覆盖 ──
+# ── CR-20: register rejects override ──
 
 
 class TestRegisterHijackGuard:
@@ -276,7 +276,7 @@ class TestRegisterHijackGuard:
                 default_label = "l"
 
             NodeRegistry.register(Hijack)
-            # Orig 仍在 (未被覆盖)
+            # Orig still registered (not overridden)
             assert NodeRegistry.get("cr20_test_node") is Orig
         finally:
             NodeRegistry._registry.clear()
@@ -299,7 +299,7 @@ class TestRegisterHijackGuard:
                 default_label = "l"
 
             NodeRegistry.register(ReReg)
-            NodeRegistry.register(ReReg)  # 同类重注册幂等
+            NodeRegistry.register(ReReg)  # same-class re-registration is idempotent
             assert NodeRegistry.get("cr20_rereg") is ReReg
         finally:
             NodeRegistry._registry.clear()
@@ -339,7 +339,7 @@ class TestRegisterHijackGuard:
             NodeRegistry._protected_names.update(saved_prot)
 
 
-# ── CR-21: sandbox=false 插件信任白名单 ──
+# ── CR-21: sandbox=false plugin trust allowlist ──
 
 
 class TestPluginTrust:
@@ -349,7 +349,7 @@ class TestPluginTrust:
 
         ConfigCenter.reset_instance()
         cc = ConfigCenter.get_instance()
-        cc.set_default("plugins.trusted", [])  # 空白名单
+        cc.set_default("plugins.trusted", [])  # empty allowlist
 
         plugins_dir = tmp_path / "plugins"
         plugins_dir.mkdir()
@@ -380,7 +380,7 @@ class TestPluginTrust:
 
         loader = PluginLoader(plugins_dir=str(plugins_dir))
         loaded = loader.load("evil")
-        assert loaded == []  # 未信任 → 拒绝加载
+        assert loaded == []  # untrusted -> load refused
         assert not loader.is_loaded("evil")
         ConfigCenter.reset_instance()
 
@@ -427,7 +427,7 @@ class TestPluginTrust:
         ConfigCenter.reset_instance()
 
 
-# ── CR-22: zip-slip + rmtree 越界 ──
+# ── CR-22: zip-slip + rmtree out-of-scope ──
 
 
 class TestZipSlip:
@@ -438,7 +438,7 @@ class TestZipSlip:
         plugins_dir.mkdir()
         loader = PluginLoader(plugins_dir=str(plugins_dir))
 
-        # 构造恶意 zip: 顶层目录 + 一个 ../escape 路径条目
+        # craft malicious zip: top-level dir + one ../escape path entry
         zip_path = tmp_path / "evil.zip"
         with zipfile.ZipFile(zip_path, "w") as zf:
             zf.writestr("evil/manifest.json", "{}")
@@ -446,7 +446,7 @@ class TestZipSlip:
             zf.writestr("evil/../../escape.txt", "PWN")
         ok = loader._install_zip(zip_path)
         assert ok is False
-        # escape.txt 不应被写到 tmp_path 之上
+        # escape.txt must not be written above tmp_path
         assert not (tmp_path.parent / "escape.txt").exists()
 
     def test_safe_rmtree_rejects_traversal(self, tmp_path):
@@ -455,7 +455,7 @@ class TestZipSlip:
         plugins_dir = tmp_path / "plugins"
         plugins_dir.mkdir()
         loader = PluginLoader(plugins_dir=str(plugins_dir))
-        # 试图删 ../ (越界)
+        # attempt to delete ../ (out of scope)
         assert loader._safe_rmtree("../") is False
         assert loader._safe_rmtree("../../") is False
 
@@ -475,18 +475,18 @@ class TestZipSlip:
         assert (plugins_dir / "good" / "manifest.json").exists()
 
 
-# ── CR-23: env 白名单 + seatbelt ──
+# ── CR-23: env allowlist + seatbelt ──
 
 
 class TestSandboxEnv:
     def test_safe_env_keys_excludes_secrets(self):
         from fusion_cowork.plugins.sandbox import _SAFE_ENV_KEYS
 
-        # 敏感变量不在白名单
+        # secret vars not in allowlist
         assert "OPENAI_API_KEY" not in _SAFE_ENV_KEYS
         assert "FUSION_MLX_API_KEY" not in _SAFE_ENV_KEYS
         assert "AWS_SECRET_ACCESS_KEY" not in _SAFE_ENV_KEYS
-        # 必要变量在白名单
+        # required vars in allowlist
         assert "PATH" in _SAFE_ENV_KEYS
         assert "HOME" in _SAFE_ENV_KEYS
 
@@ -509,7 +509,7 @@ class TestSandboxEnv:
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
         sbx = PluginSandbox()
-        # 注入敏感 env 到父进程
+        # inject sensitive env into the parent process
         monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
         monkeypatch.setenv("PATH", "/usr/bin")
         await sbx.execute(plugin_name="t", command="/bin/true", args=[], stdin_data="{}")
@@ -519,8 +519,8 @@ class TestSandboxEnv:
         assert env.get("FUSION_SANDBOX_ID", "").startswith("sbx_")
 
     def test_seatbelt_wrap_returns_sandbox_exec(self, monkeypatch):
-        # CI (ubuntu) 无 sandbox-exec → _wrap_seatbelt 回退原命令; 跨平台断言 seatbelt
-        # 路径需 mock shutil.which 假装 sandbox-exec 可用
+        # CI (ubuntu) has no sandbox-exec -> _wrap_seatbelt falls back to the original command; the
+        # cross-platform seatbelt path needs shutil.which mocked to pretend sandbox-exec exists
         import shutil as _shutil
         from pathlib import Path as _Path
 
@@ -528,25 +528,25 @@ class TestSandboxEnv:
 
         monkeypatch.setattr(_shutil, "which", lambda name: "/usr/bin/sandbox-exec" if name == "sandbox-exec" else None)
         sbx = sandbox_mod.PluginSandbox()
-        # 用本机真实存在的 true 二进制 (macOS /bin/true, linux /usr/bin/true) —
-        # 跨平台断言其 resolve 后绝对路径出现在 seatbelt args 里
+        # use the real local true binary (macOS /bin/true, linux /usr/bin/true) —
+        # cross-platform assert its resolved absolute path appears in the seatbelt args
         true_bin = _shutil.which("true") or "/bin/true"
         expected_abs = str(_Path(true_bin).resolve())
         cmd, args = sbx._wrap_seatbelt(true_bin, ["--flag"])
         assert cmd == "sandbox-exec"
         assert "-f" in args
         assert "--" in args
-        assert expected_abs in args, f"seatbelt args 应含解析后的命令绝对路径, args={args}"
+        assert expected_abs in args, f"seatbelt args 应含解析后的命令绝对路径, args={args}"  # i18n: user-facing
 
 
-# ── CR-15: sandbox_runner 有界读 + 无 traceback ──
+# ── CR-15: sandbox_runner bounded read + no traceback ──
 
 
 class TestSandboxRunnerBounded:
     def test_oversized_input_rejected(self, monkeypatch):
         import fusion_cowork.plugins.sandbox_runner as runner
 
-        # 模拟 stdin 超过 16MB
+        # simulate stdin over 16MB
         big = "x" * (16 * 1024 * 1024 + 10)
         monkeypatch.setattr("sys.stdin", io.StringIO(big))
         import asyncio as _aio
@@ -557,11 +557,11 @@ class TestSandboxRunnerBounded:
     def test_error_payload_no_traceback(self, monkeypatch):
         import fusion_cowork.plugins.sandbox_runner as runner
 
-        # 合法 JSON 但 action 非法 → 走 except 分支? 不, 未知 action 走 else (非 except)
-        # 构造触发 _introspect 抛错: entry_file 不存在
+        # valid JSON but bad action -> except branch? No: unknown action goes to else (not except)
+        # trigger an _introspect raise: entry_file does not exist
         monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"action": "introspect", "entry_file": "/nope/x.py"})))
         import asyncio as _aio
 
         rc = _aio.run(runner.main())
         assert rc == 1
-        # stdout 末尾应是 _RESULT_MARKER + JSON, 不含 traceback 字段
+        # stdout tail must be _RESULT_MARKER + JSON, without a traceback field

@@ -118,8 +118,8 @@ class TestA1KernelSubstrate:
         assert NodeRegistry.get(COUNT_494) is _CountProbe  # original kept
 
     def test_alias_and_create_coercion_unchanged(self):
-        NodeRegistry.register_alias("计数器494", COUNT_494)
-        assert NodeRegistry.resolve_alias("计数器494") == COUNT_494
+        NodeRegistry.register_alias("计数器494", COUNT_494)  # i18n: user-facing
+        assert NodeRegistry.resolve_alias("计数器494") == COUNT_494  # i18n: user-facing
         node = NodeRegistry.create(TYPE_494, node_id="t1", config=NodeConfig(params={"limit": "10"}))
         assert node.config.params["limit"] == 10  # lenient local coercion intact
 

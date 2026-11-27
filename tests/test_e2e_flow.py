@@ -1,7 +1,7 @@
-"""Stage 7 E2E — tenant → JWT auth → space → message → agent → workflow → assert。
+"""Stage 7 E2E — tenant → JWT auth → space → message → agent → workflow → assert.
 
-httpx ASGITransport 打 FastAPI create_space_api, JWT (HS256) 校验 + tenant 隔离。
-@ pytest.mark.slow (CI 单独 job, 默认 skip 以保本地快)。
+httpx ASGITransport hits the FastAPI create_space_api, JWT (HS256) validation + tenant isolation.
+@ pytest.mark.slow (separate CI job, skipped by default to keep local runs fast).
 """
 
 from __future__ import annotations
@@ -156,7 +156,7 @@ class _E2EDemoRegistered(_E2EDemoNode):
 
 class TestE2EWorkflow:
     async def test_workflow_engine_dag_executes(self, store):
-        # 独立 workflow 跑通 — 验证引擎层不被多租户改造破坏
+        # Standalone workflow runs through — verifies the engine layer is not broken by the multi-tenant changes
         wf = Workflow(name="e2e-wf")
         wf.add_node(_E2EDemoRegistered(node_id="n1"))
         engine = WorkflowEngine()

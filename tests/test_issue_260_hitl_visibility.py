@@ -1,4 +1,4 @@
-"""issue #260: HITL 闸门等待期 run 可见性 — blocked 步骤 + per-run hitl_pause 覆盖。"""
+"""issue #260: run visibility during the HITL gate wait — blocked step + per-run hitl_pause override."""
 
 from __future__ import annotations
 
@@ -35,7 +35,9 @@ async def test_gate_entry_writes_blocked_step(monkeypatch):
             blocked_seen = True
             break
         await asyncio.sleep(0.01)
-    assert blocked_seen, "闸门等待期时间线应出现 blocked 步骤 (issue #260: running+0 steps 观感挂死)"
+    assert blocked_seen, (
+        "闸门等待期时间线应出现 blocked 步骤 (issue #260: running+0 steps 观感挂死)"  # i18n: user-facing
+    )  # i18n: user-facing
     assert eng.hitl_pending("run_gate")
     eng.resolve_hitl("run_gate", True)
     execution = await task
@@ -69,7 +71,7 @@ async def test_per_run_pause_override_on_headless_engine(monkeypatch):
             gated = True
             break
         await asyncio.sleep(0.01)
-    assert gated, "headless 引擎的 per-run 覆盖应生效进入审批等待"
+    assert gated, "headless 引擎的 per-run 覆盖应生效进入审批等待"  # i18n: user-facing
     eng.resolve_hitl("run_pause", False)
     execution = await task
     assert execution.status.value in ("failed", "completed_with_denials")

@@ -1,4 +1,4 @@
-"""BenchmarkRunner — 执行节点/工作流计时，产出 BenchmarkResult。"""
+"""BenchmarkRunner — times node/workflow execution and produces BenchmarkResult."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ class BenchmarkResult:
 
 
 class BenchmarkRunner:
-    """基准执行器 — 逐个执行节点并计时。"""
+    """Baseline executor — executes nodes one by one and times them."""
 
     def __init__(self, warmup: int = 1, repeats: int = 3):
         self._warmup = warmup
@@ -41,7 +41,7 @@ class BenchmarkRunner:
 
         node = NodeRegistry.create(node_name, config=NodeConfig(params=params))
         if not node:
-            logger.warning(f"节点未注册: {node_name}")
+            logger.warning(f"Node not registered: {node_name}")
             return BenchmarkResult(node_name=node_name, status="not_found", latency_ms=0)
 
         t0 = time.monotonic()

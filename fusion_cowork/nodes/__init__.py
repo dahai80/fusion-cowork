@@ -1,9 +1,10 @@
-"""Fusion-Cowork 节点系统。
+"""Fusion-Cowork node system.
 
-7 类节点 (macos/ai/io/logic/tools/browser/ecosystem), 全部通过 @register_node
-注册到 NodeRegistry。节点模块在 import 时自注册, 故服务端启动需显式导入全部
-节点模块, 否则 NodeRegistry 为空或残缺 (历史 bug: 仅 cli.py 副作用导入的
-macos+browser 注册, 33/47 节点可见)。
+7 node categories (macos/ai/io/logic/tools/browser/ecosystem), all registered
+to NodeRegistry via @register_node. Node modules self-register at import time,
+so the server must explicitly import all node modules at startup; otherwise
+NodeRegistry is empty or incomplete (historical bug: only the macos+browser
+modules imported as side effects of cli.py were registered, 33/47 nodes visible).
 """
 
 import logging
@@ -43,19 +44,21 @@ _NODE_MODULES = (
 
 
 def import_all_nodes() -> int:
-    """显式导入全部节点模块, 触发 @register_node 注册。
+    """Explicitly import all node modules to trigger @register_node registration.
 
-    幂等: 重复调用只导入一次 (Python import 缓存)。
-    容错: 单个模块导入失败记录警告并继续, 不阻断服务启动。
+    Idempotent: repeated calls import each module only once (Python import cache).
+    Fault-tolerant: a single module import failure is logged as a warning and
+    execution continues, never blocking service startup.
 
     Returns:
-        成功导入的模块数
+        Number of modules successfully imported
     """
     import importlib
 
     from fusion_cowork.engine.node import NodeRegistry
 
-    # E-13: 记录导入前的已注册名 — 这些非本次模块注册 (如测试 fixture), 不应进 builtin 快照。
+    # E-13: record names registered before importing — these were not registered by this
+    # module batch (e.g. test fixtures) and must not enter the builtin snapshot.
     prior_names = set(NodeRegistry._registry.keys())
     ok = 0
     for mod_path in _NODE_MODULES:
@@ -63,10 +66,12 @@ def import_all_nodes() -> int:
             importlib.import_module(mod_path)
             ok += 1
         except Exception as e:
-            logger.warning("节点模块导入失败 %s: %s", mod_path, e)
-    # E-13: 仅冻结本次模块新注册的节点名 (防 loader.unload 经恶意 node_map 删内置节点)。
-    # 累加到已有 builtin 快照 (import_all_nodes 可能多次调用, 首次注册的是真内置)。
+            logger.warning("Node module import failed %s: %s", mod_path, e)
+    # E-13: freeze only the node names newly registered by this batch (prevents
+    # loader.unload deleting builtin nodes via a malicious node_map).
+    # Accumulate into the existing builtin snapshot (import_all_nodes may be called
+    # multiple times; the first batch registers the true builtins).
     new_names = set(NodeRegistry._registry.keys()) - prior_names
     NodeRegistry.freeze_builtins(extra_names=new_names)
-    logger.info("节点模块导入完成: %d/%d", ok, len(_NODE_MODULES))
+    logger.info("Node module import done: %d/%d", ok, len(_NODE_MODULES))
     return ok

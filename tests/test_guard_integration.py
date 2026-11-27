@@ -1,11 +1,11 @@
-"""fusion-guard 集成测试 (issue #73)。
+"""fusion-guard integration tests (issue #73).
 
-纯离线 — 无 live daemon。三策略:
-- A: mock GuardClient (evaluate 返预设 verdict) → 验 PermissionManager.check 委托/放行/拒绝/待确认
-- B: fake UDS server (asyncio.start_unix_server) → 验 GuardClient wire 帧格式/解析
-- C: opt-in OFF 回归 → guard 未启用, check 走原逻辑
+Fully offline — no live daemon. Three strategies:
+- A: mock GuardClient (evaluate returns a preset verdict) -> verify PermissionManager.check delegation / allow / deny / pending-approval
+- B: fake UDS server (asyncio.start_unix_server) -> verify GuardClient wire frame format / parsing
+- C: opt-in OFF regression -> guard not enabled, check uses the original logic
 
-清理: monkeypatch.setenv + tmp_path + close_guard_client() autouse。
+Cleanup: monkeypatch.setenv + tmp_path + close_guard_client() autouse.
 """
 
 import asyncio
@@ -23,16 +23,16 @@ fusion_cowork.nodes.import_all_nodes()
 
 @pytest.fixture(autouse=True)
 def _reset_guard_singleton(monkeypatch, tmp_path):
-    # 每测隔离: 关 guard 单例 + 重定向缓存目录到 tmp_path
+    # Per-test isolation: reset the guard singleton + redirect the cache dir to tmp_path
     monkeypatch.setattr(guard_mod, "_guard_client", None)
     monkeypatch.setattr(guard_mod, "RULES_CACHE_DIR", str(tmp_path / ".fusion-guard"))
     monkeypatch.setattr(guard_mod, "RULES_CACHE_FILE", str(tmp_path / ".fusion-guard" / "rules-cache.json"))
     yield
-    # 末尾清全局单例 (防泄漏到下一测)
+    # Clear the global singleton at the end (prevent leaking into the next test)
     guard_mod._guard_client = None
 
 
-# ── 策略 A: mock GuardClient ──
+# -- Strategy A: mock GuardClient --
 
 
 class FakeGuardClient:
@@ -61,7 +61,7 @@ def _wire_guard(monkeypatch, fake_client):
     monkeypatch.setenv("FUSION_GUARD_ENABLED", "1")
     monkeypatch.setattr(guard_mod, "guard_enabled", lambda: True)
     monkeypatch.setattr(guard_mod, "get_guard_client", lambda: fake_client)
-    # permission.py 内 import 的 get_guard_client 也须指到 fake
+    # The get_guard_client imported inside permission.py must also point to the fake
     import fusion_cowork.engine.permission as perm_mod
 
     monkeypatch.setattr(perm_mod, "_guard_cached_epoch", lambda: 0)
@@ -84,7 +84,7 @@ def _verdict(**kw):
     )
 
 
-# === A 测试占位 — Edit 填 ===
+# === A test placeholder — filled via Edit ===
 
 
 class TestPermissionGuardWiring:
@@ -137,7 +137,7 @@ class TestPermissionGuardWiring:
         assert ok is True
         assert fake.confirm_calls == 1
         assert "aid-2" not in pm._pending_guard_approvals
-        # 本地 approve 规则已加 → 后续 check 不再走 guard (approve 规则命中先返回)
+        # Local approve rule added -> later check no longer goes through guard (approve rule hit returns first)
         fake._verdict = _verdict(action="block")
         ok2 = await pm.check("shell_exec", "execute", {"command": "ls"})
         assert ok2 is True
@@ -152,19 +152,19 @@ class TestPermissionGuardWiring:
         await pm.check("shell_exec", "execute", {"command": "ls"})
         ok = await pm.confirm_guard("aid-3", approved=False, approved_by="tester")
         assert ok is True
-        # deny 规则已加 → 后续 check 即拒
+        # deny rule added -> later check is denied immediately
         fake._verdict = _verdict(action="allow", risk_level="l1")
         ok2 = await pm.check("shell_exec", "execute", {"command": "ls"})
         assert ok2 is False
 
     @pytest.mark.asyncio
     async def test_guard_unreachable_no_cache_fail_closed(self, monkeypatch):
-        fake = FakeGuardClient(verdict=None)  # evaluate 返 None = 不可达
+        fake = FakeGuardClient(verdict=None)  # evaluate returns None = unreachable
         _wire_guard(monkeypatch, fake)
         monkeypatch.setattr(guard_mod, "load_cached_rules", lambda: None)
         pm = PermissionManager()
         ok = await pm.check("shell_exec", "execute", {"command": "ls"})
-        assert ok is False  # 高风险 fail-closed
+        assert ok is False  # high risk fail-closed
 
     @pytest.mark.asyncio
     async def test_guard_unreachable_cached_deny(self, monkeypatch):
@@ -191,7 +191,7 @@ class TestPermissionGuardWiring:
         pm = PermissionManager()
         ok = await pm.check("file_input", "execute", {"path": "/tmp/x"})
         assert ok is True
-        assert fake.evaluate_calls == 0  # 低风险不调 guard
+        assert fake.evaluate_calls == 0  # low risk does not call guard
 
     @pytest.mark.asyncio
     async def test_explicit_approve_rule_skips_guard(self, monkeypatch):
@@ -201,11 +201,11 @@ class TestPermissionGuardWiring:
         pm.approve("shell_exec")
         ok = await pm.check("shell_exec", "execute", {"command": "ls"})
         assert ok is True
-        assert fake.evaluate_calls == 0  # approve 规则命中先返回, 不走 guard
+        assert fake.evaluate_calls == 0  # approve rule hit returns first, guard not consulted
 
     @pytest.mark.asyncio
     async def test_preview_redact_denies(self, monkeypatch):
-        # redact+l3 (非 l1/l2 allow 分支, 无 requires_approval) → 保守拒绝路径
+        # redact+l3 (not the l1/l2 allow branch, no requires_approval) -> conservative deny path
         fake = FakeGuardClient(verdict=_verdict(action="redact", risk_level="l3", requires_approval=False))
         _wire_guard(monkeypatch, fake)
         pm = PermissionManager()
@@ -261,14 +261,14 @@ class TestNodeToGuardContent:
         assert ctype == "shell"
 
 
-# ── 策略 B: fake UDS server ──
+# -- Strategy B: fake UDS server --
 
 
-# === B 测试占位 — Edit 填 ===
+# === B test placeholder — filled via Edit ===
 
 
 def _short_sock(tmp_path):
-    # macOS AF_UNIX 路径上限 ~104 字节, tmp_path 嵌套深 → 用 /tmp 短路径
+    # macOS AF_UNIX path limit is ~104 bytes, tmp_path nests deep -> use a short /tmp path
     path = f"/tmp/fcguard-{os.getpid()}-{id(tmp_path)}.sock"
     if os.path.exists(path):
         os.unlink(path)
@@ -276,7 +276,7 @@ def _short_sock(tmp_path):
 
 
 async def _start_fake_guard(sock_path, response_factory):
-    # 伪造 fusion-guard daemon: 读换行分隔 JSON-RPC 请求, 回原始 JSON (无尾换行)
+    # Fake fusion-guard daemon: reads newline-delimited JSON-RPC requests, replies raw JSON (no trailing newline)
     async def handle(reader, writer):
         try:
             line = await reader.readuntil(b"\n")
@@ -467,7 +467,7 @@ class TestGuardClientWire:
         try:
             client = guard_mod.GuardClient(sock_path=sock)
             await client.ping()
-            # 服务器单连接 handler 回完即关 → 手动 close 强制下轮重连, 验 id 自增
+            # Server single-connection handler closes after one reply -> manually close to force reconnect, verify id increments
             await client.close()
             await client.ping()
             assert ids == [1, 2]
@@ -477,10 +477,10 @@ class TestGuardClientWire:
             await server.wait_closed()
 
 
-# ── 策略 C: opt-in OFF 回归 ──
+# -- Strategy C: opt-in OFF regression --
 
 
-# === C 测试占位 — Edit 填 ===
+# === C test placeholder — filled via Edit ===
 
 
 class TestGuardOptInOff:
@@ -506,7 +506,7 @@ class TestGuardOptInOff:
 
     @pytest.mark.asyncio
     async def test_check_legacy_high_risk_denies_without_guard(self, monkeypatch):
-        # 无 env → guard 未启用 → 高风险无批准 → 拒 (原行为不变)
+        # No env -> guard not enabled -> high risk without approval -> deny (original behavior unchanged)
         monkeypatch.delenv("FUSION_GUARD_ENABLED", raising=False)
         pm = PermissionManager()
         ok = await pm.check("shell_exec", "execute", {"command": "ls"})

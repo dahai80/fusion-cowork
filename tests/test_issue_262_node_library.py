@@ -1,4 +1,4 @@
-"""issue #262: 官方通用节点库 — agent_exec / github_api / command_evidence / http_webhook / approval_gate。"""
+"""issue #262: official generic node library — agent_exec / github_api / command_evidence / http_webhook / approval_gate."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ class TestAgentExec:
             "agent_exec", {"command": [sys.executable, "-c", "import time; time.sleep(5)"], "timeout": 0.3}
         )
         assert res.status == NodeStatus.FAILED
-        assert "超时" in res.error
+        assert "超时" in res.error  # i18n: user-facing
 
     @pytest.mark.asyncio
     async def test_bad_command_shape(self):
@@ -61,7 +61,7 @@ class TestAgentExec:
     async def test_missing_cwd(self):
         res = await _run_node("agent_exec", {"command": [sys.executable, "-c", "pass"], "cwd": "/no/such/dir-262"})
         assert res.status == NodeStatus.FAILED
-        assert "不存在" in res.error
+        assert "不存在" in res.error  # i18n: user-facing
 
 
 class FakeGHClient:
@@ -103,7 +103,7 @@ class TestGitHubApi:
             "github_api", {"op": "issue_create", "repo": "evil/x", "allowed_repos": ["org/ok"], "title": "t"}
         )
         assert res.status == NodeStatus.FAILED
-        assert "白名单" in res.error
+        assert "白名单" in res.error  # i18n: user-facing
 
     @pytest.mark.asyncio
     async def test_token_missing(self, monkeypatch):
@@ -151,8 +151,8 @@ class TestGitHubApi:
 class TestCommandEvidence:
     @pytest.mark.asyncio
     async def test_allowlist_matches_versioned_interpreter(self, tmp_path):
-        # issue #334: venv/pyenv 解释器常为绝对路径 python3.12 — basename 去版本后缀后
-        # 与 `python *` 同族匹配, 不再依赖 PATH 里的解释器拼法
+        # issue #334: venv/pyenv interpreters are often absolute python3.12 — after basename strips the version suffix
+        # it matches the `python *` family, no longer depending on the PATH interpreter spelling
         fake_py = tmp_path / ".venv" / "bin" / "python3.12"
         fake_py.parent.mkdir(parents=True)
         fake_py.write_text("#!/bin/sh\n")
@@ -173,7 +173,7 @@ class TestCommandEvidence:
             {"command": [str(fake), "-s", "http://x"], "allowlist": ["python *"], "evidence_dir": str(tmp_path / "ev")},
         )
         assert res.status == NodeStatus.FAILED
-        assert "白名单" in res.error
+        assert "白名单" in res.error  # i18n: user-facing
 
     @pytest.mark.asyncio
     async def test_allowlist_match_archives_scrubbed(self, tmp_path):
@@ -192,7 +192,7 @@ class TestCommandEvidence:
             {"command": [sys.executable, "-c", "pass"], "allowlist": ["git *"], "evidence_dir": str(tmp_path)},
         )
         assert res.status == NodeStatus.FAILED
-        assert "白名单" in res.error
+        assert "白名单" in res.error  # i18n: user-facing
 
     @pytest.mark.asyncio
     async def test_empty_allowlist_refused(self, tmp_path):
@@ -315,7 +315,7 @@ class TestHttpWebhook:
             "http_webhook", {"url": "https://x.example/hook", "headers": {"Authorization": "${T262_MISSING}"}}
         )
         assert res.status == NodeStatus.FAILED
-        assert "环境变量" in res.error
+        assert "环境变量" in res.error  # i18n: user-facing
 
 
 class TestApprovalGate:
@@ -332,13 +332,13 @@ class TestApprovalGate:
         monkeypatch.delenv("FUSION_COWORK_HITL_PAUSE", raising=False)
         eng = WorkflowEngine(permission_manager=PermissionManager(), hitl_pause=True)
         wf = Workflow(name="wf-262")
-        wf.add_node(_node("approval_gate", {"prompt": "发布审批"}))
+        wf.add_node(_node("approval_gate", {"prompt": "发布审批"}))  # i18n: user-facing
         task = asyncio.create_task(eng.execute(wf, execution_id="run_gate262"))
         for _ in range(200):
             if eng.hitl_pending("run_gate262"):
                 break
             await asyncio.sleep(0.01)
-        assert eng.hitl_pending("run_gate262"), "approval_gate 应天生进 HITL 等待"
+        assert eng.hitl_pending("run_gate262"), "approval_gate 应天生进 HITL 等待"  # i18n: user-facing
         eng.resolve_hitl("run_gate262", True, once=True)
         execution = await task
         assert execution.status.value == "success"

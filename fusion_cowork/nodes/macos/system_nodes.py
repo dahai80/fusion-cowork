@@ -1,7 +1,7 @@
-"""macOS 系统自动化节点 — 利用 AppleScript 和 macOS 原生能力实现系统级操作。
+"""macOS system automation nodes — system-level operations via AppleScript and native macOS capabilities.
 
-所有节点通过 osascript（AppleScript 命令行）或 Python 原生库（os, shutil, pathlib）
-执行 macOS 系统操作，无需额外依赖。
+All nodes execute macOS system operations via osascript (AppleScript CLI) or Python native
+libraries (os, shutil, pathlib), with no extra dependencies.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from . import run_osascript as _run_applescript
 
 
 def _get_desktop_path() -> str:
-    """获取 macOS 桌面路径。"""
+    """Get the macOS Desktop path."""
     _, path = _run_applescript('tell application "Finder" to get path of desktop')
     if path:
         return path
@@ -37,22 +37,22 @@ def _get_desktop_path() -> str:
 
 
 def _get_downloads_path() -> str:
-    """获取 macOS 下载文件夹路径。"""
+    """Get the macOS Downloads folder path."""
     return str(Path.home() / "Downloads")
 
 
 def _get_documents_path() -> str:
-    """获取 macOS 文稿文件夹路径。"""
+    """Get the macOS Documents folder path."""
     return str(Path.home() / "Documents")
 
 
 def _get_trash_path() -> str:
-    """获取废纸篓路径。"""
+    """Get the Trash path."""
     return str(Path.home() / ".Trash")
 
 
 def _file_size_str(size_bytes: int) -> str:
-    """格式化文件大小显示。"""
+    """Format a file size for display."""
     for unit in ["B", "KB", "MB", "GB"]:
         if size_bytes < 1024:
             return f"{size_bytes:.1f}{unit}"
@@ -61,7 +61,7 @@ def _file_size_str(size_bytes: int) -> str:
 
 
 def _safe_move(src: str, dst_dir: str) -> bool:
-    """安全移动文件，自动处理重名。"""
+    """Move a file safely, handling name collisions automatically."""
     src_path = Path(src)
     dst_path = Path(dst_dir)
     dst_path.mkdir(parents=True, exist_ok=True)
@@ -78,12 +78,12 @@ def _safe_move(src: str, dst_dir: str) -> bool:
 
 
 def _get_file_type_category(path: Path) -> str:
-    """根据文件类型返回分类目录名。"""
+    """Return the category folder name for a file type."""
     ext = path.suffix.lower()
-    # 图片
+    # Images
     if ext in {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".ico", ".tiff", ".heic", ".raw"}:
-        return "图片"
-    # 文档
+        return "图片"  # i18n: user-facing
+    # Documents
     if ext in {
         ".pdf",
         ".doc",
@@ -100,17 +100,17 @@ def _get_file_type_category(path: Path) -> str:
         ".pages",
         ".key",
     }:
-        return "文档"
-    # 视频
+        return "文档"  # i18n: user-facing
+    # Videos
     if ext in {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".mpeg"}:
-        return "视频"
-    # 音频
+        return "视频"  # i18n: user-facing
+    # Audio
     if ext in {".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a", ".wma"}:
-        return "音频"
-    # 压缩包
+        return "音频"  # i18n: user-facing
+    # Archives
     if ext in {".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".dmg", ".iso"}:
-        return "压缩包"
-    # 代码
+        return "压缩包"  # i18n: user-facing
+    # Code
     if ext in {
         ".py",
         ".js",
@@ -136,49 +136,70 @@ def _get_file_type_category(path: Path) -> str:
         ".toml",
         ".sql",
     }:
-        return "代码"
-    # 可执行
+        return "代码"  # i18n: user-facing
+    # Executables
     if ext in {".app", ".dmg", ".pkg", ".command"} or os.access(str(path), os.X_OK):
-        return "应用"
-    return "其他"
+        return "应用"  # i18n: user-facing
+    return "其他"  # i18n: user-facing
 
 
 @register_node
 class DesktopCleanNode(BaseNode):
-    """桌面清理节点 — 按类型/日期自动规整桌面文件。
+    """Desktop cleanup node — automatically organizes desktop files by type/date.
 
-    功能：
-    - 按文件类型分类到子文件夹
-    - 按日期归档
-    - 清理过期文件
+    Features:
+    - Classifies files into subfolders by type
+    - Archives by date
+    - Cleans up expired files
     """
 
     name = "desktop_clean"
-    display_name = "桌面清理"
+    display_name = "桌面清理"  # i18n: user-facing
     category = NodeCategory.MACOS_SYSTEM
-    description = "按类型/日期自动规整桌面文件"
+    description = "按类型/日期自动规整桌面文件"  # i18n: user-facing
     icon = "🧹"
-    default_label = "桌面清理"
+    default_label = "桌面清理"  # i18n: user-facing
 
     inputs = [
-        {"key": "source_path", "label": "桌面路径", "type": "string", "optional": True},
+        {"key": "source_path", "label": "桌面路径", "type": "string", "optional": True},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "cleaned_files", "label": "清理的文件", "type": "list[dict]"},
-        {"key": "summary", "label": "清理摘要", "type": "string"},
+        {"key": "cleaned_files", "label": "清理的文件", "type": "list[dict]"},  # i18n: user-facing
+        {"key": "summary", "label": "清理摘要", "type": "string"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "organize_by_type": {"type": "boolean", "default": True, "description": "按文件类型分类"},
-                "organize_by_date": {"type": "boolean", "default": False, "description": "按日期归档"},
-                "remove_old_files": {"type": "boolean", "default": False, "description": "删除过期文件"},
-                "old_days_threshold": {"type": "integer", "default": 90, "description": "过期天数阈值"},
+                "organize_by_type": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "按文件类型分类",  # i18n: user-facing
+                },  # i18n: user-facing
+                "organize_by_date": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "按日期归档",  # i18n: user-facing
+                },  # i18n: user-facing
+                "remove_old_files": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "删除过期文件",  # i18n: user-facing
+                },  # i18n: user-facing
+                "old_days_threshold": {
+                    "type": "integer",
+                    "default": 90,
+                    "description": "过期天数阈值",  # i18n: user-facing
+                },  # i18n: user-facing
+                # i18n: user-facing
                 "target_base_dir": {"type": "string", "default": "", "description": "目标目录（留空使用桌面）"},
-                "skip_hidden": {"type": "boolean", "default": True, "description": "跳过隐藏文件"},
-                "dry_run": {"type": "boolean", "default": False, "description": "预览模式（不实际移动）"},
+                "skip_hidden": {"type": "boolean", "default": True, "description": "跳过隐藏文件"},  # i18n: user-facing
+                "dry_run": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "预览模式（不实际移动）",  # i18n: user-facing
+                },  # i18n: user-facing
             },
         }
 
@@ -190,8 +211,8 @@ class DesktopCleanNode(BaseNode):
         if not source_path.exists():
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"目录不存在: {source}",
-                summary="目录不存在",
+                error=f"目录不存在: {source}",  # i18n: user-facing
+                summary="目录不存在",  # i18n: user-facing
             )
 
         organize_by_type = params.get("organize_by_type", True)
@@ -205,13 +226,13 @@ class DesktopCleanNode(BaseNode):
         target_path = Path(target_base).expanduser()
         cleaned_files = []
 
-        # 扫描桌面文件（不包含目录）
+        # Scan desktop files (directories excluded)
         for item in source_path.iterdir():
             if not item.is_file():
                 continue
             if skip_hidden and item.name.startswith("."):
                 continue
-            # 跳过系统文件
+            # Skip system files
             if item.name in {".DS_Store", "Icon\r", ".localized"}:
                 continue
 
@@ -224,7 +245,7 @@ class DesktopCleanNode(BaseNode):
                 "category": _get_file_type_category(item),
             }
 
-            # 删除过期文件
+            # Delete expired files
             if remove_old_files:
                 age_days = (time.time() - item.stat().st_mtime) / 86400
                 if age_days > old_days:
@@ -239,7 +260,7 @@ class DesktopCleanNode(BaseNode):
                     cleaned_files.append(file_info)
                     continue
 
-            # 分类整理
+            # Organize by category
             if organize_by_type:
                 category = file_info["category"]
                 category_dir = target_path / category
@@ -263,10 +284,10 @@ class DesktopCleanNode(BaseNode):
         )
 
     def _build_summary(self, files: list, dry_run: bool) -> str:
-        """生成清理摘要。"""
-        mode = "预览" if dry_run else "清理"
+        """Build the cleanup summary."""
+        mode = "预览" if dry_run else "清理"  # i18n: user-facing
         if not files:
-            return f"{mode}完成，桌面已很整洁，无需处理"
+            return f"{mode}完成，桌面已很整洁，无需处理"  # i18n: user-facing
         moved = sum(1 for f in files if "moved" in f.get("action", ""))
         deleted = sum(1 for f in files if f.get("action") == "deleted")
         total_size = sum(f.get("size", 0) for f in files)
@@ -275,35 +296,35 @@ class DesktopCleanNode(BaseNode):
             action = f.get("action", "unknown")
             action_counts[action] = action_counts.get(action, 0) + 1
         return (
-            f"{mode}完成: 共处理 {len(files)} 个文件 ({_file_size_str(total_size)})"
-            + (f"，移动 {moved} 个" if moved else "")
-            + (f"，删除 {deleted} 个" if deleted else "")
+            f"{mode}完成: 共处理 {len(files)} 个文件 ({_file_size_str(total_size)})"  # i18n: user-facing
+            + (f"，移动 {moved} 个" if moved else "")  # i18n: user-facing
+            + (f"，删除 {deleted} 个" if deleted else "")  # i18n: user-facing
         )
 
 
 @register_node
 class DownloadOrganizerNode(BaseNode):
-    """下载文件夹整理节点 — 自动归档、去重、整理下载文件夹。
+    """Download folder organizer node — archives, deduplicates, and organizes the Downloads folder.
 
-    功能：
-    - 按类型分类归档
-    - 智能去重
-    - 清理过期文件
+    Features:
+    - Archives files by type
+    - Smart deduplication
+    - Cleans up expired files
     """
 
     name = "download_organizer"
-    display_name = "下载文件夹整理"
+    display_name = "下载文件夹整理"  # i18n: user-facing
     category = NodeCategory.MACOS_SYSTEM
-    description = "自动归档、去重、整理下载文件夹"
+    description = "自动归档、去重、整理下载文件夹"  # i18n: user-facing
     icon = "📥"
-    default_label = "下载整理"
+    default_label = "下载整理"  # i18n: user-facing
 
     inputs = [
-        {"key": "source_path", "label": "下载目录路径", "type": "string", "optional": True},
+        {"key": "source_path", "label": "下载目录路径", "type": "string", "optional": True},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "organized_files", "label": "整理的文件", "type": "list[dict]"},
-        {"key": "summary", "label": "整理摘要", "type": "string"},
+        {"key": "organized_files", "label": "整理的文件", "type": "list[dict]"},  # i18n: user-facing
+        {"key": "summary", "label": "整理摘要", "type": "string"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -313,11 +334,15 @@ class DownloadOrganizerNode(BaseNode):
                 "organize_by_type": {"type": "boolean", "default": True},
                 "deduplicate": {"type": "boolean", "default": True},
                 "clean_old_files": {"type": "boolean", "default": False},
-                "days_threshold": {"type": "integer", "default": 30, "description": "清理 N 天前的文件"},
+                "days_threshold": {
+                    "type": "integer",
+                    "default": 30,
+                    "description": "清理 N 天前的文件",  # i18n: user-facing
+                },  # i18n: user-facing
                 "target_dir": {
                     "type": "string",
                     "default": "~/Documents/Downloads_Archive",
-                    "description": "归档目标目录",
+                    "description": "归档目标目录",  # i18n: user-facing
                 },
                 "dry_run": {"type": "boolean", "default": False},
             },
@@ -331,8 +356,8 @@ class DownloadOrganizerNode(BaseNode):
         if not source_path.exists():
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"目录不存在: {source}",
-                summary="目录不存在",
+                error=f"目录不存在: {source}",  # i18n: user-facing
+                summary="目录不存在",  # i18n: user-facing
             )
 
         target_dir = Path(params.get("target_dir", "~/Documents/Downloads_Archive")).expanduser()
@@ -343,7 +368,7 @@ class DownloadOrganizerNode(BaseNode):
         dry_run = params.get("dry_run", False)
 
         organized_files = []
-        seen_hashes = {}  # 用于去重
+        seen_hashes = {}  # used for deduplication
 
         for item in sorted(source_path.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
             if not item.is_file():
@@ -360,7 +385,7 @@ class DownloadOrganizerNode(BaseNode):
                 "category": _get_file_type_category(item),
             }
 
-            # 去重
+            # Deduplicate
             if deduplicate and item.is_file():
                 try:
                     fsize = item.stat().st_size
@@ -380,7 +405,7 @@ class DownloadOrganizerNode(BaseNode):
                 except Exception:
                     pass
 
-            # 清理旧文件
+            # Clean old files
             if clean_old:
                 age_days = (time.time() - item.stat().st_mtime) / 86400
                 if age_days > days_threshold:
@@ -395,7 +420,7 @@ class DownloadOrganizerNode(BaseNode):
                     organized_files.append(file_info)
                     continue
 
-            # 归档
+            # Archive
             if organize_by_type:
                 category = file_info["category"]
                 dest = target_dir / category
@@ -419,43 +444,43 @@ class DownloadOrganizerNode(BaseNode):
         )
 
     def _build_summary(self, files: list, dry_run: bool) -> str:
-        """生成整理摘要。"""
-        mode = "预览" if dry_run else "整理"
+        """Build the organization summary."""
+        mode = "预览" if dry_run else "整理"  # i18n: user-facing
         if not files:
-            return f"{mode}完成，下载文件夹已很整洁"
+            return f"{mode}完成，下载文件夹已很整洁"  # i18n: user-facing
         archived = sum(1 for f in files if "archived" in f.get("action", ""))
         deleted = sum(1 for f in files if "deleted" in f.get("action", ""))
         deduped = sum(1 for f in files if "duplicate" in f.get("action", ""))
         return (
-            f"{mode}完成: 共处理 {len(files)} 个文件"
-            + (f"，归档 {archived} 个" if archived else "")
-            + (f"，删除 {deleted} 个" if deleted else "")
-            + (f"，去重 {deduped} 个" if deduped else "")
+            f"{mode}完成: 共处理 {len(files)} 个文件"  # i18n: user-facing
+            + (f"，归档 {archived} 个" if archived else "")  # i18n: user-facing
+            + (f"，删除 {deleted} 个" if deleted else "")  # i18n: user-facing
+            + (f"，去重 {deduped} 个" if deduped else "")  # i18n: user-facing
         )
 
 
 @register_node
 class FileClassifierNode(BaseNode):
-    """文件分类节点 — 按文件类型/扩展名快速分类（无 AI 调用）。
+    """File classification node — quick classification by file type/extension (no AI calls).
 
-    与 AIClassifyNode 不同，本节点仅基于文件名和扩展名进行分类，
-    不调用 AI，速度更快。
+    Unlike AIClassifyNode, this node classifies based on file name and extension only,
+    without calling AI, making it faster.
     """
 
     name = "file_classifier"
-    display_name = "文件分类器"
+    display_name = "文件分类器"  # i18n: user-facing
     category = NodeCategory.FILE_OPERATION
-    description = "按文件类型/扩展名快速分类"
+    description = "按文件类型/扩展名快速分类"  # i18n: user-facing
     icon = "📂"
-    default_label = "文件分类"
+    default_label = "文件分类"  # i18n: user-facing
 
     inputs = [
-        {"key": "files", "label": "文件列表", "type": "list[file]"},
-        {"key": "source_path", "label": "源目录", "type": "string", "optional": True},
+        {"key": "files", "label": "文件列表", "type": "list[file]"},  # i18n: user-facing
+        {"key": "source_path", "label": "源目录", "type": "string", "optional": True},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "classified_files", "label": "分类结果", "type": "list[dict]"},
-        {"key": "categories", "label": "分类映射", "type": "dict"},
+        {"key": "classified_files", "label": "分类结果", "type": "list[dict]"},  # i18n: user-facing
+        {"key": "categories", "label": "分类映射", "type": "dict"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -466,7 +491,7 @@ class FileClassifierNode(BaseNode):
                 "target_base": {"type": "string", "default": ""},
                 "custom_mapping": {
                     "type": "string",
-                    "description": '自定义扩展名映射 JSON (如: {".mp3": "音乐"})',
+                    "description": '自定义扩展名映射 JSON (如: {".mp3": "音乐"})',  # i18n: user-facing
                     "default": "",
                 },
                 "dry_run": {"type": "boolean", "default": False},
@@ -478,7 +503,7 @@ class FileClassifierNode(BaseNode):
         source_path = inputs.get("source_path", "")
         params = self.config.params
 
-        # 如果没给文件列表但给了源目录，扫描目录
+        # If no file list given but a source directory is provided, scan the directory
         if not files and source_path:
             src = Path(source_path).expanduser()
             if src.exists():
@@ -488,10 +513,10 @@ class FileClassifierNode(BaseNode):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"classified_files": [], "categories": {}},
-                summary="没有文件需要分类",
+                summary="没有文件需要分类",  # i18n: user-facing
             )
 
-        # 加载自定义映射
+        # Load custom mapping
         custom_mapping = {}
         custom_map_str = params.get("custom_mapping", "")
         if custom_map_str:
@@ -500,7 +525,7 @@ class FileClassifierNode(BaseNode):
 
                 custom_mapping = json.loads(custom_map_str)
             except Exception as e:
-                logger.warning(f"自定义映射解析失败: {e}")
+                logger.warning(f"Failed to parse custom mapping: {e}")
 
         move_to_subdirs = params.get("move_to_subdirs", False)
         target_base = params.get("target_base", source_path or "")
@@ -515,7 +540,7 @@ class FileClassifierNode(BaseNode):
                 continue
 
             ext = path.suffix.lower()
-            # 自定义映射优先
+            # Custom mapping takes priority
             if ext in custom_mapping:
                 category = custom_mapping[ext]
             else:
@@ -556,30 +581,30 @@ class FileClassifierNode(BaseNode):
                 "classified_files": classified,
                 "categories": {k: len(v) for k, v in categories.items()},
             },
-            summary=f"已分类 {len(classified)} 个文件到 {len(categories)} 个类别",
+            summary=f"已分类 {len(classified)} 个文件到 {len(categories)} 个类别",  # i18n: user-facing
         )
 
 
 @register_node
 class FileBatchRenameNode(BaseNode):
-    """批量文件重命名节点 — 按规则批量重命名文件。
+    """Batch file rename node — renames files in bulk by rule.
 
-    支持格式化模板、序号、日期等模式。
+    Supports formatting templates, sequence numbers, date patterns, and more.
     """
 
     name = "file_batch_rename"
-    display_name = "批量重命名"
+    display_name = "批量重命名"  # i18n: user-facing
     category = NodeCategory.FILE_OPERATION
-    description = "按规则批量重命名文件"
+    description = "按规则批量重命名文件"  # i18n: user-facing
     icon = "✏️"
-    default_label = "批量重命名"
+    default_label = "批量重命名"  # i18n: user-facing
 
     inputs = [
-        {"key": "files", "label": "文件列表", "type": "list[file]"},
-        {"key": "pattern", "label": "命名模板", "type": "string", "optional": True},
+        {"key": "files", "label": "文件列表", "type": "list[file]"},  # i18n: user-facing
+        {"key": "pattern", "label": "命名模板", "type": "string", "optional": True},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "renamed_files", "label": "重命名结果", "type": "list[dict]"},
+        {"key": "renamed_files", "label": "重命名结果", "type": "list[dict]"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -588,11 +613,11 @@ class FileBatchRenameNode(BaseNode):
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "命名模板，支持 {index}, {date}, {original}, {ext}",
+                    "description": "命名模板，支持 {index}, {date}, {original}, {ext}",  # i18n: user-facing
                     "default": "file_{index}",
                 },
                 "start_index": {"type": "integer", "default": 1},
-                "padding": {"type": "integer", "default": 3, "description": "序号位数"},
+                "padding": {"type": "integer", "default": 3, "description": "序号位数"},  # i18n: user-facing
                 "prefix": {"type": "string", "default": ""},
                 "suffix": {"type": "string", "default": ""},
                 "lowercase": {"type": "boolean", "default": False},
@@ -618,7 +643,7 @@ class FileBatchRenameNode(BaseNode):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"renamed_files": []},
-                summary="没有文件需要重命名",
+                summary="没有文件需要重命名",  # i18n: user-facing
             )
 
         today = time.strftime("%Y%m%d")
@@ -633,14 +658,14 @@ class FileBatchRenameNode(BaseNode):
             if not path.is_file():
                 continue
             if not scope.ensure_allowed(path):
-                logger.warning(f"沙箱拒绝越界读取, 跳过: {path}")
+                logger.warning(f"Sandbox blocked out-of-scope read, skipping: {path}")
                 continue
 
             index = start_index + i
             original_stem = path.stem
             ext = path.suffix
 
-            # 生成新名称
+            # Generate the new name
             new_stem = pattern
             new_stem = new_stem.replace("{index}", str(index).zfill(padding))
             new_stem = new_stem.replace("{date}", today)
@@ -665,7 +690,7 @@ class FileBatchRenameNode(BaseNode):
 
             if not dry_run and str(new_path) != str(path):
                 if not scope.ensure_allowed(new_path):
-                    logger.warning(f"沙箱拒绝越界写入, 跳过: {new_path}")
+                    logger.warning(f"Sandbox blocked out-of-scope write, skipping: {new_path}")
                     file_info["action"] = "sandbox_blocked"
                     renamed.append(file_info)
                     continue
@@ -689,47 +714,59 @@ class FileBatchRenameNode(BaseNode):
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"renamed_files": renamed},
-            summary=f"已重命名 {len(renamed)} 个文件" + (" (预览模式)" if dry_run else ""),
+            summary=f"已重命名 {len(renamed)} 个文件" + (" (预览模式)" if dry_run else ""),  # i18n: user-facing
         )
 
 
 @register_node
 class DiskCleanerNode(BaseNode):
-    """磁盘清理节点 — 扫描并清理垃圾文件、缓存、临时文件。
+    """Disk cleanup node — scans and cleans junk files, caches, and temporary files.
 
-    安全清理 macOS 系统垃圾文件，仅处理用户目录下的安全文件。
+    Safely cleans macOS system junk files, only handling safe files under the user directory.
     """
 
     name = "disk_cleaner"
-    display_name = "磁盘清理"
+    display_name = "磁盘清理"  # i18n: user-facing
     category = NodeCategory.MACOS_SYSTEM
-    description = "扫描并清理垃圾文件、缓存、临时文件"
+    description = "扫描并清理垃圾文件、缓存、临时文件"  # i18n: user-facing
     icon = "💾"
-    default_label = "磁盘清理"
+    default_label = "磁盘清理"  # i18n: user-facing
 
     inputs = [
-        {"key": "target_path", "label": "清理目标路径", "type": "string", "optional": True},
+        {"key": "target_path", "label": "清理目标路径", "type": "string", "optional": True},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "cleaned_files", "label": "清理的文件", "type": "list[dict]"},
-        {"key": "total_freed", "label": "释放空间", "type": "string"},
-        {"key": "summary", "label": "清理摘要", "type": "string"},
+        {"key": "cleaned_files", "label": "清理的文件", "type": "list[dict]"},  # i18n: user-facing
+        {"key": "total_freed", "label": "释放空间", "type": "string"},  # i18n: user-facing
+        {"key": "summary", "label": "清理摘要", "type": "string"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "clean_trash": {"type": "boolean", "default": True, "description": "清空废纸篓"},
+                "clean_trash": {"type": "boolean", "default": True, "description": "清空废纸篓"},  # i18n: user-facing
+                # i18n: user-facing
                 "clean_downloads": {"type": "boolean", "default": False, "description": "清理下载临时文件"},
-                "clean_cache": {"type": "boolean", "default": False, "description": "清理用户缓存"},
-                "clean_temp": {"type": "boolean", "default": False, "description": "清理临时文件"},
+                "clean_cache": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "清理用户缓存",  # i18n: user-facing
+                },  # i18n: user-facing
+                "clean_temp": {"type": "boolean", "default": False, "description": "清理临时文件"},  # i18n: user-facing
+                # i18n: user-facing
                 "clean_node_modules": {"type": "boolean", "default": False, "description": "清理 node_modules 目录"},
+                # i18n: user-facing
                 "clean_pycache": {"type": "boolean", "default": True, "description": "清理 __pycache__ 目录"},
+                # i18n: user-facing
                 "clean_ds_store": {"type": "boolean", "default": True, "description": "清理 .DS_Store 文件"},
-                "min_file_size": {"type": "integer", "default": 0, "description": "最小文件大小(字节)"},
+                "min_file_size": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": "最小文件大小(字节)",  # i18n: user-facing
+                },  # i18n: user-facing
                 "dry_run": {"type": "boolean", "default": True},
-                "max_depth": {"type": "integer", "default": 5, "description": "扫描深度"},
+                "max_depth": {"type": "integer", "default": 5, "description": "扫描深度"},  # i18n: user-facing
             },
         }
 
@@ -739,12 +776,12 @@ class DiskCleanerNode(BaseNode):
         target_path = Path(target).expanduser()
 
         if not target_path.exists():
-            return NodeResult(status=NodeStatus.FAILED, error=f"路径不存在: {target}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"路径不存在: {target}")  # i18n: user-facing
 
         dry_run = params.get("dry_run", True)
         cleaned_files = []
 
-        # 清理规则
+        # Cleanup rules
         patterns = []
         if params.get("clean_trash"):
             patterns.append(("trash", _get_trash_path()))
@@ -753,7 +790,7 @@ class DiskCleanerNode(BaseNode):
         if params.get("clean_temp"):
             patterns.append(("temp", "/tmp"))
 
-        # 文件级清理
+        # File-level cleanup
         file_patterns = []
         if params.get("clean_pycache"):
             file_patterns.append("__pycache__")
@@ -762,13 +799,13 @@ class DiskCleanerNode(BaseNode):
         if params.get("clean_node_modules"):
             file_patterns.append("node_modules")
 
-        # 扫描目录
+        # Scan directories
         for pattern in file_patterns:
             for found in target_path.rglob(pattern):
                 if not found.exists():
                     continue
                 try:
-                    # 计算大小
+                    # Compute size
                     if found.is_dir():
                         total_size = sum(f.stat().st_size for f in found.rglob("*") if f.is_file())
                     else:
@@ -798,9 +835,9 @@ class DiskCleanerNode(BaseNode):
                     cleaned_files.append(file_info)
 
                 except Exception as e:
-                    logger.debug(f"处理 {found} 时跳过: {e}")
+                    logger.debug(f"Skipping {found} during processing: {e}")
 
-        # 处理目录级清理
+        # Directory-level cleanup
         for label, path_str in patterns:
             p = Path(path_str).expanduser()
             if p.exists():
@@ -830,7 +867,7 @@ class DiskCleanerNode(BaseNode):
                         file_info["action"] = "would_clean"
                     cleaned_files.append(file_info)
                 except Exception as e:
-                    logger.debug(f"跳过 {label} {p}: {e}")
+                    logger.debug(f"Skipping {label} {p}: {e}")
 
         total_freed = sum(
             f.get("size", 0)
@@ -839,10 +876,11 @@ class DiskCleanerNode(BaseNode):
         )
 
         summary = (
+            # i18n: user-facing
             f"{'预览' if dry_run else '清理'}完成: 发现 {len(cleaned_files)} 项，可释放 {_file_size_str(total_freed)}"
         )
         if not dry_run:
-            summary = f"清理完成: 处理 {len(cleaned_files)} 项，释放 {_file_size_str(total_freed)}"
+            summary = f"清理完成: 处理 {len(cleaned_files)} 项，释放 {_file_size_str(total_freed)}"  # i18n: user-facing
 
         return NodeResult(
             status=NodeStatus.SUCCESS,
@@ -858,23 +896,23 @@ class DiskCleanerNode(BaseNode):
 
 @register_node
 class FileWatcherNode(BaseNode):
-    """文件监听节点 — 监听目录变化并触发后续操作。
+    """File watcher node — watches directory changes and triggers downstream actions.
 
-    使用 watchdog 库监听文件系统的创建、修改、删除事件。
+    Uses the watchdog library to listen for filesystem creation, modification, and deletion events.
     """
 
     name = "file_watcher"
-    display_name = "文件监听"
+    display_name = "文件监听"  # i18n: user-facing
     category = NodeCategory.MACOS_SYSTEM
-    description = "监听目录变化并触发后续操作"
+    description = "监听目录变化并触发后续操作"  # i18n: user-facing
     icon = "👀"
-    default_label = "文件监听"
+    default_label = "文件监听"  # i18n: user-facing
 
     inputs = [
-        {"key": "watch_path", "label": "监听目录", "type": "string"},
+        {"key": "watch_path", "label": "监听目录", "type": "string"},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "events", "label": "监听到的事件", "type": "list[dict]"},
+        {"key": "events", "label": "监听到的事件", "type": "list[dict]"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -882,14 +920,14 @@ class FileWatcherNode(BaseNode):
             "type": "object",
             "required": ["watch_path"],
             "properties": {
-                "watch_path": {"type": "string", "description": "监听目录路径"},
+                "watch_path": {"type": "string", "description": "监听目录路径"},  # i18n: user-facing
                 "watch_subdirs": {"type": "boolean", "default": True},
                 "watch_for_creation": {"type": "boolean", "default": True},
                 "watch_for_modification": {"type": "boolean", "default": False},
                 "watch_for_deletion": {"type": "boolean", "default": False},
                 "file_patterns": {
                     "type": "string",
-                    "description": "文件过滤模式，逗号分隔，如: *.pdf,*.docx",
+                    "description": "文件过滤模式，逗号分隔，如: *.pdf,*.docx",  # i18n: user-facing
                     "default": "",
                 },
                 "timeout_seconds": {"type": "integer", "default": 30},
@@ -903,23 +941,23 @@ class FileWatcherNode(BaseNode):
         if not watch_path:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="未指定监听目录",
-                summary="未指定监听目录",
+                error="未指定监听目录",  # i18n: user-facing
+                summary="未指定监听目录",  # i18n: user-facing
             )
 
         path = Path(watch_path).expanduser()
         if not path.exists():
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"监听目录不存在: {watch_path}",
-                summary="目录不存在",
+                error=f"监听目录不存在: {watch_path}",  # i18n: user-facing
+                summary="目录不存在",  # i18n: user-facing
             )
 
         watch_subdirs = params.get("watch_subdirs", True)
         file_patterns = params.get("file_patterns", "")
         timeout = params.get("timeout_seconds", 30)
 
-        # 使用 watchdog 监听
+        # Watch with watchdog
         try:
             from watchdog.events import FileSystemEventHandler
             from watchdog.observers import Observer
@@ -963,7 +1001,7 @@ class FileWatcherNode(BaseNode):
             observer.schedule(event_handler, str(path), recursive=watch_subdirs)
             observer.start()
 
-            # 等待指定时间或停止信号
+            # Wait for the timeout or a stop signal
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=timeout)
             except TimeoutError:
@@ -972,7 +1010,7 @@ class FileWatcherNode(BaseNode):
                 observer.stop()
                 observer.join()
 
-            # 过滤文件模式
+            # Filter by file patterns
             if file_patterns:
                 patterns = [p.strip() for p in file_patterns.split(",") if p.strip()]
                 filtered = []
@@ -990,33 +1028,33 @@ class FileWatcherNode(BaseNode):
                     "event_count": len(events),
                     "watch_path": str(path),
                 },
-                summary=f"监听完成: 检测到 {len(events)} 个事件",
+                summary=f"监听完成: 检测到 {len(events)} 个事件",  # i18n: user-facing
             )
 
         except ImportError:
-            # watchdog 未安装，返回提示
+            # watchdog not installed, return a hint
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="需要安装 watchdog: pip install watchdog",
-                summary="依赖缺失: watchdog",
+                error="需要安装 watchdog: pip install watchdog",  # i18n: user-facing
+                summary="依赖缺失: watchdog",  # i18n: user-facing
             )
 
 
 @register_node
 class FileCopyNode(BaseNode):
     name = "file_copy"
-    display_name = "文件复制"
+    display_name = "文件复制"  # i18n: user-facing
     category = NodeCategory.FILE_OPERATION
-    description = "复制文件或目录到目标位置"
+    description = "复制文件或目录到目标位置"  # i18n: user-facing
     icon = "📋"
-    default_label = "文件复制"
+    default_label = "文件复制"  # i18n: user-facing
 
     inputs = [
-        {"key": "files", "label": "文件列表", "type": "list[file]"},
-        {"key": "destination", "label": "目标目录", "type": "string"},
+        {"key": "files", "label": "文件列表", "type": "list[file]"},  # i18n: user-facing
+        {"key": "destination", "label": "目标目录", "type": "string"},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "copied_files", "label": "已复制文件", "type": "list[dict]"},
+        {"key": "copied_files", "label": "已复制文件", "type": "list[dict]"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -1024,9 +1062,14 @@ class FileCopyNode(BaseNode):
             "type": "object",
             "required": ["files", "destination"],
             "properties": {
+                # i18n: user-facing
                 "files": {"type": "array", "items": {"type": "string"}, "description": "要复制的文件路径列表"},
-                "destination": {"type": "string", "description": "目标目录"},
-                "create_subdir": {"type": "boolean", "default": True, "description": "按日期创建子目录"},
+                "destination": {"type": "string", "description": "目标目录"},  # i18n: user-facing
+                "create_subdir": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "按日期创建子目录",  # i18n: user-facing
+                },  # i18n: user-facing
                 "overwrite": {"type": "boolean", "default": False},
                 "preserve_metadata": {"type": "boolean", "default": True},
             },
@@ -1038,7 +1081,7 @@ class FileCopyNode(BaseNode):
         params = self.config.params
 
         if not files or not destination:
-            return NodeResult(status=NodeStatus.FAILED, error="缺少文件列表或目标目录")
+            return NodeResult(status=NodeStatus.FAILED, error="缺少文件列表或目标目录")  # i18n: user-facing
 
         dst = Path(destination).expanduser()
 
@@ -1048,8 +1091,8 @@ class FileCopyNode(BaseNode):
         if not scope.ensure_allowed(dst):
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"沙箱拒绝越界写入: {dst}",
-                summary="授权文件夹外路径被拦截",
+                error=f"沙箱拒绝越界写入: {dst}",  # i18n: user-facing
+                summary="授权文件夹外路径被拦截",  # i18n: user-facing
             )
 
         dst.mkdir(parents=True, exist_ok=True)
@@ -1065,14 +1108,14 @@ class FileCopyNode(BaseNode):
             if not src.exists():
                 continue
             if not scope.ensure_allowed(src):
-                logger.warning(f"沙箱拒绝越界读取, 跳过: {src}")
+                logger.warning(f"Sandbox blocked out-of-scope read, skipping: {src}")
                 continue
             target = dst / src.name
             if target.exists() and not params.get("overwrite", False):
                 stem = target.stem
                 target = dst / f"{stem}_{int(time.time())}{target.suffix}"
             if not scope.ensure_allowed(target):
-                logger.warning(f"沙箱拒绝越界写入, 跳过: {target}")
+                logger.warning(f"Sandbox blocked out-of-scope write, skipping: {target}")
                 continue
             try:
                 if src.is_file():
@@ -1083,37 +1126,38 @@ class FileCopyNode(BaseNode):
                     shutil.copytree(str(src), str(target), dirs_exist_ok=True)
                 copied.append({"source": str(src), "destination": str(target), "name": src.name})
             except Exception as e:
-                logger.error(f"复制失败 {src}: {e}")
+                logger.error(f"Copy failed {src}: {e}")
 
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"copied_files": copied},
-            summary=f"已复制 {len(copied)} 个文件到 {dst}",
+            summary=f"已复制 {len(copied)} 个文件到 {dst}",  # i18n: user-facing
         )
 
 
 @register_node
 class FileMoveNode(BaseNode):
     name = "file_move"
-    display_name = "文件移动"
+    display_name = "文件移动"  # i18n: user-facing
     category = NodeCategory.FILE_OPERATION
-    description = "移动文件或目录到目标位置"
+    description = "移动文件或目录到目标位置"  # i18n: user-facing
     icon = "➡️"
-    default_label = "文件移动"
+    default_label = "文件移动"  # i18n: user-facing
 
     inputs = [
-        {"key": "files", "label": "文件列表", "type": "list[file]"},
-        {"key": "destination", "label": "目标目录", "type": "string"},
+        {"key": "files", "label": "文件列表", "type": "list[file]"},  # i18n: user-facing
+        {"key": "destination", "label": "目标目录", "type": "string"},  # i18n: user-facing
     ]
-    outputs = [{"key": "moved_files", "label": "已移动文件", "type": "list[dict]"}]
+    outputs = [{"key": "moved_files", "label": "已移动文件", "type": "list[dict]"}]  # i18n: user-facing
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "required": ["files", "destination"],
             "properties": {
+                # i18n: user-facing
                 "files": {"type": "array", "items": {"type": "string"}, "description": "要移动的文件路径列表"},
-                "destination": {"type": "string", "description": "目标目录"},
+                "destination": {"type": "string", "description": "目标目录"},  # i18n: user-facing
                 "create_subdir": {"type": "boolean", "default": True},
                 "overwrite": {"type": "boolean", "default": False},
             },
@@ -1125,7 +1169,7 @@ class FileMoveNode(BaseNode):
         params = self.config.params
 
         if not files or not destination:
-            return NodeResult(status=NodeStatus.FAILED, error="缺少文件列表或目标目录")
+            return NodeResult(status=NodeStatus.FAILED, error="缺少文件列表或目标目录")  # i18n: user-facing
 
         dst = Path(destination).expanduser()
 
@@ -1135,8 +1179,8 @@ class FileMoveNode(BaseNode):
         if not scope.ensure_allowed(dst):
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"沙箱拒绝越界写入: {dst}",
-                summary="授权文件夹外路径被拦截",
+                error=f"沙箱拒绝越界写入: {dst}",  # i18n: user-facing
+                summary="授权文件夹外路径被拦截",  # i18n: user-facing
             )
 
         dst.mkdir(parents=True, exist_ok=True)
@@ -1151,49 +1195,53 @@ class FileMoveNode(BaseNode):
             if not src.exists():
                 continue
             if not scope.ensure_allowed(src):
-                logger.warning(f"沙箱拒绝越界读取, 跳过: {src}")
+                logger.warning(f"Sandbox blocked out-of-scope read, skipping: {src}")
                 continue
             target = dst / src.name
             if target.exists() and not params.get("overwrite", False):
                 stem = target.stem
                 target = dst / f"{stem}_{int(time.time())}{target.suffix}"
             if not scope.ensure_allowed(target):
-                logger.warning(f"沙箱拒绝越界写入, 跳过: {target}")
+                logger.warning(f"Sandbox blocked out-of-scope write, skipping: {target}")
                 continue
             try:
                 shutil.move(str(src), str(target))
                 moved.append({"source": str(src), "destination": str(target), "name": src.name})
             except Exception as e:
-                logger.error(f"移动失败 {src}: {e}")
+                logger.error(f"Move failed {src}: {e}")
 
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"moved_files": moved},
-            summary=f"已移动 {len(moved)} 个文件到 {dst}",
+            summary=f"已移动 {len(moved)} 个文件到 {dst}",  # i18n: user-facing
         )
 
 
 @register_node
 class FileDeleteNode(BaseNode):
     name = "file_delete"
-    display_name = "文件删除"
+    display_name = "文件删除"  # i18n: user-facing
     category = NodeCategory.FILE_OPERATION
-    description = "删除文件或目录到废纸篓"
+    description = "删除文件或目录到废纸篓"  # i18n: user-facing
     icon = "🗑️"
-    default_label = "文件删除"
+    default_label = "文件删除"  # i18n: user-facing
 
     inputs = [
-        {"key": "files", "label": "文件列表", "type": "list[file]"},
+        {"key": "files", "label": "文件列表", "type": "list[file]"},  # i18n: user-facing
     ]
-    outputs = [{"key": "deleted_files", "label": "已删除文件", "type": "list[dict]"}]
+    outputs = [{"key": "deleted_files", "label": "已删除文件", "type": "list[dict]"}]  # i18n: user-facing
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "use_trash": {"type": "boolean", "default": True, "description": "移到废纸篓而非永久删除"},
-                "dry_run": {"type": "boolean", "default": True, "description": "预览模式"},
-                "confirm": {"type": "boolean", "default": False, "description": "需要确认"},
+                "use_trash": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "移到废纸篓而非永久删除",  # i18n: user-facing
+                },  # i18n: user-facing
+                "dry_run": {"type": "boolean", "default": True, "description": "预览模式"},  # i18n: user-facing
+                "confirm": {"type": "boolean", "default": False, "description": "需要确认"},  # i18n: user-facing
             },
         }
 
@@ -1202,6 +1250,7 @@ class FileDeleteNode(BaseNode):
         params = self.config.params
 
         if not files:
+            # i18n: user-facing
             return NodeResult(status=NodeStatus.SUCCESS, data={"deleted_files": []}, summary="没有文件需要删除")
 
         use_trash = params.get("use_trash", True)
@@ -1216,7 +1265,7 @@ class FileDeleteNode(BaseNode):
             if not scope.ensure_allowed(path):
                 return NodeResult(
                     status=NodeStatus.FAILED,
-                    error=f"沙箱拒绝越界删除: {path}",
+                    error=f"沙箱拒绝越界删除: {path}",  # i18n: user-facing
                 )
             if not path.exists():
                 continue
@@ -1250,27 +1299,27 @@ class FileDeleteNode(BaseNode):
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"deleted_files": deleted},
-            summary=f"{'预览: 将删除' if dry_run else '已删除'} {len(deleted)} 个文件",
+            summary=f"{'预览: 将删除' if dry_run else '已删除'} {len(deleted)} 个文件",  # i18n: user-facing
         )
 
 
 @register_node
 class FileFindNode(BaseNode):
-    """文件查找节点 — 按条件递归查找文件。"""
+    """File find node — recursively finds files by conditions."""
 
     name = "file_find"
-    display_name = "文件查找"
+    display_name = "文件查找"  # i18n: user-facing
     category = NodeCategory.FILE_OPERATION
-    description = "按条件递归查找文件"
+    description = "按条件递归查找文件"  # i18n: user-facing
     icon = "🔍"
-    default_label = "文件查找"
+    default_label = "文件查找"  # i18n: user-facing
 
     inputs = [
-        {"key": "search_path", "label": "搜索路径", "type": "string"},
+        {"key": "search_path", "label": "搜索路径", "type": "string"},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "files", "label": "找到的文件", "type": "list[file]"},
-        {"key": "total_count", "label": "文件总数", "type": "integer"},
+        {"key": "files", "label": "找到的文件", "type": "list[file]"},  # i18n: user-facing
+        {"key": "total_count", "label": "文件总数", "type": "integer"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -1278,16 +1327,16 @@ class FileFindNode(BaseNode):
             "type": "object",
             "required": ["search_path"],
             "properties": {
-                "search_path": {"type": "string", "description": "搜索目录路径"},
+                "search_path": {"type": "string", "description": "搜索目录路径"},  # i18n: user-facing
                 "patterns": {
                     "type": "string",
-                    "description": "文件模式，逗号分隔，如: *.pdf,*.docx,*.md",
+                    "description": "文件模式，逗号分隔，如: *.pdf,*.docx,*.md",  # i18n: user-facing
                     "default": "*",
                 },
-                "min_size": {"type": "integer", "default": 0, "description": "最小文件大小(字节)"},
-                "max_size": {"type": "integer", "default": 0, "description": "最大文件大小(字节)"},
-                "max_depth": {"type": "integer", "default": 10, "description": "最大递归深度"},
-                "max_results": {"type": "integer", "default": 1000, "description": "最大结果数"},
+                "min_size": {"type": "integer", "default": 0, "description": "最小文件大小(字节)"},  # i18n: user-facing
+                "max_size": {"type": "integer", "default": 0, "description": "最大文件大小(字节)"},  # i18n: user-facing
+                "max_depth": {"type": "integer", "default": 10, "description": "最大递归深度"},  # i18n: user-facing
+                "max_results": {"type": "integer", "default": 1000, "description": "最大结果数"},  # i18n: user-facing
                 "include_hidden": {"type": "boolean", "default": False},
             },
         }
@@ -1297,11 +1346,11 @@ class FileFindNode(BaseNode):
         params = self.config.params
 
         if not search_path:
-            return NodeResult(status=NodeStatus.FAILED, error="未指定搜索路径")
+            return NodeResult(status=NodeStatus.FAILED, error="未指定搜索路径")  # i18n: user-facing
 
         path = Path(search_path).expanduser()
         if not path.exists():
-            return NodeResult(status=NodeStatus.FAILED, error=f"路径不存在: {search_path}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"路径不存在: {search_path}")  # i18n: user-facing
 
         from ...security import get_scoped_folder_manager
 
@@ -1309,8 +1358,8 @@ class FileFindNode(BaseNode):
         if not scope.ensure_allowed(path):
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"沙箱拒绝越界读取: {path}",
-                summary="授权文件夹外路径被拦截",
+                error=f"沙箱拒绝越界读取: {path}",  # i18n: user-facing
+                summary="授权文件夹外路径被拦截",  # i18n: user-facing
             )
 
         patterns = [p.strip() for p in params.get("patterns", "*").split(",") if p.strip()]
@@ -1352,32 +1401,32 @@ class FileFindNode(BaseNode):
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"files": files, "total_count": len(files)},
-            summary=f"找到 {len(files)} 个文件",
+            summary=f"找到 {len(files)} 个文件",  # i18n: user-facing
         )
 
 
 @register_node
 class ScreenCaptureNode(BaseNode):
-    """桌面截图节点 — 截取屏幕并保存/分析。
+    """Desktop screenshot node — captures the screen and saves/analyzes it.
 
-    对标 Claude Cowork 的屏幕查看能力。
-    支持全屏、选区、窗口截图，可结合 fusion-mlx 进行图像分析。
+    Parallels Claude Cowork's screen viewing capability.
+    Supports full-screen, selection, and window captures, and can combine with fusion-mlx for image analysis.
     """
 
     name = "screen_capture"
-    display_name = "桌面截图"
+    display_name = "桌面截图"  # i18n: user-facing
     category = NodeCategory.MACOS_SYSTEM
-    description = "截取屏幕并保存到文件"
+    description = "截取屏幕并保存到文件"  # i18n: user-facing
     icon = "📸"
-    default_label = "屏幕截图"
+    default_label = "屏幕截图"  # i18n: user-facing
 
     inputs = [
-        {"key": "save_path", "label": "保存路径", "type": "string", "optional": True},
+        {"key": "save_path", "label": "保存路径", "type": "string", "optional": True},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "file_path", "label": "截图文件路径", "type": "string"},
-        {"key": "width", "label": "宽度", "type": "integer"},
-        {"key": "height", "label": "高度", "type": "integer"},
+        {"key": "file_path", "label": "截图文件路径", "type": "string"},  # i18n: user-facing
+        {"key": "width", "label": "宽度", "type": "integer"},  # i18n: user-facing
+        {"key": "height", "label": "高度", "type": "integer"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -1388,22 +1437,22 @@ class ScreenCaptureNode(BaseNode):
                     "type": "string",
                     "enum": ["full", "selection", "window"],
                     "default": "full",
-                    "description": "截图类型",
+                    "description": "截图类型",  # i18n: user-facing
                 },
                 "save_path": {
                     "type": "string",
                     "default": "~/Desktop",
-                    "description": "截图保存目录",
+                    "description": "截图保存目录",  # i18n: user-facing
                 },
                 "file_name": {
                     "type": "string",
                     "default": "screenshot_{date}",
-                    "description": "文件名（不含扩展名）",
+                    "description": "文件名（不含扩展名）",  # i18n: user-facing
                 },
                 "analyze_with_ai": {
                     "type": "boolean",
                     "default": False,
-                    "description": "是否用 AI 分析截图内容",
+                    "description": "是否用 AI 分析截图内容",  # i18n: user-facing
                 },
             },
         }
@@ -1425,12 +1474,12 @@ class ScreenCaptureNode(BaseNode):
         actual_name = file_name.replace("{date}", date_str)
         file_path = save_dir / f"{actual_name}.png"
 
-        # 使用 screencapture 命令 (HI-11: exec 列表避免 shell 注入, file_path 经参数传递)
+        # Use the screencapture command (HI-11: exec argv avoids shell injection, file_path passed as argument)
         argv = ["screencapture", "-x"]
         if capture_type == "selection":
-            argv.append("-i")  # 交互选择
+            argv.append("-i")  # interactive selection
         elif capture_type == "window":
-            argv.append("-w")  # 窗口截图
+            argv.append("-w")  # window capture
         argv.append(str(file_path))
 
         try:
@@ -1444,11 +1493,11 @@ class ScreenCaptureNode(BaseNode):
             if proc.returncode != 0:
                 return NodeResult(
                     status=NodeStatus.FAILED,
-                    error=f"截图失败: {stderr.decode()}",
-                    summary="截图失败",
+                    error=f"截图失败: {stderr.decode()}",  # i18n: user-facing
+                    summary="截图失败",  # i18n: user-facing
                 )
 
-            # 获取图片尺寸
+            # Get image dimensions
             import subprocess
 
             size_result = subprocess.run(
@@ -1475,69 +1524,72 @@ class ScreenCaptureNode(BaseNode):
                 "capture_type": capture_type,
             }
 
-            # AI 分析截图
+            # AI analysis of the screenshot
             if analyze and width > 0 and height > 0:
                 try:
                     analysis = await self._analyze_screenshot(str(file_path))
                     result_data["analysis"] = analysis
                 except Exception as e:
-                    result_data["analysis"] = f"分析失败: {e}"
+                    result_data["analysis"] = f"分析失败: {e}"  # i18n: user-facing
 
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data=result_data,
-                summary=f"截图已保存: {file_path.name} ({width}x{height})",
+                summary=f"截图已保存: {file_path.name} ({width}x{height})",  # i18n: user-facing
             )
 
         except Exception as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"截图异常: {e}",
-                summary="截图异常",
+                error=f"截图异常: {e}",  # i18n: user-facing
+                summary="截图异常",  # i18n: user-facing
             )
 
     async def _analyze_screenshot(self, image_path: str) -> str:
-        """使用 fusion-mlx 分析截图内容。"""
+        """Analyze the screenshot content with fusion-mlx."""
         from ...ai import FusionMLXClient
         from .input_nodes import _build_vision_user_content
 
         client = FusionMLXClient()
         try:
-            content = _build_vision_user_content("分析这张截图, 描述你看到了什么。", image_path)
+            content = _build_vision_user_content("分析这张截图, 描述你看到了什么。", image_path)  # i18n: user-facing
             response = await client.chat(
                 model="qwen3.5-9b",
                 messages=[
-                    {"role": "system", "content": "你是一个图像分析助手。分析截图内容并描述你看到了什么。"},
+                    {
+                        "role": "system",
+                        "content": "你是一个图像分析助手。分析截图内容并描述你看到了什么。",  # i18n: user-facing
+                    },  # i18n: user-facing
                     {"role": "user", "content": content},
                 ],
                 max_tokens=1024,
             )
             return response.content
         except Exception as e:
-            return f"AI 分析不可用: {e}"
+            return f"AI 分析不可用: {e}"  # i18n: user-facing
 
 
 @register_node
 class ClipboardNode(BaseNode):
-    """剪贴板节点 — 读写系统剪贴板。
+    """Clipboard node — reads/writes the system clipboard.
 
-    对标 Claude Cowork 的剪贴板操作能力。
-    支持文本和文件路径的读写。
+    Parallels Claude Cowork's clipboard capabilities.
+    Supports reading and writing text and file paths.
     """
 
     name = "clipboard"
-    display_name = "剪贴板"
+    display_name = "剪贴板"  # i18n: user-facing
     category = NodeCategory.MACOS_SYSTEM
-    description = "读写系统剪贴板"
+    description = "读写系统剪贴板"  # i18n: user-facing
     icon = "📋"
-    default_label = "剪贴板"
+    default_label = "剪贴板"  # i18n: user-facing
 
     inputs = [
-        {"key": "text", "label": "要写入的文本", "type": "string", "optional": True},
+        {"key": "text", "label": "要写入的文本", "type": "string", "optional": True},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "text", "label": "剪贴板文本", "type": "string"},
-        {"key": "length", "label": "文本长度", "type": "integer"},
+        {"key": "text", "label": "剪贴板文本", "type": "string"},  # i18n: user-facing
+        {"key": "length", "label": "文本长度", "type": "integer"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -1548,12 +1600,12 @@ class ClipboardNode(BaseNode):
                     "type": "string",
                     "enum": ["read", "write", "clear"],
                     "default": "read",
-                    "description": "剪贴板操作",
+                    "description": "剪贴板操作",  # i18n: user-facing
                 },
                 "text": {
                     "type": "string",
                     "default": "",
-                    "description": "要写入的文本（write 操作时使用）",
+                    "description": "要写入的文本（write 操作时使用）",  # i18n: user-facing
                 },
             },
         }
@@ -1579,7 +1631,7 @@ class ClipboardNode(BaseNode):
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
                     data={"text": content, "length": len(content), "action": "read"},
-                    summary=f"读取剪贴板: {len(content)} 字符",
+                    summary=f"读取剪贴板: {len(content)} 字符",  # i18n: user-facing
                 )
 
             elif action == "write":
@@ -1594,7 +1646,7 @@ class ClipboardNode(BaseNode):
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
                     data={"text": text, "length": len(text), "action": "write"},
-                    summary=f"写入剪贴板: {len(text)} 字符",
+                    summary=f"写入剪贴板: {len(text)} 字符",  # i18n: user-facing
                 )
 
             elif action == "clear":
@@ -1608,48 +1660,48 @@ class ClipboardNode(BaseNode):
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
                     data={"text": "", "length": 0, "action": "clear"},
-                    summary="剪贴板已清空",
+                    summary="剪贴板已清空",  # i18n: user-facing
                 )
 
         except Exception as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"剪贴板操作失败: {e}",
-                summary="操作失败",
+                error=f"剪贴板操作失败: {e}",  # i18n: user-facing
+                summary="操作失败",  # i18n: user-facing
             )
 
 
 @register_node
 class NotificationNode(BaseNode):
-    """系统通知节点 — 发送 macOS 原生通知。
+    """Notification node — sends native macOS notifications.
 
-    对标 Claude Cowork 的通知能力。
-    使用 osascript 发送 macOS Notification Center 通知。
+    Parallels Claude Cowork's notification capability.
+    Sends macOS Notification Center notifications via osascript.
     """
 
     name = "notification"
-    display_name = "系统通知"
+    display_name = "系统通知"  # i18n: user-facing
     category = NodeCategory.MACOS_SYSTEM
-    description = "发送 macOS 原生通知"
+    description = "发送 macOS 原生通知"  # i18n: user-facing
     icon = "🔔"
-    default_label = "系统通知"
+    default_label = "系统通知"  # i18n: user-facing
 
     inputs = [
-        {"key": "title", "label": "通知标题", "type": "string"},
-        {"key": "message", "label": "通知内容", "type": "string"},
+        {"key": "title", "label": "通知标题", "type": "string"},  # i18n: user-facing
+        {"key": "message", "label": "通知内容", "type": "string"},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "sent", "label": "是否发送成功", "type": "boolean"},
+        {"key": "sent", "label": "是否发送成功", "type": "boolean"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "title": {"type": "string", "default": "Fusion-Cowork", "description": "通知标题"},
-                "message": {"type": "string", "default": "", "description": "通知内容"},
-                "subtitle": {"type": "string", "default": "", "description": "副标题"},
-                "sound": {"type": "boolean", "default": False, "description": "是否播放声音"},
+                "title": {"type": "string", "default": "Fusion-Cowork", "description": "通知标题"},  # i18n: user-facing
+                "message": {"type": "string", "default": "", "description": "通知内容"},  # i18n: user-facing
+                "subtitle": {"type": "string", "default": "", "description": "副标题"},  # i18n: user-facing
+                "sound": {"type": "boolean", "default": False, "description": "是否播放声音"},  # i18n: user-facing
             },
         }
 
@@ -1666,11 +1718,11 @@ class NotificationNode(BaseNode):
         if not message:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="通知内容不能为空",
-                summary="未指定通知内容",
+                error="通知内容不能为空",  # i18n: user-facing
+                summary="未指定通知内容",  # i18n: user-facing
             )
 
-        # 转义 AppleScript 特殊字符 (双引号) + shell 单引号 (防注入)
+        # Escape AppleScript special chars (double quotes) + shell single quotes (injection prevention)
         title_escaped = title.replace("\\", "\\\\").replace('"', '\\"')
         msg_escaped = message.replace("\\", "\\\\").replace('"', '\\"')
         sub_escaped = subtitle.replace("\\", "\\\\").replace('"', '\\"')
@@ -1684,7 +1736,7 @@ class NotificationNode(BaseNode):
             script += ' sound name "default"'
 
         try:
-            # HI-11: shell 单引号转义 script (单引号内的 ' 需 break-quote: '\''), 避免注入
+            # HI-11: shell single-quote escaping of script (a ' inside quotes needs break-quote: '\''), avoids injection
             script_sh_escaped = script.replace("'", "'\"'\"'")
             proc = await asyncio.create_subprocess_shell(
                 f"osascript -e '{script_sh_escaped}'",
@@ -1697,38 +1749,38 @@ class NotificationNode(BaseNode):
             return NodeResult(
                 status=NodeStatus.SUCCESS if success else NodeStatus.FAILED,
                 data={"sent": success, "title": title, "message": message},
-                summary=f"通知已发送: {title}" if success else f"通知发送失败: {stderr.decode()}",
+                summary=f"通知已发送: {title}" if success else f"通知发送失败: {stderr.decode()}",  # i18n: user-facing
             )
 
         except Exception as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"通知发送失败: {e}",
-                summary="通知失败",
+                error=f"通知发送失败: {e}",  # i18n: user-facing
+                summary="通知失败",  # i18n: user-facing
             )
 
 
 @register_node
 class AppLifecycleNode(BaseNode):
-    """应用生命周期节点 — 启动/退出/切换 macOS 应用程序。
+    """App lifecycle node — launches/quits/switches macOS applications.
 
-    对标 Claude Cowork 的桌面应用控制能力。
-    使用 AppleScript 控制 macOS 应用。
+    Parallels Claude Cowork's desktop app control capability.
+    Controls macOS apps via AppleScript.
     """
 
     name = "app_lifecycle"
-    display_name = "应用控制"
+    display_name = "应用控制"  # i18n: user-facing
     category = NodeCategory.MACOS_SYSTEM
-    description = "启动/退出/切换 macOS 应用程序"
+    description = "启动/退出/切换 macOS 应用程序"  # i18n: user-facing
     icon = "🖥️"
-    default_label = "应用控制"
+    default_label = "应用控制"  # i18n: user-facing
 
     inputs = [
-        {"key": "app_name", "label": "应用名称", "type": "string"},
+        {"key": "app_name", "label": "应用名称", "type": "string"},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "success", "label": "是否成功", "type": "boolean"},
-        {"key": "app_pid", "label": "进程 PID", "type": "integer", "optional": True},
+        {"key": "success", "label": "是否成功", "type": "boolean"},  # i18n: user-facing
+        {"key": "app_pid", "label": "进程 PID", "type": "integer", "optional": True},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -1739,17 +1791,18 @@ class AppLifecycleNode(BaseNode):
                     "type": "string",
                     "enum": ["launch", "quit", "activate", "check", "list"],
                     "default": "launch",
-                    "description": "操作类型",
+                    "description": "操作类型",  # i18n: user-facing
                 },
                 "app_name": {
                     "type": "string",
                     "default": "",
+                    # i18n: user-facing
                     "description": "应用名称（如 Finder、Safari、Terminal）；action 为 launch/quit/activate/check 时必填，list 时可省略",
                 },
                 "save_windows": {
                     "type": "boolean",
                     "default": False,
-                    "description": "退出时是否保存窗口",
+                    "description": "退出时是否保存窗口",  # i18n: user-facing
                 },
             },
         }
@@ -1765,7 +1818,7 @@ class AppLifecycleNode(BaseNode):
 
         try:
             if action == "list":
-                # 列出正在运行的应用
+                # List running applications
                 proc = await asyncio.create_subprocess_shell(
                     "osascript -e 'tell application \"System Events\" to get name of every process whose background only is false'",
                     stdout=asyncio.subprocess.PIPE,
@@ -1776,17 +1829,17 @@ class AppLifecycleNode(BaseNode):
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
                     data={"apps": apps, "count": len(apps)},
-                    summary=f"运行中的应用: {len(apps)} 个",
+                    summary=f"运行中的应用: {len(apps)} 个",  # i18n: user-facing
                 )
 
             if not app_name:
                 return NodeResult(
                     status=NodeStatus.FAILED,
-                    error="未指定应用名称",
-                    summary="未指定应用",
+                    error="未指定应用名称",  # i18n: user-facing
+                    summary="未指定应用",  # i18n: user-facing
                 )
 
-            # HI-11: app_name 转义 AppleScript 双引号 + 反斜杠, 防 AppleScript 注入
+            # HI-11: escape AppleScript double quotes + backslashes in app_name, prevents AppleScript injection
             app_escaped = app_name.replace("\\", "\\\\").replace('"', '\\"')
             if action == "launch":
                 script = f'tell application "{app_escaped}" to launch'
@@ -1798,9 +1851,10 @@ class AppLifecycleNode(BaseNode):
             elif action == "check":
                 script = f'tell application "System Events" to (name of processes) contains "{app_escaped}"'
             else:
+                # i18n: user-facing
                 return NodeResult(status=NodeStatus.FAILED, error=f"未知操作: {action}", summary="未知操作")
 
-            # HI-11: shell 单引号转义 script (单引号内 ' → '"'"'), 避免命令注入
+            # HI-11: shell single-quote escaping of script (' inside single quotes → '"'"'), avoids command injection
             script_sh_escaped = script.replace("'", "'\"'\"'")
             proc = await asyncio.create_subprocess_shell(
                 f"osascript -e '{script_sh_escaped}'",
@@ -1809,11 +1863,11 @@ class AppLifecycleNode(BaseNode):
             )
             stdout, stderr = await proc.communicate()
 
-            # 获取进程 PID
+            # Get process PID
             pid = 0
             if action in ("launch", "activate", "check"):
                 try:
-                    # HI-11: pgrep 的 app_name 走 shell 单引号转义, 防注入
+                    # HI-11: pgrep's app_name goes through shell single-quote escaping, prevents injection
                     app_sh_for_pgrep = app_name.replace("'", "'\"'\"'")
                     pid_proc = await asyncio.create_subprocess_shell(
                         f"pgrep -f '{app_sh_for_pgrep}' | head -1",
@@ -1835,32 +1889,32 @@ class AppLifecycleNode(BaseNode):
         except Exception as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"应用控制失败: {e}",
-                summary="操作失败",
+                error=f"应用控制失败: {e}",  # i18n: user-facing
+                summary="操作失败",  # i18n: user-facing
             )
 
 
 @register_node
 class OCRNode(BaseNode):
-    """OCR 文字识别节点 — 从图片中识别文字。
+    """OCR text recognition node — recognizes text from images.
 
-    对标 Claude Cowork 的屏幕文字读取能力。
-    使用 macOS 原生 Vision 框架或 fusion-mlx 进行 OCR。
+    Parallels Claude Cowork's on-screen text reading capability.
+    Uses the native macOS Vision framework or fusion-mlx for OCR.
     """
 
     name = "ocr"
-    display_name = "OCR 文字识别"
+    display_name = "OCR 文字识别"  # i18n: user-facing
     category = NodeCategory.AI_PROCESSING
-    description = "从图片中识别文字"
+    description = "从图片中识别文字"  # i18n: user-facing
     icon = "👁️"
-    default_label = "OCR 识别"
+    default_label = "OCR 识别"  # i18n: user-facing
 
     inputs = [
-        {"key": "image_path", "label": "图片路径", "type": "string"},
+        {"key": "image_path", "label": "图片路径", "type": "string"},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "text", "label": "识别文字", "type": "string"},
-        {"key": "confidence", "label": "置信度", "type": "float"},
+        {"key": "text", "label": "识别文字", "type": "string"},  # i18n: user-facing
+        {"key": "confidence", "label": "置信度", "type": "float"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -1868,13 +1922,13 @@ class OCRNode(BaseNode):
             "type": "object",
             "required": ["image_path"],
             "properties": {
-                "image_path": {"type": "string", "description": "图片文件路径"},
-                "language": {"type": "string", "default": "zh-Hans,en", "description": "识别语言"},
+                "image_path": {"type": "string", "description": "图片文件路径"},  # i18n: user-facing
+                "language": {"type": "string", "default": "zh-Hans,en", "description": "识别语言"},  # i18n: user-facing
                 "method": {
                     "type": "string",
                     "enum": ["native", "mlx"],
                     "default": "native",
-                    "description": "OCR 方法（native=macOS Vision, mlx=fusion-mlx）",
+                    "description": "OCR 方法（native=macOS Vision, mlx=fusion-mlx）",  # i18n: user-facing
                 },
             },
         }
@@ -1889,16 +1943,19 @@ class OCRNode(BaseNode):
         method = params.get("method", "native")
 
         if not image_path:
-            return NodeResult(status=NodeStatus.FAILED, error="未指定图片路径", summary="未指定图片")
+            return NodeResult(
+                status=NodeStatus.FAILED, error="未指定图片路径", summary="未指定图片"  # i18n: user-facing
+            )  # i18n: user-facing
 
         path = Path(image_path).expanduser()
         if not path.exists():
+            # i18n: user-facing
             return NodeResult(status=NodeStatus.FAILED, error=f"文件不存在: {image_path}", summary="文件不存在")
 
         try:
             if method == "native":
-                # 使用 macOS 原生 Vision 框架（通过 Shortcuts 或 swift 命令行）
-                # 这里使用一个简化的方法：通过 tesseract 或 mlx 视觉模型
+                # Use the native macOS Vision framework (via Shortcuts or the swift CLI)
+                # Simplified approach here: via tesseract or an mlx vision model
                 text = await self._ocr_native(path)
             else:
                 text = await self._ocr_mlx(path)
@@ -1906,19 +1963,19 @@ class OCRNode(BaseNode):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"text": text, "confidence": 0.85, "method": method, "image": str(path)},
-                summary=f"识别到 {len(text)} 字符",
+                summary=f"识别到 {len(text)} 字符",  # i18n: user-facing
             )
 
         except Exception as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"OCR 失败: {e}",
-                summary="OCR 失败",
+                error=f"OCR 失败: {e}",  # i18n: user-facing
+                summary="OCR 失败",  # i18n: user-facing
             )
 
     async def _ocr_native(self, path: Path) -> str:
-        """使用 macOS 原生能力进行 OCR。"""
-        # 尝试使用 Shortcuts 的 OCR 功能
+        """Perform OCR with native macOS capabilities."""
+        # Try the Shortcuts OCR feature
         try:
             proc = await asyncio.create_subprocess_shell(
                 f"shortcuts run 'Extract Text from Image' -i '{path}' 2>/dev/null || echo 'OCR not available'",
@@ -1933,10 +1990,10 @@ class OCRNode(BaseNode):
         except Exception:
             pass
 
-        return "[OCR 需要安装 macOS Shortcuts 或 tesseract]"
+        return "[OCR 需要安装 macOS Shortcuts 或 tesseract]"  # i18n: user-facing
 
     async def _ocr_mlx(self, path: Path) -> str:
-        """使用 fusion-mlx 视觉模型进行 OCR。"""
+        """Perform OCR with the fusion-mlx vision model."""
         from ...ai import FusionMLXClient
 
         client = FusionMLXClient()
@@ -1944,11 +2001,14 @@ class OCRNode(BaseNode):
             response = await client.chat(
                 model="qwen3.5-9b",
                 messages=[
-                    {"role": "system", "content": "你是一个 OCR 助手。识别图片中的文字内容，只返回文字本身。"},
-                    {"role": "user", "content": f"请识别这张图片中的文字: {path}"},
+                    {
+                        "role": "system",
+                        "content": "你是一个 OCR 助手。识别图片中的文字内容，只返回文字本身。",  # i18n: user-facing
+                    },  # i18n: user-facing
+                    {"role": "user", "content": f"请识别这张图片中的文字: {path}"},  # i18n: user-facing
                 ],
                 max_tokens=2048,
             )
             return response.content
         except Exception as e:
-            return f"[MLX OCR 不可用: {e}]"
+            return f"[MLX OCR 不可用: {e}]"  # i18n: user-facing

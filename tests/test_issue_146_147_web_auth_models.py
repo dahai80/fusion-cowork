@@ -1,15 +1,15 @@
-"""issue #146 + #147: web serve 鉴权契约修复 + 模型列表 stale 缓存。
+"""issue #146 + #147: web serve auth contract fix + models list stale cache.
 
 #146 Contract:
-- FUSION_COWORK_WEB_API_KEY 未配置时: 所有 /api/* 放行 (对齐 cli.py "未配置放行"
-  与 README "unset = allow"), 不再无条件 401 (旧 bug 导致 shell 登录弹回循环)。
-- 配置密钥时: 无/错 key 401, 正确 key 200 (现状保持)。
+- FUSION_COWORK_WEB_API_KEY unset: all /api/* allowed (aligns with cli.py "unset = allow"
+  and the README "unset = allow"), no more unconditional 401 (old bug caused a shell login bounce loop).
+- Key configured: missing/wrong key 401, correct key 200 (unchanged).
 
 #147 Contract:
-- /api/models 首次上游失败 (无缓存) → 200 + unavailable=True 空列表 envelope
-  (issue #172: 冷缓存不再 503, 前端轮询拿到成功响应即不重试)。
-- 上游成功过一次后再失败 → 200 + stale=True + 缓存列表, 消除前端重试风暴;
-  chat 过滤在 stale 路径同样生效 (?all=1 返回原始缓存)。
+- /api/models first upstream failure (no cache) → 200 + unavailable=True empty-list envelope
+  (issue #172: cold cache no longer 503, frontend polling gets a success response and stops retrying).
+- Upstream succeeded once then fails → 200 + stale=True + cached list, eliminating the frontend retry storm;
+  chat filter applies on the stale path too (?all=1 returns the raw cache).
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ def _build_client(tmp_path, store_root, with_key: bool, monkeypatch):
 
     monkey_target = web_api
     monkey_target._WEB_DIR = tmp_path / "web"
-    # issue #168: 本机 ~/.fusion-cowork/web_module_key 会激活鉴权 — 测试隔离, 回归纯 env 契约
+    # issue #168: a local ~/.fusion-cowork/web_module_key activates auth — isolate the test, regression-pure env contract
     monkeypatch.setattr(web_api, "_module_key", lambda: "")
     if with_key:
         monkeypatch.setenv("FUSION_COWORK_WEB_API_KEY", STATIC_KEY)
@@ -47,7 +47,7 @@ class TestIssue146AuthContract:
     def test_unset_key_allows_api(self, tmp_path, store_root, monkeypatch):
         client = _build_client(tmp_path, store_root, with_key=False, monkeypatch=monkeypatch)
         resp = client.get("/api/nodes")
-        assert resp.status_code == 200, f"未配置密钥应放行, 实得 {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, f"未配置密钥应放行, 实得 {resp.status_code}: {resp.text}"  # i18n: user-facing
 
     def test_unset_key_allows_post(self, tmp_path, store_root, monkeypatch):
         client = _build_client(tmp_path, store_root, with_key=False, monkeypatch=monkeypatch)
@@ -74,7 +74,7 @@ class TestIssue146AuthContract:
 
 
 class _FlakyMlx:
-    """list_models 可编程失败的 MLX 客户端桩。"""
+    """MLX client stub with programmable list_models failure."""
 
     def __init__(self, fail: bool):
         self.fail = fail
@@ -83,7 +83,7 @@ class _FlakyMlx:
     async def list_models(self):
         self.calls += 1
         if self.fail:
-            raise RuntimeError("fusion-mlx 不在线")
+            raise RuntimeError("fusion-mlx 不在线")  # i18n: user-facing
         return [
             {"id": "chat-a", "engine_type": "text_generation"},
             {"id": "embed-b", "engine_type": "embedding"},
@@ -100,7 +100,7 @@ def _build_models_client(tmp_path, store_root, monkeypatch, mlx_stub):
 
     web_api._WEB_DIR = tmp_path / "web"
     monkeypatch.delenv("FUSION_COWORK_WEB_API_KEY", raising=False)
-    # issue #168: 本机 ~/.fusion-cowork/web_module_key 会激活鉴权 — 测试隔离
+    # issue #168: a local ~/.fusion-cowork/web_module_key activates auth — isolate the test
     monkeypatch.setattr(web_api, "_module_key", lambda: "")
 
     engine = WorkflowEngine()
@@ -114,7 +114,7 @@ class TestIssue147ModelsStaleCache:
     def test_first_failure_no_cache_returns_unavailable_envelope(self, tmp_path, store_root, monkeypatch):
         client = _build_models_client(tmp_path, store_root, monkeypatch, _FlakyMlx(fail=True))
         resp = client.get("/api/models")
-        assert resp.status_code == 200, "冷缓存上游失败应返回 200 envelope (issue #172), 而非 503"
+        assert resp.status_code == 200, "冷缓存上游失败应返回 200 envelope (issue #172), 而非 503"  # i18n: user-facing
         body = resp.json()
         assert body["models"] == []
         assert body["unavailable"] is True
@@ -128,7 +128,7 @@ class TestIssue147ModelsStaleCache:
         assert first.json()["stale"] is False
         mlx.fail = True
         second = client.get("/api/models")
-        assert second.status_code == 200, "有缓存时上游失败应返回 200 stale, 而非 503"
+        assert second.status_code == 200, "有缓存时上游失败应返回 200 stale, 而非 503"  # i18n: user-facing
         body = second.json()
         assert body["stale"] is True
         assert body["count"] == first.json()["count"]

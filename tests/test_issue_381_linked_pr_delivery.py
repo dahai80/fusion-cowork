@@ -1,9 +1,9 @@
-"""issue #381: 重跑死锁 — 既有 open PR 覆盖同 scope 时的链接再交付。
+"""issue #381: rerun deadlock — linked re-delivery when an existing open PR already covers the same scope.
 
-- 会话声明 delivered_pr + PR open + body 含 "Closes #N" → 合法交付
-  (outcome=linked_existing_pr), 不再要求新建 PR
-- PR 非 open / body 无 closing link / 未声明 → 原严格失败路径 (回退 state:ready)
-- 派发 prompt 带 retry 再交付指引 (不建重复 PR, 链接既有 PR)
+- Session declares delivered_pr + PR open + body contains "Closes #N" -> legitimate delivery
+  (outcome=linked_existing_pr), no longer requiring a new PR
+- PR not open / body without closing link / not declared -> original strict failure path (falls back to state:ready)
+- Dispatch prompt carries retry re-delivery guidance (no duplicate PR, link the existing PR)
 """
 
 import json
@@ -61,7 +61,7 @@ class TestLinkedExistingPrDelivery:
         binp = _fake_claude(tmp_path, _result_json(out))
         res = await _node(tmp_path, binp).execute({})
         assert res.status.value == "failed"
-        assert "校验未通过" in res.error
+        assert "校验未通过" in res.error  # i18n: user-facing
 
     async def test_closed_pr_fails(self, tmp_path, monkeypatch):
         _patch_api(monkeypatch, pr={"state": "closed", "number": 18, "body": "Closes #9"})
@@ -75,7 +75,7 @@ class TestLinkedExistingPrDelivery:
         binp = _fake_claude(tmp_path, _result_json("no pr this time"))
         res = await _node(tmp_path, binp).execute({})
         assert res.status.value == "failed"
-        assert "会话未产出 PR" in res.error
+        assert "会话未产出 PR" in res.error  # i18n: user-facing
 
     async def test_new_pr_delivery_unchanged(self, tmp_path, monkeypatch):
         _patch_api(monkeypatch)

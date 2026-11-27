@@ -1,4 +1,4 @@
-"""AST Diff 模块单元测试 — 迁移自 fusion-multi-node。"""
+"""AST Diff module unit tests — migrated from fusion-multi-node."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from fusion_cowork.engine.ast_diff import (
     compute_ast_diff,
 )
 
-# ── 测试 AST 树 ──
+# ── Test AST trees ──
 
 SAMPLE_OLD_AST = {
     "id": "root",

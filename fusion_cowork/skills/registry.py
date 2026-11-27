@@ -31,7 +31,7 @@ class SkillRegistry:
         self._skills[skill.name] = skill
         for alias in skill.aliases:
             self._skills[alias] = skill
-        logger.info(f"注册技能: {skill.name} (aliases={skill.aliases})")
+        logger.info(f"Registered skill: {skill.name} (aliases={skill.aliases})")
 
     def unregister(self, name: str) -> bool:
         skill = self._skills.pop(name, None)
@@ -39,20 +39,20 @@ class SkillRegistry:
             return False
         for alias in skill.aliases:
             self._skills.pop(alias, None)
-        logger.info(f"注销技能: {name}")
+        logger.info(f"Unregistered skill: {name}")
         return True
 
     async def execute(self, name: str, args: str = "") -> Any:
         skill = self._skills.get(name)
         if skill is None:
-            logger.error(f"未知技能: {name}")
-            return {"error": f"未知技能: {name}"}
+            logger.error(f"Unknown skill: {name}")
+            return {"error": f"未知技能: {name}"}  # i18n: user-facing
         try:
             result = await skill.handler(args)
-            logger.info(f"技能执行成功: {name}")
+            logger.info(f"Skill executed successfully: {name}")
             return result
         except Exception as e:
-            logger.error(f"技能执行失败 {name}: {e}")
+            logger.error(f"Skill execution failed {name}: {e}")
             return {"error": str(e)}
 
     def list_skills(self, category: str = "") -> List[Skill]:

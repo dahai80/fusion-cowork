@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 import { breadcrumbSegments, dirBasename, selectableSystemDirs } from '../src/systemdirs';
 
-// issue #251: 新建工作目录候选 = 服务端系统目录 − 已占用同名; 空名剔除; 不存在手输路径;
-// 弹窗逐级下钻 — 面包屑切分 + 当前目录名取相对路径末段
+// issue #251: new working-directory candidates = server system directories − names already taken; empty names dropped; hand-typed paths rejected;
+// dialog drill-down level by level — breadcrumb splitting + current directory name from the last relative-path segment
 
 describe('selectableSystemDirs (#251)', () => {
     it('filters used names and blank entries', () => {
@@ -20,7 +20,7 @@ describe('selectableSystemDirs (#251)', () => {
     });
 
     it('keeps everything when nothing is used', () => {
-        const dirs = [{ name: 'Q3 对账', path: '/w/q3', relative: 'Q3 对账' }];
+        const dirs = [{ name: 'Q3 对账', path: '/w/q3', relative: 'Q3 对账' }]; // i18n: user-facing
         expect(selectableSystemDirs(dirs, new Set())).toEqual(dirs);
     });
 });

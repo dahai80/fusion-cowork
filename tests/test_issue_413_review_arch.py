@@ -1,8 +1,8 @@
-"""issue #413: intake 架构评审闸门 (gate B) 二选一 — review_arch 缺省 false = 自动通过。
+"""issue #413: intake architecture review gate (gate B) either-or — review_arch default false = auto-pass.
 
-- approval_gate 节点 require_review=false → 引擎跳过权限/HITL, 节点输出 auto_passed
-- require_review 缺省 true → 照常进 HITL (闸 A / 闸 C 不受影响)
-- product_lifecycle 模板: 闸门 B 接 ${param.review_arch}, 缺省装配为免评审
+- approval_gate node require_review=false → engine skips permission/HITL, node outputs auto_passed
+- require_review default true → still enters HITL as usual (gates A / C unaffected)
+- product_lifecycle template: gate B wired to ${param.review_arch}, default assembly skips review
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ class TestGateNode:
         assert schema["properties"]["require_review"]["default"] is True
 
     async def test_require_review_false_auto_passes(self):
+        # i18n: user-facing
         res = await _gate({"prompt": "闸门 B", "require_review": False}).execute({})
         assert res.status.value == "success"
         assert res.data["approved"] is True
@@ -39,6 +40,7 @@ class TestGateNode:
         assert res.data["review_arch"] is False
 
     async def test_require_review_absent_still_human_gate(self):
+        # i18n: user-facing
         res = await _gate({"prompt": "闸门 A"}).execute({})
         assert res.status.value == "success"
         assert "auto_passed" not in res.data
@@ -50,6 +52,7 @@ class TestEngineSkip:
         monkeypatch.delenv("FUSION_GUARD_ENABLED", raising=False)
         eng = WorkflowEngine(permission_manager=PermissionManager(), hitl_pause=True)
         wf = Workflow(name="wf-413")
+        # i18n: user-facing
         wf.add_node(_gate({"prompt": "闸门 B", "require_review": False}))
         task = asyncio.create_task(eng.execute(wf, execution_id="run_413_auto"))
         execution = await task
@@ -62,12 +65,14 @@ class TestEngineSkip:
         monkeypatch.delenv("FUSION_GUARD_ENABLED", raising=False)
         eng = WorkflowEngine(permission_manager=PermissionManager(), hitl_pause=True)
         wf = Workflow(name="wf-413b")
+        # i18n: user-facing
         wf.add_node(_gate({"prompt": "闸门 B"}))
         task = asyncio.create_task(eng.execute(wf, execution_id="run_413_gate"))
         for _ in range(200):
             if eng.hitl_pending("run_413_gate"):
                 break
             await asyncio.sleep(0.01)
+        # i18n: user-facing
         assert eng.hitl_pending("run_413_gate"), "缺省闸门必须照常进 HITL"
         eng.resolve_hitl("run_413_gate", True, once=True)
         execution = await task
@@ -89,8 +94,8 @@ class TestTemplate:
         assert gate_b.config.params["require_review"] is True
 
     def test_other_gates_untouched(self):
-        # issue #387: 闸 A/C 改接 ${param.gates_human} (缺省 true = 照常人工) —
-        # review_arch 只控闸 B, 闸 A/C 仍由独立参数控制
+        # issue #387: gates A/C now wired to ${param.gates_human} (default true = human as usual) —
+        # review_arch only controls gate B; gates A/C remain governed by their own parameter
         wf = self._tpl().template_to_workflow("product_lifecycle", param_values={"review_arch": True})
         gate_a = wf.nodes["n2"]
         gate_c = wf.nodes["n10"]

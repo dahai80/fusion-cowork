@@ -1,10 +1,10 @@
-"""Union Web 模块 API — issue #94 (PRD N-6)。
+"""Union Web module API — issue #94 (PRD N-6).
 
-fusion-cowork web/ UI 包的后端 HTTP 面:
-- REST: 节点目录 / 工作流定义 CRUD (文件存储) / 运行生命周期 (异步 run + cancel)
-- 静态托管: web/dist SPA (gateway /shell/fusion-cowork/ 代理到本服务)
-- 鉴权: FUSION_COWORK_WEB_API_KEY 静态密钥 (Bearer / x-api-key), gateway 代理注入;
-  未配置时放行 (默认仅 127.0.0.1 绑定, 本地优先) — 对齐 agent-studio #327 模式
+Backend HTTP surface of the fusion-cowork web/ UI package:
+- REST: node catalog / workflow definition CRUD (file storage) / run lifecycle (async run + cancel)
+- Static hosting: web/dist SPA (gateway /shell/fusion-cowork/ proxies to this service)
+- Auth: FUSION_COWORK_WEB_API_KEY static key (Bearer / x-api-key), injected by gateway proxy;
+  allow when unset (default binds 127.0.0.1 only, local-first) — aligns with the agent-studio #327 pattern
 """
 
 import asyncio
@@ -36,7 +36,7 @@ def _api_key() -> str:
 
 
 def _module_key() -> str:
-    # issue #168 (K4): 网关注册时签发的 fm- 模块密钥 (0600 落盘); 未签发返回空。
+    # issue #168 (K4): fm- module key issued at gateway registration (persisted 0600); empty when not issued.
     try:
         from .shell_registry import load_module_key
 
@@ -52,7 +52,7 @@ def _service_key() -> str:
 
 
 def _accepted_keys() -> List[str]:
-    # 双活窗口: env 静态密钥与网关签发密钥同时有效 (24h grace 对齐 gateway K1)。
+    # Dual-active window: env static key and gateway-issued key are both valid (24h grace, aligned with gateway K1).
     keys = [k for k in (_api_key(), _module_key(), _service_key()) if k]
     return list(dict.fromkeys(keys))
 
@@ -99,25 +99,25 @@ _DEMAND_MAIL_RAIL_DEF = {
                 "id": "poll",
                 "name": "poll_qq_imap",
                 "params": {},
-                "config": {"continue_on_error": True, "label": "IMAP 轮询"},
+                "config": {"continue_on_error": True, "label": "IMAP 轮询"},  # i18n: user-facing
             },
             "normalize": {
                 "id": "normalize",
                 "name": "normalize_lead",
                 "params": {},
-                "config": {"continue_on_error": True, "label": "线索归一化"},
+                "config": {"continue_on_error": True, "label": "线索归一化"},  # i18n: user-facing
             },
             "match": {
                 "id": "match",
                 "name": "match",
                 "params": {"threshold": 3.0},
-                "config": {"label": "能力匹配"},
+                "config": {"label": "能力匹配"},  # i18n: user-facing
             },
             "draft": {
                 "id": "draft",
                 "name": "dual_draft",
                 "params": {},
-                "config": {"continue_on_error": True, "label": "双模型草稿"},
+                "config": {"continue_on_error": True, "label": "双模型草稿"},  # i18n: user-facing
             },
         },
         "edges": [
@@ -137,7 +137,7 @@ class WorkflowDefStore:
     def _path(self, workflow_id: str) -> Path:
         safe = "".join(c for c in workflow_id if c.isalnum() or c in "-_")
         if not safe or safe != workflow_id:
-            raise ValueError(f"非法工作流 id: {workflow_id}")
+            raise ValueError(f"非法工作流 id: {workflow_id}")  # i18n: user-facing
         return self._root / f"{safe}.json"
 
     def list(self) -> List[Dict[str, Any]]:
@@ -155,7 +155,7 @@ class WorkflowDefStore:
                     }
                 )
             except (json.JSONDecodeError, OSError) as e:
-                logger.warning(f"工作流定义读取失败 {p.name}: {e}")
+                logger.warning(f"workflow definition read failed {p.name}: {e}")
         return items
 
     def get(self, workflow_id: str) -> Optional[Dict[str, Any]]:
@@ -181,13 +181,13 @@ class WorkflowDefStore:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(record, ensure_ascii=False, indent=4), encoding="utf-8")
         os.replace(tmp, path)
-        logger.info(f"工作流定义已保存: {workflow_id}")
+        logger.info(f"workflow definition saved: {workflow_id}")
         return record
 
     def delete(self, workflow_id: str) -> bool:
         try:
             self._path(workflow_id).unlink()
-            logger.info(f"工作流定义已删除: {workflow_id}")
+            logger.info(f"workflow definition deleted: {workflow_id}")
             return True
         except (FileNotFoundError, ValueError):
             return False
@@ -197,17 +197,18 @@ _TEXT_EXTS = {".md", ".markdown", ".txt", ".html", ".htm", ".csv", ".json", ".ya
 _MAX_ARTIFACT_BYTES = 64 * 1024
 _MAX_ARTIFACTS = 20
 
-# issue #142: 逐块审阅哨兵 — accepted_blocks 全拒 → confirm 返回 confirmed=False
+# issue #142: block-level review sentinel — all-reject accepted_blocks → confirm returns confirmed=False
 _EDIT_ALL_REJECTED = object()
 
 
 def _narrow_pending_edit(permission_manager: Any, action_id: str, accepted_raw: List[Any]) -> Any:
-    # 逐块接受/拒绝 → 用待审批条目的原始 old/new 对重建仅含接受块的 new 值。
-    # 返回 None 表示无窄化 (全接受/无编辑对); _EDIT_ALL_REJECTED 表示全部拒绝。
+    # Per-block accept/reject → rebuild a new value containing only the accepted blocks from the
+    # pending entry's original old/new pair. Returns None when no narrowing applies (all accepted /
+    # no edit pair); _EDIT_ALL_REJECTED means everything was rejected.
     try:
         entries = permission_manager.list_pending()
     except Exception as e:
-        logger.warning(f"逐块审阅: 读取待审批队列失败: {e}")
+        logger.warning(f"block review: failed to read pending queue: {e}")
         return None
     entry = next((e for e in entries if isinstance(e, dict) and e.get("action_id") == action_id), None)
     if not entry:
@@ -224,7 +225,7 @@ def _narrow_pending_edit(permission_manager: Any, action_id: str, accepted_raw: 
         non_equal = {b["index"] for b in blocks if b["tag"] != "equal"}
         accepted = {int(i) for i in accepted_raw if isinstance(i, (int, float)) and float(i).is_integer()}
     except Exception as e:
-        logger.warning(f"逐块审阅: 分块重建失败: {e}")
+        logger.warning(f"block review: block rebuild failed: {e}")
         return None
     selected = accepted & non_equal
     if not selected:
@@ -235,24 +236,24 @@ def _narrow_pending_edit(permission_manager: Any, action_id: str, accepted_raw: 
     edited = dict(entry.get("params") or {})
     edited[str(raw_edit.get("new_key") or "new_text")] = edited_new
     logger.info(
-        f"逐块审阅: action={action_id} 接受 {len(selected)}/{len(non_equal)} 块, 窄化 {raw_edit.get('new_key')}"
+        f"block review: action={action_id} accepted {len(selected)}/{len(non_equal)} blocks, narrowed {raw_edit.get('new_key')}"
     )
     return edited
 
 
 def _team_poll_interval() -> float:
-    # issue #190: 无推送能力对端的兜底轮询间隔 (秒)
+    # issue #190: fallback polling interval (seconds) for peers without push capability
     raw = os.environ.get("FUSION_INBOX_POLL_INTERVAL", "5")
     try:
         value = float(raw)
     except (TypeError, ValueError):
-        logger.warning(f"FUSION_INBOX_POLL_INTERVAL 非法: {raw!r}, 回落 5s")
+        logger.warning(f"invalid FUSION_INBOX_POLL_INTERVAL: {raw!r}, falling back to 5s")
         return 5.0
     return value if value > 0 else 5.0
 
 
 def _iso_to_epoch(value: Any) -> float:
-    """ISO 时间字符串转 epoch; 非法/空值返回 0。"""
+    """Convert an ISO time string to epoch; invalid/empty values return 0."""
     if not isinstance(value, str) or not value:
         return 0.0
     try:
@@ -273,13 +274,13 @@ def _artifact_type(suffix: str) -> str:
     if suffix == ".json":
         return "json"
     if suffix in (".diff", ".patch"):
-        # issue #142: diff/patch 文件以 unified diff 渲染
+        # issue #142: diff/patch files render as unified diff
         return "diff"
     return "text"
 
 
 def _step_diff_content(step: Any, out: Dict[str, Any]) -> str:
-    # issue #142: diff 产物来源 — 输出自带 diff 字段, 或步骤输入含编辑对 (old/new)
+    # issue #142: diff artifact source — output carries its own diff field, or step input holds an edit pair (old/new)
     if isinstance(out.get("diff"), str) and out["diff"].strip():
         return out["diff"]
     inp = getattr(step, "input_data", None) or {}
@@ -305,7 +306,7 @@ _ARTIFACT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_\-]{1,128}$")
 
 
 def find_artifact_refs(text: Any) -> List[Dict[str, str]]:
-    # issue #233: 从文本按序提取 artifact 轻量引用 (保序去重); payload 保持 ~30 token ref 不膨胀
+    # issue #233: extract lightweight artifact references from text in order (order-preserving, dedup); payload keeps the ~30 token ref unexpanded
     if not isinstance(text, str) or not text:
         return []
     seen: set = set()
@@ -320,7 +321,7 @@ def find_artifact_refs(text: Any) -> List[Dict[str, str]]:
 
 
 def _artifact_ref_text(card: Dict[str, Any]) -> str:
-    # issue #233: 重建引擎轻量 ref_text (artifact.get 的 ~30 token 格式)
+    # issue #233: rebuild the engine's lightweight ref_text (the ~30 token artifact.get format)
     return (
         f"[Artifact: {card.get('name', '')} | ID: {card.get('artifact_id', '')} | "
         f"Version: v{card.get('current_version') or 1} | Type: {card.get('type', '')} | "
@@ -331,8 +332,9 @@ def _artifact_ref_text(card: Dict[str, Any]) -> str:
 async def _fetch_artifact_card_with_status(
     artifact_id: str, transport: Any = None
 ) -> Tuple[Optional[Dict[str, Any]], Optional[int]]:
-    # issue #237: 返回 (卡片, 上游 HTTP 状态)。状态让调用方区分「不存在/无权限」与
-    # 「引擎不可达」; transport 异常/非法 id 返回 (None, None)。
+    # issue #237: return (card, upstream HTTP status). The status lets the caller tell
+    # "missing / no permission" apart from "engine unreachable"; transport errors /
+    # invalid id return (None, None).
     if not artifact_id or not _ARTIFACT_ID_PATTERN.match(artifact_id):
         return None, None
     base_url = os.environ.get("FUSION_ARTIFACTS_URL", "http://127.0.0.1:11451").rstrip("/")
@@ -352,8 +354,9 @@ async def _fetch_artifact_card_with_status(
         return None, None
     payload: Any = data
     if isinstance(data, dict):
-        # issue #243: 上游信封三形 — {data:{…}} (网关风格) / {artifact:{…}} (引擎实测)
-        # / 平铺。首见 {artifact:{…}} 使卡片字段全空, 深链预填只剩空名。
+        # issue #243: upstream envelope three shapes — {data:{…}} (gateway style) / {artifact:{…}}
+        # (engine-observed) / flat. First seen {artifact:{…}} left all card fields empty, so
+        # deep-link prefill only had an empty name.
         for key in ("data", "artifact"):
             wrapped = data.get(key)
             if isinstance(wrapped, dict):
@@ -377,13 +380,13 @@ async def _fetch_artifact_card_with_status(
 
 
 async def _fetch_artifact_card(artifact_id: str, transport: Any = None) -> Optional[Dict[str, Any]]:
-    # issue #233 兼容入口: 时间线卡片只关心成功/失败, 状态由 #237 路由消费。
+    # issue #233 compat entry: timeline cards only care about success/failure; the status is consumed by the #237 route.
     card, _ = await _fetch_artifact_card_with_status(artifact_id, transport=transport)
     return card
 
 
 def _collect_artifacts(steps: List[Any]) -> List[Dict[str, Any]]:
-    """W10: 从步骤输出提取可预览产物 (文件路径优先, 其次内联文本)。"""
+    """W10: extract previewable artifacts from step outputs (file path first, then inline text)."""
     artifacts: List[Dict[str, Any]] = []
     for step in steps or []:
         if len(artifacts) >= _MAX_ARTIFACTS:
@@ -393,9 +396,9 @@ def _collect_artifacts(steps: List[Any]) -> List[Dict[str, Any]]:
             continue
         node_id = getattr(step, "node_id", "")
         node_name = getattr(step, "node_display_name", "") or getattr(step, "node_name", "")
-        # issue #150: 步骤输出的结构化引用 (file/message refs) 随产物透出
+        # issue #150: structured references in step output (file/message refs) surface with the artifacts
         citations = out.get("citations") if isinstance(out.get("citations"), list) else []
-        # issue #142: 编辑型步骤产出 unified diff 卡 — apply_edit 的 old/new 对 → diff 产物
+        # issue #142: edit-type steps produce a unified diff card — apply_edit old/new pair → diff artifact
         diff_content = _step_diff_content(step, out)
         if diff_content:
             artifacts.append(
@@ -434,7 +437,7 @@ def _collect_artifacts(steps: List[Any]) -> List[Dict[str, Any]]:
                     item["content"] = raw[:_MAX_ARTIFACT_BYTES]
                     item["truncated"] = len(raw) > _MAX_ARTIFACT_BYTES
                 except OSError as e:
-                    logger.warning(f"产物读取失败 {p}: {e}")
+                    logger.warning(f"artifact read failed {p}: {e}")
             artifacts.append(item)
             continue
         for key in ("markdown", "html", "content", "report", "text"):
@@ -468,7 +471,7 @@ def _float_env(name: str, default: float) -> float:
 
 
 def _token_rollup(steps: List[Dict[str, Any]]) -> Dict[str, int]:
-    # issue #461: per-run token 归因 — 汇总各步 usage (issue #143 步级数据)
+    # issue #461: per-run token attribution — aggregate per-step usage (issue #143 step-level data)
     tot = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     for s in steps or []:
         t = s.get("tokens") if isinstance(s, dict) else None
@@ -483,7 +486,7 @@ def _token_rollup(steps: List[Dict[str, Any]]) -> Dict[str, int]:
 
 
 def _spend_usd(total_tokens: int) -> float:
-    # issue #461: 花费估算 — 单价 (USD/百万 token) 未配置时恒 0.0 (诚实不估)
+    # issue #461: spend estimation — constant 0.0 when unit price (USD per million tokens) is unset (honestly not estimated)
     price = _float_env("FUSION_COWORK_SPEND_USD_PER_MTOK", 0.0)
     if price <= 0 or total_tokens <= 0:
         return 0.0
@@ -539,24 +542,24 @@ class RunRegistry:
         self._engine = engine
         self._runs: Dict[str, Dict[str, Any]] = {}
         self._tasks: Dict[str, asyncio.Task] = {}
-        # issue #372: 停滞看门狗 — run 级最后事件时间戳 + 周期清扫 (emitter/engine 不支持心跳则不启用)
+        # issue #372: stall watchdog — run-level last-event timestamp + periodic sweep (disabled when emitter/engine lack heartbeat support)
         self._last_event: Dict[str, float] = {}
         self._sweeper_started = False
-        # B2: 运行事件订阅 — 每个 SSE 客户端一个队列
+        # B2: run event subscription — one queue per SSE client
         self._subs: Dict[str, List[asyncio.Queue]] = {}
         self._emitter = event_emitter
-        # issue #191: 运行控制状态持久层 (未注入 = 纯内存, 零行为变化)
+        # issue #191: run control-state persistence layer (not injected = pure in-memory, zero behavior change)
         self.run_store = run_store
-        # issue #154: webhook push 出口 (未注入 = 不推送, 零行为变化)
+        # issue #154: webhook push egress (not injected = no push, zero behavior change)
         self.push = None
-        # issue #579: at-least-once 完成通知 — 持久 outbox (未注入 = 原 best-effort 路径)
+        # issue #579: at-least-once completion notification — persistent outbox (not injected = original best-effort path)
         self.reliable_push = None
         self._push_flushing = False
-        # issue #228: 能力用量入账回调 (未注入 = 不记账, 零行为变化)
+        # issue #228: capability usage recording callback (not injected = no accounting, zero behavior change)
         self.capability_recorder = None
-        # issue #516: golden run 录制回调 (未注入 = 不录制, 零行为变化)
+        # issue #516: golden run recording callback (not injected = no recording, zero behavior change)
         self.asset_recorder = None
-        # issue #461: 跨 run 并发闸门 — per-key 限额 + 可选全局上限 (env 未设 = 不设闸, 零行为变化)
+        # issue #461: cross-run concurrency gate — per-key limit + optional global cap (env unset = no gate, zero behavior change)
         from ..engine.run_gate import RunGate
 
         self._gate = RunGate.from_env()
@@ -588,10 +591,10 @@ class RunRegistry:
             try:
                 queue.put_nowait(item)
             except asyncio.QueueFull:
-                logger.warning(f"SSE 队列已满, 丢帧: {run_id}")
+                logger.warning(f"SSE queue full, dropped frame: {run_id}")
 
     def _schedule_push_flush(self, reliable: Any) -> None:
-        # issue #579: 去重调度 flush — 已有 flush 在跑就不叠加; 无运行中事件循环则跳过
+        # issue #579: dedup-scheduled flush — skip when a flush is already running; skip when no running event loop
         if getattr(self, "_push_flushing", False):
             return
         try:
@@ -604,7 +607,7 @@ class RunRegistry:
             try:
                 await reliable.flush_pending()
             except Exception as e:
-                logger.warning(f"push outbox flush 异常 (留待下次): {e}")
+                logger.warning(f"push outbox flush error (left for next attempt): {e}")
             finally:
                 self._push_flushing = False
 
@@ -622,20 +625,20 @@ class RunRegistry:
             execution = None
         if execution is not None:
             record["steps"] = [RunRegistry._step_dict(s) for s in execution.steps]
-            # issue #461: 每 run token/花费归因 — 随事件实时滚动
+            # issue #461: per-run token/spend attribution — rolled live with events
             record["tokens"] = _token_rollup(record["steps"])
             record["spend_usd"] = _spend_usd(record["tokens"]["total_tokens"])
-            # issue #571: MAST 归因实时滚动 (失败节点落 verdict 后可见)
+            # issue #571: MAST attribution rolled live (visible once failed nodes land a verdict)
             _attr = getattr(execution, "attribution", None)
             if _attr:
                 record["attribution"] = _attr
             status = execution.status.value if hasattr(execution.status, "value") else str(execution.status)
-            # issue #191: paused 记录不被运行事件翻回 running —
-            # 引擎暂停检查点/HITL 边界不改 execution.status, 状态翻转只由 resume() 显式驱动
+            # issue #191: a paused record is never flipped back to running by run events —
+            # engine pause checkpoints / HITL boundaries do not change execution.status; status flips are driven explicitly by resume() only
             if record.get("status") != "paused":
                 record["status"] = status
-        # issue #579: at-least-once 节点完成通知 — node_end 事件入持久 outbox
-        # (event_type 是 str-mixin 枚举, 直接与字符串相等比较, 不走 str())
+        # issue #579: at-least-once node completion notification — node_end events enter the persistent outbox
+        # (event_type is a str-mixin enum; compare directly with the string, no str())
         if self.reliable_push is not None and getattr(event, "event_type", "") == "node_end":
             evt_data = getattr(event, "data", None)
             evt_status = str(evt_data.get("status", "")) if isinstance(evt_data, dict) else ""
@@ -658,11 +661,11 @@ class RunRegistry:
                 "run": self._public(record),
             },
         )
-        # issue #191: 事件即检查点 — 每个步骤事件后持久化进度+控制状态
+        # issue #191: event-as-checkpoint — persist progress + control state after every step event
         self._persist(run_id)
 
     def _persist(self, run_id: str) -> None:
-        # issue #191: 活跃 run 落 SQLite; 失败只 WARN 不影响执行 (持久化是旁路)
+        # issue #191: active runs land in SQLite; failures only WARN and never affect execution (persistence is a side channel)
         if self.run_store is None:
             return
         record = self._runs.get(run_id)
@@ -678,7 +681,7 @@ class RunRegistry:
         try:
             self.run_store.save(record, paused_reason=paused_reason)
         except Exception as e:
-            logger.warning(f"运行状态持久化失败 (忽略) {run_id}: {e}")
+            logger.warning(f"run state persist failed (ignored) {run_id}: {e}")
 
     @staticmethod
     def _step_dict(s: Any) -> Dict[str, Any]:
@@ -692,22 +695,22 @@ class RunRegistry:
             "error": s.error,
             "output_data": s.output_data,
             "input_data": s.input_data,
-            # issue #143: per-node token 用量 (None = 节点无 LLM 调用)
+            # issue #143: per-node token usage (None = node made no LLM call)
             "tokens": getattr(s, "tokens", None),
-            # issue #182: 重试可观测 — 最终尝试序号 + 逐次尝试错误
+            # issue #182: retry observability — final attempt index + per-attempt errors
             "attempt": getattr(s, "attempt", 1),
             "attempt_errors": getattr(s, "attempt_errors", []),
-            # issue #227: 用户修正标记步 (运行中指令注入的落点)
+            # issue #227: user-correction marker step (landing point of mid-run directive injection)
             "user_correction": bool(getattr(s, "user_correction", False)),
-            # issue #460: 会话级检查点 — 步级会话归因 (旧快照/老引擎为 None)
+            # issue #460: session-level checkpoint — step-level session attribution (None on old snapshots/engines)
             "session_id": getattr(s, "session_id", None),
-            # issue #554: 该步 LLM JSON 修复梯触发次数 (0 = 无修复)
+            # issue #554: LLM JSON repair-ladder trigger count for this step (0 = no repair)
             "json_repairs": int(getattr(s, "json_repairs", 0) or 0),
         }
 
     def list(self, space_id: str = "") -> List[Dict[str, Any]]:
         self._gc()
-        # issue #223: space_id 过滤 — 首页 "最近任务 (本目录)" 按工作区收口
+        # issue #223: space_id filter — the home page "recent tasks (this directory)" scopes by workspace
         items = sorted(self._runs.values(), key=lambda x: -x["created_at"])
         if space_id:
             items = [r for r in items if str(r.get("space_id") or "") == space_id]
@@ -721,24 +724,24 @@ class RunRegistry:
                 "finished_at": r.get("finished_at"),
                 "error": r.get("error"),
                 "review": r.get("review"),
-                # issue #207: 来源/标签随列表透出 (缺省 None, 老调用方零变化)
+                # issue #207: source/labels surface with the list (default None, zero change for old callers)
                 "source": r.get("source"),
                 "labels": r.get("labels"),
-                # issue #223: 归属工作区 (缺省 "" = 未绑定目录, 老数据零变化)
+                # issue #223: owning workspace (default "" = unbound directory, zero change for old data)
                 "space_id": str(r.get("space_id") or ""),
-                # issue #461: token/花费随列表透出 (/api/usage 聚合用, 缺省 None 老调用方零变化)
+                # issue #461: tokens/spend surface with the list (for /api/usage aggregation, default None, zero change for old callers)
                 "tokens": r.get("tokens"),
                 "spend_usd": r.get("spend_usd"),
             }
             for r in items
         ]
-        # issue #399: 重启/淘汰后的 run 只剩终态摘要 — 列表兜底合并持久化行,
-        # 内存记录优先 (同 run_id 跳过); 上限 100 行, 不做全表扫描
+        # issue #399: runs after restart/eviction only have a terminal summary row — the list backfills
+        # persisted rows (in-memory records win, same run_id skipped); capped at 100 rows, no full-table scan
         if self.run_store is not None and hasattr(self.run_store, "load_summaries"):
             try:
                 rows = self.run_store.load_summaries(limit=100)
             except Exception as e:
-                logger.warning(f"终态摘要列表读取失败 (忽略) {e}")
+                logger.warning(f"terminal summary list read failed (ignored) {e}")
                 rows = []
             seen = set(self._runs.keys())
             extra: List[Dict[str, Any]] = []
@@ -773,14 +776,14 @@ class RunRegistry:
         run = self._runs.get(run_id)
         if run is not None:
             return run
-        # issue #388: 内存 registry 无此 run (重启/淘汰) → 终态摘要行兜底;
-        # 形状对齐 _public (无 workflow_def/directives 等恢复字段)
+        # issue #388: in-memory registry lacks this run (restart/eviction) → terminal summary row fallback;
+        # shape aligned with _public (no workflow_def/directives or other recovery fields)
         if self.run_store is None or not hasattr(self.run_store, "load_summary"):
             return None
         try:
             row = self.run_store.load_summary(run_id)
         except Exception as e:
-            logger.warning(f"终态摘要读取失败 {run_id}: {e}")
+            logger.warning(f"terminal summary read failed {run_id}: {e}")
             return None
         if row is None:
             return None
@@ -828,7 +831,7 @@ class RunRegistry:
 
         wf = Workflow.from_dict(workflow_def)
         run_id = f"run_{uuid.uuid4().hex[:12]}"
-        # issue #260: per-run HITL 覆盖必须在 create_task 前落位 — 否则首节点已进闸门判断
+        # issue #260: per-run HITL override must land before create_task — otherwise the first node is already past the gate check
         if hitl_pause is not None:
             setter = getattr(self._engine, "set_run_hitl_pause", None)
             if callable(setter):
@@ -842,7 +845,7 @@ class RunRegistry:
             "run_id": run_id,
             "workflow_id": workflow_id,
             "workflow_name": workflow_name or wf.name or workflow_id,
-            # issue #461: 闸门饱和时以 queued 起跑, _execute 拿到槽位才翻 running
+            # issue #461: start as queued when the gate is saturated; _execute flips to running once a slot is acquired
             "status": "queued" if (self._gate.enabled and not gate_reserved) else "running",
             # issue #594: reservation flag — _execute skips re-acquire when held
             "gate_reserved": gate_reserved,
@@ -856,21 +859,21 @@ class RunRegistry:
             "review": None,
             "workflow_def": workflow_def,
             "artifacts": [],
-            # issue #157: per-run 记忆开关 (任务启动时设定), 默认开
+            # issue #157: per-run memory switch (set at task start), default on
             "memory": bool(memory),
-            # issue #191: 暂停原因 (manual|hitl|crash), 恢复语义用
+            # issue #191: pause reason (manual|hitl|crash), used by resume semantics
             "paused_reason": "",
-            # issue #207: 来源/标签 (调用方归因), 缺省空
+            # issue #207: source/labels (caller attribution), default empty
             "source": str(source or ""),
             "labels": dict(labels or {}),
-            # issue #223: run 归属工作区 (Space) — 首页按目录过滤/聚合
+            # issue #223: run's owning workspace (Space) — home page filters/aggregates by directory
             "space_id": str(space_id or ""),
-            # issue #249: 祖先 run 滚动摘要 (resume 链) — 摘要行进 run 记录, 整链步体不入上下文
+            # issue #249: ancestor run rolling summary (resume chain) — summary rows enter the run record, whole-chain step bodies stay out of context
             "ancestor_summary": list(ancestor_summary or []),
-            # issue #461: 跨 run 并发闸 key + 同 run 波次并行度 (0 = 引擎默认)
+            # issue #461: cross-run concurrency gate key + same-run wave parallelism (0 = engine default)
             "concurrency_key": str(concurrency_key or ""),
             "concurrency": int(concurrency or 0),
-            # issue #516: run↔asset version 绑定 — 每个 run 可追溯到执行的资产版本
+            # issue #516: run↔asset version binding — every run is traceable to the asset version it executed
             "workflow_version": int(workflow_version or 0),
             "workflow_digest": str(workflow_digest or ""),
         }
@@ -885,7 +888,7 @@ class RunRegistry:
         )
         self._tasks[run_id] = task
         logger.info(
-            f"工作流运行已启动: {run_id} ({record['workflow_name']}) memory={record['memory']} "
+            f"workflow run started: {run_id} ({record['workflow_name']}) memory={record['memory']} "
             f"source={record['source'] or '-'} labels={len(record['labels'])} status={record['status']}"
         )
         return {"run_id": run_id, "status": record["status"]}
@@ -906,7 +909,7 @@ class RunRegistry:
         from ..auth.identity_propagation import set_current_identity_token
 
         set_current_identity_token(identity_token)
-        # issue #461: 跨 run 并发闸门 — 排队等待时 run 记录标 queued, 拿到槽位翻 running
+        # issue #461: cross-run concurrency gate — mark the run record queued while waiting; flip to running once a slot is acquired
         gate_key = str(record.get("concurrency_key") or record.get("gate_key") or "default")
         gate_acquired = False
         if self._gate.enabled:
@@ -917,27 +920,27 @@ class RunRegistry:
                 record["status"] = "queued"
                 record["queued_at"] = time.time()
                 self._persist(run_id)
-                logger.info(f"[{run_id}] run 排队等待并发闸 key={gate_key}")
+                logger.info(f"[{run_id}] run queued waiting for concurrency gate key={gate_key}")
                 await self._gate.acquire(gate_key)
                 gate_acquired = True
             record["status"] = "running"
             record["started_at"] = time.time()
             self._persist(run_id)
-            logger.info(f"[{run_id}] run 已获并发闸 key={gate_key}")
+            logger.info(f"[{run_id}] run acquired concurrency gate key={gate_key}")
         try:
-            # issue #157: run 级记忆集成 — 启动召回注入首节点 / 结束轨迹写回。
-            # 桥不可用 (未配 key) 或开关关 → 行为与旧版完全一致; 桥失败零冲击 run。
+            # issue #157: run-level memory integration — startup recall injected into the first node / end-of-run trajectory write-back.
+            # Bridge unavailable (no key configured) or switch off → behavior identical to the old version; bridge failure has zero impact on the run.
             bridge = None
             if record.get("memory", True):
                 from ..memory_bridge import MemoryBridge
 
                 bridge = MemoryBridge.from_env()
             initial_input: Optional[Dict[str, Any]] = None
-            # issue #190: 邮箱派发的消息体作为首节点输入 (记忆召回据此让位)
+            # issue #190: mail-dispatched message body becomes the first node input (memory recall yields to it)
             if message_input:
                 initial_input = dict(message_input)
-                logger.info(f"[{run_id}] 消息输入已注入首节点 ({len(initial_input)} 字段)")
-            # issue #191: 恢复续跑不再重复召回 — 首轮已注入过, 再注入会覆盖已完成首节点的快照输出
+                logger.info(f"[{run_id}] message input injected into first node ({len(initial_input)} fields)")
+            # issue #191: resumed runs do not recall again — already injected in the first round; re-injecting would overwrite the snapshot output of the completed first node
             if bridge is not None and not resume_steps:
                 query = f"{wf.name} {getattr(wf, 'description', '') or ''}".strip()
                 ctx = await bridge.retrieve_context(query)
@@ -946,18 +949,18 @@ class RunRegistry:
                     base = dict(initial_input or {})
                     base["memory_context"] = ctx
                     initial_input = base
-                    logger.info(f"[{run_id}] 记忆上下文已注入首节点输入 ({len(ctx)} chars)")
-            # issue #191: 仅在恢复场景传新参 — 注入的旧版/测试引擎无这两个 kwarg 也不破
+                    logger.info(f"[{run_id}] memory context injected into first node input ({len(ctx)} chars)")
+            # issue #191: only pass the new kwargs in resume scenarios — injected old/test engines without these kwargs stay unbroken
             engine_kwargs: Dict[str, Any] = {}
             if resume_steps is not None:
                 engine_kwargs["resume_steps"] = resume_steps
             if start_paused:
                 engine_kwargs["start_paused"] = True
-            # issue #228: 运行工作区传给引擎 — 能力闸门按工作区能力池判定
+            # issue #228: pass the run workspace to the engine — capability gate judges against the workspace capability pool
             setter = getattr(self._engine, "set_run_workspace", None)
             if callable(setter):
                 setter(run_id, str(record.get("space_id") or ""))
-            # issue #461: per-run 波次并行度 — 老引擎无该 kwarg 也不破
+            # issue #461: per-run wave parallelism — old engines without this kwarg stay unbroken
             wave = int(record.get("concurrency") or 0)
             if wave > 0:
                 engine_kwargs["concurrency"] = wave
@@ -969,7 +972,7 @@ class RunRegistry:
             )
             record["steps"] = [RunRegistry._step_dict(s) for s in execution.steps]
             record["artifacts"] = _collect_artifacts(execution.steps)
-            # issue #461: 终态 token/花费归因
+            # issue #461: terminal token/spend attribution
             record["tokens"] = _token_rollup(record["steps"])
             record["spend_usd"] = _spend_usd(record["tokens"]["total_tokens"])
             status = execution.status.value if hasattr(execution.status, "value") else str(execution.status)
@@ -977,14 +980,14 @@ class RunRegistry:
             record["result"] = {
                 "summary": execution.result_summary,
             }
-            # issue #571: run 摘要 MAST 归因 (失败归因路由; 默认 None)
+            # issue #571: run summary MAST attribution (failure attribution routing; default None)
             _attr = getattr(execution, "attribution", None)
             if _attr:
                 record["result"]["attribution"] = _attr
                 record["attribution"] = _attr
             if execution.error:
                 record["error"] = execution.error
-            # issue #157: 成功 run 结束写回 (失败/取消不入库 — 只沉淀有效产出)
+            # issue #157: write back on successful run end (failed/cancelled runs are not stored — only valid output settles)
             if bridge is not None and status == "success":
                 from ..memory_bridge import MemoryBridge
 
@@ -1005,52 +1008,52 @@ class RunRegistry:
             logger.info(f"run task cancelled: {run_id}")
             record["status"] = "cancelled"
         except Exception as e:
-            logger.error(f"工作流运行失败 {run_id}: {e}")
+            logger.error(f"workflow run failed {run_id}: {e}")
             record["status"] = "failed"
             record["error"] = str(e)
         finally:
             record["finished_at"] = time.time()
-            # issue #461: 释放并发闸槽位 (排队中取消则未获闸, 不释放)
+            # issue #461: release the concurrency gate slot (cancel while queued never acquired the gate, nothing to release)
             if gate_acquired:
                 try:
                     self._gate.release(gate_key)
                 except Exception as e:
-                    logger.warning(f"并发闸释放失败 (忽略) {run_id}: {e}")
-            # issue #191: 终态出库 — run 结束后不再需要恢复, 持久层只留活跃 run
-            # issue #388: 终态先落摘要行 (source/labels/每步耗时), 活跃行照删 —
-            # daemon 重启后 GET /api/runs/{id} 仍可查, 下游按 run 时长对账
+                    logger.warning(f"concurrency gate release failed (ignored) {run_id}: {e}")
+            # issue #191: terminal state leaves the store — a finished run no longer needs resume, persistence keeps only active runs
+            # issue #388: terminal state first writes a summary row (source/labels/per-step durations), the active row is deleted as usual —
+            # GET /api/runs/{id} still works after daemon restart; downstream reconciles by run duration
             if self.run_store is not None:
                 try:
                     if hasattr(self.run_store, "save_summary"):
                         self.run_store.save_summary(record)
                 except Exception as e:
-                    logger.warning(f"终态摘要写入失败 (忽略) {run_id}: {e}")
+                    logger.warning(f"terminal summary write failed (ignored) {run_id}: {e}")
                 try:
                     self.run_store.delete(run_id)
                 except Exception as e:
-                    logger.warning(f"运行状态清理失败 (忽略) {run_id}: {e}")
-            # issue #228: 能力用量入账 (调用次数/最近使用/审计), 仅记录已装能力
+                    logger.warning(f"run state cleanup failed (ignored) {run_id}: {e}")
+            # issue #228: capability usage recording (call count/last used/audit), only installed capabilities are recorded
             if self.capability_recorder is not None:
                 try:
                     self.capability_recorder(record)
                 except Exception as e:
-                    logger.warning(f"能力用量入账失败 (忽略) {run_id}: {e}")
-            # issue #516: 成功 run 录制为 golden 回归用例 (per-node 输出摘要)
+                    logger.warning(f"capability usage recording failed (ignored) {run_id}: {e}")
+            # issue #516: successful runs are recorded as golden regression cases (per-node output summary)
             if self.asset_recorder is not None and record.get("status") == "success" and record.get("workflow_id"):
                 try:
                     self.asset_recorder(record)
                 except Exception as e:
-                    logger.warning(f"golden run 录制失败 (忽略) {run_id}: {e}")
-            # W9: 成功完成的运行进入交付审查队列; 失败/取消不进入
+                    logger.warning(f"golden run recording failed (ignored) {run_id}: {e}")
+            # W9: successfully completed runs enter the delivery review queue; failed/cancelled do not
             if record["status"] == "success" and record.get("review") is None:
                 record["review"] = {"status": "pending_review", "note": "", "reviewed_at": None}
-                logger.info(f"运行待交付审查: {run_id}")
+                logger.info(f"run awaiting delivery review: {run_id}")
             self._broadcast(run_id, {"event": "run_end", "at": time.time(), "run": self._public(record)})
             self._tasks.pop(run_id, None)
             self._last_event.pop(run_id, None)
-            # issue #154: run 终态 webhook 掬点 (未注入 = 零行为变化)
+            # issue #154: run terminal webhook egress point (not injected = zero behavior change)
             if self.reliable_push is not None:
-                # issue #579: at-least-once — 登记落盘先于投递, flush 失败留待重试
+                # issue #579: at-least-once — registration is persisted before delivery; flush failures are left for retry
                 reliable = self.reliable_push
                 record_ref = record
                 reliable.enqueue(
@@ -1076,7 +1079,7 @@ class RunRegistry:
                             "workflow_name": record_ref.get("workflow_name", ""),
                             "status": record_ref.get("status", ""),
                             "error": record_ref.get("error"),
-                            # issue #207: 归因字段随事件外发, webhook 接收方可按来源路由
+                            # issue #207: attribution fields ride with the event so webhook receivers can route by source
                             "source": record_ref.get("source", ""),
                             "labels": dict(record_ref.get("labels") or {}),
                         },
@@ -1084,7 +1087,7 @@ class RunRegistry:
                 )
 
     def review(self, run_id: str, approved: bool, note: str = "") -> tuple[Optional[str], Optional[Dict[str, Any]]]:
-        """W9: 交付审查 — pending_review → approved/rejected (带意见)。"""
+        """W9: delivery review — pending_review → approved/rejected (with note)."""
         record = self._runs.get(run_id)
         if not record:
             return "not_found", None
@@ -1096,10 +1099,10 @@ class RunRegistry:
         review["reviewed_at"] = time.time()
         record["review"] = review
         self._broadcast(run_id, {"event": "run_reviewed", "at": time.time(), "run": self._public(record)})
-        logger.info(f"运行交付审查: {run_id} status={review['status']} note_len={len(note)}")
+        logger.info(f"run delivery review: {run_id} status={review['status']} note_len={len(note)}")
         result: Dict[str, Any] = {"run_id": run_id, "review": review}
         if not approved:
-            # B1: 退回附工作流定义, 供客户端直接编辑迭代
+            # B1: rejection attaches the workflow definition so the client can edit and iterate directly
             result["workflow"] = record.get("workflow_def")
         return None, result
 
@@ -1111,11 +1114,11 @@ class RunRegistry:
         task = self._tasks.get(run_id)
         if task and not task.done():
             task.cancel()
-        logger.info(f"工作流运行已取消: {run_id}")
+        logger.info(f"workflow run cancelled: {run_id}")
         return True
 
     def pause(self, run_id: str) -> bool:
-        # W8: 暂停 — 引擎挂起在下一节点检查点, 记录状态 paused (取消亦允许自 paused)
+        # W8: pause — the engine suspends at the next node checkpoint, record status paused (cancel is also allowed from paused)
         record = self._runs.get(run_id)
         if not record or record["status"] != "running":
             return False
@@ -1125,7 +1128,7 @@ class RunRegistry:
         record["paused_reason"] = "manual"
         self._persist(run_id)
         self._broadcast(run_id, {"event": "run_paused", "at": time.time(), "run": self._public(record)})
-        logger.info(f"工作流运行已暂停: {run_id}")
+        logger.info(f"workflow run paused: {run_id}")
         return True
 
     def resume(self, run_id: str) -> bool:
@@ -1133,29 +1136,29 @@ class RunRegistry:
         if not record or record["status"] != "paused":
             return False
         if not self._engine.resume(run_id):
-            # issue #372: 引擎无暂停事件 = 执行任务已死 (崩溃后任务丢失/事件被清理) —
-            # 不得假回 running (僵尸运行, 节点永不执行); 从快照真实重启执行
+            # issue #372: engine has no pause event = the execution task is dead (task lost after crash / events cleaned up) —
+            # must not fake running again (zombie run, nodes never execute); genuinely restart execution from the snapshot
             return self._relaunch(run_id, record)
         record["status"] = "running"
         record["paused_reason"] = ""
         self._last_event[run_id] = time.time()
         self._persist(run_id)
         self._broadcast(run_id, {"event": "run_resumed", "at": time.time(), "run": self._public(record)})
-        logger.info(f"工作流运行已恢复: {run_id}")
+        logger.info(f"workflow run resumed: {run_id}")
         return True
 
     def _relaunch(self, run_id: str, record: Dict[str, Any]) -> bool:
-        # issue #372: crash 后 resume 的真实复活路径 — 已完成步骤快照续跑,
-        # 其余节点 (含崩溃时执行中的派发节点) 从头重新执行; 复活失败 loud 报错留在 paused
+        # issue #372: the real revival path for resume-after-crash — completed steps continue from snapshot,
+        # remaining nodes (including dispatched nodes executing at crash time) re-execute from scratch; revival failure reports loud and stays paused
         try:
             wf_def = record.get("workflow_def") or {}
             if not wf_def:
-                raise ValueError("workflow_def 缺失, 无法重启执行")
+                raise ValueError("workflow_def 缺失, 无法重启执行")  # i18n: user-facing
             from ..engine import Workflow
 
             wf = Workflow.from_dict(wf_def)
             if not wf.nodes:
-                raise ValueError("workflow_def 无有效节点")
+                raise ValueError("workflow_def 无有效节点")  # i18n: user-facing
             snapshot = [
                 dict(s)
                 for s in (record.get("steps") or [])
@@ -1172,21 +1175,21 @@ class RunRegistry:
             self._persist(run_id)
             self._broadcast(run_id, {"event": "run_resumed", "at": time.time(), "run": self._public(record)})
             logger.warning(
-                f"[{run_id}] 引擎无暂停事件 (执行任务已死), 已从快照重启执行 ({len(snapshot)} 步续跑, 其余节点重新执行)"
+                f"[{run_id}] engine has no pause event (execution task dead), restarted execution from snapshot ({len(snapshot)} steps resumed, remaining nodes re-executed)"
             )
             return True
         except Exception as e:
-            logger.error(f"[{run_id}] resume 重启执行失败, 运行保持 paused: {e}")
+            logger.error(f"[{run_id}] resume restart failed, run stays paused: {e}")
             record["status"] = "paused"
             record["paused_reason"] = "crash"
-            record["error"] = f"resume 重启执行失败: {e}"
+            record["error"] = f"resume 重启执行失败: {e}"  # i18n: user-facing
             self._persist(run_id)
             self._broadcast(run_id, {"event": "run_resume_failed", "at": time.time(), "run": self._public(record)})
             return False
 
     def _ensure_stall_sweeper(self) -> None:
-        # issue #372: 停滞看门狗 — running run 长时间无任何事件 (含 #257 节点心跳) 视为
-        # 执行任务已死/事件循环卡死, crash-pause 并给出证据; 无 emitter 或引擎无心跳则不启用
+        # issue #372: stall watchdog — a running run with no events for a long time (including #257 node heartbeats)
+        # is treated as a dead execution task / stuck event loop; crash-pause with evidence; disabled when no emitter or engine lacks heartbeat
         if self._sweeper_started or self._emitter is None:
             return
         if float(getattr(self._engine, "_node_heartbeat_s", 0) or 0) <= 0:
@@ -1220,17 +1223,19 @@ class RunRegistry:
         return tripped
 
     def _stall_trip(self, run_id: str, record: Dict[str, Any], silent_s: float) -> None:
-        # issue #372: 僵尸运行判定 — 节点在跑但其执行任务无任何输出/心跳超过阈值,
-        # 与 daemon 崩溃恢复同路: paused_reason=crash + 证据日志, 任务取消防假 running
+        # issue #372: zombie run verdict — node claims to be running but its execution task has had no output/heartbeat past the threshold;
+        # same path as daemon crash recovery: paused_reason=crash + evidence log, task cancelled instead of faking running
         steps = record.get("steps") or []
         last_step = steps[-1] if steps and isinstance(steps[-1], dict) else {}
         logger.warning(
-            f"[{run_id}] 停滞看门狗: running 无事件 {silent_s:.0f}s (> 阈值), 判定执行任务已死, "
-            f"crash-pause; 时间线终点: {last_step.get('node_id') or '?'} ({last_step.get('status') or '?'})"
+            f"[{run_id}] stall watchdog: running with no events for {silent_s:.0f}s (> threshold), judged execution task dead, "
+            f"crash-pause; timeline end: {last_step.get('node_id') or '?'} ({last_step.get('status') or '?'})"
         )
         record["status"] = "paused"
         record["paused_reason"] = "crash"
-        record["error"] = f"停滞看门狗: {silent_s:.0f}s 无事件 (节点 {last_step.get('node_id') or '?'})"
+        record["error"] = (
+            f"停滞看门狗: {silent_s:.0f}s 无事件 (节点 {last_step.get('node_id') or '?'})"  # i18n: user-facing
+        )
         task = self._tasks.get(run_id)
         if task and not task.done():
             task.cancel()
@@ -1238,8 +1243,8 @@ class RunRegistry:
         self._persist(run_id)
         self._broadcast(run_id, {"event": "run_paused", "at": time.time(), "run": self._public(record)})
 
-    # issue #227: inject = 运行中指令注入 (下一节点边界并入目标节点输入, 时间线落修正标记)
-    # issue #465: remove_node/retarget_edge — 波边界动态变更 (结构校验在引擎侧)
+    # issue #227: inject = mid-run directive injection (merged into the target node's input at the next node boundary; the timeline lands a correction marker)
+    # issue #465: remove_node/retarget_edge — dynamic changes at wave boundaries (structural validation lives on the engine side)
     DIRECTIVE_ACTIONS = (
         "set_params",
         "insert_node",
@@ -1251,7 +1256,7 @@ class RunRegistry:
     )
 
     def resume_from(self, run_id: str, node_id: str) -> Dict[str, Any]:
-        """issue #226: 从历史 run 的指定步骤重跑 — 新 run 链回原 run, 已完成步骤快照续跑。"""
+        """issue #226: re-run from a given step of a historical run — the new run chains back to the original, completed steps continue from snapshot."""
         record = self._runs.get(run_id)
         if not record:
             raise KeyError(run_id)
@@ -1261,27 +1266,27 @@ class RunRegistry:
         if not wf_def:
             raise ValueError("no_workflow_def")
         raw_nodes = wf_def.get("nodes", [])
-        # issue #410: template 来源 run 的 workflow_def.nodes 是 dict (node_id -> node),
-        # 列表形态是画布保存的 run — 两种都接受, from_dict 下游本就双形态兼容
+        # issue #410: template-sourced runs have workflow_def.nodes as a dict (node_id -> node);
+        # the list shape is a canvas-saved run — both accepted, from_dict downstream is already dual-shape compatible
         if isinstance(raw_nodes, dict):
             node_ids = set(raw_nodes.keys())
         else:
             node_ids = {n.get("id") for n in raw_nodes if isinstance(n, dict)}
         if node_id not in node_ids:
             raise ValueError("unknown_node")
-        # 目标步骤在时间线中的位置 — 其之前已完成 (success + 断点续跑 skipped 副本) 的步骤作为续跑快照,
-        # 失败/被拒步骤不含 → 下游从目标节点真正重跑 (重校验由 Workflow.from_dict 完成)
+        # Position of the target step in the timeline — steps completed before it (success + skipped duplicates of breakpoint resumes) form the resume snapshot;
+        # failed/rejected steps are excluded → downstream genuinely re-runs from the target node (re-validation handled by Workflow.from_dict)
         steps = record.get("steps") or []
         idx = next(
             (i for i, s in enumerate(steps) if s.get("node_id") == node_id and not s.get("user_correction")), None
         )
-        # issue #249: 快照带预算 — 近 N 步保全量, 更早步收摘要 + step:// 引用;
-        # 祖先摘要滚动续接 (链深增长时上下文亚线性)
+        # issue #249: budgeted snapshot — the last N steps stay full, earlier steps shrink to summary + step:// references;
+        # ancestor summaries roll forward (context grows sub-linearly as chain depth increases)
         from ..engine.run_context import build_resume_snapshot, compose_ancestor_summary
 
         prior_ancestor = list(record.get("ancestor_summary") or [])
         if idx is None:
-            # 目标节点从未执行 → 全量重跑, 快照为空, 祖先摘要原样续接
+            # target node never executed → full re-run, empty snapshot, ancestor summary continues as-is
             resume_steps: List[Dict[str, Any]] = []
             ancestor_new: List[Dict[str, Any]] = []
             stats: Dict[str, int] = {"eligible": 0, "snapshot_steps": 0, "estimated_tokens": 0}
@@ -1306,8 +1311,8 @@ class RunRegistry:
         )
         new_id = result["run_id"]
         logger.info(
-            f"resume-from: {run_id} → {new_id} node={node_id} snapshot={len(resume_steps)} 步 "
-            f"(链回原 run) context={stats.get('estimated_tokens', 0)}tok "
+            f"resume-from: {run_id} → {new_id} node={node_id} snapshot={len(resume_steps)} steps "
+            f"(chained back to original run) context={stats.get('estimated_tokens', 0)}tok "
             f"ancestor={stats.get('ancestor_total', 0)}"
         )
         return {
@@ -1318,14 +1323,15 @@ class RunRegistry:
             "context": stats,
         }
 
-    # issue #489: rewind 重入键 — (run_id, node_id) 相同且产物 run 仍在活跃态时幂等返回
+    # issue #489: rewind re-entry key — idempotent return when (run_id, node_id) match and the produced run is still active
     _ACTIVE_RUN_STATUSES = ("running", "pending", "paused")
 
     def rewind(self, run_id: str, node_id: str, rule: str = "", actor: str = "") -> Dict[str, Any]:
-        """issue #489: 门控驳回回退 — 从回退点起重跑下游, 回退点前已消耗步骤快照免重跑 (不重复付费模型工作)。
+        """issue #489: gate-denial rewind — re-run downstream from the rewind point; steps already consumed before it replay from snapshot (no double-paying model work).
 
-        与 resume_from 的差异: 幂等键 (run_id, node_id) — 同键重复调用在产物 run 活跃期间返回
-        同一 run; 每次 rewind 落历史 (who/when/which rule) 到原 run 记录 rewinds 字段。
+        Difference from resume_from: idempotency key (run_id, node_id) — repeated calls with the
+        same key return the same run while the produced run is active; each rewind records history
+        (who/when/which rule) into the original run's rewinds field.
         """
         record = self._runs.get(run_id)
         if not record:
@@ -1335,7 +1341,7 @@ class RunRegistry:
                 continue
             prev = self._runs.get(str(rw.get("new_run_id") or ""))
             if prev and prev.get("status") in self._ACTIVE_RUN_STATUSES:
-                logger.info(f"rewind 幂等命中: {run_id} node={node_id} → 已有活跃 run {prev.get('run_id')}")
+                logger.info(f"rewind idempotent hit: {run_id} node={node_id} → already active run {prev.get('run_id')}")
                 return {
                     "run_id": prev.get("run_id"),
                     "resumed_from": node_id,
@@ -1354,7 +1360,7 @@ class RunRegistry:
             "new_run_id": new_id,
         }
         record.setdefault("rewinds", []).append(entry)
-        # 回退元数据随链传递: 新 run 的 labels 带 rewind 规则/操作人 (审计可追溯)
+        # Rewind metadata rides the chain: the new run's labels carry the rewind rule/actor (audit-traceable)
         new_record = self._runs.get(new_id)
         if new_record is not None:
             labels = new_record.setdefault("labels", {})
@@ -1369,14 +1375,14 @@ class RunRegistry:
         )
         logger.info(
             f"rewind: {run_id} → {new_id} node={node_id} rule={rule!r} actor={actor!r} "
-            f"snapshot={result.get('snapshot_steps', 0)} 步"
+            f"snapshot={result.get('snapshot_steps', 0)} steps"
         )
         result["rewind_of"] = run_id
         result["idempotent"] = False
         return result
 
     def directive(self, run_id: str, directive: Dict[str, Any]) -> Optional[str]:
-        """W8/B1: 排队运行改向指令; 返回 None 表示已排队, 否则错误码。"""
+        """W8/B1: queue a run redirection directive; returns None when queued, otherwise an error code."""
         record = self._runs.get(run_id)
         if not record or record["status"] not in ("running", "paused"):
             return "not_running"
@@ -1384,26 +1390,26 @@ class RunRegistry:
         if action not in self.DIRECTIVE_ACTIONS:
             return "bad_action"
         if not self._engine.add_directive(run_id, directive):
-            # issue #465: 结构化拒绝 — 引擎侧校验失败时取走结构化错误码透传给路由
+            # issue #465: structured rejection — take the structured error code from engine-side validation failure and pass it through to the route
             structured = getattr(self._engine, "pop_directive_error", None)
             err = structured(run_id) if callable(structured) else None
             return err or "rejected"
-        # issue #191: 全量 payload 落 record — 恢复重放需要完整指令 (仅 action 不够)
+        # issue #191: the full payload lands in the record — replay on recovery needs the whole directive (action alone is not enough)
         record.setdefault("directives", []).append({"action": action, "at": time.time(), "payload": dict(directive)})
         self._persist(run_id)
         self._broadcast(run_id, {"event": "run_directive", "at": time.time(), "run": self._public(record)})
-        logger.info(f"运行改向指令已排队: {run_id} action={action}")
+        logger.info(f"run redirection directive queued: {run_id} action={action}")
         return None
 
     async def recover_persisted(self) -> int:
-        # issue #191: daemon 重启恢复 — SQLite 活跃行 → 重建 record → start_paused 续跑。
-        # 唯一恢复路径: 步骤进度 (resume_steps) 与控制状态 (paused/directives) 同路还原。
+        # issue #191: daemon restart recovery — SQLite active rows → rebuild record → continue with start_paused.
+        # The single recovery path: step progress (resume_steps) and control state (paused/directives) are restored through the same route.
         if self.run_store is None:
             return 0
         try:
             rows = self.run_store.load_active()
         except Exception as e:
-            logger.error(f"加载持久化运行状态失败 (跳过恢复): {e}")
+            logger.error(f"failed to load persisted run state (skipping recovery): {e}")
             return 0
         recovered = 0
         discarded: list = []
@@ -1421,13 +1427,13 @@ class RunRegistry:
 
                 wf = Workflow.from_dict(wf_def)
                 if not wf.nodes:
-                    raise ValueError("workflow_def 无有效节点")
+                    raise ValueError("workflow_def 无有效节点")  # i18n: user-facing
             except Exception as e:
-                logger.error(f"恢复运行 {run_id} 失败: 持久化数据无法解析, 已废弃该行: {e}")
+                logger.error(f"failed to recover run {run_id}: persisted data unparseable, row discarded: {e}")
                 self.run_store.delete(run_id)
                 discarded.append(run_id)
                 continue
-            # 持久化状态 running = 上次会话非正常退出 (kill -9/崩溃) — loud 恢复为 paused
+            # Persisted status running = previous session exited uncleanly (kill -9/crash) — recover loud as paused
             crashed = str(row.get("status", "")) != "paused"
             record: Dict[str, Any] = {
                 "run_id": run_id,
@@ -1446,28 +1452,28 @@ class RunRegistry:
                 "memory": bool(row.get("memory", 1)),
                 "recovered": True,
                 "directives": [],
-                # issue #223: 恢复保留工作区归属 (v1 行无此列 → 空串, 语义 = 未绑定)
+                # issue #223: recovery keeps workspace ownership (v1 rows lack the column → empty string, meaning unbound)
                 "space_id": str(row.get("space_id") or ""),
             }
             self._runs[run_id] = record
-            # issue #463: durable HITL — 日志 pending 行重建进审批队列 (仅恢复的 run)
+            # issue #463: durable HITL — journal pending rows are rebuilt into the approval queue (recovered runs only)
             journal = getattr(self._engine, "_approval_journal", None)
             pm = getattr(self._engine, "_permission_manager", None)
             if journal is not None and pm is not None:
                 try:
                     n_restored = pm.restore_pending_details(journal.pending_for_run(run_id))
                     if n_restored:
-                        logger.info(f"[{run_id}] 审批日志 pending 重建 {n_restored} 条")
+                        logger.info(f"[{run_id}] approval journal pending rebuilt: {n_restored} entries")
                 except Exception as e:
-                    logger.warning(f"[{run_id}] 审批日志 pending 重建失败 (忽略): {e}")
+                    logger.warning(f"[{run_id}] approval journal pending rebuild failed (ignored): {e}")
             task = asyncio.create_task(self._execute(run_id, wf, start_paused=True, resume_steps=steps))
             self._tasks[run_id] = task
-            # 等引擎登记 pause 事件后再重放指令 (add_directive 校验 _pause_events 存在)
+            # Wait for the engine to register the pause event before replaying directives (add_directive validates _pause_events exists)
             for _ in range(200):
                 if run_id in getattr(self._engine, "_pause_events", {}):
                     break
                 await asyncio.sleep(0.02)
-            # 恢复期间重放持久化的改向指令 — resume 后首个节点边界生效
+            # Replay persisted redirection directives during recovery — effective at the first node boundary after resume
             replayed = 0
             for d in directives:
                 if not isinstance(d, dict):
@@ -1477,10 +1483,10 @@ class RunRegistry:
                     record.setdefault("directives", []).append(d)
                     replayed += 1
             if replayed:
-                logger.info(f"[{run_id}] 恢复期间重放改向指令 {replayed} 条")
+                logger.info(f"[{run_id}] replayed {replayed} redirection directives during recovery")
             if crashed:
-                # issue #372: crash 恢复必须给出可诊断证据 — 崩溃时刻正在执行的节点
-                # (快照中非终态步骤) + 时间线长度, 运维无需跨进程比对 transcript
+                # issue #372: crash recovery must provide diagnosable evidence — the node executing at crash time
+                # (non-terminal steps in the snapshot) + timeline length; ops never needs to compare transcripts across processes
                 running_steps = [
                     f"{s.get('node_id')}({s.get('node_name')})"
                     for s in steps
@@ -1489,21 +1495,23 @@ class RunRegistry:
                 ]
                 last_step = steps[-1] if steps and isinstance(steps[-1], dict) else {}
                 suspect = (
-                    ", ".join(running_steps) if running_steps else f"无 (时间线终点: {last_step.get('node_id') or '?'})"
+                    ", ".join(running_steps)
+                    if running_steps
+                    else f"none (timeline end: {last_step.get('node_id') or '?'})"
                 )
                 logger.warning(
-                    f"[{run_id}] 上次会话非正常退出 (持久化状态 running), 已恢复为 paused "
-                    f"({len(steps)} 步快照), 等待人工 resume/审批; 崩溃时疑似执行中节点: {suspect}"
+                    f"[{run_id}] previous session exited uncleanly (persisted status running), recovered as paused "
+                    f"({len(steps)} step snapshot), waiting for manual resume/approval; node suspected executing at crash: {suspect}"
                 )
             else:
-                logger.info(f"[{run_id}] 恢复暂停中的运行: paused_reason={record['paused_reason']}")
+                logger.info(f"[{run_id}] recovered paused run: paused_reason={record['paused_reason']}")
             self._persist(run_id)
             recovered += 1
-        # issue #382: boot reconcile — 过期 lease 重排队; 已废弃 run 的 effects 诚实退役
+        # issue #382: boot reconcile — expired leases re-queue; effects of discarded runs retire honestly
         _ob = get_outbox_bridge()
         if _ob is not None and _ob.enabled:
             _ob.reconcile(discarded or None)
-        # issue #388: 终态摘要保留期清理 (默认 90 天, FUSION_COWORK_RUN_SUMMARY_RETENTION_DAYS 覆盖)
+        # issue #388: terminal summary retention pruning (default 90 days, FUSION_COWORK_RUN_SUMMARY_RETENTION_DAYS overrides)
         if self.run_store is not None and hasattr(self.run_store, "prune_summaries"):
             try:
                 retention = int(os.environ.get("FUSION_COWORK_RUN_SUMMARY_RETENTION_DAYS", "90"))
@@ -1512,7 +1520,7 @@ class RunRegistry:
             try:
                 self.run_store.prune_summaries(retention)
             except Exception as e:
-                logger.warning(f"终态摘要保留期清理失败 (忽略): {e}")
+                logger.warning(f"terminal summary retention prune failed (ignored): {e}")
         return recovered
 
     def _gc(self) -> None:
@@ -1524,9 +1532,9 @@ class RunRegistry:
 
 
 def _build_space_stack(data_dir: Optional[Path] = None):
-    """组装 space 域 (store + 4 svc + FastAPI 子应用) — web serve 与测试共用。
+    """Assemble the space domain (store + 4 services + FastAPI sub-app) — shared by web serve and tests.
 
-    Returns (space_app, artifact_svc, space_store) — store 供 serve 关停时 close()。
+    Returns (space_app, artifact_svc, space_store) — the store lets serve close() on shutdown.
     """
     from ..ai.mlx_client import FusionMLXClient, KBClient
     from ..space import (
@@ -1544,8 +1552,8 @@ def _build_space_stack(data_dir: Optional[Path] = None):
     store = SpaceStore(data_dir=str(data_dir) if data_dir else _DEFAULT_SPACE_DATA_DIR)
     perm = SpacePermission(store)
     mlx = FusionMLXClient()
-    # W13/B2: chat 服务与 SSE 端点共用同一事件总线 (此前 chat 自建 emitter,
-    # /stream 的 _event_emitter 为 None, SSE 只会发 ping)
+    # W13/B2: chat service and the SSE endpoint share the same event bus (previously chat built its own emitter,
+    # so /stream's _event_emitter was None and SSE only ever emitted ping)
     from ..engine.events import EventEmitter
 
     emitter = EventEmitter()
@@ -1584,18 +1592,18 @@ def _serialize_session(s: Any) -> Dict[str, Any]:
 
 
 def _make_pending_push_callback(push_egress, runs: Any = None):
-    """issue #154: 审批入队 → webhook 推送回调工厂 (best-effort, 不抛)。
+    """issue #154: approval enqueue → webhook push callback factory (best-effort, never raises).
 
-    在事件循环内被调用 (engine 权限检查 await 链), 直接 create_task;
-    无事件循环时跳过 — webhook 是 best-effort, 不为它开新循环。
-    issue #207: 注入 RunRegistry 时按 execution_id 附 run 归因 (run_source/run_labels)。
+    Called inside the event loop (engine permission-check await chain), so create_task directly;
+    skipped when no event loop — the webhook is best-effort, never spin up a loop for it.
+    issue #207: when a RunRegistry is injected, attach run attribution by execution_id (run_source/run_labels).
     """
 
     def _cb(info: dict) -> None:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            logger.debug("push 回调无事件 loop, 跳过 (best-effort)")
+            logger.debug("push callback has no event loop, skipped (best-effort)")
             return
         payload = dict(info)
         if runs is not None:
@@ -1605,14 +1613,14 @@ def _make_pending_push_callback(push_egress, runs: Any = None):
                     payload["run_source"] = record.get("source", "")
                     payload["run_labels"] = dict(record.get("labels") or {})
             except Exception as e:
-                logger.debug(f"审批事件 run 归因失败 (忽略): {e}")
+                logger.debug(f"approval event run attribution failed (ignored): {e}")
         loop.create_task(push_egress.push_event("approval_requested", payload))
 
     return _cb
 
 
 def _otlp_logs(records: List[Dict[str, Any]], scope: str = "fusion-cowork.audit") -> Dict[str, Any]:
-    """issue #156: 审计记录 → OTLP/JSON LogsData (SIEM collector 可直接消费)。"""
+    """issue #156: audit records → OTLP/JSON LogsData (consumable directly by a SIEM collector)."""
     log_records: List[Dict[str, Any]] = []
     for rec in records:
         attrs = [{"key": k, "value": {"stringValue": str(v)}} for k, v in (rec.get("attributes") or {}).items()]
@@ -1639,9 +1647,9 @@ def _otlp_logs(records: List[Dict[str, Any]], scope: str = "fusion-cowork.audit"
 
 
 async def _takeover_session(ws, run_id: str, runs: Any, permission_manager: Any) -> None:
-    """issue #154: 接管会话主循环 — 订阅 run 事件 + 处理转向帧。
+    """issue #154: takeover session main loop — subscribe to run events + handle steering frames.
 
-    帧: {"method": "directive"|"pause"|"resume"|"cancel"|"confirm", "params": {...}}
+    Frames: {"method": "directive"|"pause"|"resume"|"cancel"|"confirm", "params": {...}}
     """
     queue = runs.subscribe(run_id)
     record = runs.get(run_id)
@@ -1666,7 +1674,7 @@ async def _takeover_session(ws, run_id: str, runs: Any, permission_manager: Any)
 
 
 def _schedule_hitl_audit(app: Any, run_id: str, action_id: str, approved: bool, decided_by: str) -> None:
-    """issue #463: HITL 决定进防篡改审计链 (security/audit.py) — fire-and-forget, 失败仅 WARN。"""
+    """issue #463: HITL decisions enter the tamper-evident audit chain (security/audit.py) — fire-and-forget, failures only WARN."""
     audit = getattr(app.state, "audit_log", None)
     if audit is None:
         return
@@ -1695,7 +1703,7 @@ def _schedule_hitl_audit(app: Any, run_id: str, action_id: str, approved: bool, 
 
 
 async def _takeover_apply(method: str, params: dict, run_id: str, runs: Any, permission_manager: Any) -> dict:
-    """issue #154: 转向帧分发 — 复用 RunRegistry + permission manager, 返回回执帧。"""
+    """issue #154: steering frame dispatch — reuses RunRegistry + permission manager, returns a reply frame."""
     if method == "directive":
         action = str(params.get("action", ""))
         if action not in RunRegistry.DIRECTIVE_ACTIONS:
@@ -1715,7 +1723,7 @@ async def _takeover_apply(method: str, params: dict, run_id: str, runs: Any, per
         return {"event": "cancelled"} if ok else {"event": "error", "message": "not cancelable"}
     if method == "confirm":
         if permission_manager is None:
-            return {"event": "error", "message": "权限管理器不可用"}
+            return {"event": "error", "message": "权限管理器不可用"}  # i18n: user-facing
         action_id = str(params.get("action_id", ""))
         approved = bool(params.get("approved"))
         confirmed = await permission_manager.confirm_guard(
@@ -1727,13 +1735,13 @@ async def _takeover_apply(method: str, params: dict, run_id: str, runs: Any, per
                 if callable(saver):
                     saver()
             except Exception as e:
-                logger.warning(f"takeover confirm 规则保存失败: {e}")
+                logger.warning(f"takeover confirm rule save failed: {e}")
         return {"event": "confirm_result", "action_id": action_id, "approved": approved, "confirmed": confirmed}
     return {"event": "error", "message": f"unknown method: {method}"}
 
 
 async def _pump_run_events(ws, queue) -> None:
-    """issue #154: run 事件泵 — RunRegistry 订阅队列 → WS 帧。断连/取消即退。"""
+    """issue #154: run event pump — RunRegistry subscription queue → WS frames. Exits on disconnect/cancel."""
     while True:
         item = await queue.get()
         try:
@@ -1843,7 +1851,7 @@ def create_web_app(
         from fastapi.responses import JSONResponse, Response, StreamingResponse
         from fastapi.staticfiles import StaticFiles
     except ImportError as e:
-        raise ImportError("web API 需要 [web] 依赖: pip install fusion-cowork[web]") from e
+        raise ImportError("web API 需要 [web] 依赖: pip install fusion-cowork[web]") from e  # i18n: user-facing
 
     from ..nodes import import_all_nodes
 
@@ -1855,9 +1863,9 @@ def create_web_app(
         from ..plugins import get_plugin_loader
 
         for _name, _plugin_nodes in get_plugin_loader().load_all().items():
-            logger.info(f"插件节点已加载: {_name} -> {[n.name for n in _plugin_nodes]}")
+            logger.info(f"plugin nodes loaded: {_name} -> {[n.name for n in _plugin_nodes]}")
     except Exception as e:
-        logger.warning(f"插件加载失败 (忽略): {e}")
+        logger.warning(f"plugin load failed (ignored): {e}")
     store = WorkflowDefStore(root=store_root)
     # issue #516: workflow asset discipline — versioned saves + machine-checkable
     # acceptance gates + audit trail + golden regression suite per workflow id
@@ -1870,7 +1878,7 @@ def create_web_app(
         _seed_template_workflows(store, templates_dir)
     except Exception as e:
         logger.warning(f"issue #485 template seeding failed (ignored): {e}")
-    # issue #459: 入站触发器注册表 — token 鉴权 webhook 建新 run, 与 workflow 定义同盘持久化
+    # issue #459: inbound trigger registry — token-authenticated webhooks create new runs, persisted alongside workflow definitions
     from ..engine.triggers import TriggerRegistry
 
     triggers = TriggerRegistry(Path(store_root) if store_root else None)
@@ -1878,13 +1886,13 @@ def create_web_app(
         from ..engine import PermissionManager
 
         permission_manager = PermissionManager()
-        # issue #138: 审批规则持久化 — serve 启动加载已批准/拒绝规则
+        # issue #138: approval rule persistence — serve startup loads previously approved/denied rules
         loader = getattr(permission_manager, "load", None)
         if callable(loader):
             try:
                 loader()
             except Exception as e:
-                logger.warning(f"web API 权限规则加载失败 (继续空规则): {e}")
+                logger.warning(f"web API permission rule load failed (continuing with empty rules): {e}")
     if engine is None:
         from ..engine import WorkflowEngine
         from ..engine.events import EventEmitter
@@ -1907,7 +1915,7 @@ def create_web_app(
         from ..observability.ops_telemetry import OpsTelemetry
 
         engine._ops_telemetry = OpsTelemetry.from_env()
-    # issue #463: durable HITL — 审批日志注入引擎 (引擎已带则不覆盖, 测试可注入临时库)
+    # issue #463: durable HITL — inject the approval journal into the engine (never overrides an engine-provided one; tests can inject a temp store)
     approval_journal = getattr(engine, "_approval_journal", None)
     if approval_journal is None:
         from ..engine.approval_journal import ApprovalJournal
@@ -1924,7 +1932,7 @@ def create_web_app(
         if notifier.enabled:
             engine.hitl_notifier = notifier
             logger.info("issue #404 HITL email notifier enabled (smtp host=%s)", (notifier._config or {}).get("host"))
-    # issue #191: 运行控制状态持久层 — SQLite 落盘, daemon 重启可恢复
+    # issue #191: run control-state persistence layer — SQLite-backed, recoverable across daemon restarts
     from ..engine.run_persistence import RunStateStore
 
     if run_store is None:
@@ -1939,14 +1947,14 @@ def create_web_app(
         from ..ai.nl_parser import NLWorkflowGenerator
 
         nl_generator = NLWorkflowGenerator(FusionMLXClient())
-        logger.info("web API NL 生成器未注入, 使用默认 FusionMLXClient")
+        logger.info("web API NL generator not injected, using default FusionMLXClient")
     if session_store is None:
         from ..engine.session import SessionStore
 
         session_store = SessionStore()
     if space_api is None:
         space_api, artifact_svc, space_store = _build_space_stack(space_data_dir)
-        logger.info("web API space 栈已构建 (默认路径)")
+        logger.info("web API space stack built (default paths)")
     else:
         artifact_svc, space_store = None, None
     app = FastAPI(title="Fusion-Cowork Web API", version="0.1.0")
@@ -1959,14 +1967,14 @@ def create_web_app(
     app.state.space_api = space_api
     app.state.artifact_svc = artifact_svc
     app.state.space_store = space_store
-    # issue #463: HITL 决定审计链 — 复用 space store 的 audit_log 表 (无 space 栈则无审计)
+    # issue #463: HITL decision audit chain — reuses the space store's audit_log table (no space stack = no audit)
     if space_store is not None:
         from ..security.audit import AuditLog
 
         app.state.audit_log = AuditLog(space_store)
     app.state.permission_manager = permission_manager
     app.state.run_registry = runs
-    # W22: 跨设备同步引擎接缝 — 注入后 /api/deliver 可投递; 默认 None (503 诚实不可用)
+    # W22: cross-device sync engine seam — /api/deliver can deliver once injected; default None (503, honestly unavailable)
     app.state.cross_sync = cross_sync
 
     # issue #288: identity JWT capture — the shell forwards the caller's
@@ -1982,7 +1990,7 @@ def create_web_app(
         with identity_token_context(token):
             return await call_next(request)
 
-    # ── issue #228: 能力市场 — 工作区能力池 + 授权闸门 + 用量入账 ──
+    # ── issue #228: capability marketplace — workspace capability pool + authorization gate + usage recording ──
     from ..capabilities import OAuthFlow, build_catalog, make_capability_gate, record_run_usage
     from ..capabilities.store import CapabilityStore
 
@@ -2064,7 +2072,7 @@ def create_web_app(
 
     oauth_flow = OAuthFlow(transport=capabilities_transport)
 
-    # issue #190: 团队消息消费栈 — 花名册 + durable 信箱 + 常驻消费池
+    # issue #190: team message consumption stack — roster + durable mailbox + resident consumer pool
     from ..orchestrator.runner_pool import RunnerPool
     from ..orchestrator.team_mailbox import CoworkRoster, TeamMailbox
 
@@ -2077,7 +2085,7 @@ def create_web_app(
         workflow_id = str(agent.get("workflow_id") or "")
         record = store.get(workflow_id)
         if not record:
-            raise RuntimeError(f"工作流定义不存在: {workflow_id}")
+            raise RuntimeError(f"工作流定义不存在: {workflow_id}")  # i18n: user-facing
         body = message.get("body") or ""
         try:
             payload = json.loads(body)
@@ -2096,7 +2104,7 @@ def create_web_app(
             memory=False,
             message_input=payload,
         )
-        logger.info(f"团队派发: agent={agent.get('agent_id')} workflow={workflow_id} run={started['run_id']}")
+        logger.info(f"team dispatch: agent={agent.get('agent_id')} workflow={workflow_id} run={started['run_id']}")
         return started["run_id"]
 
     async def _team_get_run(run_id: str) -> Optional[Dict[str, Any]]:
@@ -2121,50 +2129,56 @@ def create_web_app(
     app.state.team_mailbox = team_mailbox
     app.state.runner_pool = runner_pool
 
-    # issue #154: webhook push 出口 (未配 FUSION_COWORK_PUSH_WEBHOOK_URL = no-op)
+    # issue #154: webhook push egress (FUSION_COWORK_PUSH_WEBHOOK_URL unset = no-op)
     from .push import PushEgress, ReliableEgress
 
     push_egress = PushEgress.from_env()
     app.state.push_egress = push_egress
     runs.push = push_egress
-    # issue #579: at-least-once 完成通知 — FUSION_COWORK_PUSH_AT_LEAST_ONCE=1 时
-    # run_finished/node_end 走持久 outbox (未开 = 原 best-effort 路径零行为变化)
+    # issue #579: at-least-once completion notification — when FUSION_COWORK_PUSH_AT_LEAST_ONCE=1
+    # run_finished/node_end go through the persistent outbox (off = original best-effort path, zero behavior change)
     reliable_push = ReliableEgress.from_env()
     app.state.reliable_push = reliable_push
     if reliable_push is not None:
         runs.reliable_push = reliable_push
-    # issue #154: 审批入队 → webhook 推送 (permission manager 回调, best-effort)
+    # issue #154: approval enqueue → webhook push (permission manager callback, best-effort)
     if permission_manager is not None:
         permission_manager.on_pending_created = _make_pending_push_callback(push_egress, runs)
 
-    # issue #191: 启动即恢复 — SQLite 里的活跃 run (paused/崩溃残留 running) 重建为 paused, 等人工 resume/审批
+    # issue #191: recover at startup — active runs in SQLite (paused / crash-left running) are rebuilt as paused, waiting for manual resume/approval
     @app.on_event("startup")
     async def _recover_runs():
         recovered = await runs.recover_persisted()
         if recovered:
-            logger.warning(f"启动恢复: 从持久层重建 {recovered} 个活跃 run (均以 paused 起跑, 等待人工 resume/审批)")
-        # issue #579: 启动冲刷 outbox 残留 — 上次未送达的完成通知重投 (可能重复, 接收方按 id 去重)
+            logger.warning(
+                f"startup recovery: rebuilt {recovered} active runs from the persistence layer (all start paused, waiting for manual resume/approval)"
+            )
+        # issue #579: flush leftover outbox at startup — re-deliver last session's undelivered completion notifications (may duplicate; receivers dedupe by id)
         if reliable_push is not None and reliable_push.pending_count():
             try:
                 delivered = await reliable_push.flush_pending()
-                logger.info(f"push outbox 启动冲刷: delivered={delivered} pending={reliable_push.pending_count()}")
+                logger.info(f"push outbox startup flush: delivered={delivered} pending={reliable_push.pending_count()}")
             except Exception as e:
-                logger.warning(f"push outbox 启动冲刷失败 (留待事件触发): {e}")
+                logger.warning(f"push outbox startup flush failed (left for event trigger): {e}")
 
     @app.on_event("startup")
     async def _start_team_pool():
-        # issue #190: 花名册有启用 agent 即拉起消费池; FUSION_COWORK_RUNNER_POOL=1 强制常驻
+        # issue #190: start the consumer pool when the roster has enabled agents; FUSION_COWORK_RUNNER_POOL=1 forces resident
         try:
             enabled = len(app.state.team_roster.list(enabled_only=True))
         except Exception as e:
-            logger.error(f"团队消费池启动失败 (花名册不可读): {e}")
+            logger.error(f"team consumer pool failed to start (roster unreadable): {e}")
             return
         forced = os.environ.get("FUSION_COWORK_RUNNER_POOL", "").strip().lower() in ("1", "true", "yes", "on")
         if enabled or forced:
             await app.state.runner_pool.start()
-            logger.info(f"团队消费池已启动: {enabled} 个 consumer, 轮询 {app.state.runner_pool.poll_interval}s")
+            logger.info(
+                f"team consumer pool started: {enabled} consumers, polling every {app.state.runner_pool.poll_interval}s"
+            )
         else:
-            logger.info("团队消费池未启动: 花名册无启用 agent (fusion-cowork team register 登记)")
+            logger.info(
+                "team consumer pool not started: roster has no enabled agents (register via fusion-cowork team register)"
+            )
 
     @app.on_event("shutdown")
     async def _stop_team_pool():
@@ -2205,17 +2219,17 @@ def create_web_app(
     async def _auth_middleware(request: Request, call_next):
         if request.url.path in ("/health",) or request.url.path.startswith("/ws/"):
             return await call_next(request)
-        # issue #262: webhook 回调以 HMAC 签名鉴权 (路由内 compare_digest 校验), 不吃静态 key
+        # issue #262: webhook callbacks authenticate via HMAC signature (compare_digest inside the route), never the static key
         if request.url.path.startswith("/api/hooks/"):
             return await call_next(request)
-        # #146: 未配置密钥 = 放行 (对齐 cli.py/README "unset = allow" 契约) —
-        # 旧行为无条件 401 导致 shell 登录弹回循环。
+        # #146: no key configured = allow (aligns with the cli.py/README "unset = allow" contract) —
+        # the old unconditional 401 caused a shell login bounce loop.
         if not auth_configured():
             return await call_next(request)
         key = extract_caller_key(request.headers)
         key_info = check_static_key(key)
         if not key_info:
-            logger.warning(f"web API 鉴权拒绝: {request.url.path} (key {'缺失' if not key else '无效'})")
+            logger.warning(f"web API auth denied: {request.url.path} (key {'missing' if not key else 'invalid'})")
             return JSONResponse(
                 status_code=401,
                 content={"error": {"code": "unauthorized", "message": "missing or invalid api key"}},
@@ -2268,7 +2282,7 @@ def create_web_app(
                 status_code=409,
                 detail={
                     "code": "asset_gate_rejected",
-                    "message": "工作流资产门禁未通过, 未激活",
+                    "message": "工作流资产门禁未通过, 未激活",  # i18n: user-facing
                     "version": asset_record.get("version"),
                     "gate_results": asset_record.get("gate_results", []),
                 },
@@ -2286,7 +2300,8 @@ def create_web_app(
         record = store.get(workflow_id)
         if not record:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"工作流不存在: {workflow_id}"}
+                status_code=404,
+                detail={"code": "not_found", "message": f"工作流不存在: {workflow_id}"},  # i18n: user-facing
             )
         return record
 
@@ -2294,7 +2309,8 @@ def create_web_app(
     async def workflows_put(request: Request, workflow_id: str, body: Dict[str, Any]):
         if not store.get(workflow_id):
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"工作流不存在: {workflow_id}"}
+                status_code=404,
+                detail={"code": "not_found", "message": f"工作流不存在: {workflow_id}"},  # i18n: user-facing
             )
         # issue #516: update also flows through the asset gate
         try:
@@ -2306,7 +2322,7 @@ def create_web_app(
                 status_code=409,
                 detail={
                     "code": "asset_gate_rejected",
-                    "message": "工作流资产门禁未通过, 未激活",
+                    "message": "工作流资产门禁未通过, 未激活",  # i18n: user-facing
                     "version": asset_record.get("version"),
                     "gate_results": asset_record.get("gate_results", []),
                 },
@@ -2320,11 +2336,12 @@ def create_web_app(
     async def workflows_delete(workflow_id: str):
         if not store.delete(workflow_id):
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"工作流不存在: {workflow_id}"}
+                status_code=404,
+                detail={"code": "not_found", "message": f"工作流不存在: {workflow_id}"},  # i18n: user-facing
             )
         return {"deleted": True}
 
-    # ── issue #516: asset version / audit surface (独立于执行日志可查) ──
+    # ── issue #516: asset version / audit surface (queryable independently of execution logs) ──
 
     @app.get("/api/workflows/{workflow_id}/versions")
     async def workflow_versions(workflow_id: str):
@@ -2335,14 +2352,18 @@ def create_web_app(
     async def workflow_version_diff(workflow_id: str, v1: int, v2: int):
         result = asset_store.diff(workflow_id, v1, v2)
         if result is None:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"版本不存在: v{v1} 或 v{v2}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"版本不存在: v{v1} 或 v{v2}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return {"v1": v1, "v2": v2, "diff": result}
 
     @app.get("/api/workflows/{workflow_id}/versions/{version}")
     async def workflow_version_detail(workflow_id: str, version: int):
         rec = asset_store.get_version(workflow_id, version)
         if rec is None:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"版本不存在: v{version}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"版本不存在: v{version}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return rec
 
     @app.get("/api/workflows/{workflow_id}/audit")
@@ -2350,7 +2371,7 @@ def create_web_app(
         entries = asset_store.audit(workflow_id, limit=limit)
         return {"audit": entries, "count": len(entries)}
 
-    # ── issue #459: 入站触发器 — webhook/事件可新建 run (事件驱动链路起点) ──
+    # ── issue #459: inbound triggers — webhooks/events can create new runs (start of the event-driven chain) ──
 
     @app.get("/api/triggers")
     async def triggers_list():
@@ -2363,7 +2384,8 @@ def create_web_app(
         record = store.get(workflow_id)
         if not record:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": f"workflow_id 不存在: {workflow_id}"}
+                status_code=400,
+                detail={"code": "bad_request", "message": f"workflow_id 不存在: {workflow_id}"},  # i18n: user-facing
             )
         try:
             created = triggers.create(
@@ -2378,33 +2400,42 @@ def create_web_app(
     @app.delete("/api/triggers/{trigger_id}")
     async def triggers_delete(trigger_id: str):
         if not triggers.delete(trigger_id):
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"触发器不存在: {trigger_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"触发器不存在: {trigger_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return {"deleted": True}
 
     @app.post("/api/hooks/trigger/{token}", status_code=202)
     async def trigger_hook(token: str, request: Request):
-        # token 即鉴权 (/api/hooks/ 前缀免静态 key); 比对用 compare_digest 防时序
+        # The token itself is the auth (/api/hooks/ prefix bypasses the static key); compare_digest prevents timing attacks
         trigger = triggers.find_by_token(token)
         if not trigger:
-            logger.warning(f"trigger hook token 无效: {token[:12]}…")
-            raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "trigger token 无效"})
+            logger.warning(f"trigger hook token invalid: {token[:12]}…")
+            raise HTTPException(
+                status_code=401, detail={"code": "unauthorized", "message": "trigger token 无效"}  # # i18n: user-facing
+            )  # i18n: user-facing
         try:
             payload = json.loads((await request.body()).decode("utf-8") or "{}")
         except Exception as exc:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}) from exc
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}  # # i18n: user-facing
+            ) from exc  # i18n: user-facing
         if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON 对象"})
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON 对象"}  # # i18n: user-facing
+            )  # i18n: user-facing
         workflow_id = str(trigger.get("workflow_id") or "")
         record = store.get(workflow_id)
         if not record:
             raise HTTPException(
                 status_code=410,
-                detail={"code": "gone", "message": f"触发器绑定的 workflow 已删除: {workflow_id}"},
+                detail={"code": "gone", "message": f"触发器绑定的 workflow 已删除: {workflow_id}"},  # i18n: user-facing
             )
         workflow_def = record.get("workflow") or {}
         if not workflow_def:
             raise HTTPException(
-                status_code=410, detail={"code": "gone", "message": f"workflow 定义为空: {workflow_id}"}
+                status_code=410,
+                detail={"code": "gone", "message": f"workflow 定义为空: {workflow_id}"},  # i18n: user-facing
             )
         params = dict(trigger.get("params") or {})
         params.update({k: v for k, v in payload.items() if k not in ("payload",)})
@@ -2418,14 +2449,15 @@ def create_web_app(
             )
         except ValueError as exc:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": f"工作流定义无效: {exc}"}
+                status_code=400,
+                detail={"code": "bad_request", "message": f"工作流定义无效: {exc}"},  # i18n: user-facing
             ) from exc
         run_id = started.get("run_id") if isinstance(started, dict) else ""
-        # 触发器事件同时广播到事件总线 — wait_for_event 可链式响应入站触发
+        # Trigger events also broadcast onto the event bus — wait_for_event can chain-respond to inbound triggers
         from ..engine.event_bus import get_event_bus
 
         get_event_bus().emit(f"trigger.{trigger.get('name')}", {"run_id": run_id, **payload})
-        logger.info(f"trigger hook 建 run: trigger={trigger.get('name')} run={run_id}")
+        logger.info(f"trigger hook started run: trigger={trigger.get('name')} run={run_id}")
         return {"run_id": run_id, "trigger": trigger.get("name"), "started": bool(run_id)}
 
     @app.post("/api/events/{name}")
@@ -2433,9 +2465,13 @@ def create_web_app(
         try:
             payload = json.loads((await request.body()).decode("utf-8") or "{}")
         except Exception as exc:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}) from exc
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}  # # i18n: user-facing
+            ) from exc  # i18n: user-facing
         if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON 对象"})
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON 对象"}  # # i18n: user-facing
+            )  # i18n: user-facing
         from ..engine.event_bus import get_event_bus
 
         woken = get_event_bus().emit(name, payload)
@@ -2451,7 +2487,8 @@ def create_web_app(
             record = store.get(workflow_id)
             if not record:
                 raise HTTPException(
-                    status_code=404, detail={"code": "not_found", "message": f"工作流不存在: {workflow_id}"}
+                    status_code=404,
+                    detail={"code": "not_found", "message": f"工作流不存在: {workflow_id}"},  # i18n: user-facing
                 )
             workflow_def = record.get("workflow") or {}
             workflow_name = record.get("name", workflow_id)
@@ -2466,22 +2503,29 @@ def create_web_app(
             record = None
         if not workflow_def:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "workflow 或 workflow_id 必填"}
+                status_code=400,
+                detail={"code": "bad_request", "message": "workflow 或 workflow_id 必填"},  # i18n: user-facing
             )
         try:
-            # issue #157: per-run 记忆开关, 默认开 (未配 FUSION_MEMORY_API_KEY 时桥自动关闭)
+            # issue #157: per-run memory switch, default on (bridge auto-disables when FUSION_MEMORY_API_KEY is unset)
             memory = body.get("memory", True)
             if not isinstance(memory, bool):
-                raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "memory 须为 boolean"})
-            # issue #209: per-run 输入 — 与邮箱派发同语义 (message_input 注入首节点),
-            # inputs 优先, initial_input 兼容别名; 非 dict 一律 400 不再静默丢弃
+                raise HTTPException(
+                    status_code=400, detail={"code": "bad_request", "message": "memory 须为 boolean"}  # # i18n: user-facing
+                )  # i18n: user-facing
+            # issue #209: per-run input — same semantics as mail dispatch (message_input injected into the first node),
+            # inputs takes precedence, initial_input kept as a compat alias; non-dict always 400, no longer silently dropped
             inputs_obj = body.get("inputs", body.get("initial_input"))
             if inputs_obj is not None and not isinstance(inputs_obj, dict):
-                raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "inputs 须为 JSON 对象"})
-            # issue #207: per-run 来源/标签 — 全部可选, 校验类型后落 run 记录
+                raise HTTPException(
+                    status_code=400, detail={"code": "bad_request", "message": "inputs 须为 JSON 对象"}  # # i18n: user-facing
+                )  # i18n: user-facing
+            # issue #207: per-run source/labels — all optional, type-checked then stored on the run record
             source = body.get("source", "")
             if not isinstance(source, str):
-                raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "source 须为字符串"})
+                raise HTTPException(
+                    status_code=400, detail={"code": "bad_request", "message": "source 须为字符串"}  # # i18n: user-facing
+                )  # i18n: user-facing
             labels = body.get("labels")
             if labels is None:
                 labels = {}
@@ -2489,46 +2533,58 @@ def create_web_app(
                 isinstance(k, str) and isinstance(v, str) for k, v in labels.items()
             ):
                 raise HTTPException(
-                    status_code=400, detail={"code": "bad_request", "message": "labels 须为字符串到字符串的对象"}
+                    status_code=400,
+                    detail={"code": "bad_request", "message": "labels 须为字符串到字符串的对象"},  # i18n: user-facing
                 )
-            # issue #223: run 归属工作区 — 首页在活动目录上下文里启动的 run 带目录 id
+            # issue #223: run's owning workspace — runs started in the active directory context carry the directory id
             space_id = body.get("space_id", "")
             if not isinstance(space_id, str):
-                raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "space_id 须为字符串"})
-            # issue #260: per-run HITL 闸门覆盖 — 无人值守 acceptance run 可 fail-fast
-            # (true/false 显式覆盖; 缺省跟随引擎全局 FUSION_COWORK_HITL_PAUSE)
+                raise HTTPException(
+                    status_code=400, detail={"code": "bad_request", "message": "space_id 须为字符串"}  # # i18n: user-facing
+                )  # i18n: user-facing
+            # issue #260: per-run HITL gate override — unattended acceptance runs can fail fast
+            # (true/false explicit override; default follows the engine-global FUSION_COWORK_HITL_PAUSE)
             hitl_pause = body.get("hitl_pause")
             if hitl_pause is not None and not isinstance(hitl_pause, bool):
                 raise HTTPException(
-                    status_code=400, detail={"code": "bad_request", "message": "hitl_pause 须为 boolean"}
+                    status_code=400,
+                    detail={"code": "bad_request", "message": "hitl_pause 须为 boolean"},  # i18n: user-facing
                 )
-            # issue #461: 跨 run 并发闸 key + 同 run 波次并行度
+            # issue #461: cross-run concurrency gate key + same-run wave parallelism
             concurrency_key = body.get("concurrency_key", "")
             if not isinstance(concurrency_key, str):
                 raise HTTPException(
-                    status_code=400, detail={"code": "bad_request", "message": "concurrency_key 须为字符串"}
+                    status_code=400,
+                    detail={"code": "bad_request", "message": "concurrency_key 须为字符串"},  # i18n: user-facing
                 )
             concurrency = body.get("concurrency", 0)
             if not isinstance(concurrency, int) or isinstance(concurrency, bool) or concurrency < 0:
                 raise HTTPException(
-                    status_code=400, detail={"code": "bad_request", "message": "concurrency 须为非负整数"}
+                    status_code=400,
+                    detail={"code": "bad_request", "message": "concurrency 须为非负整数"},  # i18n: user-facing
                 )
             # issue #485: per-run template params — template-backed records re-assemble
             # the source template with param_values so ${param.*} resolve before execution
             params_obj = body.get("params")
             if params_obj is not None and not isinstance(params_obj, dict):
-                raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "params 须为 JSON 对象"})
+                raise HTTPException(
+                    status_code=400, detail={"code": "bad_request", "message": "params 须为 JSON 对象"}  # # i18n: user-facing
+                )  # i18n: user-facing
             template_id = str((record or {}).get("template_id") or "")
             if params_obj and not template_id:
                 raise HTTPException(
                     status_code=400,
-                    detail={"code": "bad_request", "message": "params 仅支持模板工作流 (记录缺 template_id)"},
+                    detail={
+                        "code": "bad_request",
+                        "message": "params 仅支持模板工作流 (记录缺 template_id)",  # # i18n: user-facing
+                    },  # i18n: user-facing
                 )
             if params_obj and template_id:
                 _wf = _tpl_manager().template_to_workflow(template_id, param_values=params_obj)
                 if _wf is None:
                     raise HTTPException(
-                        status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}
+                        status_code=404,
+                        detail={"code": "not_found", "message": f"模板不存在: {template_id}"},  # i18n: user-facing
                     )
                 _errors = _wf.validate()
                 if _errors:
@@ -2539,7 +2595,10 @@ def create_web_app(
                 if "${param." in json.dumps(_assembled, ensure_ascii=False):
                     raise HTTPException(
                         status_code=400,
-                        detail={"code": "params_missing", "message": "必填模板参数缺失 (${param.*} 未替换)"},
+                        detail={
+                            "code": "params_missing",
+                            "message": "必填模板参数缺失 (${param.*} 未替换)",  # # i18n: user-facing
+                        },  # i18n: user-facing
                     )
                 workflow_def = _assembled
             # issue #288: caller identity JWT → background run LLM calls meter
@@ -2564,29 +2623,31 @@ def create_web_app(
                 workflow_digest=workflow_digest,
             )
         except ValueError as exc:
-            # issue #135 F-2: 坏边形状/含环等工作流定义错误 → 400 可读信息, 不 500
+            # issue #135 F-2: bad edge shapes/cycles and other workflow definition errors → 400 with a readable message, not 500
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": f"工作流定义无效: {exc}"}
+                status_code=400,
+                detail={"code": "bad_request", "message": f"工作流定义无效: {exc}"},  # i18n: user-facing
             ) from exc
 
     @app.get("/api/runs")
     async def runs_list(space_id: str = ""):
-        # issue #223: ?space_id= 工作区过滤 — 缺省返回全部 (老调用方零变化)
+        # issue #223: ?space_id= workspace filter — default returns all (zero change for old callers)
         items = runs.list(space_id=space_id)
         return {"runs": items, "count": len(items)}
 
-    # ── issue #223: 首页目录选择态聚合 — Space 卡片 + 成员数 + 任务数 + 最近活动 ──
+    # ── issue #223: home page directory-selection aggregation — Space cards + member count + task count + recent activity ──
     @app.get("/api/workspaces")
     async def workspaces_list():
         if space_store is None:
-            # space 栈未装配 (无 [web] data dir) — 诚实告知不可用, 前端态零收起
+            # space stack not assembled (no [web] data dir) — honestly report unavailable; frontend keeps its state visible
             return {"workspaces": [], "available": False}
         try:
             spaces = await space_store.list_spaces(limit=100)
         except Exception as e:
-            logger.error(f"workspaces 聚合失败: {e}")
+            logger.error(f"workspaces aggregation failed: {e}")
             raise HTTPException(
-                status_code=502, detail={"code": "upstream_error", "message": f"工作区列表失败: {e}"}
+                status_code=502,
+                detail={"code": "upstream_error", "message": f"工作区列表失败: {e}"},  # i18n: user-facing
             ) from e
         run_items = runs.list()
         out: List[Dict[str, Any]] = []
@@ -2596,7 +2657,7 @@ def create_web_app(
             try:
                 member_count = await space_store.count_members(sid)
             except Exception as e:
-                logger.warning(f"workspaces 成员计数失败 space={sid}: {e}")
+                logger.warning(f"workspaces member count failed space={sid}: {e}")
                 member_count = 0
             ws_runs = [r for r in run_items if str(r.get("space_id") or "") == sid]
             out.append(
@@ -2615,14 +2676,14 @@ def create_web_app(
             )
         return {"workspaces": out, "available": True}
 
-    # ── issue #251: 系统工作目录枚举 — 新建目录名必须来自真实目录选择, 不收手输;
-    # ?path= 相对浏览支持子目录层级 (弹窗逐级下钻), 越界路径 400 ──
+    # ── issue #251: system workspace directory enumeration — a new directory name must come from a real directory pick, no free-typed input;
+    # ?path= relative browsing supports subdirectory levels (dialog drills down level by level); out-of-bounds paths get 400 ──
     @app.get("/api/workspaces/system-dirs")
     async def workspaces_system_dirs(path: str = ""):
         root = Path(os.environ.get("FUSION_COWORK_WORKSPACE_ROOT") or Path.home()).expanduser()
         if not root.is_dir():
-            # 根不存在 → 诚实告知不可用, 前端选择器收起并提示
-            logger.warning(f"system-dirs 根目录不存在: {root}")
+            # Root missing → honestly report unavailable; frontend picker collapses with a hint
+            logger.warning(f"system-dirs root directory missing: {root}")
             return {"root": str(root), "root_name": root.name, "relative": "", "directories": [], "available": False}
         rel = (path or "").strip().strip("/")
         current = root
@@ -2633,10 +2694,13 @@ def create_web_app(
                 candidate.relative_to(resolved_root)
             except ValueError:
                 raise HTTPException(
-                    status_code=400, detail={"code": "bad_path", "message": f"路径越界: {path}"}
+                    status_code=400,
+                    detail={"code": "bad_path", "message": f"路径越界: {path}"},  # i18n: user-facing
                 ) from None
             if not candidate.is_dir():
-                raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"目录不存在: {path}"})
+                raise HTTPException(
+                    status_code=404, detail={"code": "not_found", "message": f"目录不存在: {path}"}  # # i18n: user-facing
+                )  # i18n: user-facing
             current = candidate
             rel = candidate.relative_to(resolved_root).as_posix()
         try:
@@ -2645,9 +2709,10 @@ def create_web_app(
                 key=lambda e: e.name.lower(),
             )
         except OSError as e:
-            logger.error(f"system-dirs 枚举失败 root={root} rel={rel}: {e}")
+            logger.error(f"system-dirs enumeration failed root={root} rel={rel}: {e}")
             raise HTTPException(
-                status_code=502, detail={"code": "upstream_error", "message": f"目录枚举失败: {e}"}
+                status_code=502,
+                detail={"code": "upstream_error", "message": f"目录枚举失败: {e}"},  # i18n: user-facing
             ) from e
         child_rel = (rel + "/") if rel else ""
         directories = [{"name": e.name, "path": str(e), "relative": child_rel + e.name} for e in entries[:200]]
@@ -2663,21 +2728,23 @@ def create_web_app(
     async def runs_get(run_id: str):
         record = runs.get(run_id)
         if not record:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"})
-        # issue #461: token/花费实时归因 — 步级 usage 汇总, 老记录无该字段也即时可算
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
+        # issue #461: live token/spend attribution — per-step usage rollup, computed on the fly even for old records without the field
         if record.get("steps"):
             record["tokens"] = _token_rollup(record["steps"])
             record["spend_usd"] = _spend_usd(record["tokens"]["total_tokens"])
-        # issue #558 (#132): 终态失败 run 附带边级 handoff 候选 — kernel
-        # FailureAnalyzer 确定性启发 (无模型调用), 纯增量字段, 失败不冲击接口
+        # issue #558 (#132): terminal failed runs carry edge-level handoff candidates — kernel
+        # FailureAnalyzer deterministic heuristics (no model call); purely additive field, failure never breaks the API
         if record.get("status") == "failed":
             attribution = _failure_attribution(run_id, record)
             if attribution is not None:
                 record["failure_attribution"] = attribution
             else:
                 record.pop("failure_attribution", None)
-        # issue #181: HITL 等待中标记 — 前端提示"等待人工审批"而非卡死
-        # issue #187: 附带截止时间 — 审批卡倒计时; 状态服务端持久, 页面刷新不丢
+        # issue #181: HITL pending marker — the frontend shows "waiting for human approval" instead of a frozen state
+        # issue #187: deadline attached — approval card countdown; state is server-persistent and survives page refresh
         if record.get("status") == "running":
             record["hitl_pending"] = engine.hitl_pending(run_id)
             if not record["hitl_pending"]:
@@ -2698,15 +2765,15 @@ def create_web_app(
                 deadline = deadline_getter(run_id) if callable(deadline_getter) else None
                 if deadline is not None:
                     record["hitl_deadline"] = deadline
-                # issue #508: awaiting_human 分支状态 — 谁在等人工决定
+                # issue #508: awaiting_human branch state — who is waiting on the human decision
                 record["awaiting_human"] = True
                 waiting_node = getattr(engine, "hitl_waiting_node", None)
                 awaiting_node = waiting_node(run_id) if callable(waiting_node) else None
                 if awaiting_node:
                     record["awaiting_node"] = awaiting_node
         else:
-            # issue #549: 终态 run 清掉 mid-run GET 写入的 HITL 标记 — record 是
-            # 注册表共享 dict, 运行期写入的键不清理会残留到终态响应
+            # issue #549: terminal runs clear HITL markers written by mid-run GETs — the record is a
+            # registry-shared dict; keys written while running would leak into the terminal response if not cleaned
             record.pop("hitl_pending", None)
             record.pop("hitl_deadline", None)
             record.pop("hitl_recover", None)
@@ -2714,21 +2781,25 @@ def create_web_app(
             record.pop("awaiting_node", None)
         return record
 
-    # ── W10/B5 运行产物预览 (右栏, 实时随步骤输出刷新) ──
+    # ── W10/B5 run artifact preview (right column, refreshed live with step outputs) ──
     @app.get("/api/runs/{run_id}/artifacts")
     async def runs_artifacts(run_id: str):
         record = runs.get(run_id)
         if not record:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         artifacts = record.get("artifacts") or []
         return {"artifacts": artifacts, "count": len(artifacts), "review": record.get("review")}
 
-    # ── B2 运行步骤日志 SSE — events.py 总线 → 前端实时步骤 (轮询为降级) ──
+    # ── B2 run step-log SSE — events.py bus → frontend real-time steps (polling is the fallback) ──
     @app.get("/api/runs/{run_id}/events")
     async def runs_events(run_id: str, request: Request):
         record = runs.get(run_id)
         if not record:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
 
         async def event_stream():
             queue = runs.subscribe(run_id)
@@ -2756,38 +2827,49 @@ def create_web_app(
     @app.post("/api/runs/{run_id}/cancel")
     async def runs_cancel(run_id: str):
         if not runs.cancel(run_id):
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"运行不可取消: {run_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"运行不可取消: {run_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return {"status": "cancelling", "run_id": run_id}
 
-    # ── W8 运行改向: 暂停/恢复 (追加指令需 orchestrator 交互协议, 见 migration doc I2) ──
+    # ── W8 run redirection: pause/resume (appended directives need the orchestrator interaction protocol, see migration doc I2) ──
     @app.post("/api/runs/{run_id}/pause")
     async def runs_pause(run_id: str):
         if not runs.pause(run_id):
-            raise HTTPException(status_code=409, detail={"code": "not_running", "message": f"运行不可暂停: {run_id}"})
+            raise HTTPException(
+                status_code=409, detail={"code": "not_running", "message": f"运行不可暂停: {run_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return {"status": "paused", "run_id": run_id}
 
     @app.post("/api/runs/{run_id}/resume")
     async def runs_resume(run_id: str):
         if not runs.resume(run_id):
-            raise HTTPException(status_code=409, detail={"code": "not_paused", "message": f"运行不可恢复: {run_id}"})
+            raise HTTPException(
+                status_code=409, detail={"code": "not_paused", "message": f"运行不可恢复: {run_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return {"status": "running", "run_id": run_id}
 
-    # ── W9 交付审查: 成功运行 pending_review → approved/rejected (节点级 guard 审批另属 W19) ──
+    # ── W9 delivery review: successful runs pending_review → approved/rejected (node-level guard approvals belong to W19 separately) ──
     @app.post("/api/runs/{run_id}/review")
     async def runs_review(run_id: str, body: Dict[str, Any]):
         approved = body.get("approved")
         if not isinstance(approved, bool):
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "approved 必须是布尔值"})
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "approved 必须是布尔值"}  # # i18n: user-facing
+            )  # i18n: user-facing
         err, result = runs.review(run_id, approved, str(body.get("note") or ""))
         if err == "not_found":
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         if err == "not_pending":
             raise HTTPException(
-                status_code=409, detail={"code": "not_pending", "message": f"运行不在待审查状态: {run_id}"}
+                status_code=409,
+                detail={"code": "not_pending", "message": f"运行不在待审查状态: {run_id}"},  # i18n: user-facing
             )
         return result
 
-    # ── W8/B1 运行改向: 暂停态追加指令 (换参/插节点/跳过剩余) ──
+    # ── W8/B1 run redirection: append directives while paused (swap params / insert node / skip remaining) ──
     @app.post("/api/runs/{run_id}/directive", status_code=202)
     async def runs_directive(run_id: str, body: Dict[str, Any]):
         err = runs.directive(run_id, body)
@@ -2796,97 +2878,121 @@ def create_web_app(
                 status_code=400,
                 detail={
                     "code": "bad_action",
-                    "message": f"action 必须是 {', '.join(RunRegistry.DIRECTIVE_ACTIONS)}",
+                    "message": f"action 必须是 {', '.join(RunRegistry.DIRECTIVE_ACTIONS)}",  # i18n: user-facing
                 },
             )
         if err == "not_running":
             raise HTTPException(
-                status_code=409, detail={"code": "not_running", "message": f"运行不在运行/暂停态: {run_id}"}
+                status_code=409,
+                detail={"code": "not_running", "message": f"运行不在运行/暂停态: {run_id}"},  # i18n: user-facing
             )
         if isinstance(err, dict):
-            # issue #465: 结构化拒绝 (mid_wave/already_executed/unknown_target/bad_directive)
+            # issue #465: structured rejection (mid_wave/already_executed/unknown_target/bad_directive)
             status = 400 if err.get("code") == "bad_directive" else 409
             raise HTTPException(status_code=status, detail={"code": err.get("code"), "message": err.get("message")})
         if err:
-            raise HTTPException(status_code=409, detail={"code": err, "message": f"运行改向被拒绝: {run_id}"})
+            raise HTTPException(
+                status_code=409, detail={"code": err, "message": f"运行改向被拒绝: {run_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return {"status": "queued", "run_id": run_id, "action": body.get("action")}
 
-    # ── issue #226: 终态 run 从指定步骤重跑 (新 run 链回原 run) ──
+    # ── issue #226: re-run terminal runs from a given step (new run chains back to the original) ──
     @app.post("/api/runs/{run_id}/resume-from")
     async def runs_resume_from(run_id: str, body: Dict[str, Any]):
         node_id = str(body.get("node_id") or "").strip()
         if not node_id:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "node_id 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "node_id 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         try:
             return runs.resume_from(run_id, node_id)
         except KeyError:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"}
+                status_code=404,
+                detail={"code": "not_found", "message": f"运行不存在: {run_id}"},  # i18n: user-facing
             ) from None
         except ValueError as exc:
             msg = str(exc)
             if msg == "not_terminal":
                 raise HTTPException(
-                    status_code=409, detail={"code": "not_terminal", "message": f"运行未到终态: {run_id}"}
+                    status_code=409,
+                    detail={"code": "not_terminal", "message": f"运行未到终态: {run_id}"},  # i18n: user-facing
                 ) from exc
             if msg == "unknown_node":
                 raise HTTPException(
-                    status_code=400, detail={"code": "unknown_node", "message": f"步骤不存在于工作流: {node_id}"}
+                    status_code=400,
+                    detail={"code": "unknown_node", "message": f"步骤不存在于工作流: {node_id}"},  # i18n: user-facing
                 ) from exc
-            # no_workflow_def / from_dict 校验失败 → 400
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": f"无法重跑: {msg}"}) from exc
+            # no_workflow_def / from_dict validation failure → 400
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": f"无法重跑: {msg}"}  # # i18n: user-facing
+            ) from exc  # i18n: user-facing
 
-    # ── issue #489: 门控驳回回退 — 幂等 rewind + 历史 (who/when/which rule) ──
+    # ── issue #489: gate-denial rewind — idempotent rewind + history (who/when/which rule) ──
     @app.post("/api/runs/{run_id}/rewind")
     async def runs_rewind(run_id: str, body: Dict[str, Any]):
         node_id = str(body.get("node_id") or "").strip()
         if not node_id:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "node_id 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "node_id 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         rule = str(body.get("rule") or "").strip()
         actor = str(body.get("actor") or "").strip()
         try:
             return runs.rewind(run_id, node_id, rule=rule, actor=actor)
         except KeyError:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"}
+                status_code=404,
+                detail={"code": "not_found", "message": f"运行不存在: {run_id}"},  # i18n: user-facing
             ) from None
         except ValueError as exc:
             msg = str(exc)
             if msg == "not_terminal":
                 raise HTTPException(
-                    status_code=409, detail={"code": "not_terminal", "message": f"运行未到终态: {run_id}"}
+                    status_code=409,
+                    detail={"code": "not_terminal", "message": f"运行未到终态: {run_id}"},  # i18n: user-facing
                 ) from exc
             if msg == "unknown_node":
                 raise HTTPException(
-                    status_code=400, detail={"code": "unknown_node", "message": f"步骤不存在于工作流: {node_id}"}
+                    status_code=400,
+                    detail={"code": "unknown_node", "message": f"步骤不存在于工作流: {node_id}"},  # i18n: user-facing
                 ) from exc
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": f"无法回退: {msg}"}) from exc
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": f"无法回退: {msg}"}  # # i18n: user-facing
+            ) from exc  # i18n: user-facing
 
-    # ── issue #233: artifact 卡片代理 (fusion-artifacts-engine v0.6.0 contract) ──
+    # ── issue #233: artifact card proxy (fusion-artifacts-engine v0.6.0 contract) ──
     @app.get("/api/artifacts/refs/{artifact_id}")
     async def artifacts_ref_card(artifact_id: str):
-        # issue #237: 区分「id 非法 / artifact 删除或无权限 / 引擎不可达」三类失败,
-        # 前端据此给出明确提示, 不再静默注入假 ref。
+        # issue #237: distinguish three failure classes — "invalid id / artifact deleted or no permission / engine unreachable";
+        # the frontend then gives a clear message instead of silently injecting a fake ref.
         card, upstream_status = await _fetch_artifact_card_with_status(artifact_id)
         if card is None:
             if not artifact_id or not _ARTIFACT_ID_PATTERN.match(artifact_id):
                 raise HTTPException(
-                    status_code=404, detail={"code": "bad_id", "message": f"非法 artifact id: {artifact_id}"}
+                    status_code=404,
+                    detail={"code": "bad_id", "message": f"非法 artifact id: {artifact_id}"},  # i18n: user-facing
                 )
             if upstream_status in (401, 403, 404):
                 raise HTTPException(
                     status_code=404,
-                    detail={"code": "artifact_not_found", "message": f"产物不存在或无权访问: {artifact_id}"},
+                    detail={
+                        "code": "artifact_not_found",
+                        "message": f"产物不存在或无权访问: {artifact_id}",  # # i18n: user-facing
+                    },  # i18n: user-facing
                 )
             raise HTTPException(
                 status_code=502,
-                detail={"code": "upstream_unavailable", "message": "fusion-artifacts-engine 不可用"},
+                detail={
+                    "code": "upstream_unavailable",
+                    "message": "fusion-artifacts-engine 不可用",  # # i18n: user-facing
+                },  # i18n: user-facing
             )
         card["ref_text"] = _artifact_ref_text(card)
         return {"artifact": card}
 
-    # ── W5 模板目录 (migration doc §6 P0) ──
-    # issue #261: 模板发布/导入/导出 — 画布流程 ↔ 模板资产 (custom_dir 可注入隔离)
+    # ── W5 template catalog (migration doc §6 P0) ──
+    # issue #261: template publish/import/export — canvas workflows ↔ template assets (custom_dir injectable for isolation)
     def _tpl_manager():
         from ..templates import TemplateManager
 
@@ -2907,21 +3013,26 @@ def create_web_app(
     async def templates_get(template_id: str):
         tpl = _tpl_manager().get_template(template_id)
         if not tpl:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return tpl
 
     @app.post("/api/templates")
     async def templates_publish(request: Request):
-        # issue #261: 画布流程发布为命名模板 (custom, 幂等 slug — 同名覆盖)
+        # issue #261: publish a canvas workflow as a named template (custom, idempotent slug — same name overwrites)
         try:
             body = await request.json()
         except Exception as e:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}) from e
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}  # # i18n: user-facing
+            ) from e  # i18n: user-facing
         name = str(body.get("name") or "").strip()
         wf = body.get("workflow")
         if not name or not isinstance(wf, dict) or not (wf.get("nodes") or wf.get("workflow", {}).get("nodes")):
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "name 与 workflow.nodes 必填"}
+                status_code=400,
+                detail={"code": "bad_request", "message": "name 与 workflow.nodes 必填"},  # i18n: user-facing
             )
         wf = wf.get("workflow") if isinstance(wf.get("workflow"), dict) else wf
         tpl_id = _tpl_slug(name)
@@ -2932,26 +3043,34 @@ def create_web_app(
             "category": _tpl_slug(str(body.get("category") or "custom")),
             "workflow": wf,
         }
-        # issue #294: params schema 随模板持久化 — GUI 启动表单按 schema 生成
+        # issue #294: params schema persists with the template — GUI launch form is generated from the schema
         if isinstance(body.get("params"), dict):
             tpl["params"] = body["params"]
         if not _tpl_manager().save_custom_template(tpl):
-            raise HTTPException(status_code=500, detail={"code": "save_failed", "message": "模板保存失败"})
-        logger.info(f"模板已发布: {tpl_id} ({name})")
+            raise HTTPException(
+                status_code=500, detail={"code": "save_failed", "message": "模板保存失败"}  # # i18n: user-facing
+            )  # i18n: user-facing
+        logger.info(f"template published: {tpl_id} ({name})")
         return {"id": tpl_id, "name": name}
 
     @app.post("/api/templates/import")
     async def templates_import(request: Request):
-        # issue #261: 导入模板 JSON (整模板或裸 workflow 定义); 同 id 覆盖
+        # issue #261: import template JSON (full template or bare workflow definition); same id overwrites
         try:
             body = await request.json()
         except Exception as e:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}) from e
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}  # # i18n: user-facing
+            ) from e  # i18n: user-facing
         if not isinstance(body, dict):
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON 对象"})
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON 对象"}  # # i18n: user-facing
+            )  # i18n: user-facing
         wf = body.get("workflow") if isinstance(body.get("workflow"), dict) else body
         if not isinstance(wf, dict) or not wf.get("nodes"):
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "workflow.nodes 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "workflow.nodes 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         name = str(body.get("name") or wf.get("name") or "").strip() or "imported-template"
         tpl_id = _tpl_slug(str(body.get("id") or name))
         tpl = {
@@ -2961,20 +3080,24 @@ def create_web_app(
             "category": _tpl_slug(str(body.get("category") or "custom")),
             "workflow": wf,
         }
-        # issue #294: params schema 随模板持久化 — GUI 启动表单按 schema 生成
+        # issue #294: params schema persists with the template — GUI launch form is generated from the schema
         if isinstance(body.get("params"), dict):
             tpl["params"] = body["params"]
         if not _tpl_manager().save_custom_template(tpl):
-            raise HTTPException(status_code=500, detail={"code": "save_failed", "message": "模板保存失败"})
-        logger.info(f"模板已导入: {tpl_id} ({name})")
+            raise HTTPException(
+                status_code=500, detail={"code": "save_failed", "message": "模板保存失败"}  # # i18n: user-facing
+            )  # i18n: user-facing
+        logger.info(f"template imported: {tpl_id} ({name})")
         return {"id": tpl_id, "name": name}
 
     @app.get("/api/templates/{template_id}/export")
     async def templates_export(template_id: str):
-        # issue #261: 导出模板原始 JSON (Content-Disposition 附件)
+        # issue #261: export the template's raw JSON (Content-Disposition attachment)
         tpl = _tpl_manager().get_template(template_id)
         if not tpl:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         import json as _json
 
         return Response(
@@ -2985,10 +3108,11 @@ def create_web_app(
 
     @app.delete("/api/templates/{template_id}")
     async def templates_delete(template_id: str):
-        # issue #261: 删除自定义模板 — 内置模板拒绝
+        # issue #261: delete a custom template — builtin templates are refused
         if not _tpl_manager().delete_custom_template(template_id):
             raise HTTPException(
-                status_code=400, detail={"code": "not_custom", "message": f"仅自定义模板可删除: {template_id}"}
+                status_code=400,
+                detail={"code": "not_custom", "message": f"仅自定义模板可删除: {template_id}"},  # i18n: user-facing
             )
         return {"deleted": template_id}
 
@@ -3000,12 +3124,16 @@ def create_web_app(
         tm = _tpl_manager()
         tpl = tm.get_template(template_id)
         if not tpl:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         body = body if isinstance(body, dict) else {}
         param_values = body.get("params") if isinstance(body.get("params"), dict) else {}
         wf = tm.template_to_workflow(template_id, param_values=param_values)
         if wf is None:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         errors = wf.validate()
         if errors:
             raise HTTPException(status_code=400, detail={"code": "invalid_workflow", "message": "; ".join(errors)})
@@ -3013,7 +3141,10 @@ def create_web_app(
         if "${param." in json.dumps(wf_dict, ensure_ascii=False):
             raise HTTPException(
                 status_code=400,
-                detail={"code": "params_missing", "message": "必填模板参数缺失 (${param.*} 未替换)"},
+                detail={
+                    "code": "params_missing",
+                    "message": "必填模板参数缺失 (${param.*} 未替换)",  # # i18n: user-facing
+                },  # i18n: user-facing
             )
         primary = str(body.get("id") or template_id)
         ids = [primary] + [a for a in tpl.get("web_aliases", []) if isinstance(a, str) and a and a != primary]
@@ -3039,28 +3170,37 @@ def create_web_app(
 
     @app.post("/api/templates/{template_id}/launch", status_code=202)
     async def templates_launch(template_id: str, request: Request):
-        # issue #294: GUI 一键启动模板 — params 表单值经 template_to_workflow 替换后直接起 run
+        # issue #294: GUI one-click template launch — params form values are substituted via template_to_workflow and the run starts directly
         tpl = _tpl_manager().get_template(template_id)
         if not tpl:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         try:
             body = await request.json()
         except Exception as e:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}) from e
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}  # # i18n: user-facing
+            ) from e  # i18n: user-facing
         param_values = body.get("params") if isinstance(body.get("params"), dict) else {}
         wf = _tpl_manager().template_to_workflow(template_id, param_values=param_values)
         if wf is None:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         errors = wf.validate()
         if errors:
             raise HTTPException(status_code=400, detail={"code": "invalid_workflow", "message": "; ".join(errors)})
         wf_dict = wf.to_dict()
-        # 未替换的 ${param.*} 残留 = 必填参数缺失 — 装配即拒绝比 org/repo 字面量上线诚实
+        # Leftover ${param.*} residue = missing required params — refusing at assembly is more honest than shipping org/repo literals
         blob = json.dumps(wf_dict, ensure_ascii=False)
         if "${param." in blob:
             raise HTTPException(
                 status_code=400,
-                detail={"code": "params_missing", "message": "必填模板参数缺失 (${param.*} 未替换)"},
+                detail={
+                    "code": "params_missing",
+                    "message": "必填模板参数缺失 (${param.*} 未替换)",  # # i18n: user-facing
+                },  # i18n: user-facing
             )
         # issue #288: caller identity JWT → background run LLM calls meter under the user
         from ..auth.identity_propagation import extract_identity_token
@@ -3076,10 +3216,11 @@ def create_web_app(
             )
         except ValueError as exc:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": f"工作流定义无效: {exc}"}
+                status_code=400,
+                detail={"code": "bad_request", "message": f"工作流定义无效: {exc}"},  # i18n: user-facing
             ) from exc
 
-    # ── issue #400: 需求录入模式 — requirement 进, slug/私有仓/登记全自动派生 ──
+    # ── issue #400: requirement intake mode — requirement in; slug/private repo/registry registration all derived automatically ──
     def _intake_module():
         from . import intake as _intake
 
@@ -3089,20 +3230,24 @@ def create_web_app(
 
     @app.post("/api/templates/{template_id}/launch-intake", status_code=202)
     async def templates_launch_intake(template_id: str, request: Request, response: Response):
-        # 客户只给一件事: requirement 文本 (文档 md/txt v1)。slug/私有仓/registry
-        # 登记/启动参数全部派生; 显式参数模式仍是 /launch (操作员专家通道)
+        # The client provides exactly one thing: requirement text (md/txt doc, v1). slug/private repo/registry
+        # registration/launch params are all derived; explicit-params mode remains /launch (operator expert channel)
         intake = _intake_module()
         tpl = _tpl_manager().get_template(template_id)
         if not tpl:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         try:
             body = await request.json()
         except Exception as e:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}) from e
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}  # # i18n: user-facing
+            ) from e  # i18n: user-facing
         requirement = str(body.get("requirement") or "")
         slug_hint = str(body.get("slug_hint") or "")
         dry_run = bool(body.get("dry_run"))
-        # issue #413: 架构评审 (gate B) intake 二选一 — 缺省 false = 闸门自动通过
+        # issue #413: architecture review (gate B) intake is opt-in — default false = gate passes automatically
         review_arch = bool(body.get("review_arch"))
         try:
             plan = await intake.prepare_intake(
@@ -3119,8 +3264,8 @@ def create_web_app(
             return {"status": "dry_run", "plan": plan}
 
         # registry entry was created with run_id "pending" — start the run, then backfill
-        # issue #414: 模板 slug 参数是裸 slug (repo_scaffold 自加 ai- 前缀) — registry/repo/labels
-        # 保持 ai- 前缀形态, 传给模板的去掉, 否则脚手架目录变成 ai-ai-<name>
+        # issue #414: the template's slug param is a bare slug (repo_scaffold adds the ai- prefix itself) — registry/repo/labels
+        # keep the ai- prefixed form, the value passed to the template is stripped, otherwise the scaffold dir becomes ai-ai-<name>
         template_slug = plan["slug"].removeprefix("ai-")
         try:
             wf = _tpl_manager().template_to_workflow(
@@ -3135,17 +3280,24 @@ def create_web_app(
             )
         except Exception as exc:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": f"模板装配失败: {exc}"}
+                status_code=400,
+                detail={"code": "bad_request", "message": f"模板装配失败: {exc}"},  # i18n: user-facing
             ) from exc
         if wf is None:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         errors = wf.validate()
         if errors:
             raise HTTPException(status_code=400, detail={"code": "invalid_workflow", "message": "; ".join(errors)})
         wf_dict = wf.to_dict()
         if "${param." in json.dumps(wf_dict, ensure_ascii=False):
             raise HTTPException(
-                status_code=400, detail={"code": "params_missing", "message": "必填模板参数缺失 (${param.*} 未替换)"}
+                status_code=400,
+                detail={
+                    "code": "params_missing",
+                    "message": "必填模板参数缺失 (${param.*} 未替换)",  # # i18n: user-facing
+                },  # i18n: user-facing
             )
         from ..auth.identity_propagation import extract_identity_token
 
@@ -3160,16 +3312,17 @@ def create_web_app(
             )
         except ValueError as exc:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": f"工作流定义无效: {exc}"}
+                status_code=400,
+                detail={"code": "bad_request", "message": f"工作流定义无效: {exc}"},  # i18n: user-facing
             ) from exc
         run_id = str(run.get("run_id", ""))
         try:
             intake.update_registry_run_id(plan["slug"], run_id, path=intake.registry_path())
         except Exception as e:
-            logger.warning(f"registry run_id 回填失败 (忽略) {plan['slug']}: {e}")
+            logger.warning(f"registry run_id backfill failed (ignored) {plan['slug']}: {e}")
         return {"status": "started", "run_id": run_id, "plan": plan}
 
-    # ── issue #263 仓库 onboarding 向导 ──
+    # ── issue #263 repository onboarding wizard ──
     def _wizard():
         from . import github_wizard as _gw
 
@@ -3178,7 +3331,10 @@ def create_web_app(
         if not os.environ.get("GITHUB_TOKEN"):
             raise HTTPException(
                 status_code=503,
-                detail={"code": "token_missing", "message": "GITHUB_TOKEN 未设置 — 向导只走环境变量, 不入库"},
+                detail={
+                    "code": "token_missing",
+                    "message": "GITHUB_TOKEN 未设置 — 向导只走环境变量, 不入库",  # # i18n: user-facing
+                },  # i18n: user-facing
             )
         return _gw.GithubWizard()
 
@@ -3186,15 +3342,18 @@ def create_web_app(
     async def wizard_repos(org: str):
         org = (org or "").strip()
         if not org:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "org 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "org 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         try:
             repos = await _wizard().list_repos(org)
         except HTTPException:
             raise
         except Exception as e:
-            logger.warning(f"向导列仓失败 org={org}: {e}")
+            logger.warning(f"wizard list repos failed org={org}: {e}")
             raise HTTPException(
-                status_code=502, detail={"code": "github_error", "message": f"GitHub 列仓失败: {e}"}
+                status_code=502,
+                detail={"code": "github_error", "message": f"GitHub 列仓失败: {e}"},  # i18n: user-facing
             ) from e
         return {"repos": repos, "count": len(repos)}
 
@@ -3203,7 +3362,9 @@ def create_web_app(
         org = str(body.get("org") or "").strip()
         repos = [r for r in (body.get("repos") or []) if str(r).strip()]
         if not org or not repos:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "org 与 repos 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "org 与 repos 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         try:
             plans = await _wizard().preview(
                 org, repos, codeowners=body.get("codeowners"), protected_checks=body.get("protected_checks")
@@ -3211,9 +3372,10 @@ def create_web_app(
         except HTTPException:
             raise
         except Exception as e:
-            logger.warning(f"向导预览失败 org={org}: {e}")
+            logger.warning(f"wizard preview failed org={org}: {e}")
             raise HTTPException(
-                status_code=502, detail={"code": "github_error", "message": f"GitHub 预览失败: {e}"}
+                status_code=502,
+                detail={"code": "github_error", "message": f"GitHub 预览失败: {e}"},  # i18n: user-facing
             ) from e
         return {"plans": plans}
 
@@ -3222,7 +3384,9 @@ def create_web_app(
         org = str(body.get("org") or "").strip()
         repos = [r for r in (body.get("repos") or []) if str(r).strip()]
         if not org or not repos:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "org 与 repos 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "org 与 repos 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         try:
             results = await _wizard().apply(
                 org, repos, codeowners=body.get("codeowners"), protected_checks=body.get("protected_checks")
@@ -3230,9 +3394,10 @@ def create_web_app(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"向导应用失败 org={org}: {e}")
+            logger.error(f"wizard apply failed org={org}: {e}")
             raise HTTPException(
-                status_code=502, detail={"code": "github_error", "message": f"GitHub 应用失败: {e}"}
+                status_code=502,
+                detail={"code": "github_error", "message": f"GitHub 应用失败: {e}"},  # i18n: user-facing
             ) from e
         return {"results": results}
 
@@ -3241,31 +3406,34 @@ def create_web_app(
         org = str(body.get("org") or "").strip()
         repos = [r for r in (body.get("repos") or []) if str(r).strip()]
         if not org or not repos:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "org 与 repos 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "org 与 repos 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         try:
             results = await _wizard().teardown(org, repos)
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"向导卸载失败 org={org}: {e}")
+            logger.error(f"wizard teardown failed org={org}: {e}")
             raise HTTPException(
-                status_code=502, detail={"code": "github_error", "message": f"GitHub 卸载失败: {e}"}
+                status_code=502,
+                detail={"code": "github_error", "message": f"GitHub 卸载失败: {e}"},  # i18n: user-facing
             ) from e
         return {"results": results}
 
-    # ── W6 调度任务 (migration doc §6 P0) ──
+    # ── W6 scheduled tasks (migration doc §6 P0) ──
     def _make_task_executor(workflow_id: str):
-        # issue #218: TaskScheduler._run_task 以零参调用 executor (await executor()),
-        # 旧签名 _exec(task_id) 每次触发都 TypeError, 连败 5 次后任务被置 FAILED。
+        # issue #218: TaskScheduler._run_task invokes the executor with zero args (await executor());
+        # the old _exec(task_id) signature raised TypeError on every fire, and after 5 consecutive failures the task was marked FAILED.
         async def _exec() -> None:
             record = store.get(workflow_id)
             if not record:
-                logger.error(f"定时任务执行器找不到工作流: {workflow_id}")
+                logger.error(f"scheduled task executor cannot find workflow: {workflow_id}")
                 return
             runs.start(
                 record.get("workflow") or {}, workflow_id=workflow_id, workflow_name=record.get("name", workflow_id)
             )
-            logger.info(f"定时任务已触发工作流 {workflow_id}")
+            logger.info(f"scheduled task triggered workflow {workflow_id}")
 
         return _exec
 
@@ -3299,16 +3467,20 @@ def create_web_app(
         name = str(body.get("name") or "").strip()
         workflow_id = str(body.get("workflow_id") or "").strip()
         if not name or not workflow_id:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "name 与 workflow_id 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "name 与 workflow_id 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         if not store.get(workflow_id):
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"工作流不存在: {workflow_id}"}
+                status_code=404,
+                detail={"code": "not_found", "message": f"工作流不存在: {workflow_id}"},  # i18n: user-facing
             )
         cron = str(body.get("cron") or "").strip()
         interval_minutes = body.get("interval_minutes")
         if cron and isinstance(interval_minutes, (int, float)) and interval_minutes > 0:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "cron 与 interval_minutes 只能二选一"}
+                status_code=400,
+                detail={"code": "bad_request", "message": "cron 与 interval_minutes 只能二选一"},  # i18n: user-facing
             )
         try:
             if cron:
@@ -3329,25 +3501,32 @@ def create_web_app(
                 )
             else:
                 raise HTTPException(
-                    status_code=400, detail={"code": "bad_request", "message": "cron 或 interval_minutes 必填其一"}
+                    status_code=400,
+                    detail={"code": "bad_request", "message": "cron 或 interval_minutes 必填其一"},  # i18n: user-facing
                 )
         except HTTPException:
             raise
         except ValueError as e:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": f"触发器无效: {e}"}) from e
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": f"触发器无效: {e}"}  # # i18n: user-facing
+            ) from e  # i18n: user-facing
         t = scheduler.get_task(task_id)
         return {"id": task_id, "name": name, "workflow_id": workflow_id, "status": t.status.value if t else "active"}
 
     @app.post("/api/scheduler/tasks/{task_id}/pause")
     async def scheduler_tasks_pause(task_id: str):
         if not scheduler.pause_task(task_id):
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return {"id": task_id, "status": "paused"}
 
     @app.post("/api/scheduler/tasks/{task_id}/resume")
     async def scheduler_tasks_resume(task_id: str):
         if not scheduler.resume_task(task_id):
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return {"id": task_id, "status": "active"}
 
     @app.post("/api/scheduler/tasks/{task_id}/run-now")
@@ -3360,7 +3539,9 @@ def create_web_app(
         except ValueError as e:
             raise HTTPException(status_code=409, detail={"code": "task_not_active", "message": str(e)}) from e
         if not triggered:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         t = scheduler.get_task(task_id)
         return {
             "id": task_id,
@@ -3403,43 +3584,53 @@ def create_web_app(
     @app.delete("/api/scheduler/tasks/{task_id}")
     async def scheduler_tasks_delete(task_id: str):
         if not scheduler.remove_task(task_id):
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return {"deleted": True}
 
-    # ── W7 NL 委托 (migration doc §6 P1) ──
+    # ── W7 NL delegate (migration doc §6 P1) ──
     @app.post("/api/ai/generate-workflow")
     async def ai_generate_workflow(body: Dict[str, Any]):
         prompt = str(body.get("prompt") or "").strip()
         if not prompt:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "prompt 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "prompt 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         context = body.get("context") if isinstance(body.get("context"), dict) else None
-        # W17: 可选 model 覆盖 — 用请求自带 mlx 客户端构造临时生成器 (不改共享实例状态)
+        # W17: optional model override — build a temporary generator with the request's own mlx client (never mutates the shared instance)
         model = str(body.get("model") or "").strip()
         generator = nl_generator
         if model:
             from ..ai.nl_parser import NLWorkflowGenerator
 
             generator = NLWorkflowGenerator(getattr(nl_generator, "mlx", None), model=model)
-        logger.info(f"web API NL 生成请求: {prompt[:80]} model={model or '(auto)'}")
+        logger.info(f"web API NL generation request: {prompt[:80]} model={model or '(auto)'}")
         try:
             workflow = await generator.generate(prompt, context)
         except Exception as e:
-            logger.error(f"web API NL 生成失败: {e}")
-            raise HTTPException(status_code=502, detail={"code": "upstream_error", "message": f"生成失败: {e}"}) from e
+            logger.error(f"web API NL generation failed: {e}")
+            raise HTTPException(
+                status_code=502, detail={"code": "upstream_error", "message": f"生成失败: {e}"}  # # i18n: user-facing
+            ) from e  # i18n: user-facing
         if not isinstance(workflow, dict) or not workflow.get("nodes"):
-            raise HTTPException(status_code=502, detail={"code": "upstream_error", "message": "生成结果缺少 nodes"})
+            raise HTTPException(
+                status_code=502, detail={"code": "upstream_error", "message": "生成结果缺少 nodes"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return {"workflow": workflow}
 
-    # ── issue #148: chat-first 委托 — 一句话直接出交付物, 不强制进画布 ──
-    # 确定性启发 (Rule: 决策走代码不走模型): 计划 ≤2 节点且不含高风险节点 →
-    # mode=auto 直接执行并返回 run_id (前端流式展示进度/交付物); 否则
-    # mode=plan 返回内部执行计划 (仍保存为工作流), 一键批准执行; DAG 编辑
-    # 永远可选 (workflow_id 可进画布)。
+    # ── issue #148: chat-first delegate — one sentence straight to a deliverable, no forced canvas entry ──
+    # Deterministic heuristic (Rule: decisions go through code, not the model): a plan with ≤2 nodes and no
+    # high-risk nodes → mode=auto executes directly and returns run_id (frontend streams progress/deliverables);
+    # otherwise mode=plan returns the internal execution plan (still saved as a workflow) for one-click approval;
+    # DAG editing always remains optional (workflow_id can enter the canvas).
     @app.post("/api/ai/chat-delegate")
     async def ai_chat_delegate(body: Dict[str, Any]):
         prompt = str(body.get("prompt") or "").strip()
         if not prompt:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "prompt 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "prompt 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         context = body.get("context") if isinstance(body.get("context"), dict) else None
         model = str(body.get("model") or "").strip()
         memory = body.get("memory", True)
@@ -3452,10 +3643,14 @@ def create_web_app(
         try:
             workflow = await generator.generate(prompt, context)
         except Exception as e:
-            logger.error(f"web API chat-delegate 生成失败: {e}")
-            raise HTTPException(status_code=502, detail={"code": "upstream_error", "message": f"生成失败: {e}"}) from e
+            logger.error(f"web API chat-delegate generation failed: {e}")
+            raise HTTPException(
+                status_code=502, detail={"code": "upstream_error", "message": f"生成失败: {e}"}  # # i18n: user-facing
+            ) from e  # i18n: user-facing
         if not isinstance(workflow, dict) or not workflow.get("nodes"):
-            raise HTTPException(status_code=502, detail={"code": "upstream_error", "message": "生成结果缺少 nodes"})
+            raise HTTPException(
+                status_code=502, detail={"code": "upstream_error", "message": "生成结果缺少 nodes"}  # # i18n: user-facing
+            )  # i18n: user-facing
 
         from ..engine.node import NodeRegistry
         from ..engine.permission import HIGH_RISK_NODES
@@ -3487,7 +3682,7 @@ def create_web_app(
             "description": record.get("description", ""),
             "steps": plan_steps,
         }
-        # issue #509: 幻觉路径提示 — 生成器剔除的未验证路径透传给预览卡
+        # issue #509: hallucinated-path hint — unverified paths stripped by the generator pass through to the preview card
         gen_warnings = workflow.get("warnings")
         if isinstance(gen_warnings, list) and gen_warnings:
             plan["warnings"] = [str(w) for w in gen_warnings]
@@ -3502,37 +3697,46 @@ def create_web_app(
                 )
             except ValueError as exc:
                 raise HTTPException(
-                    status_code=400, detail={"code": "bad_request", "message": f"工作流定义无效: {exc}"}
+                    status_code=400,
+                    detail={"code": "bad_request", "message": f"工作流定义无效: {exc}"},  # i18n: user-facing
                 ) from exc
-            logger.info(f"chat-delegate 自动执行: workflow={workflow_id} run={run['run_id']} ({len(nodes)} 节点)")
+            logger.info(f"chat-delegate auto-executed: workflow={workflow_id} run={run['run_id']} ({len(nodes)} nodes)")
             return {"mode": "auto", "workflow_id": workflow_id, "run_id": run["run_id"], "plan": plan}
         logger.info(
-            f"chat-delegate 计划待批准: workflow={workflow_id} ({len(nodes)} 节点, 含高风险={any(n in HIGH_RISK_NODES for n in node_names)})"
+            f"chat-delegate plan awaiting approval: workflow={workflow_id} ({len(nodes)} nodes, high-risk={any(n in HIGH_RISK_NODES for n in node_names)})"
         )
         return {"mode": "plan", "workflow_id": workflow_id, "plan": plan}
 
-    # ── issue #150: 引用溯源 — 按路径读取文本文件 (沙箱范围内, 供引用卡展示) ──
+    # ── issue #150: citation provenance — read a text file by path (within the sandbox, shown in the citation card) ──
     @app.get("/api/files/read")
     async def files_read(path: str = "", line_start: int = 0, line_end: int = 0):
         if not path:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "path 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "path 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         from ..security import get_scoped_folder_manager
 
         p = Path(path).expanduser()
         if not get_scoped_folder_manager().ensure_allowed(p):
-            raise HTTPException(status_code=403, detail={"code": "forbidden", "message": f"路径不在授权范围内: {path}"})
+            raise HTTPException(
+                status_code=403, detail={"code": "forbidden", "message": f"路径不在授权范围内: {path}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         if not p.is_file():
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"文件不存在: {path}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"文件不存在: {path}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         try:
             raw = p.read_text(encoding="utf-8", errors="replace")
         except OSError as e:
-            raise HTTPException(status_code=400, detail={"code": "read_error", "message": f"读取失败: {e}"}) from e
+            raise HTTPException(
+                status_code=400, detail={"code": "read_error", "message": f"读取失败: {e}"}  # # i18n: user-facing
+            ) from e  # i18n: user-facing
         lines = raw.splitlines()
         total_lines = len(lines)
         lo = max(int(line_start or 1), 1)
         hi = min(int(line_end or total_lines), total_lines) if line_end else total_lines
         selected = "\n".join(lines[lo - 1 : hi])[:_MAX_ARTIFACT_BYTES]
-        logger.info(f"web API 文件读取: {p} [{lo}-{hi}/{total_lines}]")
+        logger.info(f"web API file read: {p} [{lo}-{hi}/{total_lines}]")
         return {
             "path": str(p),
             "name": p.name,
@@ -3543,18 +3747,18 @@ def create_web_app(
             "truncated": len(selected) >= _MAX_ARTIFACT_BYTES,
         }
 
-    # ── W17 模型目录 (migration doc §6 P3; #126 起默认只回 chat 模型) ──
-    # #147: 模型列表最后成功缓存 — 上游断链时返回 stale 结果而非 503,
-    # 消除前端重试风暴; 下次成功自动刷新 ("服务恢复后自动回填")。
-    # #172: 冷缓存 (上游一直离线) 同样不再 503 — 返回 200 空列表 + unavailable=true
-    # envelope, 前端轮询拿到成功响应即不重试, 渲染空态而非刷屏报错。
+    # ── W17 model catalog (migration doc §6 P3; since #126 the default returns chat models only) ──
+    # #147: last-successful model list cache — return the stale result instead of 503 when upstream is down,
+    # eliminating the frontend retry storm; the next success refreshes automatically ("auto-backfill after service recovery").
+    # #172: cold cache (upstream never came online) also no longer 503s — returns a 200 empty list + unavailable=true
+    # envelope, so the frontend poller gets a success and stops retrying, rendering an empty state instead of error spam.
     _models_cache: Dict[str, Any] = {"models": None, "ts": 0.0}
 
     @app.get("/api/models")
     async def models_list(request: Request):
         mlx = getattr(nl_generator, "mlx", None)
         if mlx is None:
-            logger.warning("web API 模型列表: 模型客户端不可用, 返回空列表 envelope")
+            logger.warning("web API model list: model client unavailable, returning empty list envelope")
             return {"models": [], "count": 0, "total": 0, "stale": False, "unavailable": True}
         try:
             models = await mlx.list_models()
@@ -3564,25 +3768,27 @@ def create_web_app(
             cached = _models_cache["models"]
             if cached is not None:
                 age = int(time.time() - _models_cache["ts"])
-                logger.warning(f"web API 模型列表获取失败, 返回 {age}s 前缓存 ({len(cached)} 条): {e}")
+                logger.warning(
+                    f"web API model list fetch failed, returning {age}s-old cache ({len(cached)} entries): {e}"
+                )
                 models = cached
                 stale = True
             else:
-                logger.warning(f"web API 模型列表获取失败 (fusion-mlx 不在线, 无缓存): {e}")
+                logger.warning(f"web API model list fetch failed (fusion-mlx offline, no cache): {e}")
                 return {"models": [], "count": 0, "total": 0, "stale": False, "unavailable": True}
         else:
             stale = False
-        # #126: 顶层模型选择器 (W17 picker / DelegatePage) 只能选 chat 模型 —
-        # video/embedding 等选中后在生成期才失败。默认过滤, 原始列表经 ?all=1 获取。
+        # #126: the top-level model picker (W17 picker / DelegatePage) can only select chat models —
+        # video/embedding etc. would only fail later during generation. Filtered by default; the raw list is at ?all=1.
         from ..ai.nl_parser import _is_chat_model
 
         if request.query_params.get("all") != "1":
             chat_models = [m for m in models if _is_chat_model(m)]
-            logger.info(f"web API 模型列表: chat {len(chat_models)}/{len(models)} (默认过滤非 chat)")
+            logger.info(f"web API model list: chat {len(chat_models)}/{len(models)} (non-chat filtered by default)")
             return {"models": chat_models, "count": len(chat_models), "total": len(models), "stale": stale}
         return {"models": models, "count": len(models), "total": len(models), "stale": stale}
 
-    # ── issue #155: markdown skill 包 — 发现 / 参数表单 schema / 执行 ──
+    # ── issue #155: markdown skill packages — discovery / param form schema / execution ──
     @app.get("/api/skills")
     async def skills_list():
         from ..skills import get_package_registry
@@ -3593,7 +3799,7 @@ def create_web_app(
         out = []
         for p in packages:
             d = p.to_dict()
-            # issue #255: 用户目录包可经 web 编辑/删除; 内置包只读
+            # issue #255: user-directory packages can be edited/deleted via web; builtin packages are read-only
             d["editable"] = bool(p.source) and p.source.startswith(user_dir)
             out.append(d)
         return {"skills": out, "count": len(out)}
@@ -3605,26 +3811,31 @@ def create_web_app(
         try:
             body = await request.json()
         except Exception as e:
-            logger.warning(f"/api/skills/{name}/run JSON 解析失败: {e}")
+            logger.warning(f"/api/skills/{name}/run JSON parse failed: {e}")
             raise HTTPException(status_code=400, detail={"code": "invalid_json", "message": "invalid json"}) from e
         values = body.get("params") if isinstance(body, dict) and "params" in body else body
         if not isinstance(values, dict):
-            raise HTTPException(status_code=400, detail={"code": "invalid_params", "message": "params 必须是对象"})
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_params", "message": "params 必须是对象"}  # # i18n: user-facing
+            )  # i18n: user-facing
         registry = get_package_registry()
         if registry.get(name) is None:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         result = await registry.run(name, values)
         if "error" in result:
             status = 400 if result.get("errors") else 500
             return JSONResponse(result, status_code=status)
         return result
 
-    # ── issue #255: markdown skill 包 CRUD (用户目录 ~/.fusion-cowork/skills) ──
+    # ── issue #255: markdown skill package CRUD (user directory ~/.fusion-cowork/skills) ──
     def _skill_slug(name: str) -> str:
         slug = re.sub(r"[^a-z0-9_-]+", "-", name.strip().lstrip("/").lower()).strip("-")
         if not slug:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_name", "message": f"技能名无法转为文件名: {name}"}
+                status_code=400,
+                detail={"code": "bad_name", "message": f"技能名无法转为文件名: {name}"},  # i18n: user-facing
             )
         return slug
 
@@ -3640,15 +3851,19 @@ def create_web_app(
 
         pkg = get_package_registry().get(name)
         if pkg is None:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         editable = bool(pkg.source) and pkg.source.startswith(str(USER_PACKAGES_DIR))
         markdown = ""
         if editable:
             try:
                 markdown = Path(pkg.source).read_text(encoding="utf-8")
             except OSError as e:
-                logger.warning(f"[skills] 读包源失败 {pkg.source}: {e}")
-                raise HTTPException(status_code=500, detail={"code": "read_failed", "message": "读取技能包失败"}) from e
+                logger.warning(f"[skills] failed to read package source {pkg.source}: {e}")
+                raise HTTPException(
+                    status_code=500, detail={"code": "read_failed", "message": "读取技能包失败"}  # # i18n: user-facing
+                ) from e  # i18n: user-facing
         return {"name": pkg.name, "editable": editable, "markdown": markdown}
 
     @app.put("/api/skills")
@@ -3662,7 +3877,9 @@ def create_web_app(
             raise HTTPException(status_code=400, detail={"code": "invalid_json", "message": "invalid json"}) from e
         markdown = body.get("markdown") if isinstance(body, dict) else None
         if not isinstance(markdown, str) or not markdown.strip():
-            raise HTTPException(status_code=400, detail={"code": "invalid_body", "message": "markdown 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_body", "message": "markdown 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         try:
             pkg = parse_markdown(markdown)
         except ValueError as e:
@@ -3672,7 +3889,7 @@ def create_web_app(
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(markdown, encoding="utf-8")
         _reload_skill_packages()
-        logger.info(f"[skills] markdown 包已保存: {pkg.name} -> {target}")
+        logger.info(f"[skills] markdown package saved: {pkg.name} -> {target}")
         saved = get_package_registry().get(pkg.name)
         d = (saved or pkg).to_dict()
         d["saved"] = True
@@ -3686,14 +3903,18 @@ def create_web_app(
 
         pkg = get_package_registry().get(name)
         if pkg is None:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         source = Path(pkg.source or "")
         if not (str(source).startswith(str(USER_PACKAGES_DIR)) and source.exists()):
-            logger.warning(f"[skills] 拒绝删除非用户目录包: {pkg.name} ({pkg.source})")
-            raise HTTPException(status_code=400, detail={"code": "builtin", "message": "内置技能不可删除"})
+            logger.warning(f"[skills] refused to delete non-user-directory package: {pkg.name} ({pkg.source})")
+            raise HTTPException(
+                status_code=400, detail={"code": "builtin", "message": "内置技能不可删除"}  # # i18n: user-facing
+            )  # i18n: user-facing
         source.unlink()
         _reload_skill_packages()
-        logger.info(f"[skills] markdown 包已删除: {pkg.name} ({source})")
+        logger.info(f"[skills] markdown package deleted: {pkg.name} ({source})")
         return {"deleted": True, "name": pkg.name}
 
     @app.get("/api/skills/{name:path}")
@@ -3702,15 +3923,17 @@ def create_web_app(
 
         pkg = get_package_registry().get(name)
         if pkg is None:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return pkg.to_dict()
 
-    # ── issue #170: Extensions console — Skills + Knowledge (f-ecommerce E2 迁移) ──
-    # Skills: 用户 JSON skill 包 (~/.fusion-cowork/skills/<name>/skill.json,
-    #   handler = workflow|node|script), 安装即注册进 SkillRegistry (MCP skill_run
-    #   可调), 脚本包仅静态 env 密钥 (本地未配鉴权 = 本机操作员) 可装。
-    # Knowledge: fusion-rag (:11436) KB 控制台 — 复用 SpaceKB 同款 KBClient 绑定,
-    #   wire 状态落 ~/.fusion-cowork/web/rag_wired.json, 能力 id knowledge.<kb>.search。
+    # ── issue #170: Extensions console — Skills + Knowledge (f-ecommerce E2 migration) ──
+    # Skills: user JSON skill packs (~/.fusion-cowork/skills/<name>/skill.json,
+    #   handler = workflow|node|script); installing registers into the SkillRegistry (callable via
+    #   MCP skill_run); script packs install only under a static env key (no local auth configured = local operator).
+    # Knowledge: fusion-rag (:11436) KB console — reuses the SpaceKB-style KBClient binding;
+    #   wire state lands in ~/.fusion-cowork/web/rag_wired.json; capability id knowledge.<kb>.search.
     def _extensions_rag():
         from ..ai.mlx_client import KBClient
 
@@ -3725,7 +3948,7 @@ def create_web_app(
         except FileNotFoundError:
             return []
         except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"rag wired 状态读取失败 {path}: {e}")
+            logger.warning(f"rag wired state read failed {path}: {e}")
             return []
 
     def _save_wired(wired: List[str]) -> None:
@@ -3736,8 +3959,8 @@ def create_web_app(
         tmp.replace(path)
 
     def _script_install_allowed(request: Request) -> bool:
-        # script 包 = 任意代码 — 仅静态 env 密钥 (或本机未配鉴权) 可装;
-        # 网关签发 fm- 模块密钥走浏览器面, 永远不可装脚本包。
+        # script packs = arbitrary code — installable only with a static env key (or when local auth is unconfigured);
+        # gateway-issued fm- module keys go through the browser surface and can never install script packs.
         if not auth_configured():
             return True
         return extract_caller_key(request.headers) == _api_key() and bool(_api_key())
@@ -3790,12 +4013,14 @@ def create_web_app(
         except Exception as e:
             raise HTTPException(status_code=400, detail={"code": "invalid_json", "message": "invalid json"}) from e
         if not isinstance(doc, dict):
-            raise HTTPException(status_code=400, detail={"code": "invalid_body", "message": "body 必须是 JSON 对象"})
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_body", "message": "body 必须是 JSON 对象"}  # # i18n: user-facing
+            )  # i18n: user-facing
         name, stype, problems = _validate_skill_doc(doc)
         if problems:
             return JSONResponse({"installed": False, "problems": problems}, status_code=400)
         if stype == "script" and not _script_install_allowed(request):
-            logger.warning("[extensions] script 包安装被拒 (非静态管理密钥): %s", name)
+            logger.warning("[extensions] script pack install refused (not a static admin key): %s", name)
             return JSONResponse(
                 {"installed": False, "problems": ["script skills are admin-only (arbitrary code)"]},
                 status_code=403,
@@ -3832,7 +4057,9 @@ def create_web_app(
         args = str(body.get("args", "")) if isinstance(body, dict) else ""
         pack = next((p for p in list_skill_packs(skills_dir=skills_dir) if p.name == name), None)
         if pack is None:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         started = _time.monotonic()
         result = await make_pack_handler(pack, skills_dir)(args)
         failed = isinstance(result, dict) and "error" in result
@@ -3863,7 +4090,7 @@ def create_web_app(
                 return {"ok": False, "error": f"fusion-rag {resp.status_code}"}
             return {"ok": True, "version": data.get("version", ""), "status": data.get("status", "")}
         except Exception as e:
-            logger.warning("[extensions] fusion-rag 不可达: %s", e)
+            logger.warning("[extensions] fusion-rag unreachable: %s", e)
             return {"ok": False, "error": str(e)}
         finally:
             await client.close()
@@ -3876,7 +4103,7 @@ def create_web_app(
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
-            logger.warning("[extensions] fusion-rag KB 列表失败: %s", e)
+            logger.warning("[extensions] fusion-rag KB list failed: %s", e)
             raise HTTPException(status_code=503, detail={"code": "rag_unavailable", "message": str(e)}) from e
         finally:
             await client.close()
@@ -3939,14 +4166,16 @@ def create_web_app(
         description = str(body.get("description") or "").strip() if isinstance(body, dict) else ""
         wire = bool(body.get("wire")) if isinstance(body, dict) else False
         if not name:
-            raise HTTPException(status_code=400, detail={"code": "invalid_name", "message": "name 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_name", "message": "name 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         client = _extensions_rag()
         try:
             kb_id = await client.create_kb(name, description)
             if wire:
                 _save_wired(_load_wired() + [kb_id])
         except Exception as e:
-            logger.error("[extensions] fusion-rag KB 创建失败: %s", e)
+            logger.error("[extensions] fusion-rag KB create failed: %s", e)
             raise HTTPException(status_code=503, detail={"code": "rag_unavailable", "message": str(e)}) from e
         finally:
             await client.close()
@@ -3981,7 +4210,7 @@ def create_web_app(
         try:
             resp = await client.list_documents(kb_id)
         except Exception as e:
-            logger.warning("[extensions] fusion-rag 文档列表失败 %s: %s", kb_id, e)
+            logger.warning("[extensions] fusion-rag document list failed %s: %s", kb_id, e)
             raise HTTPException(status_code=503, detail={"code": "rag_unavailable", "message": str(e)}) from e
         finally:
             await client.close()
@@ -3990,22 +4219,29 @@ def create_web_app(
 
     @app.post("/api/extensions/rag/kb/{kb_id}/documents")
     async def extensions_rag_kb_upload(kb_id: str, request: Request):
-        # multipart 上传: 浏览器文件先落 ~/.fusion-cowork/web/rag_uploads/<kb>/,
-        # 再经 KBClient.upload_file (SpaceKB 同款绑定) 走 fusion-rag 摄取。
+        # multipart upload: browser files land in ~/.fusion-cowork/web/rag_uploads/<kb>/ first,
+        # then KBClient.upload_file (same binding as SpaceKB) ingests them into fusion-rag.
         try:
             form = await request.form()
         except Exception as e:
             raise HTTPException(
-                status_code=400, detail={"code": "invalid_form", "message": "multipart form 解析失败"}
+                status_code=400,
+                detail={"code": "invalid_form", "message": "multipart form 解析失败"},  # i18n: user-facing
             ) from e
         upload = form.get("file")
         if upload is None or isinstance(upload, str):
-            raise HTTPException(status_code=400, detail={"code": "missing_file", "message": "file 字段必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "missing_file", "message": "file 字段必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         filename = Path(upload.filename or "").name
         if not filename or Path(filename).suffix.lower() not in (".md", ".txt"):
-            raise HTTPException(status_code=400, detail={"code": "invalid_type", "message": "仅接受 .md/.txt"})
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_type", "message": "仅接受 .md/.txt"}  # # i18n: user-facing
+            )  # i18n: user-facing
         if not kb_id or any(c in kb_id for c in "/\\") or kb_id.startswith("."):
-            raise HTTPException(status_code=400, detail={"code": "invalid_kb", "message": "非法 kb_id"})
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_kb", "message": "非法 kb_id"}  # # i18n: user-facing
+            )  # i18n: user-facing
         upload_dir = Path.home() / ".fusion-cowork" / "web" / "rag_uploads" / kb_id
         upload_dir.mkdir(parents=True, exist_ok=True)
         dest = upload_dir / filename
@@ -4016,25 +4252,26 @@ def create_web_app(
                     size += len(chunk)
                     if size > 10 << 20:
                         raise HTTPException(
-                            status_code=400, detail={"code": "too_large", "message": "文件超过 10MB 上限"}
+                            status_code=400,
+                            detail={"code": "too_large", "message": "文件超过 10MB 上限"},  # i18n: user-facing
                         )
                     f.write(chunk)
         except HTTPException:
             dest.unlink(missing_ok=True)
             raise
         except OSError as e:
-            logger.error("[extensions] 上传落盘失败 %s: %s", dest, e)
+            logger.error("[extensions] upload write failed %s: %s", dest, e)
             raise HTTPException(status_code=500, detail={"code": "write_failed", "message": str(e)}) from e
         client = _extensions_rag()
         try:
             result = await client.upload_file(kb_id, str(dest), file_name=filename)
         except Exception as e:
-            logger.error("[extensions] fusion-rag 摄取失败 %s/%s: %s", kb_id, filename, e)
+            logger.error("[extensions] fusion-rag ingest failed %s/%s: %s", kb_id, filename, e)
             raise HTTPException(status_code=503, detail={"code": "rag_unavailable", "message": str(e)}) from e
         finally:
             await client.close()
         result = result if isinstance(result, dict) else {}
-        logger.info("[extensions] KB %s 摄取 %s (%d bytes): %s", kb_id, filename, size, result.get("chunks", "?"))
+        logger.info("[extensions] KB %s ingested %s (%d bytes): %s", kb_id, filename, size, result.get("chunks", "?"))
         return {"chunks": result.get("chunks"), **{k: v for k, v in result.items() if k != "chunks"}}
 
     @app.post("/api/extensions/rag/kb/{kb_id}/search")
@@ -4045,7 +4282,9 @@ def create_web_app(
             raise HTTPException(status_code=400, detail={"code": "invalid_json", "message": "invalid json"}) from e
         query = str(body.get("query") or "").strip() if isinstance(body, dict) else ""
         if not query:
-            raise HTTPException(status_code=400, detail={"code": "invalid_query", "message": "query 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_query", "message": "query 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         try:
             top_k = int(body.get("top_k", 5))
         except (TypeError, ValueError):
@@ -4055,7 +4294,7 @@ def create_web_app(
         try:
             hits = await client.search(kb_id, query, top_k=top_k)
         except Exception as e:
-            logger.warning("[extensions] fusion-rag 检索失败 %s: %s", kb_id, e)
+            logger.warning("[extensions] fusion-rag search failed %s: %s", kb_id, e)
             raise HTTPException(status_code=503, detail={"code": "rag_unavailable", "message": str(e)}) from e
         finally:
             await client.close()
@@ -4066,7 +4305,7 @@ def create_web_app(
             if isinstance(h, dict)
         ]
 
-    # ── issue #228: 能力市场 — Skills / Connectors / Sub-agents 统一生命周期 ──
+    # ── issue #228: capability marketplace — unified Skills / Connectors / Sub-agents lifecycle ──
     from ..capabilities import load_connector_config, normalize_workspace, search_items
 
     _CAP_KIND = {"skill": "skills", "connector": "connectors", "subagent": "subagents"}
@@ -4078,10 +4317,12 @@ def create_web_app(
         try:
             space = await space_store.get_space(ws)
         except Exception as e:
-            logger.warning(f"能力市场: 工作区校验失败 {ws}: {e}")
+            logger.warning(f"capability marketplace: workspace validation failed {ws}: {e}")
             raise HTTPException(status_code=502, detail={"code": "upstream_error", "message": str(e)}) from e
         if space is None:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"工作区不存在: {ws}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"工作区不存在: {ws}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return ws
 
     async def _cap_catalog(ws: str, types: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -4103,14 +4344,16 @@ def create_web_app(
 
     def _cap_type_or_400(cap_type: str) -> str:
         if cap_type not in _CAP_KIND:
-            raise HTTPException(status_code=400, detail={"code": "bad_type", "message": f"未知能力类型: {cap_type}"})
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_type", "message": f"未知能力类型: {cap_type}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return cap_type
 
     async def _cap_body(request: Request) -> Dict[str, Any]:
         try:
             body = await request.json()
         except Exception as e:
-            logger.warning(f"能力市场请求体解析失败: {e}")
+            logger.warning(f"capability marketplace request body parse failed: {e}")
             return {}
         return body if isinstance(body, dict) else {}
 
@@ -4140,7 +4383,9 @@ def create_web_app(
         ws = await _cap_workspace(body.get("workspace_id"))
         item = await _cap_item(ws, cap_type, cap_id)
         if item is None:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知能力: {cap_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"未知能力: {cap_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         entry = capability_store.install(
             ws,
             cap_type,
@@ -4150,7 +4395,7 @@ def create_web_app(
             spawn_policy=item.get("spawn_policy") if cap_type == "subagent" else None,
             actor=str(body.get("actor") or ""),
         )
-        logger.info(f"能力市场安装: ws={ws} {cap_id} source={item.get('source')}")
+        logger.info(f"capability marketplace install: ws={ws} {cap_id} source={item.get('source')}")
         return {"installed": True, "workspace_id": ws, "capability": entry.to_public()}
 
     @app.delete("/api/capabilities/{cap_type}/{cap_id}")
@@ -4168,7 +4413,9 @@ def create_web_app(
         enabled = bool(body.get("enabled", True))
         entry = capability_store.set_enabled(ws, cap_type, cap_id, enabled, actor=str(body.get("actor") or ""))
         if entry is None:
-            raise HTTPException(status_code=404, detail={"code": "not_installed", "message": f"未安装: {cap_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_installed", "message": f"未安装: {cap_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return {"workspace_id": ws, "capability": entry.to_public()}
 
     @app.post("/api/capabilities/connectors/{cap_id}/scopes")
@@ -4177,21 +4424,30 @@ def create_web_app(
         ws = await _cap_workspace(body.get("workspace_id"))
         item = await _cap_item(ws, "connector", cap_id)
         if item is None:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知连接器: {cap_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"未知连接器: {cap_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         known = {str(s.get("id")): bool(s.get("sensitive")) for s in item.get("scopes") or []}
         requested = [str(s) for s in body.get("scopes") or [] if str(s)]
         unknown = [s for s in requested if s not in known]
         if unknown:
-            raise HTTPException(status_code=400, detail={"code": "unknown_scope", "message": f"未知 scope: {unknown}"})
+            raise HTTPException(
+                status_code=400, detail={"code": "unknown_scope", "message": f"未知 scope: {unknown}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         sensitive = [s for s in requested if known.get(s)]
         if sensitive and body.get("approve") is not True:
             raise HTTPException(
                 status_code=409,
-                detail={"code": "sensitive_scope_requires_approval", "message": f"敏感 scope 需显式批准: {sensitive}"},
+                detail={
+                    "code": "sensitive_scope_requires_approval",
+                    "message": f"敏感 scope 需显式批准: {sensitive}",  # # i18n: user-facing
+                },  # i18n: user-facing
             )
         entry = capability_store.grant_scopes(ws, cap_id, requested, actor=str(body.get("actor") or ""))
         if entry is None:
-            raise HTTPException(status_code=404, detail={"code": "not_installed", "message": f"未安装: {cap_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_installed", "message": f"未安装: {cap_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return {"workspace_id": ws, "capability": entry.to_public(), "sensitive_approved": sensitive}
 
     @app.post("/api/capabilities/connectors/{cap_id}/oauth/start")
@@ -4201,19 +4457,21 @@ def create_web_app(
         item = await _cap_item(ws, "connector", cap_id)
         if item is None or (item.get("auth") or {}).get("kind") != "oauth":
             raise HTTPException(
-                status_code=404, detail={"code": "oauth_not_configured", "message": f"无 OAuth 配置: {cap_id}"}
+                status_code=404,
+                detail={"code": "oauth_not_configured", "message": f"无 OAuth 配置: {cap_id}"},  # i18n: user-facing
             )
         raw_id = str(item.get("name") or "")
         cfg = load_connector_config(connector_dir, raw_id) or {}
         oauth_cfg = cfg.get("oauth") if isinstance(cfg.get("oauth"), dict) else None
         if not oauth_cfg:
             raise HTTPException(
-                status_code=404, detail={"code": "oauth_not_configured", "message": f"无 OAuth 配置: {cap_id}"}
+                status_code=404,
+                detail={"code": "oauth_not_configured", "message": f"无 OAuth 配置: {cap_id}"},  # i18n: user-facing
             )
         try:
             started = oauth_flow.start(cap_id, oauth_cfg, workspace_id=ws)
         except Exception as e:
-            logger.warning(f"OAuth 授权启动失败 {cap_id}: {e}")
+            logger.warning(f"OAuth flow start failed {cap_id}: {e}")
             raise HTTPException(status_code=400, detail={"code": "oauth_not_configured", "message": str(e)}) from e
         return started
 
@@ -4222,15 +4480,18 @@ def create_web_app(
         from ..security.encryption import encrypt_at_rest
 
         if error:
-            logger.warning(f"OAuth 回调返回错误: {error}")
+            logger.warning(f"OAuth callback returned error: {error}")
             return JSONResponse({"connected": False, "error": error}, status_code=400)
         pending = oauth_flow.pop_state(state)
         if pending is None:
             raise HTTPException(
-                status_code=400, detail={"code": "oauth_state_invalid", "message": "state 未知或已过期"}
+                status_code=400,
+                detail={"code": "oauth_state_invalid", "message": "state 未知或已过期"},  # i18n: user-facing
             )
         if not code:
-            raise HTTPException(status_code=400, detail={"code": "oauth_code_missing", "message": "缺少 code"})
+            raise HTTPException(
+                status_code=400, detail={"code": "oauth_code_missing", "message": "缺少 code"}  # # i18n: user-facing
+            )  # i18n: user-facing
         cap_id = str(pending.get("connector_id") or "")
         ws = str(pending.get("workspace_id") or "")
         item = await _cap_item(ws, "connector", cap_id)
@@ -4240,14 +4501,14 @@ def create_web_app(
         try:
             tokens = await oauth_flow.exchange(pending, code, oauth_cfg)
         except Exception as e:
-            logger.warning(f"OAuth token 交换失败 {cap_id}: {e}")
+            logger.warning(f"OAuth token exchange failed {cap_id}: {e}")
             raise HTTPException(status_code=502, detail={"code": "oauth_exchange_failed", "message": str(e)}) from e
         encrypted = {k: encrypt_at_rest(str(v)) for k, v in tokens.items()}
         capability_store.set_credentials(ws, cap_id, encrypted)
         scopes = [str(s) for s in pending.get("scopes") or []]
         if scopes:
             capability_store.grant_scopes(ws, cap_id, scopes)
-        logger.info(f"OAuth 连接完成: ws={ws} {cap_id} scopes={scopes}")
+        logger.info(f"OAuth connect completed: ws={ws} {cap_id} scopes={scopes}")
         return {"connected": True, "workspace_id": ws, "connector_id": cap_id, "scopes": scopes}
 
     @app.post("/api/capabilities/connectors/{cap_id}/revoke")
@@ -4263,7 +4524,9 @@ def create_web_app(
         ws = normalize_workspace(workspace_id)
         usage = capability_store.usage(ws, cap_type, cap_id)
         if usage is None:
-            raise HTTPException(status_code=404, detail={"code": "not_installed", "message": f"未安装: {cap_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_installed", "message": f"未安装: {cap_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         usage["workspace_id"] = ws
         return usage
 
@@ -4272,14 +4535,18 @@ def create_web_app(
         ws = await _cap_workspace(workspace_id)
         item = await _cap_item(ws, "subagent", cap_id)
         if item is None:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知子代理: {cap_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"未知子代理: {cap_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         kind = str((item.get("detail") or {}).get("kind") or "")
         if kind == "template":
             from ..templates import TemplateManager
 
             tpl = TemplateManager().get_template(str(item["detail"]["template_id"]))
             if tpl is None:
-                raise HTTPException(status_code=404, detail={"code": "not_found", "message": "模板不存在"})
+                raise HTTPException(
+                    status_code=404, detail={"code": "not_found", "message": "模板不存在"}  # # i18n: user-facing
+                )  # i18n: user-facing
             return {"kind": "template", "definition": tpl}
         import httpx
 
@@ -4302,7 +4569,7 @@ def create_web_app(
                 resp.raise_for_status()
                 return {"kind": kind, "definition": resp.json()}
         except Exception as e:
-            logger.warning(f"子代理定义拉取失败 {cap_id}: {e}")
+            logger.warning(f"subagent definition fetch failed {cap_id}: {e}")
             raise HTTPException(status_code=502, detail={"code": "upstream_unavailable", "message": str(e)}) from e
 
     @app.post("/api/capabilities/subagents/{cap_id}/spawn")
@@ -4311,16 +4578,23 @@ def create_web_app(
         ws = await _cap_workspace(body.get("workspace_id"))
         entry = capability_store.get(ws, "subagent", cap_id)
         if entry is None or not entry.enabled:
-            raise HTTPException(status_code=409, detail={"code": "not_enabled", "message": f"子代理未启用: {cap_id}"})
+            raise HTTPException(
+                status_code=409, detail={"code": "not_enabled", "message": f"子代理未启用: {cap_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         item = await _cap_item(ws, "subagent", cap_id)
         if item is None:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"未知子代理: {cap_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"未知子代理: {cap_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         detail = item.get("detail") or {}
         policy = entry.spawn_policy or item.get("spawn_policy") or {}
         if policy.get("requires_approval") and body.get("approve") is not True:
             raise HTTPException(
                 status_code=409,
-                detail={"code": "spawn_approval_required", "message": f"子代理派生需显式批准: {cap_id}"},
+                detail={
+                    "code": "spawn_approval_required",
+                    "message": f"子代理派生需显式批准: {cap_id}",  # # i18n: user-facing
+                },  # i18n: user-facing
             )
         text = str(body.get("input") or body.get("goal") or "")
         kind = str(detail.get("kind") or "")
@@ -4329,7 +4603,9 @@ def create_web_app(
 
             wf = TemplateManager().template_to_workflow(str(detail.get("template_id") or ""))
             if wf is None:
-                raise HTTPException(status_code=404, detail={"code": "not_found", "message": "模板不存在"})
+                raise HTTPException(
+                    status_code=404, detail={"code": "not_found", "message": "模板不存在"}  # # i18n: user-facing
+                )  # i18n: user-facing
             started = runs.start(
                 wf.to_dict(),
                 workflow_id=f"capability:{cap_id}",
@@ -4338,7 +4614,7 @@ def create_web_app(
                 labels={"capability": cap_id},
                 space_id=ws,
             )
-            logger.info(f"子代理派生 (template): ws={ws} {cap_id} run={started['run_id']}")
+            logger.info(f"subagent spawn (template): ws={ws} {cap_id} run={started['run_id']}")
             return {"kind": "template", "run_id": started["run_id"], "route": f"/runs/{started['run_id']}"}
         import httpx
 
@@ -4367,15 +4643,15 @@ def create_web_app(
                 resp.raise_for_status()
                 payload = resp.json()
         except Exception as e:
-            logger.warning(f"子代理派生失败 {cap_id}: {e}")
+            logger.warning(f"subagent spawn failed {cap_id}: {e}")
             raise HTTPException(status_code=502, detail={"code": "upstream_unavailable", "message": str(e)}) from e
         capability_store.record_usage(
             ws, "subagent", cap_id, workflow=str(item.get("title") or ""), detail=text[:80], verdict="spawned"
         )
-        logger.info(f"子代理派生 ({kind}): ws={ws} {cap_id}")
+        logger.info(f"subagent spawn ({kind}): ws={ws} {cap_id}")
         return {"kind": kind, "result": payload, "spawn_policy": policy}
 
-    # ── issue #153: 托管浏览器 — 启动 / 关闭 / 状态 / 实时截图侧栏 ──
+    # ── issue #153: managed browser — launch / close / status / live screenshot sidebar ──
     @app.post("/api/browser/launch")
     async def browser_launch(request: Request):
         from ..managed_browser import ManagedBrowserError, get_managed_browser
@@ -4385,7 +4661,9 @@ def create_web_app(
         except Exception:
             body = {}
         if not isinstance(body, dict):
-            raise HTTPException(status_code=400, detail={"code": "invalid_body", "message": "body 必须是对象"})
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_body", "message": "body 必须是对象"}  # # i18n: user-facing
+            )  # i18n: user-facing
         try:
             info = await get_managed_browser().launch(
                 url=str(body.get("url") or "about:blank"),
@@ -4394,10 +4672,10 @@ def create_web_app(
                 import_cookies=str(body.get("import_cookies") or ""),
             )
         except ManagedBrowserError as e:
-            logger.error(f"托管浏览器启动失败: {e}")
+            logger.error(f"managed browser launch failed: {e}")
             raise HTTPException(status_code=503, detail={"code": "browser_unavailable", "message": str(e)}) from e
         except Exception as e:
-            logger.error(f"托管浏览器启动异常: {e}")
+            logger.error(f"managed browser launch error: {e}")
             raise HTTPException(status_code=500, detail={"code": "browser_error", "message": str(e)}) from e
         return info
 
@@ -4421,19 +4699,21 @@ def create_web_app(
 
         info = get_managed_browser().status()
         if not info.get("running"):
-            raise HTTPException(status_code=409, detail={"code": "not_running", "message": "托管浏览器未运行"})
+            raise HTTPException(
+                status_code=409, detail={"code": "not_running", "message": "托管浏览器未运行"}  # # i18n: user-facing
+            )  # i18n: user-facing
         client = CDPClient(port=int(info["port"]))
         try:
             await client.connect()
             data = await client.screenshot()
         except Exception as e:
-            logger.warning(f"托管浏览器截图失败: {e}")
+            logger.warning(f"managed browser screenshot failed: {e}")
             raise HTTPException(status_code=502, detail={"code": "screenshot_failed", "message": str(e)}) from e
         finally:
             await client.disconnect()
         return Response(content=data, media_type="image/png")
 
-    # ── issue #162: fusion-browser 引擎 — 每运行 profile / 登录态导入 / 面板截图流 ──
+    # ── issue #162: fusion-browser engine — per-run profile / login-state import / panel screenshot stream ──
     def _fusion_browser():
         from ..fusion_browser import get_fusion_browser
 
@@ -4445,7 +4725,9 @@ def create_web_app(
         except Exception:
             body = {}
         if not isinstance(body, dict):
-            raise HTTPException(status_code=400, detail={"code": "invalid_body", "message": "body 必须是对象"})
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_body", "message": "body 必须是对象"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return body
 
     @app.post("/api/fusion-browser/launch")
@@ -4460,7 +4742,7 @@ def create_web_app(
         try:
             return await asyncio.to_thread(browser.launch, str(body.get("url") or "") or None)
         except FusionBrowserError as e:
-            logger.error(f"fusion-browser 启动失败: {e}")
+            logger.error(f"fusion-browser launch failed: {e}")
             raise HTTPException(status_code=503, detail={"code": "browser_unavailable", "message": str(e)}) from e
 
     @app.get("/api/fusion-browser/status")
@@ -4482,7 +4764,7 @@ def create_web_app(
                 mode=str(body.get("mode") or "") or None,
             )
         except FusionBrowserError as e:
-            status = 409 if "未运行" in str(e) else 502
+            status = 409 if "未运行" in str(e) else 502  # i18n: user-facing
             raise HTTPException(status_code=status, detail={"code": "session_failed", "message": str(e)}) from e
 
     @app.post("/api/fusion-browser/import-cookies")
@@ -4492,7 +4774,9 @@ def create_web_app(
         body = await _fusion_body(request)
         session_id = str(body.get("session_id") or "")
         if not session_id:
-            raise HTTPException(status_code=400, detail={"code": "missing_session", "message": "session_id 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "missing_session", "message": "session_id 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         try:
             return await asyncio.to_thread(
                 _fusion_browser().import_cookies,
@@ -4513,7 +4797,7 @@ def create_web_app(
         if not session_id or not action:
             raise HTTPException(
                 status_code=400,
-                detail={"code": "missing_params", "message": "session_id 与 action 必填"},
+                detail={"code": "missing_params", "message": "session_id 与 action 必填"},  # i18n: user-facing
             )
         try:
             return await asyncio.to_thread(
@@ -4549,11 +4833,13 @@ def create_web_app(
         from ..fusion_browser import FusionBrowserError
 
         if not session_id:
-            raise HTTPException(status_code=400, detail={"code": "missing_session", "message": "session_id 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "missing_session", "message": "session_id 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         try:
             data = await asyncio.to_thread(_fusion_browser().screenshot_png, session_id)
         except FusionBrowserError as e:
-            status = 409 if "未运行" in str(e) else 502
+            status = 409 if "未运行" in str(e) else 502  # i18n: user-facing
             raise HTTPException(status_code=status, detail={"code": "screenshot_failed", "message": str(e)}) from e
         return Response(content=data, media_type="image/png")
 
@@ -4562,10 +4848,14 @@ def create_web_app(
         from ..fusion_browser import FusionBrowserError
 
         if not session_id:
-            raise HTTPException(status_code=400, detail={"code": "missing_session", "message": "session_id 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "missing_session", "message": "session_id 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         browser = _fusion_browser()
         if not browser.socket_path:
-            raise HTTPException(status_code=409, detail={"code": "not_running", "message": "fusion-browser 未运行"})
+            raise HTTPException(
+                status_code=409, detail={"code": "not_running", "message": "fusion-browser 未运行"}  # # i18n: user-facing
+            )  # i18n: user-facing
         try:
             frames = browser.stream_frames(session_id)
         except FusionBrowserError as e:
@@ -4583,7 +4873,7 @@ def create_web_app(
                         except asyncio.QueueFull:
                             time.sleep(0.05)
             except Exception as e:
-                logger.warning(f"fusion-browser 面板流中断: {e}")
+                logger.warning(f"fusion-browser panel stream interrupted: {e}")
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
@@ -4611,7 +4901,7 @@ def create_web_app(
 
         return StreamingResponse(_events(), media_type="text/event-stream")
 
-    # ── issue #139: manifest ext 后端 — ⌘K 跨模块搜索 + 通知中心轮询源 ──
+    # ── issue #139: manifest ext backend — ⌘K cross-module search + notification center poll sources ──
     @app.get("/api/search")
     async def search_all(q: str = ""):
         query = (q or "").strip().lower()
@@ -4626,18 +4916,18 @@ def create_web_app(
         for r in runs.list():
             name = str(r.get("workflow_name") or r.get("run_id") or "")
             if query in name.lower():
-                items.append({"title": f"运行: {name}", "route": "/runs", "kind": "run"})
+                items.append({"title": f"运行: {name}", "route": "/runs", "kind": "run"})  # i18n: user-facing
         if space_store is not None:
             try:
                 spaces = await space_store.list_spaces(limit=100)
             except Exception as e:
-                logger.warning(f"搜索空间失败 (跳过): {e}")
+                logger.warning(f"space search failed (skipped): {e}")
                 spaces = []
             for s in spaces:
                 name = str(getattr(s, "name", "") or getattr(s, "id", ""))
                 if query in name.lower():
                     items.append({"title": name, "route": "/spaces", "kind": "space"})
-        # issue #228: 能力市场条目并入 ⌘K 搜索 (技能/连接器/子代理)
+        # issue #228: capability marketplace items merged into ⌘K search (skills/connectors/subagents)
         try:
             for hit in search_items(
                 q,
@@ -4656,27 +4946,29 @@ def create_web_app(
                     }
                 )
         except Exception as e:
-            logger.warning(f"搜索能力市场失败 (跳过): {e}")
+            logger.warning(f"capability marketplace search failed (skipped): {e}")
         items = items[:32]
-        logger.info(f"web API 搜索 q={q!r} 命中 {len(items)} 条")
+        logger.info(f"web API search q={q!r} hits {len(items)}")
         return {"items": items}
 
     @app.get("/api/notifications/approvals")
     async def notifications_approvals():
         if permission_manager is None:
-            raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"})
+            raise HTTPException(
+                status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"}  # # i18n: user-facing
+            )  # i18n: user-facing
         list_merged = getattr(permission_manager, "list_pending", None)
         approvals = list_merged() if callable(list_merged) else permission_manager.list_pending_guard()
         items = [
             {
                 "id": a.get("action_id", ""),
-                "title": f"审批: {a.get('tool_name', '')}",
+                "title": f"审批: {a.get('tool_name', '')}",  # i18n: user-facing
                 "route": "/approvals",
                 "level": "warning",
             }
             for a in approvals
         ][:32]
-        logger.info(f"web API 通知源 approvals 轮询: {len(items)} 条待审批")
+        logger.info(f"web API notification source approvals poll: {len(items)} pending")
         return {"items": items}
 
     @app.get("/api/notifications/runs")
@@ -4687,46 +4979,55 @@ def create_web_app(
         items = [
             {
                 "id": r.get("run_id", ""),
-                "title": f"运行结束: {r.get('workflow_name') or r.get('run_id')} ({r.get('status')})",
+                "title": f"运行结束: {r.get('workflow_name') or r.get('run_id')} ({r.get('status')})",  # i18n: user-facing
                 "route": "/runs",
                 "level": "error" if r.get("status") == "failed" else "info",
             }
             for r in rows[:32]
         ]
-        logger.info(f"web API 通知源 runs 轮询: {len(items)} 条终态运行")
+        logger.info(f"web API notification source runs poll: {len(items)} terminal runs")
         return {"items": items}
 
-    # ── issue #138 G10: 空间知识层 — space 级 instructions (system-prompt 注入) ──
+    # ── issue #138 G10: space knowledge layer — space-level instructions (system-prompt injection) ──
     @app.get("/api/space/spaces/{space_id}/instructions")
     async def instructions_get(space_id: str):
         if space_store is None:
-            raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "空间存储不可用"})
+            raise HTTPException(
+                status_code=503, detail={"code": "unavailable", "message": "空间存储不可用"}  # # i18n: user-facing
+            )  # i18n: user-facing
         sp = await space_store.get_space(space_id)
         if not sp:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": "空间不存在"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": "空间不存在"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return {"space_id": space_id, "instructions": getattr(sp.config, "instructions", "") or ""}
 
     @app.put("/api/space/spaces/{space_id}/instructions")
     async def instructions_put(space_id: str, body: Dict[str, Any]):
         if space_store is None:
-            raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "空间存储不可用"})
+            raise HTTPException(
+                status_code=503, detail={"code": "unavailable", "message": "空间存储不可用"}  # # i18n: user-facing
+            )  # i18n: user-facing
         sp = await space_store.get_space(space_id)
         if not sp:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": "空间不存在"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": "空间不存在"}  # # i18n: user-facing
+            )  # i18n: user-facing
         existing = sp.config.to_dict()
         existing["instructions"] = str(body.get("instructions") or "")
         await space_store.update_space(space_id, config=existing)
-        logger.info(f"web API space instructions 已更新: {space_id} ({len(existing['instructions'])} 字符)")
+        logger.info(f"web API space instructions updated: {space_id} ({len(existing['instructions'])} chars)")
         return {"space_id": space_id, "instructions": existing["instructions"]}
 
-    # ── issue #262: 签名 webhook 回调 — 外部系统审批后续跑等待中的审批闸门 run ──
+    # ── issue #262: signed webhook callback — external systems approve/resume runs waiting on approval gates ──
 
     async def _apply_rejected_item_states(repo: str, rejected: List[Dict[str, Any]], findings: str) -> None:
-        # issue #309: 逐项拒绝回写 GitHub — state:blocked 标签 + 原因评论 (best-effort,
-        # 任何失败只 WARN 不影响续跑); 复用 GITHUB_TOKEN 环境变量, 与 github_api 节点同源
+        # issue #309: per-item rejection writeback to GitHub — state:blocked label + reason comment
+        # (best-effort, any failure only WARNs and never blocks the resume); reuses the
+        # GITHUB_TOKEN env var, same source as the github_api node
         token = os.environ.get("GITHUB_TOKEN", "").strip()
         if not token:
-            logger.warning("batch 拒绝项状态回写跳过: GITHUB_TOKEN 未配置")
+            logger.warning("batch rejection writeback skipped: GITHUB_TOKEN not configured")
             return
         import httpx
 
@@ -4738,8 +5039,10 @@ def create_web_app(
         ) as client:
             for item in rejected:
                 issue_number = item.get("task_issue")
-                reason = str(item.get("reason") or "被验收闸门拒绝")
-                body_text = f"G4 验收拒绝: {reason}" + (f"\n\n审查意见:\n{findings}" if findings else "")
+                reason = str(item.get("reason") or "被验收闸门拒绝")  # i18n: user-facing
+                body_text = f"G4 验收拒绝: {reason}" + (
+                    f"\n\n审查意见:\n{findings}" if findings else ""  # # i18n: user-facing
+                )  # i18n: user-facing
                 try:
                     await client.request(
                         "PUT", f"/repos/{repo}/issues/{issue_number}/labels", json={"labels": ["state:blocked"]}
@@ -4747,9 +5050,9 @@ def create_web_app(
                     await client.request(
                         "POST", f"/repos/{repo}/issues/{issue_number}/comments", json={"body": body_text}
                     )
-                    logger.info(f"batch 拒绝项已回写: {repo}#{issue_number} state:blocked")
+                    logger.info(f"batch rejection written back: {repo}#{issue_number} state:blocked")
                 except Exception as e:
-                    logger.warning(f"batch 拒绝项回写失败 (忽略): {repo}#{issue_number}: {e}")
+                    logger.warning(f"batch rejection writeback failed (ignored): {repo}#{issue_number}: {e}")
 
     @app.post("/api/hooks/webhook/{run_id}")
     async def hooks_webhook(run_id: str, request: Request):
@@ -4757,22 +5060,33 @@ def create_web_app(
         if not secret:
             raise HTTPException(
                 status_code=503,
-                detail={"code": "unavailable", "message": "FUSION_COWORK_WEBHOOK_SECRET 未配置, webhook 回调不可用"},
+                detail={
+                    "code": "unavailable",
+                    "message": "FUSION_COWORK_WEBHOOK_SECRET 未配置, webhook 回调不可用",  # # i18n: user-facing
+                },  # i18n: user-facing
             )
         raw = await request.body()
         provided = request.headers.get("X-Fusion-Signature", "")
         expected = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
         if not provided or not hmac.compare_digest(provided, expected):
-            logger.warning(f"webhook 回调签名校验失败: run={run_id}")
-            raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "HMAC 签名无效"})
+            logger.warning(f"webhook callback signature check failed: run={run_id}")
+            raise HTTPException(
+                status_code=401, detail={"code": "unauthorized", "message": "HMAC 签名无效"}  # # i18n: user-facing
+            )  # i18n: user-facing
         try:
             payload = json.loads(raw.decode("utf-8") or "{}")
         except Exception as exc:
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}) from exc
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}  # # i18n: user-facing
+            ) from exc  # i18n: user-facing
         if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON 对象"})
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON 对象"}  # # i18n: user-facing
+            )  # i18n: user-facing
         if permission_manager is None:
-            raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"})
+            raise HTTPException(
+                status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"}  # # i18n: user-facing
+            )  # i18n: user-facing
         finder = getattr(permission_manager, "find_pending_by_execution", None)
         pending = finder(run_id) if callable(finder) else None
         if not pending:
@@ -4790,13 +5104,18 @@ def create_web_app(
                     logger.info(f"webhook run id resolved from body: path={run_id} body={body_run}")
                     run_id = body_run
         if not pending:
-            return {"run_id": run_id, "resumed": False, "reason": "该 run 无待审批项 (已处理或不在等待)"}
+            return {
+                "run_id": run_id,
+                "resumed": False,
+                "reason": "该 run 无待审批项 (已处理或不在等待)",  # # i18n: user-facing
+            }  # i18n: user-facing
         approved = bool(payload.get("approved"))
         action_id = pending.get("action_id", "")
         edited = payload.get("params")
         edited = edited if isinstance(edited, dict) and edited else None
-        # issue #309: 逐项决定 items[] — 全批/混合都续跑 (部分完成可追踪), 全拒按拒绝;
-        # 拒绝项回写 GitHub state:blocked (best-effort, payload.repo 提供时)
+        # issue #309: per-item decision items[] — full-approve/mixed both resume (partial
+        # completion is trackable), all-reject follows the reject path;
+        # rejected items write back GitHub state:blocked (best-effort, when payload.repo provided)
         batch: List[Dict[str, Any]] = []
         raw_items = payload.get("items")
         if isinstance(raw_items, list):
@@ -4817,7 +5136,7 @@ def create_web_app(
             approved = any_approved
             rejected = [x for x in batch if not x.get("approved")]
             logger.info(
-                f"webhook 逐项决定: run={run_id} items={len(batch)} approved={len(batch) - len(rejected)} rejected={len(rejected)}"
+                f"webhook per-item decision: run={run_id} items={len(batch)} approved={len(batch) - len(rejected)} rejected={len(rejected)}"
             )
             if rejected and str(payload.get("repo") or ""):
                 await _apply_rejected_item_states(
@@ -4825,7 +5144,7 @@ def create_web_app(
                     rejected,
                     str(payload.get("findings") or ""),
                 )
-        # issue #303: 决定来源随 webhook 落到 run 时间线 (谁批准的)
+        # issue #303: decision attribution lands on the run timeline via the webhook (who approved)
         attribution = {
             "approval_id": str(payload.get("approval_id") or action_id),
             "decided_by": str(payload.get("decided_by") or "webhook"),
@@ -4848,7 +5167,7 @@ def create_web_app(
                         resumed = bool(resolver(run_id, approved, once=True, params=edited))
                     except TypeError:
                         resumed = bool(resolver(run_id, approved, once=True))
-        logger.info(f"webhook 回调续跑: run={run_id} approved={approved} resumed={resumed}")
+        logger.info(f"webhook callback resume: run={run_id} approved={approved} resumed={resumed}")
         _schedule_hitl_audit(app, run_id, action_id, approved, "webhook")
         return {
             "run_id": run_id,
@@ -5091,18 +5410,25 @@ def create_web_app(
         logger.info(f"DB backup done: {path}")
         return {"path": str(path)}
 
-    # ── W19 guard L3 审批队列 (migration doc §6 P3; #124 起 guard+本地 CONFIRM 合并) ──
+    # ── W19 guard L3 approval queue (migration doc §6 P3; guard + local CONFIRM merged since #124) ──
     @app.get("/api/permissions/pending")
     async def permissions_pending():
         if permission_manager is None:
-            raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"})
+            raise HTTPException(
+                status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"}  # # i18n: user-facing
+            )  # i18n: user-facing
         list_merged = getattr(permission_manager, "list_pending", None)
         approvals = list_merged() if callable(list_merged) else permission_manager.list_pending_guard()
-        # issue #463: durable HITL — 审批日志 pending 行兜底合并 (队列丢失仍可见, source=journal)
-        # issue #497: journal 行卫生 — 空 run_id (崩溃前未落账, 永远无法唤醒/解决) 和
-        # 终态 run 的行不再出现在待审批列表 (污染审批箱 + 跨 run 过滤器误报); 活跃
-        # run 的行照常兜底可见。issue #572: run 记录整体丢失 (重启丢内存库/历史
-        # 淘汰) 的行同样丢弃 — 无法唤醒也无法解决, 永久滞留只会污染审批箱。
+        # issue #463: durable HITL — merge approval-journal pending rows as fallback
+        # (still visible if the queue is lost, source=journal)
+        # issue #497: journal row hygiene — rows with an empty run_id (never journaled
+        # before a crash, can never be woken/resolved) and rows whose run is in a
+        # terminal state no longer surface in the pending list (they pollute the
+        # approval inbox + cause cross-run filter false positives); rows of active
+        # runs keep the normal fallback visibility. issue #572: rows whose run
+        # record is gone entirely (restart with lost in-memory store / evicted
+        # history) are dropped too — they can neither be woken nor resolved, and
+        # lingering forever only pollutes the inbox.
         journal = getattr(engine, "_approval_journal", None)
         if journal is not None:
             try:
@@ -5140,41 +5466,50 @@ def create_web_app(
                         }
                     )
                 if dropped:
-                    logger.info(f"审批日志 pending 卫生清理: {dropped} 条失效行不进待审批列表 (issue #497)")
+                    logger.info(
+                        f"approval journal pending hygiene: {dropped} stale rows excluded from pending list (issue #497)"
+                    )
             except Exception as e:
-                logger.warning(f"审批日志 pending 合并失败 (忽略): {e}")
+                logger.warning(f"approval journal pending merge failed (ignored): {e}")
         return {"approvals": approvals}
 
     @app.post("/api/permissions/pending/{action_id}/confirm")
     async def permissions_confirm(action_id: str, body: Dict[str, Any]):
         if permission_manager is None:
-            raise HTTPException(status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"})
-        # issue #287: confirm 语义 — {"once": true} 不带 approved 按批准一次处理
-        # ("Approve once" 卡片语义), 不再默认落拒绝唤醒 run; 显式 approved=false
-        # 仍走一次性拒绝 (issue #216)。
+            raise HTTPException(
+                status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"}  # # i18n: user-facing
+            )  # i18n: user-facing
+        # issue #287: confirm semantics — {"once": true} without approved is treated as
+        # approve-once ("Approve once" card semantics), no longer defaulting to a
+        # deny-resume; an explicit approved=false still takes the once-deny path (issue #216).
         approved = bool(body.get("approved", bool(body.get("once"))))
-        # issue #328: 拒绝评审意见 — 随决定传给引擎, 修订回路重跑时并入产出节点输入
+        # issue #328: rejection review comment — passed to the engine with the decision,
+        # merged into produced-node inputs when the revision loop re-runs
         reject_comment = str(body.get("comment") or body.get("comments") or "").strip() or None
-        # issue #142: 逐块审阅 — accepted_blocks 指定接受的变更块, 重建窄化后的编辑参数
+        # issue #142: block-level review — accepted_blocks selects accepted change blocks,
+        # rebuilding the narrowed edit params
         narrowed = None
         if approved and isinstance(body.get("accepted_blocks"), list):
             narrowed = _narrow_pending_edit(permission_manager, action_id, body["accepted_blocks"])
             if narrowed is _EDIT_ALL_REJECTED:
-                logger.info(f"逐块审阅: {action_id} 全部变更块被拒绝, 不落批准规则")
+                logger.info(f"block-level review: {action_id} all change blocks rejected, no approval rule saved")
                 return {
                     "action_id": action_id,
                     "approved": True,
                     "confirmed": False,
-                    "reason": "所有变更块均被拒绝, 无可批准内容",
+                    "reason": "所有变更块均被拒绝, 无可批准内容",  # i18n: user-facing
                 }
-        # issue #181: confirm 前读取待审批详情 — 本地待审批携带 execution_id,
-        # confirm 落规则后唤醒 HITL 暂停中的 run 原地续跑 (guard 侧无 execution_id, 不受影响)
+        # issue #181: read pending details before confirm — local pending entries carry an
+        # execution_id; after confirm saves the rule, the HITL-paused run is woken and
+        # resumes in place (guard-side entries have no execution_id, unaffected)
         hitl_exec = None
         details_getter = getattr(permission_manager, "get_pending_details", None)
         if callable(details_getter):
             hitl_exec = (details_getter(action_id) or {}).get("execution_id") or None
-        # issue #187: "Approve once" — 只出队该待审批项, 不落持久规则, 直接唤醒暂停中的 run
-        # issue #508: reply — 结构化人工回复, 随批准并入被闸节点输入 (下游经闸门输出透传)
+        # issue #187: "Approve once" — dequeue only this pending entry, persist no rule,
+        # wake the paused run directly
+        # issue #508: reply — structured human reply, merged into the gated node input on
+        # approval (downstream receives it via the gate output passthrough)
         reply = body.get("reply") if isinstance(body.get("reply"), dict) else None
         if body.get("once") and hitl_exec:
             releaser = getattr(permission_manager, "release_pending_once", None)
@@ -5182,10 +5517,11 @@ def create_web_app(
             if released and approved:
                 resolver = getattr(engine, "resolve_hitl", None)
                 if callable(resolver):
-                    # issue #225: 审批卡 "编辑参数" — edited_params 随批准并入被闸节点输入
+                    # issue #225: approval-card "edit params" — edited_params merged into the
+                    # gated node input on approval
                     edited = body.get("edited_params")
                     edited = edited if isinstance(edited, dict) and edited else None
-                    # issue #303: web 审批卡决定也记录来源
+                    # issue #303: web approval-card decisions record attribution too
                     attribution = {
                         "approval_id": action_id,
                         "decided_by": "web",
@@ -5200,14 +5536,17 @@ def create_web_app(
                             try:
                                 resolver(hitl_exec, True, once=True)
                             except TypeError:
-                                # 兼容无 once 参数的旧引擎 — 规则未落, 复查会拒绝但 run 被唤醒
+                                # back-compat with engines lacking the once param — no rule
+                                # saved, the re-check will deny but the run is woken
                                 resolver(hitl_exec, True)
-                logger.info(f"HITL 一次性批准已唤醒 run: {hitl_exec} (action_id={action_id}, 不落规则)")
+                logger.info(f"HITL once-approve woke run: {hitl_exec} (action_id={action_id}, no rule saved)")
                 _schedule_hitl_audit(app, hitl_exec, action_id, True, "web")
                 return {"action_id": action_id, "approved": True, "confirmed": True, "once": True}
             if released and not approved:
-                # issue #216: 一次性拒绝同样要唤醒 run (拒绝路径无 once-grant, 不落规则),
-                # 否则卡片出队后 confirm_guard 查不到条目返回 False, run 挂到 HITL 超时自动拒绝
+                # issue #216: once-deny must wake the run too (the deny path has no
+                # once-grant and saves no rule), otherwise after the card is dequeued
+                # confirm_guard finds no entry and returns False, leaving the run to
+                # stall until the HITL timeout auto-denies
                 resolver = getattr(engine, "resolve_hitl", None)
                 if callable(resolver):
                     try:
@@ -5223,7 +5562,7 @@ def create_web_app(
                         )
                     except TypeError:
                         resolver(hitl_exec, False)
-                logger.info(f"HITL 一次性拒绝已唤醒 run: {hitl_exec} (action_id={action_id}, 不落规则)")
+                logger.info(f"HITL once-deny woke run: {hitl_exec} (action_id={action_id}, no rule saved)")
                 _schedule_hitl_audit(app, hitl_exec, action_id, False, "web")
                 return {"action_id": action_id, "approved": False, "confirmed": True, "once": True}
         confirmed = await permission_manager.confirm_guard(
@@ -5246,21 +5585,21 @@ def create_web_app(
                     )
                 except TypeError:
                     resolver(hitl_exec, approved)
-                logger.info(f"HITL confirm 已唤醒 run: {hitl_exec} approved={approved}")
+                logger.info(f"HITL confirm woke run: {hitl_exec} approved={approved}")
                 _schedule_hitl_audit(app, hitl_exec, action_id, approved, "web")
-        # issue #138: 确认落规则后立即持久化 (重启不丢)
+        # issue #138: persist immediately after confirm saves the rule (survives restart)
         try:
             saver = getattr(permission_manager, "save", None)
             if confirmed and callable(saver):
                 saver()
         except Exception as e:
-            logger.warning(f"web API 权限规则保存失败: {e}")
+            logger.warning(f"web API permission rule save failed: {e}")
         resp: Dict[str, Any] = {"action_id": action_id, "approved": approved, "confirmed": confirmed}
         if narrowed is not None:
             resp["edited_params"] = narrowed
         return resp
 
-    # ── W21 集群面板 (migration doc §6 P3, FUSION_CLUSTER_ENABLED opt-in) ──
+    # ── W21 cluster panel (migration doc §6 P3, FUSION_CLUSTER_ENABLED opt-in) ──
     @app.get("/api/cluster/state")
     async def cluster_state():
         from ..distributed_state import get_cluster_state_store
@@ -5281,7 +5620,7 @@ def create_web_app(
             "total_allocated_mb": cluster_store.total_vram_allocated_mb(),
         }
 
-    # ── W18 用量/配额指示 — 空间域计数 + QuotaEnforcer 配额 (migration doc §6 P3) ──
+    # ── W18 usage/quota indicator — space-domain counts + QuotaEnforcer quotas (migration doc §6 P3) ──
     @app.get("/api/usage")
     async def usage_overview():
         quotas_usage = {
@@ -5312,7 +5651,7 @@ def create_web_app(
                 )
                 quotas_usage["agents"] = int(row["c"] or 0)
             except Exception as e:
-                logger.warning(f"用量计数失败 (返回零值): {e}")
+                logger.warning(f"usage counting failed (returning zeros): {e}")
         from ..security.quotas import get_default_quota_enforcer
 
         try:
@@ -5325,7 +5664,7 @@ def create_web_app(
                 "max_storage_mb": quotas.max_storage_mb,
             }
         except Exception as e:
-            logger.warning(f"配额读取失败 (返回 unlimited): {e}")
+            logger.warning(f"quota read failed (returning unlimited): {e}")
             quota_fields = {
                 "max_spaces": -1,
                 "max_messages_per_space": -1,
@@ -5333,7 +5672,7 @@ def create_web_app(
                 "max_agents_per_space": -1,
                 "max_storage_mb": -1,
             }
-        # issue #461: token/花费归因 — 按 run 与 workflow 聚合 (进程内注册表 + 重启摘要行)
+        # issue #461: token/spend attribution — aggregated by run and workflow (in-process registry + restart summary rows)
         token_usage = {"total_tokens": 0, "prompt_tokens": 0, "completion_tokens": 0, "spend_usd": 0.0, "runs": 0}
         by_workflow: Dict[str, Dict[str, Any]] = {}
         for r in runs.list():
@@ -5365,7 +5704,7 @@ def create_web_app(
             "token_by_workflow": by_workflow,
         }
 
-    # ── W22 移动只读概览 + 投递到桌面 (remote/sync 底座, cross_sync 注入接缝) ──
+    # ── W22 mobile read-only overview + deliver to desktop (remote/sync foundation, cross_sync injection seam) ──
     @app.get("/api/mobile/overview")
     async def mobile_overview():
         recent = runs.list()[:5]
@@ -5389,16 +5728,18 @@ def create_web_app(
     async def deliver_to_desktop(request: Request):
         cross = getattr(app.state, "cross_sync", None)
         if cross is None:
-            return JSONResponse({"error": "跨设备同步未启用 (cross_sync 未注入)"}, status_code=503)
+            return JSONResponse({"error": "跨设备同步未启用 (cross_sync 未注入)"}, status_code=503)  # i18n: user-facing
         try:
             body = await request.json()
         except Exception as e:
-            logger.warning(f"/api/deliver JSON 解析失败: {e}")
+            logger.warning(f"/api/deliver JSON parse failed: {e}")
             return JSONResponse({"error": "invalid json"}, status_code=400)
         run_id = str(body.get("run_id") or "")
         record = runs.get(run_id)
         if record is None:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         receiver = str(body.get("target_device_id") or "broadcast")
         from .sync import SyncMessage
 
@@ -5417,11 +5758,11 @@ def create_web_app(
         try:
             delivered = await cross.send_message(msg)
         except Exception as e:
-            logger.warning(f"/api/deliver 发送失败 (诚实返回未送达): {e}")
+            logger.warning(f"/api/deliver send failed (honestly reporting not delivered): {e}")
             delivered = False
         return {"delivered": delivered, "run_id": run_id, "receiver": receiver}
 
-    # ── issue #156: 管理台 — 成员 / 用量 / 审计导出。FUSION_COWORK_ADMIN_KEY 门禁 ──
+    # ── issue #156: admin console — members / usage / audit export. FUSION_COWORK_ADMIN_KEY gate ──
     def _require_admin(request: Request) -> None:
         import os as _os
 
@@ -5429,11 +5770,14 @@ def create_web_app(
         if not expected:
             raise HTTPException(
                 status_code=503,
-                detail={"code": "admin_disabled", "message": "管理台未启用 (未配置 FUSION_COWORK_ADMIN_KEY)"},
+                detail={
+                    "code": "admin_disabled",
+                    "message": "管理台未启用 (未配置 FUSION_COWORK_ADMIN_KEY)",  # # i18n: user-facing
+                },  # i18n: user-facing
             )
         provided = request.headers.get("x-admin-key", "")
         if provided != expected:
-            logger.warning(f"admin API 鉴权拒绝: {request.url.path}")
+            logger.warning(f"admin API auth denied: {request.url.path}")
             raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "invalid admin key"})
 
     @app.get("/api/admin/members")
@@ -5448,7 +5792,7 @@ def create_web_app(
                 )
                 members = [dict(r) for r in rows]
             except Exception as e:
-                logger.warning(f"admin members 查询失败: {e}")
+                logger.warning(f"admin members query failed: {e}")
         from ..auth import is_identity_enabled
 
         return {
@@ -5473,7 +5817,7 @@ def create_web_app(
                     row = await space_store._fetchone(f"SELECT COUNT(*) AS c FROM {table}")
                     totals[key] = int(row["c"] or 0)
                 except Exception as e:
-                    logger.warning(f"admin usage 计数失败 {table}: {e}")
+                    logger.warning(f"admin usage count failed {table}: {e}")
         run_counts: Dict[str, int] = {}
         total_tokens = 0
         for record in runs._runs.values():
@@ -5519,7 +5863,7 @@ def create_web_app(
                         }
                     )
             except Exception as e:
-                logger.warning(f"admin audit 查询失败: {e}")
+                logger.warning(f"admin audit query failed: {e}")
         for record in runs._runs.values():
             finished = record.get("finished_at")
             if not finished:
@@ -5550,16 +5894,20 @@ def create_web_app(
         _require_admin(request)
         egress = getattr(app.state, "push_egress", None)
         if egress is None or not getattr(egress, "enabled", False):
-            return {"enabled": False, "delivered": False, "hint": "配置 FUSION_COWORK_PUSH_WEBHOOK_URL 后可用"}
+            return {
+                "enabled": False,
+                "delivered": False,
+                "hint": "配置 FUSION_COWORK_PUSH_WEBHOOK_URL 后可用",  # # i18n: user-facing
+            }  # i18n: user-facing
         delivered = await egress.push_event("test", {"source": "admin_console"})
         return {"enabled": True, "delivered": delivered}
 
-    # ── issue #154: 会话接管 WS — 任意已认证设备 attach 运行中的 run, 事件流 + 转向帧 ──
+    # ── issue #154: takeover WS — any authenticated device attaches to a running run, event stream + steering frames ──
     @app.websocket("/ws/takeover/{run_id}")
     async def takeover_ws(websocket: WebSocket, run_id: str):
         from fastapi import WebSocketDisconnect
 
-        # 浏览器 WS 无法带自定义头 — token 走 query 参数; 未配 key = 放行 (#146 契约)
+        # browser WS cannot send custom headers — token goes via query param; no key configured = allow (#146 contract)
         from ..auth import verify_any_token
 
         if auth_configured():
@@ -5571,16 +5919,16 @@ def create_web_app(
         await websocket.accept()
         record = runs.get(run_id)
         if record is None:
-            await websocket.send_json({"event": "error", "message": f"运行不存在: {run_id}"})
+            await websocket.send_json({"event": "error", "message": f"运行不存在: {run_id}"})  # i18n: user-facing
             await websocket.close(code=4404)
             return
         try:
             await _takeover_session(websocket, run_id, runs, permission_manager)
         except WebSocketDisconnect:
-            logger.info(f"takeover WS 断开: run={run_id}")
+            logger.info(f"takeover WS disconnected: run={run_id}")
         return
 
-    # ── W20 插件面板 — /rpc 端点 (rpc_bridge plugins/* 委托, 依赖缺则 -32603) ──
+    # ── W20 plugin panel — /rpc endpoint (rpc_bridge plugins/* delegation, -32603 when dependency missing) ──
     @app.post("/rpc")
     async def rpc_endpoint(request: Request):
         from .rpc_bridge import dispatch_rpc
@@ -5588,21 +5936,21 @@ def create_web_app(
         try:
             body = await request.json()
         except Exception as e:
-            logger.warning(f"/rpc JSON 解析失败: {e}")
+            logger.warning(f"/rpc JSON parse failed: {e}")
             return JSONResponse(
                 {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}},
                 status_code=400,
             )
         return JSONResponse(await dispatch_rpc(body))
 
-    # ── W11 会话统一列表 (migration doc §6 P1) ──
-    # ── W11/A12 统一会话列表: engine session + space chat + 调度历史 ──
+    # ── W11 unified session list (migration doc §6 P1) ──
+    # ── W11/A12 unified session list: engine session + space chat + scheduler history ──
     @app.get("/api/sessions")
     async def sessions_list(status: str = "", source: str = "", limit: int = 50):
         if source not in ("", "engine", "space", "scheduler"):
             raise HTTPException(
                 status_code=400,
-                detail={"code": "bad_request", "message": "source 必须是 engine/space/scheduler"},
+                detail={"code": "bad_request", "message": "source 必须是 engine/space/scheduler"},  # i18n: user-facing
             )
         lim = min(max(limit, 1), 200)
         items: List[Dict[str, Any]] = []
@@ -5676,7 +6024,7 @@ def create_web_app(
                         }
                         items.append(item)
                 except Exception as e:
-                    logger.warning(f"space 会话合并失败 (跳过): {e}")
+                    logger.warning(f"space session merge failed (skipped): {e}")
         if source in ("", "scheduler") and scheduler is not None:
             try:
                 for task in scheduler.list_tasks():
@@ -5705,7 +6053,7 @@ def create_web_app(
                     }
                     items.append(item)
             except Exception as e:
-                logger.warning(f"调度会话合并失败 (跳过): {e}")
+                logger.warning(f"scheduler session merge failed (skipped): {e}")
         if status:
             items = [i for i in items if i.get("status") == status]
         items.sort(key=lambda i: i.get("updated_at") or i.get("created_at") or 0, reverse=True)
@@ -5716,10 +6064,12 @@ def create_web_app(
     async def sessions_get(session_id: str):
         s = session_store.get(session_id)
         if not s:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"会话不存在: {session_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"会话不存在: {session_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return _serialize_session(s)
 
-    # ── issue #190: 团队消息面 — 花名册 / 信箱 / 消费池生命周期 ──
+    # ── issue #190: team messaging surface — roster / mailbox / consumer-pool lifecycle ──
     @app.get("/api/team/status")
     async def team_status():
         return app.state.runner_pool.status()
@@ -5748,7 +6098,9 @@ def create_web_app(
     @app.delete("/api/team/roster/{agent_id}")
     async def team_roster_remove(agent_id: str):
         if not app.state.team_roster.remove(agent_id):
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"agent 未登记: {agent_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"agent 未登记: {agent_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return {"removed": agent_id}
 
     @app.post("/api/team/send", status_code=201)
@@ -5769,13 +6121,16 @@ def create_web_app(
     @app.get("/api/team/inbox")
     async def team_inbox(agent_id: str, unread: int = 1, limit: int = 100):
         if not agent_id:
-            raise HTTPException(status_code=400, detail={"code": "missing_agent", "message": "agent_id 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "missing_agent", "message": "agent_id 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         messages = app.state.team_mailbox.inbox(agent_id, unread_only=bool(unread), limit=limit)
         return {"agent_id": agent_id, "messages": messages, "count": len(messages)}
 
     @app.post("/api/team/notify")
     async def team_notify():
-        # 推送路径: 对端 daemon 写信箱后调用本接口, 消费池立即醒来 (而非等轮询)
+        # push path: the peer daemon calls this endpoint after writing the mailbox, so the
+        # consumer pool wakes immediately (instead of waiting for the poll interval)
         app.state.runner_pool.wake()
         return {"notified": True, "running": app.state.runner_pool.running}
 
@@ -5838,12 +6193,17 @@ def create_web_app(
         title = str(body.get("title") or "").strip()[:120]
         description = str(body.get("description") or "").strip()[:4000]
         if source != "direct":
-            raise HTTPException(status_code=400, detail={"code": "invalid_source", "message": "source 必须是 direct"})
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_source", "message": "source 必须是 direct"}  # # i18n: user-facing
+            )  # i18n: user-facing
         if not external_id:
-            raise HTTPException(status_code=400, detail={"code": "missing_external_id", "message": "external_id 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "missing_external_id", "message": "external_id 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         if not title or not description:
             raise HTTPException(
-                status_code=400, detail={"code": "invalid_body", "message": "title 与 description 必填"}
+                status_code=400,
+                detail={"code": "invalid_body", "message": "title 与 description 必填"},  # i18n: user-facing
             )
         skills_raw = body.get("skills") or []
         skills = (
@@ -5938,7 +6298,9 @@ def create_web_app(
         async with _demand_store() as store:
             lead = await store.get_lead(lead_id)
         if lead is None:
-            raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"lead 不存在: {lead_id}"})
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"lead 不存在: {lead_id}"}  # # i18n: user-facing
+            )  # i18n: user-facing
         return lead
 
     @app.post("/api/demand/leads/{lead_id}/approve")
@@ -5946,16 +6308,23 @@ def create_web_app(
         body = await request.json()
         pick = str(body.get("pick") or "")
         if pick not in ("a", "b"):
-            raise HTTPException(status_code=400, detail={"code": "invalid_pick", "message": "pick 必须是 a 或 b"})
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_pick", "message": "pick 必须是 a 或 b"}  # # i18n: user-facing
+            )  # i18n: user-facing
         edited = str(body.get("text") or "")
         async with _demand_store() as store:
             lead = await store.get_lead(lead_id)
             if lead is None:
-                raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"lead 不存在: {lead_id}"})
+                raise HTTPException(
+                    status_code=404, detail={"code": "not_found", "message": f"lead 不存在: {lead_id}"}  # # i18n: user-facing
+                )  # i18n: user-facing
             if lead.get("status") != "drafted":
                 raise HTTPException(
                     status_code=409,
-                    detail={"code": "invalid_status", "message": f"仅 drafted 状态可审批, 当前: {lead.get('status')}"},
+                    detail={
+                        "code": "invalid_status",
+                        "message": f"仅 drafted 状态可审批, 当前: {lead.get('status')}",  # # i18n: user-facing
+                    },  # i18n: user-facing
                 )
             fields: Dict[str, Any] = {"status": "approved", "draft_pick": pick}
             if edited:
@@ -5980,7 +6349,9 @@ def create_web_app(
         async with _demand_store() as store:
             lead = await store.get_lead(lead_id)
             if lead is None:
-                raise HTTPException(status_code=404, detail={"code": "not_found", "message": f"lead 不存在: {lead_id}"})
+                raise HTTPException(
+                    status_code=404, detail={"code": "not_found", "message": f"lead 不存在: {lead_id}"}  # # i18n: user-facing
+                )  # i18n: user-facing
             await store.update_lead(lead_id, {"status": "discarded", "discard_reason": reason})
             updated = await store.get_lead(lead_id)
         logger.info(f"[demand] lead {lead_id} discarded reason={reason[:80]}")
@@ -6008,10 +6379,13 @@ def create_web_app(
         capabilities = body.get("capabilities")
         if not isinstance(capabilities, list) or not capabilities:
             raise HTTPException(
-                status_code=400, detail={"code": "invalid_catalog", "message": "capabilities 必须是非空列表"}
+                status_code=400,
+                detail={"code": "invalid_catalog", "message": "capabilities 必须是非空列表"},  # i18n: user-facing
             )
         if not str(body.get("version") or "").strip():
-            raise HTTPException(status_code=400, detail={"code": "invalid_catalog", "message": "version 必填"})
+            raise HTTPException(
+                status_code=400, detail={"code": "invalid_catalog", "message": "version 必填"}  # # i18n: user-facing
+            )  # i18n: user-facing
         old_version = ""
         try:
             old_version = str(
@@ -6065,7 +6439,8 @@ def create_web_app(
             port = int(port) if port else 0
         except (TypeError, ValueError):
             raise HTTPException(
-                status_code=400, detail={"code": "invalid_port", "message": "port 必须是整数"}
+                status_code=400,
+                detail={"code": "invalid_port", "message": "port 必须是整数"},  # i18n: user-facing
             ) from None
         path = write_settings(
             host=str(body.get("host") or ""),
@@ -6114,7 +6489,8 @@ def create_web_app(
             order = await store.get_order(order_no)
             if order is None:
                 raise HTTPException(
-                    status_code=404, detail={"code": "not_found", "message": f"order 不存在: {order_no}"}
+                    status_code=404,
+                    detail={"code": "not_found", "message": f"order 不存在: {order_no}"},  # i18n: user-facing
                 )
             verified = await store.audit_verify()
         order["audit_chain_ok"] = verified
@@ -6128,7 +6504,8 @@ def create_web_app(
             order = await store.get_order(order_no)
             if order is None:
                 raise HTTPException(
-                    status_code=404, detail={"code": "not_found", "message": f"order 不存在: {order_no}"}
+                    status_code=404,
+                    detail={"code": "not_found", "message": f"order 不存在: {order_no}"},  # i18n: user-facing
                 )
             updated = await store.advance_stage(order_no)
         logger.info(f"[delivery] order {order_no} approved: {order['stage']} -> {updated['stage']}")
@@ -6190,15 +6567,15 @@ def create_web_app(
         logger.info(f"[delivery] invite consumed: {_invite_log_tag(token)} order={order_no}")
         return _invite_payload(invite or {"order_no": order_no}, consumed=True)
 
-    # ── P2 W12/W13 空间协作面 — space 域子应用挂载 (含 SSE / WS / artifacts) ──
+    # ── P2 W12/W13 space collaboration surface — space-domain sub-app mount (SSE / WS / artifacts included) ──
     app.mount("/api/space", space_api)
 
     dist = Path(dist_dir) if dist_dir else _WEB_DIR / "dist"
     if (dist / "index.html").exists():
         app.mount("/", StaticFiles(directory=dist, html=True), name="spa")
-        logger.info(f"web SPA 已挂载: {dist}")
+        logger.info(f"web SPA mounted: {dist}")
     else:
-        logger.info(f"web/dist 未构建, 静态托管跳过: {dist}")
+        logger.info(f"web/dist not built, static hosting skipped: {dist}")
 
     return app
 

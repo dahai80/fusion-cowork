@@ -120,14 +120,14 @@ class TestSystem:
         from fusion_cowork.nodes.macos import DesktopCleanNode, DownloadOrganizerNode
 
         async def fake_execute(self, _):
-            return NodeResult(status=NodeStatus.SUCCESS, data={"moved": 0}, summary="0 项")
+            return NodeResult(status=NodeStatus.SUCCESS, data={"moved": 0}, summary="0 项")  # i18n: user-facing
 
         monkeypatch.setattr(DesktopCleanNode, "execute", fake_execute)
         monkeypatch.setattr(DownloadOrganizerNode, "execute", fake_execute)
         client = _client(monkeypatch, tmp_path)
         r = client.post("/api/system/clean", json={"dry_run": True}, headers=HDR)
         assert r.status_code == 200
-        assert r.json()["outputs"]["desktop"] == "0 项"
+        assert r.json()["outputs"]["desktop"] == "0 项"  # i18n: user-facing
 
 
 class TestSessions:

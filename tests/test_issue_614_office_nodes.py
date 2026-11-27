@@ -58,7 +58,7 @@ def _office_stub_app(outcomes: list, unfilled: str = ""):
         )
 
     async def docx_parse(request: Request) -> JSONResponse:
-        return JSONResponse({"blocks": [{"kind": "heading", "text": "周报"}]})
+        return JSONResponse({"blocks": [{"kind": "heading", "text": "周报"}]})  # i18n: user-facing
 
     async def pptx_write(request: Request) -> Response:
         form = await request.form()
@@ -173,7 +173,7 @@ class TestRegistration:
         for name in ("office_document", "office_spreadsheet", "office_slides", "office_artifact"):
             assert NodeRegistry.get(name) is not None, name
         aliases = {k for k, v in NODE_NAME_ALIASES.items() if str(v).startswith("office_")}
-        assert {"办公文档", "办公表格", "办公幻灯片", "成果入库"} <= aliases
+        assert {"办公文档", "办公表格", "办公幻灯片", "成果入库"} <= aliases  # i18n: user-facing
 
 
 # ── stub unit tests ──
@@ -210,7 +210,9 @@ class TestDocumentNode:
         outcomes = []
         _patch_transports(monkeypatch, office_app=_office_stub_app(outcomes))
         out = tmp_path / "weekly.docx"
-        node = _make("office_document", op="write", markdown="# 周报\n内容", output_path=str(out), rollout_id="ro-3")
+        node = _make(
+            "office_document", op="write", markdown="# 周报\n内容", output_path=str(out), rollout_id="ro-3"  # i18n: user-facing
+        )  # i18n: user-facing
         r = _run(node)
         assert r.status == NodeStatus.SUCCESS
         assert out.exists() and out.read_bytes().startswith(b"docx-bytes:")
@@ -227,7 +229,7 @@ class TestDocumentNode:
             "office_document",
             op="fill",
             file_path=str(tpl),
-            values={"name": "张三"},
+            values={"name": "张三"},  # i18n: user-facing
             output_path=str(out),
             rollout_id="ro-4",
         )
@@ -245,7 +247,7 @@ class TestDocumentNode:
             "office_document",
             op="fill",
             file_path=str(tpl),
-            values={"name": "张三"},
+            values={"name": "张三"},  # i18n: user-facing
             output_path=str(tmp_path / "f.docx"),
             rollout_id="ro-5",
         )
@@ -261,7 +263,7 @@ class TestDocumentNode:
         node = _make("office_document", op="parse", file_path=str(doc))
         r = _run(node)
         assert r.status == NodeStatus.SUCCESS
-        assert r.data["blocks"][0]["text"] == "周报"
+        assert r.data["blocks"][0]["text"] == "周报"  # i18n: user-facing
 
     def test_no_rollout_id_skips_outcome_post(self, tmp_path, monkeypatch):
         outcomes = []
@@ -297,7 +299,7 @@ class TestArtifactNode:
     def test_create_registers_new_chain(self, tmp_path, monkeypatch):
         calls = []
         _patch_transports(monkeypatch, artifacts_app=_artifacts_stub_app(calls))
-        node = _make("office_artifact", session_id="sess-1", name="周报", content="# 周报")
+        node = _make("office_artifact", session_id="sess-1", name="周报", content="# 周报")  # i18n: user-facing
         r = _run(node)
         assert r.status == NodeStatus.SUCCESS
         assert r.data["artifact_id"] == "art-1"
@@ -312,9 +314,9 @@ class TestArtifactNode:
         node = _make(
             "office_artifact",
             session_id="sess-1",
-            name="周报",
+            name="周报",  # i18n: user-facing
             artifact_id="art-1",
-            content="# 周报 v2",
+            content="# 周报 v2",  # i18n: user-facing
             change_log="revise",
         )
         r = _run(node)
@@ -378,7 +380,7 @@ def _minimal_xlsx(path: Path) -> None:
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
         'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-        '<sheets><sheet name="数据" sheetId="1" r:id="rId1"/></sheets></workbook>'
+        '<sheets><sheet name="数据" sheetId="1" r:id="rId1"/></sheets></workbook>'  # i18n: user-facing
     )
     wb_rels = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -389,8 +391,8 @@ def _minimal_xlsx(path: Path) -> None:
     sheet = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-        '<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>项目</t></is></c>'
-        '<c r="B1" t="inlineStr"><is><t>工时</t></is></c></row>'
+        '<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>项目</t></is></c>'  # i18n: user-facing
+        '<c r="B1" t="inlineStr"><is><t>工时</t></is></c></row>'  # i18n: user-facing
         '<row r="2"><c r="A2" t="inlineStr"><is><t>RAG</t></is></c><c r="B2"><v>8</v></c></row>'
         "</sheetData></worksheet>"
     )
@@ -422,7 +424,7 @@ class TestLiveOfficeDag:
             NodeConfig(
                 params={
                     "op": "write",
-                    "markdown": "# 周报\n\n## 本周进展\n- RAG 工时 8h（来自 weekly.xlsx）\n",
+                    "markdown": "# 周报\n\n## 本周进展\n- RAG 工时 8h（来自 weekly.xlsx）\n",  # i18n: user-facing
                     "output_path": str(tmp_path / "weekly.docx"),
                     "rollout_id": "live-614",
                 }
@@ -452,7 +454,7 @@ class TestLiveOfficeDag:
             NodeConfig(
                 params={
                     "op": "write",
-                    "markdown": "# 周报\n\noffice DAG artifact registration test\n",
+                    "markdown": "# 周报\n\noffice DAG artifact registration test\n",  # i18n: user-facing
                     "output_path": str(tmp_path / "a.docx"),
                 }
             ),
@@ -464,7 +466,7 @@ class TestLiveOfficeDag:
                 params={
                     "session_id": "cowork-live-614",
                     "name": "office-dag-weekly",
-                    "content": "# 周报\n\noffice DAG artifact registration test\n",
+                    "content": "# 周报\n\noffice DAG artifact registration test\n",  # i18n: user-facing
                 }
             ),
         )

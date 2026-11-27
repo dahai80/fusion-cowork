@@ -1,4 +1,4 @@
-"""#116 W11/A12: 统一会话列表 — engine / space / scheduler 合并 + source 过滤。"""
+"""#116 W11/A12: unified session list — engine / space / scheduler merged + source filter."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def client(monkeypatch, tmp_path):
             return [
                 SimpleNamespace(
                     id="task1",
-                    name="每夜报表",
+                    name="每夜报表",  # i18n: user-facing
                     workflow_id="wf-1",
                     trigger_type="cron",
                     status=SimpleNamespace(value="active"),
@@ -51,7 +51,7 @@ def client(monkeypatch, tmp_path):
 class TestUnifiedSessions:
     def test_space_and_scheduler_merged(self, client):
         tc, _ = client
-        created = tc.post("/api/space/spaces", json={"name": "研究空间"}, headers=_auth())
+        created = tc.post("/api/space/spaces", json={"name": "研究空间"}, headers=_auth())  # i18n: user-facing
         assert created.status_code == 201, created.text
         space_id = created.json()["id"]
         sent = tc.post(
@@ -67,7 +67,7 @@ class TestUnifiedSessions:
 
         space_item = next(s for s in body["sessions"] if s["source"] == "space")
         assert space_item["space_id"] == space_id
-        assert space_item["title"] == "研究空间"
+        assert space_item["title"] == "研究空间"  # i18n: user-facing
         assert space_item["metadata"]["last_message"] == "hello space"
         assert space_item["href"] == "#/spaces"
 

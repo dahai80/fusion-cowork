@@ -70,7 +70,9 @@ export default function PermissionsRulesPage() {
     const levels = ['confirm', 'manual', 'auto', 'plan', 'bypass'];
     return (
         <div className="mx-auto max-w-4xl space-y-4 p-4">
-            <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">权限规则</h1>
+            <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+                权限规则{/* i18n: user-facing */}
+            </h1>
             {error && (
                 <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
                     {error}
@@ -78,7 +80,9 @@ export default function PermissionsRulesPage() {
             )}
 
             <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
-                <div className="mb-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">级别: {level || '…'}</div>
+                <div className="mb-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                    {/* i18n: user-facing */}级别: {level || '…'}
+                </div>
                 <div className="flex flex-wrap gap-2">
                     {levels.map((lv) => (
                         <button
@@ -99,7 +103,7 @@ export default function PermissionsRulesPage() {
                     <input
                         value={toolName}
                         onChange={(e) => setToolName(e.target.value)}
-                        placeholder="tool_name (如 shell_exec)"
+                        placeholder="tool_name (如 shell_exec)" // i18n: user-facing
                         className="flex-1 rounded-xl border border-zinc-200/80 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
                     />
                     <input
@@ -118,7 +122,7 @@ export default function PermissionsRulesPage() {
                         onClick={() => void add()}
                         className="rounded-xl bg-indigo-600 px-4 py-2 font-medium text-white shadow-sm disabled:opacity-50"
                     >
-                        添加
+                        添加{/* i18n: user-facing */}
                     </button>
                 </div>
                 <table className="w-full text-left text-sm dark:text-zinc-200">
@@ -153,7 +157,7 @@ export default function PermissionsRulesPage() {
                                         onClick={() => void removeRules(r.tool_name)}
                                         className="text-xs text-zinc-400 hover:text-red-500"
                                     >
-                                        删除
+                                        删除{/* i18n: user-facing */}
                                     </button>
                                 </td>
                             </tr>
@@ -161,7 +165,7 @@ export default function PermissionsRulesPage() {
                         {rules.length === 0 && (
                             <tr>
                                 <td colSpan={4} className="py-3 text-center text-xs text-zinc-400">
-                                    无持久规则
+                                    无持久规则{/* i18n: user-facing */}
                                 </td>
                             </tr>
                         )}

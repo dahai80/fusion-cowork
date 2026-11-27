@@ -1,6 +1,6 @@
-"""issue #448: shell 注册循环可观测性 — 目标 URL 进日志、异常分类、连败降频、/health 暴露。
+"""issue #448: shell registration loop observability — target URL in logs, exception classification, failure-streak rate limiting, /health exposure.
 
-离线桩: 伪 httpx client (可配置 post 行为), 不触网。
+Offline stub: fake httpx client (configurable post behavior), no network.
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ class TestLoopObservability:
         with caplog.at_level(logging.ERROR, logger="fusion_cowork.server.shell_registry"):
             await _run_for(0.05, client)
         assert client.calls == 0, "invalid URL must fail fast, never loop"
-        assert any("非法" in r.message for r in caplog.records)
+        assert any("非法" in r.message for r in caplog.records)  # i18n: user-facing
         assert registration_health()["last_error"] == "invalid gateway url"
 
     async def test_connect_error_names_target(self, caplog):
@@ -116,11 +116,15 @@ class TestLoopObservability:
 
 class TestFailureRateLimiting:
     async def test_sustained_failure_downgrades_to_hourly_error(self, caplog):
-        # 连败达到阈值后: 一条 ERROR 摘要, 其余降为静默 — 不再逐拍 WARNING/ERROR 刷屏
+        # After the failure streak reaches the threshold: one ERROR summary, the rest downgraded to silent — no more per-beat WARNING/ERROR spam
         with caplog.at_level(logging.DEBUG, logger="fusion_cowork.server.shell_registry"):
             await _run_for(0.35, _FlakyClient(mode="connect_error"), interval=0.01)
-        errors = [r for r in caplog.records if r.levelno >= logging.ERROR and "连续失败" in r.message]
-        warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "注册循环错误" in r.message]
+        errors = [
+            r for r in caplog.records if r.levelno >= logging.ERROR and "连续失败" in r.message  # i18n: user-facing
+        ]  # i18n: user-facing
+        warnings = [
+            r for r in caplog.records if r.levelno == logging.WARNING and "注册循环错误" in r.message  # i18n: user-facing
+        ]  # i18n: user-facing
         assert len(errors) == 1, errors
         assert len(warnings) == FAIL_STREAK_ERROR_THRESHOLD - 1, warnings
 
@@ -129,13 +133,13 @@ class TestFailureRateLimiting:
         with caplog.at_level(logging.DEBUG, logger="fusion_cowork.server.shell_registry"):
             await _run_for(0.35, client, interval=0.01)
         assert registration_health()["registered"] is True
-        # 恢复后再次故障 — 连败从头计, 先 WARNING (不直接跳 hourly ERROR)
-        assert any("注册循环错误" in r.message for r in caplog.records)
+        # Failure again after recovery — streak counted from scratch, WARNING first (does not jump straight to the hourly ERROR)
+        assert any("注册循环错误" in r.message for r in caplog.records)  # i18n: user-facing
 
 
 class TestHealthEndpoint:
     def test_health_includes_shell_registration(self, tmp_path, monkeypatch):
-        # 不让 create_web_app 拉起真实注册循环 (离线测试) — 关掉 URL 门控
+        # Do not let create_web_app start the real registration loop (offline test) — turn off the URL gate
         monkeypatch.delenv("FUSION_SHELL_GATEWAY_URL", raising=False)
         from fastapi.testclient import TestClient
 

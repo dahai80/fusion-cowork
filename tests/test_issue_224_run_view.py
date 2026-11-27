@@ -1,4 +1,4 @@
-"""issue #224: unified run view 契约 — runs_get 全量记录 (workflow_def 拓扑 + space_id 归属 + 指令回显) 与 SSE 快照 _public 脱形。"""
+"""issue #224: unified run view contract — runs_get full record (workflow_def topology + space_id ownership + directive echo) and SSE snapshot _public stripping."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import_all_nodes()
 
 STATIC_KEY = "test-key-224"
 
-# 低风险纯逻辑节点 — 无 HITL 门/无 LLM 依赖, 离线确定性成功
+# Low-risk pure-logic nodes — no HITL gate / no LLM dependency, deterministic offline success
 WF_DEF = {
     "name": "wf-224",
     "nodes": [
@@ -51,7 +51,7 @@ def _wait_terminal(tc, run_id, timeout=8.0):
         if r.status_code == 200 and r.json()["status"] not in ("running", "pending"):
             return r.json()
         time.sleep(0.05)
-    raise AssertionError("run 未在超时内进入终态")
+    raise AssertionError("run 未在超时内进入终态")  # i18n: user-facing
 
 
 class _FakeRequest:
@@ -82,7 +82,7 @@ class TestRunViewContract:
         tc, app = client
         r = tc.post(
             "/api/space/spaces",
-            json={"name": "目录224"},
+            json={"name": "目录224"},  # i18n: user-facing
             headers=_headers(),
         )
         sid = r.json()["id"]
@@ -94,16 +94,16 @@ class TestRunViewContract:
         assert r.status_code == 202, r.text
         run_id = r.json()["run_id"]
         rec = _wait_terminal(tc, run_id)
-        # 拓扑源: workflow_def 全量在 (前端 computeWaves 分层依赖)
+        # Topology source: full workflow_def present (frontend computeWaves layering depends on it)
         assert rec["workflow_def"]["nodes"][0]["id"] == "n1"
         assert rec["workflow_def"]["edges"][0] == {"source_id": "n1", "target_id": "n2"}
-        # 归属: 工作区抽屉依赖
+        # Ownership: workspace drawer depends on it
         assert rec["space_id"] == sid
-        # 步骤形状: 标记步字段存在 (普通步 = False)
+        # Step shape: marker-step field present (regular step = False)
         assert all("user_correction" in s for s in rec["steps"])
 
     def test_directives_echoed_on_record(self, client):
-        # 注入需运行/暂停态 — 种子 paused 运行 (#227 模式), 验证指令回显在 runs_get 全量记录
+        # Injection requires a running/paused run — seed a paused run (#227 pattern), verify directive echo in the runs_get full record
         tc, app = client
         registry = app.state.run_registry
         run_id = "run_224_dir"
@@ -121,13 +121,13 @@ class TestRunViewContract:
         registry._engine.add_directive = lambda rid, d: True
         r = tc.post(
             f"/api/runs/{run_id}/directive",
-            json={"action": "inject", "instruction": "只看华东区"},
+            json={"action": "inject", "instruction": "只看华东区"},  # i18n: user-facing
             headers=_headers(),
         )
         assert r.status_code == 202, r.text
         rec = tc.get(f"/api/runs/{run_id}", headers=_headers()).json()
         dirs = rec.get("directives") or []
-        assert any(
+        assert any(  # i18n: user-facing
             d.get("action") == "inject" and (d.get("payload") or {}).get("instruction") == "只看华东区" for d in dirs
         ), dirs
 
@@ -142,11 +142,12 @@ class TestRunViewContract:
         assert "workflow_def" not in public
         assert public["run_id"] == run_id
         assert isinstance(public["steps"], list) and len(public["steps"]) == 2
-        # SSE 快照可序列化 (run 视图实时通道)
+        # SSE snapshot is serializable (run-view realtime channel)
         json.dumps(public, ensure_ascii=False)
 
     def test_run_view_route_serves_snapshot(self, client):
-        # 直连 endpoint 读首帧 — 无限 SSE 流不可经 tc.stream 消费 (test_issue_117 模式)
+        # Read the first frame via the endpoint directly — infinite SSE stream cannot be consumed via tc.stream
+        # (test_issue_117 pattern)
         tc, app = client
         r = tc.post("/api/runs", json={"workflow": WF_DEF, "name": "rv4"}, headers=_headers())
         run_id = r.json()["run_id"]

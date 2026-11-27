@@ -1,10 +1,10 @@
-"""issue #400: 交付管线 intake 模式 — requirement 进, slug/私有仓/registry 全自动。
+"""issue #400: delivery pipeline intake mode — requirement in, slug/private repo/registry fully automated.
 
-- slug 派生: ASCII 首行取词; 纯中文 → 内容 sha1 (确定性); 冲突 -2/-3 后缀
-- 私有仓: GitHub API POST /user/repos, 幂等 (存在 = 复用, cow#361/#368 no-op)
-- registry: business/registry.yaml 文本插入 (保注释), source: pipeline + run_id 回填
-- check-slugs: 脚本缺失 = 跳过 (warn), rc!=0 = 拒绝建仓
-- launch-intake 端点: dry_run 预览 + 显式参数装配 + run 启动 (INTAKE_FACTORY 注入)
+- slug derivation: ASCII first-line word extraction; pure Chinese → content sha1 (deterministic); conflict -2/-3 suffixes
+- Private repo: GitHub API POST /user/repos, idempotent (exists = reuse, cow#361/#368 no-op)
+- registry: business/registry.yaml text insertion (comments preserved), source: pipeline + run_id backfill
+- check-slugs: missing script = skip (warn), rc!=0 = refuse repo creation
+- launch-intake endpoint: dry_run preview + explicit param assembly + run start (INTAKE_FACTORY injection)
 """
 
 import json
@@ -48,7 +48,7 @@ class TestSlugDerivation:
         assert derive_slug("Build a Pet Hotel booking app\nwith notifications") == "ai-build-pet-hotel-booking"
 
     def test_cjk_falls_back_to_deterministic_hash(self):
-        req = "做一个宠物寄养预约小程序, 支持门店浏览与微信通知"
+        req = "做一个宠物寄养预约小程序, 支持门店浏览与微信通知"  # i18n: user-facing
         s1 = derive_slug(req)
         assert s1.startswith("ai-")
         assert derive_slug(req) == s1  # same requirement -> same slug
@@ -373,7 +373,7 @@ class TestEndpoint:
         assert "run_id: pending" in text or f"run_id: {body['run_id']}" in text
         assert "source: pipeline" in text
         assert "ai-build-pet-hotel-booking" in text
-        # issue #414: 模板 slug 参数是裸 slug — ${param.slug} 替换结果不带 ai- 前缀
+        # issue #414: template slug param is the bare slug — ${param.slug} substitution carries no ai- prefix
         from fastapi.testclient import TestClient  # noqa: F401  (client already built above)
 
         app_state = client.app.state

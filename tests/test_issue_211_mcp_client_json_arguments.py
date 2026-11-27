@@ -1,7 +1,7 @@
-"""issue #211: mcp_client 接受 JSON 字符串 arguments — 解除 mcp_client → mcp_client 连边阻塞。
+"""issue #211: mcp_client accepts JSON string arguments — unblocks mcp_client -> mcp_client edge connections.
 
-上游节点输出恒为文本 (data["result"]), 连边 {"source_output": "result", "target_input": "arguments"}
-后下游收到字符串。本节点解析 JSON 字符串后继续; 解析失败/非对象仍显式报错。
+Upstream node output is always text (data["result"]); after connecting {"source_output": "result", "target_input": "arguments"}
+the downstream node receives a string. This node parses the JSON string and proceeds; parse failure / non-object still errors explicitly.
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ class TestJsonStringArguments:
         node = _bind(_make_node({"url": "http://127.0.0.1:11483/mcp", "tool": "t2"}), handler)
         result = await node.execute({"arguments": "not json"})
         assert result.status.value == "failed"
-        assert "JSON 字符串解析失败" in result.error
+        assert "JSON 字符串解析失败" in result.error  # i18n: user-facing
         assert calls == []
 
     async def test_json_string_non_object_rejected(self):
@@ -97,7 +97,7 @@ class TestJsonStringArguments:
         node = _bind(_make_node({"url": "http://127.0.0.1:11483/mcp", "tool": "t2"}), handler)
         result = await node.execute({"arguments": "[1, 2]"})
         assert result.status.value == "failed"
-        assert result.error == "arguments 须为 JSON 对象"
+        assert result.error == "arguments 须为 JSON 对象"  # i18n: user-facing
         assert calls == []
 
     async def test_non_string_non_dict_rejected(self):
@@ -105,7 +105,7 @@ class TestJsonStringArguments:
         node = _bind(_make_node({"url": "http://127.0.0.1:11483/mcp", "tool": "t2"}), handler)
         result = await node.execute({"arguments": ["a"]})
         assert result.status.value == "failed"
-        assert result.error == "arguments 须为 JSON 对象"
+        assert result.error == "arguments 须为 JSON 对象"  # i18n: user-facing
         assert calls == []
 
 

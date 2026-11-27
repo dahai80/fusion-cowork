@@ -1,10 +1,10 @@
-"""深度健康检查 (v0.4.0 Stage 4).
+"""Deep health checks (v0.4.0 Stage 4).
 
-替静态 {"status":"ok"} — 实查 DB SELECT 1 / 磁盘 / 上游 MLX/KB 可达 (短超时)。
-desk_rpc + mcp_http /health 复用。
+Replaces the static {"status":"ok"} — actually probes DB SELECT 1 / disk / upstream MLX/KB reachability (short timeout).
+Reused by desk_rpc + mcp_http /health.
 
 run_health(store=None, upstreams=None) -> {status, checks:{db,disk,mlx,kb}}
-status: ok (全通) | degraded (部分挂) | down (核心挂)
+status: ok (all pass) | degraded (some fail) | down (core down)
 """
 
 from __future__ import annotations
@@ -19,16 +19,16 @@ logger = logging.getLogger(__name__)
 
 
 class HealthCheck:
-    """单检查项 — 返 {ok:bool, detail:str}。"""
+    """Single check item — returns {ok:bool, detail:str}."""
 
     @staticmethod
     async def check_db(store: Any) -> Dict[str, Any]:
         if store is None:
-            return {"ok": True, "detail": "no store (本地模式)"}
+            return {"ok": True, "detail": "no store (本地模式)"}  # i18n: user-facing
         try:
             backend = getattr(store, "backend", "sqlite")
             if backend == "postgres":
-                # asyncpg pool: 试 SELECT 1
+                # asyncpg pool: try SELECT 1
                 async def _sel1():
                     if hasattr(store, "_pool") and store._pool:
                         async with store._pool.acquire() as conn:
@@ -36,13 +36,13 @@ class HealthCheck:
 
                 await asyncio.wait_for(_sel1(), timeout=3)
             else:
-                # sqlite: 试读 schema_migrations 或任意表存在性
+                # sqlite: try reading schema_migrations or any table existence
                 handle = getattr(store, "_ensure_db", None)
                 if handle:
                     await handle()
             return {"ok": True, "detail": "db reachable"}
         except Exception as e:
-            logger.warning(f"health check_db 失败: {e}")
+            logger.warning(f"health check_db failed: {e}")
             return {"ok": False, "detail": f"db error: {type(e).__name__}"}
 
     @staticmethod
@@ -59,7 +59,7 @@ class HealthCheck:
         if not url:
             return {"ok": True, "detail": "not configured"}
         try:
-            # 简单 TCP 探活 (不依赖 httpx, 免引入)
+            # Simple TCP liveness probe (no httpx dependency, avoids the import)
             from urllib.parse import urlparse
 
             p = urlparse(url)

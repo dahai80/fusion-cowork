@@ -8,7 +8,7 @@ import type { RunStep } from '../src/api';
 const defDict = {
     nodes: {
         n1: { id: 'n1', name: 'github_api' },
-        n2: { id: 'n2', name: 'approval_gate', config: { label: 'G1 提案闸门' } },
+        n2: { id: 'n2', name: 'approval_gate', config: { label: 'G1 提案闸门' } }, // i18n: user-facing
         n3: { id: 'n3', name: 'http_request' },
     },
     edges: [],
@@ -59,7 +59,7 @@ describe('gateProgress (issue #303)', () => {
     it('derives done/waiting/pending states from steps', () => {
         const steps = [step('n2', 'blocked'), step('n2', 'success')];
         const gates = gateProgress(defDict as never, steps);
-        expect(gates).toEqual([{ id: 'n2', label: 'G1 提案闸门', state: 'done' }]);
+        expect(gates).toEqual([{ id: 'n2', label: 'G1 提案闸门', state: 'done' }]); // i18n: user-facing
     });
 
     it('blocked-only node counts as waiting', () => {

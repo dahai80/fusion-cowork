@@ -8,7 +8,7 @@ describe('demand page registration', () => {
     test('manifest declares /demand page', () => {
         const page = manifest.pages.find((p) => p.route === '/demand');
         expect(page).toBeDefined();
-        expect(page?.title).toBe('需求引擎');
+        expect(page?.title).toBe('需求引擎'); // i18n: user-facing
         expect(page?.title_en).toBe('Demand');
     });
 });

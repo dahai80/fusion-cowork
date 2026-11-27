@@ -1,4 +1,4 @@
-"""issue #223: workspace-first home — run↔Space 关联 (space_id) + /api/workspaces 聚合 + runs ?space_id 过滤 + v2 持久化迁移。"""
+"""issue #223: workspace-first home — run↔Space association (space_id) + /api/workspaces aggregation + runs ?space_id filter + v2 persistence migration."""
 
 from __future__ import annotations
 
@@ -73,8 +73,8 @@ class TestWorkspacesRoute:
 
     def test_aggregates_spaces_with_counts(self, client, monkeypatch):
         tc, app = client
-        sid_a = _make_space(tc, "目录A")
-        sid_b = _make_space(tc, "目录B")
+        sid_a = _make_space(tc, "目录A")  # i18n: user-facing
+        sid_b = _make_space(tc, "目录B")  # i18n: user-facing
         for uid in ("u1", "u2"):
             r = tc.post(
                 f"/api/space/spaces/{sid_a}/members",
@@ -100,14 +100,14 @@ class TestWorkspacesRoute:
         body = r.json()
         assert body["available"] is True
         by_id = {w["id"]: w for w in body["workspaces"]}
-        # 建目录自动登记 owner 成员 + 2 名受邀 = 3
+        # Creating a directory auto-registers the owner member + 2 invitees = 3
         assert by_id[sid_a]["member_count"] == 3
         assert by_id[sid_a]["task_count"] == 1
         assert by_id[sid_a]["last_run_at"] == 200.0
-        assert by_id[sid_b]["member_count"] == 1  # 仅 owner
+        assert by_id[sid_b]["member_count"] == 1  # owner only
         assert by_id[sid_b]["task_count"] == 0
         assert by_id[sid_b]["last_run_at"] is None
-        assert by_id[sid_a]["name"] == "目录A"
+        assert by_id[sid_a]["name"] == "目录A"  # i18n: user-facing
 
     def test_list_spaces_failure_502(self, client, monkeypatch):
         tc, app = client
@@ -123,7 +123,7 @@ class TestWorkspacesRoute:
 
     def test_member_count_failure_defaults_zero(self, client, monkeypatch):
         tc, app = client
-        sid = _make_space(tc, "目录C")
+        sid = _make_space(tc, "目录C")  # i18n: user-facing
         store = app.state.space_store
 
         async def boom(space_id, tenant_id=None):
@@ -146,7 +146,7 @@ class TestRunsSpaceId:
 
     def test_runs_create_persists_space_id_and_filters(self, client):
         tc, app = client
-        sid = _make_space(tc, "目录D")
+        sid = _make_space(tc, "目录D")  # i18n: user-facing
         r = tc.post(
             "/api/runs",
             json={"workflow": WF_DEF, "name": "home-run", "space_id": sid, "source": "home"},
@@ -211,7 +211,7 @@ class TestRunStateStoreSpaceId:
 
     def test_v1_migration_adds_space_id_column(self, tmp_path):
         path = tmp_path / "run_states.db"
-        # 手工建 v1 库: 无 space_id 列, user_version=1
+        # Hand-build a v1 database: no space_id column, user_version=1
         conn = sqlite3.connect(str(path))
         conn.executescript(
             """

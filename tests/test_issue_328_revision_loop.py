@@ -1,8 +1,9 @@
-"""issue #328: 审批拒绝修订回路 — 拒绝不再是终态失败.
+"""issue #328: approval-rejection revision loop — rejection is no longer a terminal failure.
 
-on_reject=revise 的闸门/节点被拒时回到产出节点, 评审意见并入重跑输入;
-超过 max_revisions 按拒绝终态处理; 未 opt-in 保持原 deny-fast 失败行为。
-"""
+A gate/node with on_reject=revise returns to the producer node when rejected,
+with review comments merged into the re-run input; exceeding max_revisions is
+treated as a rejection terminal state; without opt-in the original deny-fast
+failure behavior is preserved."""
 
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ class _ProducerNode(BaseNode):
     name = "producer_328"
     display_name = "Producer 328"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "测试用: 产出节点 — 记录每次收到的输入"
     icon = "📦"
     default_label = "Producer"
@@ -46,6 +48,7 @@ class _GateNode(BaseNode):
     name = GATE_NODE
     display_name = "Gate 328"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "测试用: 闸门 (权限层 HITL 承载)"
     icon = "🚧"
     default_label = "Gate"
@@ -89,8 +92,9 @@ async def _wait_hitl(engine: WorkflowEngine, exec_id: str, timeout: float = 5.0)
 
 
 async def _wait_pending_count(pm: PermissionManager, exec_id: str, count: int, timeout: float = 5.0) -> bool:
-    # 回退修订在同一事件循环片内完成 (重跑 + 再闸门之间不让出轮询窗口) —
-    # _hitl_waiting 的 True/False 都可能被跳过, 用待审批队列条数作再闸门信号
+    # The fallback revision completes within the same event-loop slice (no polling
+    # window yielded between re-run and re-gating) — _hitl_waiting True/False may
+    # both be skipped, so the pending-approval queue length is used as the re-gate signal
     for _ in range(int(timeout * 50)):
         entries = [p for p in pm.list_pending() if p.get("execution_id") == exec_id]
         if len(entries) >= count:
@@ -108,15 +112,17 @@ class TestRevisionLoop:
             eng.execute(_wf({"on_reject": "revise", "revision_node": "n1"}), execution_id=exec_id)
         )
         assert await _wait_hitl(eng, exec_id)
-        eng.resolve_hitl(exec_id, False, comments="PRD 太薄, 补验收标准")
-        assert await _wait_pending_count(pm_328, exec_id, 2), "修订重跑后应再次到达闸门"
+        eng.resolve_hitl(exec_id, False, comments="PRD 太薄, 补验收标准")  # i18n: user-facing
+        assert await _wait_pending_count(pm_328, exec_id, 2), (
+            "修订重跑后应再次到达闸门"  # i18n: user-facing
+        )  # i18n: user-facing  # i18n: user-facing
         eng.resolve_hitl(exec_id, True, once=True)
         execution = await asyncio.wait_for(task, timeout=5)
-        # 被闸步骤的 denied 记录留在时间线 — 终态按 #187 语义为 completed_with_denials
+        # The gated step's denied record stays on the timeline — terminal status is completed_with_denials per #187 semantics
         assert execution.status.value == "completed_with_denials"
-        # 产出节点重跑两次, 第二次输入带评审意见
+        # Producer re-runs twice; the second run's input carries the review comments
         assert len(_ProducerNode.runs) == 2
-        assert _ProducerNode.runs[1].get("revision_comments") == "PRD 太薄, 补验收标准"
+        assert _ProducerNode.runs[1].get("revision_comments") == "PRD 太薄, 补验收标准"  # i18n: user-facing
         assert "revision_comments" not in _ProducerNode.runs[0]
 
     async def test_reject_without_optin_fails_run(self, pm_328):
@@ -125,7 +131,7 @@ class TestRevisionLoop:
         exec_id = "run-328-fail"
         task = asyncio.create_task(eng.execute(_wf({}), execution_id=exec_id))
         assert await _wait_hitl(eng, exec_id)
-        eng.resolve_hitl(exec_id, False, comments="拒")
+        eng.resolve_hitl(exec_id, False, comments="拒")  # i18n: user-facing
         execution = await asyncio.wait_for(task, timeout=5)
         assert execution.status.value == "failed"
         assert len(_ProducerNode.runs) == 1
@@ -138,9 +144,9 @@ class TestRevisionLoop:
             eng.execute(_wf({"on_reject": "revise", "revision_node": "n1", "max_revisions": 1}), execution_id=exec_id)
         )
         assert await _wait_hitl(eng, exec_id)
-        eng.resolve_hitl(exec_id, False)  # 第 1 次拒绝 → 修订
-        assert await _wait_pending_count(pm_328, exec_id, 2), "修订重跑后应再次到达闸门"
-        eng.resolve_hitl(exec_id, False)  # 第 2 次拒绝 → 超上限, 终态失败
+        eng.resolve_hitl(exec_id, False)  # first rejection -> revision
+        assert await _wait_pending_count(pm_328, exec_id, 2), "修订重跑后应再次到达闸门"  # i18n: user-facing
+        eng.resolve_hitl(exec_id, False)  # second rejection -> over the cap, terminal failure
         execution = await asyncio.wait_for(task, timeout=5)
         assert execution.status.value == "failed"
         assert len(_ProducerNode.runs) == 2
@@ -151,7 +157,7 @@ class TestRevisionLoop:
         exec_id = "run-328-auto"
         task = asyncio.create_task(eng.execute(_wf({"on_reject": "revise"}), execution_id=exec_id))
         assert await _wait_hitl(eng, exec_id)
-        eng.resolve_hitl(exec_id, False, comments="改")
+        eng.resolve_hitl(exec_id, False, comments="改")  # i18n: user-facing
         assert await _wait_pending_count(pm_328, exec_id, 2)
         eng.resolve_hitl(exec_id, True, once=True)
         execution = await asyncio.wait_for(task, timeout=5)
@@ -159,7 +165,7 @@ class TestRevisionLoop:
         assert len(_ProducerNode.runs) == 2
 
     async def test_self_revision_for_non_gate_node(self, pm_328, monkeypatch):
-        # 非闸门 HIGH_RISK 节点自身被拒 — on_reject=revise 回到自身重跑
+        # A non-gate HIGH_RISK node rejected itself — on_reject=revise re-runs itself
         from fusion_cowork.engine import permission_manager
 
         monkeypatch.setattr(
@@ -175,11 +181,11 @@ class TestRevisionLoop:
         wf.add_node(n1)
         task = asyncio.create_task(eng.execute(wf, execution_id=exec_id))
         assert await _wait_hitl(eng, exec_id)
-        eng.resolve_hitl(exec_id, False, comments="重写")
+        eng.resolve_hitl(exec_id, False, comments="重写")  # i18n: user-facing
         assert await _wait_pending_count(pm_328, exec_id, 2)
         eng.resolve_hitl(exec_id, True, once=True)
         execution = await asyncio.wait_for(task, timeout=5)
         assert execution.status.value == "completed_with_denials"
-        # 自身被拒发生在 execute 之前 — 首次尝试无产出记录, 修订重跑 (批准后) 只执行一次
+        # Self-rejection happens before execute — the first attempt has no producer record; the revision re-run (after approval) executes once
         assert len(_ProducerNode.runs) == 1
-        assert _ProducerNode.runs[0].get("revision_comments") == "重写"
+        assert _ProducerNode.runs[0].get("revision_comments") == "重写"  # i18n: user-facing

@@ -1,4 +1,4 @@
-"""#114 W9/B5: 交付审查状态机 (运行级, 区别于 W19 节点级 guard 审批)。"""
+"""#114 W9/B5: delivery review state machine (run-level, distinct from the W19 node-level guard approval)."""
 
 from __future__ import annotations
 

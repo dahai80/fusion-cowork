@@ -1,11 +1,11 @@
-"""Union Web shell 注册 — issue #97 (PRD §5.2, 对齐 agent-studio shell_registry)。
+"""Union Web shell registration — issue #97 (PRD §5.2, aligned with agent-studio shell_registry).
 
-web serve 启动时向 fusion-gateway shell 注册表注册 web/manifest.json
-(POST /api/v1/shell/manifests, fg-key auth) 并周期心跳保活
-(heartbeat_timeout 后网关置灰)。env 门控 — 需同时配置:
+On web serve startup, registers web/manifest.json with the fusion-gateway shell registry
+(POST /api/v1/shell/manifests, fg-key auth) and keeps it alive with periodic heartbeats
+(the gateway grays it out after heartbeat_timeout). env-gated — requires all of:
 - FUSION_SHELL_GATEWAY_URL + FUSION_ADMIN_KEY
-可选 FUSION_SHELL_MANIFEST 覆盖 manifest 路径。未配置则静默跳过 (默认 OFF)。
-/shell/fusion-cowork/ 静态代理本身是网关配置 — 动态 manifest 只驱动菜单入口。
+Optional FUSION_SHELL_MANIFEST overrides the manifest path. Silently skipped when unset (default OFF).
+The /shell/fusion-cowork/ static proxy is itself gateway configuration — the dynamic manifest only drives the menu entry.
 """
 
 from __future__ import annotations
@@ -26,11 +26,11 @@ MANIFEST_PATH_ENV = "FUSION_SHELL_MANIFEST"
 UPSTREAM_OVERRIDE_ENV = "FUSION_COWORK_WEB_UPSTREAM"
 REGISTER_INTERVAL_SECONDS = 15.0
 HTTP_TIMEOUT_SECONDS = 5.0
-# issue #448: 连续失败达到阈值后, 每小时至多一条 ERROR 摘要 (替代逐拍 WARNING 刷屏)
+# issue #448: once the consecutive-failure threshold is hit, at most one ERROR summary per hour (replaces per-beat WARNING spam)
 FAIL_STREAK_ERROR_THRESHOLD = 10
 ERROR_SUMMARY_INTERVAL_SECONDS = 3600.0
 
-# issue #448: 注册状态供 /health 暴露 (supervisor/监控可告警 shell_registered=false)
+# issue #448: registration state exposed via /health (supervisor/monitoring can alert on shell_registered=false)
 _REGISTRATION_STATE: Dict[str, Any] = {
     "enabled": False,
     "registered": False,
@@ -38,8 +38,8 @@ _REGISTRATION_STATE: Dict[str, Any] = {
     "last_error": "",
 }
 
-# issue #168 (K4): 网关签发 fm- 模块密钥落盘路径 (0600)。
-# 静态 env 密钥继续作为覆盖路径向后兼容; 网关签发后文件覆盖 env 值。
+# issue #168 (K4): persist path (0600) for the gateway-issued fm- module key.
+# The static env key remains the back-compat override path; once issued, the file takes precedence over the env value.
 MODULE_KEY_PATH = Path.home() / ".fusion-cowork" / "web_module_key"
 
 
@@ -57,14 +57,14 @@ def save_module_key(key: str) -> bool:
     MODULE_KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
     MODULE_KEY_PATH.write_text(key + "\n", encoding="utf-8")
     MODULE_KEY_PATH.chmod(0o600)
-    logger.info(f"网关签发模块密钥已持久化: {MODULE_KEY_PATH} ({_mask_key(key)})")
+    logger.info(f"Gateway-issued module key persisted: {MODULE_KEY_PATH} ({_mask_key(key)})")
     return True
 
 
 def _gateway_admin_key() -> str:
-    # issue #204: admin key 单点解析走 fusion_core.config.admin_key (规范名
-    # FUSION_ADMIN_KEY, prod 缺失 RuntimeError 在 fusion-core 内收敛)。裸装无
-    # fusion-core 时回退只认规范名, 不在本仓重复别名链。
+    # issue #204: admin key single-point resolution goes through fusion_core.config.admin_key (canonical name
+    # FUSION_ADMIN_KEY; the prod-missing RuntimeError is contained inside fusion-core). On bare installs without
+    # fusion-core, the fallback accepts only the canonical name — no duplicate alias chain in this repo.
     try:
         from fusion_core.config import admin_key
 
@@ -72,7 +72,9 @@ def _gateway_admin_key() -> str:
     except ImportError:
         key = os.environ.get("FUSION_ADMIN_KEY", "")
         if not key:
-            logger.warning("FUSION_ADMIN_KEY 未设置: shell 网关注册不可用 (向 fusion-gateway admin API 索取)")
+            logger.warning(
+                "FUSION_ADMIN_KEY not set: shell gateway registration unavailable (request it from the fusion-gateway admin API)"
+            )
         return key
 
 
@@ -83,8 +85,8 @@ def _mask_key(key: str) -> str:
 
 
 def _extract_issued_key(payload: Any) -> str:
-    # issue #173/#174: fusion-gateway K1 签发响应 (writeShellKeyResponse) 明文在 raw_key,
-    # 其余字段名保留兼容旧/自定义网关
+    # issue #173/#174: the fusion-gateway K1 issuance response (writeShellKeyResponse) carries the plaintext in raw_key,
+    # remaining field names kept for old/custom gateway compatibility
     if not isinstance(payload, dict):
         return ""
     for field in ("raw_key", "api_key", "issued_key", "key", "module_key"):
@@ -105,20 +107,20 @@ def _default_manifest_path() -> Path:
 
 
 def shell_registration_enabled() -> bool:
-    # URL 未配置时短路, 不触发 admin key 解析 (prod 缺 key 的 RuntimeError 只在
-    # 明确要注册时才是配置错误)
+    # Short-circuit when the URL is unset, without triggering admin key resolution (the prod-missing-key RuntimeError
+    # is only a configuration error when registration is actually attempted)
     if not os.environ.get(GATEWAY_URL_ENV, "").strip():
         return False
     return bool(_gateway_admin_key().strip())
 
 
 def registration_health() -> Dict[str, Any]:
-    # issue #448: 只读快照 — /health 与监控消费, 不含 admin key
+    # issue #448: read-only snapshot — consumed by /health and monitoring, never contains the admin key
     return dict(_REGISTRATION_STATE)
 
 
 def _gateway_url_valid(gateway: str) -> bool:
-    # issue #448: 启动自检 — URL 必须能解析为 http(s)://host[:port], 否则快速失败
+    # issue #448: startup self-check — the URL must parse as http(s)://host[:port], otherwise fail fast
     try:
         parsed = urlparse(gateway)
     except ValueError:
@@ -127,8 +129,8 @@ def _gateway_url_valid(gateway: str) -> bool:
 
 
 def _classify_registry_error(e: Exception, gateway: str) -> str:
-    # issue #448: 异常分类 — 连接类错误点名目标 URL, 其余原样; 操作员可区分
-    # 配置错误 (错 host/端口) 与网关故障
+    # issue #448: error classification — connection errors name the target URL, the rest pass through as-is; operators can tell
+    # configuration mistakes (wrong host/port) apart from gateway failures
     try:
         import httpx
 
@@ -151,16 +153,18 @@ def _mark_registration(registered: bool, gateway: str = "", error: str = "") -> 
 def load_manifest() -> Dict[str, Any]:
     path = Path(os.environ.get(MANIFEST_PATH_ENV, "").strip() or _default_manifest_path())
     if not path.exists():
+        # i18n: user-facing
         raise FileNotFoundError(f"shell manifest 不存在: {path}")
     manifest = json.loads(path.read_text(encoding="utf-8"))
     if not manifest.get("id"):
+        # i18n: user-facing
         raise ValueError(f"shell manifest 缺少 id: {path}")
-    # issue #125: gateway 动态代理 (#232 契约) 解析 upstream/api_key —
-    # manifest 声明默认值; FUSION_COWORK_WEB_UPSTREAM 覆盖部署特定端口;
-    # api_key 经 api_key_env 指向的运行时变量注入 (空值不注入, 不落盘)。
-    # issue #168 (K4): env 未配置时不随注册体发送 api_key — 网关 (K1) 签发
-    # fm- 密钥并在响应中返回一次, 由 _registry_loop_body 持久化; env 已配置
-    # 则保留静态覆盖路径 (旧网关向后兼容)。
+    # issue #125: gateway dynamic proxy (#232 contract) resolves upstream/api_key —
+    # the manifest declares defaults; FUSION_COWORK_WEB_UPSTREAM overrides deployment-specific ports;
+    # api_key is injected via the runtime variable api_key_env points to (empty values are not injected or persisted).
+    # issue #168 (K4): when env is unset, no api_key is sent in the registration body — the gateway (K1) issues
+    # an fm- key and returns it once in the response, persisted by _registry_loop_body; with env configured
+    # the static override path is kept (back-compat with old gateways).
     override = os.environ.get(UPSTREAM_OVERRIDE_ENV, "").strip()
     if override:
         manifest["upstream"] = override
@@ -173,7 +177,7 @@ def load_manifest() -> Dict[str, Any]:
     else:
         manifest.pop("api_key", None)
     logger.info(
-        f"shell manifest 已加载: {path} (id={manifest['id']} upstream={manifest['upstream']} api_key={'set' if api_key else 'unset'})"
+        f"shell manifest loaded: {path} (id={manifest['id']} upstream={manifest['upstream']} api_key={'set' if api_key else 'unset'})"
     )
     return manifest
 
@@ -181,17 +185,19 @@ def load_manifest() -> Dict[str, Any]:
 async def _registry_loop_body(client: Any, manifest: Dict[str, Any], interval: float) -> None:
     module_id = str(manifest["id"])
     gateway = os.environ.get(GATEWAY_URL_ENV, "").strip().rstrip("/")
-    # issue #448: 启动自检 — URL 非法直接快速失败, 不无限循环
+    # issue #448: startup self-check — invalid URL fails fast, no infinite loop
     if not _gateway_url_valid(gateway):
-        logger.error(f"shell 注册禁用 (FUSION_SHELL_GATEWAY_URL 非法, 须为 http(s)://host[:port]): '{gateway}'")
+        logger.error(
+            f"shell registration disabled (FUSION_SHELL_GATEWAY_URL invalid, must be http(s)://host[:port]): '{gateway}'"
+        )
         _mark_registration(False, gateway=gateway, error="invalid gateway url")
         return
     admin_key = _gateway_admin_key().strip()
     admin_headers = {"Authorization": f"Bearer {admin_key}", "Content-Type": "application/json"}
     registered = False
-    # issue #448: 循环启动即记录解析后的目标 URL (绝不含 admin key) — ps -E 拿不到
-    # 守护进程 env, 操作员只能从这里知道注册打到哪
-    logger.info(f"shell 注册循环启动: gateway={gateway} module={module_id} interval={interval:g}s")
+    # issue #448: log the resolved target URL at loop start (never the admin key) — ps -E cannot read
+    # the daemon env, so this log is the only place operators can see where registration points
+    logger.info(f"shell registration loop started: gateway={gateway} module={module_id} interval={interval:g}s")
     _REGISTRATION_STATE["enabled"] = True
     _mark_registration(False, gateway=gateway, error="")
     consecutive_failures = 0
@@ -204,45 +210,47 @@ async def _registry_loop_body(client: Any, manifest: Dict[str, Any], interval: f
                     registered = True
                     consecutive_failures = 0
                     _mark_registration(True, error="")
-                    logger.info(f"shell manifest 已注册: {module_id}")
-                    # issue #168 (K4): 注册响应携带网关签发密钥时持久化 (仅此一次返回明文)
+                    logger.info(f"shell manifest registered: {module_id}")
+                    # issue #168 (K4): persist the gateway-issued key when the registration response carries one (plaintext returned only this once)
                     issued = _extract_issued_key(_safe_json(resp))
                     if issued and issued != load_module_key():
                         save_module_key(issued)
                     elif issued:
-                        logger.info("网关签发密钥与已存值一致, 不重复落盘")
+                        logger.info("Gateway-issued key matches the stored value, not rewriting the file")
                 else:
+                    # i18n: user-facing
                     raise RuntimeError(f"shell manifest 注册失败: {resp.status_code} {resp.text[:200]}")
             else:
-                # issue #168 (K4): 心跳改用签发 fm- 密钥鉴权; 未签发时回退 admin key
+                # issue #168 (K4): heartbeat authenticates with the issued fm- key; falls back to the admin key when none was issued
                 module_key = load_module_key()
                 beat_key = module_key or admin_key
                 headers = {"Authorization": f"Bearer {beat_key}", "Content-Type": "application/json"}
-                # issue #177: 心跳携带 manifest (网关 #284 契约) — 每拍重读磁盘,
-                # 磁盘编辑 (增删 pages 等) 一个心跳周期内收敛到网关注册表, 无需重启;
-                # 重读失败沿用注册时版本, 不中断心跳保活
+                # issue #177: heartbeat carries the manifest (gateway #284 contract) — re-read from disk each beat,
+                # so on-disk edits (adding/removing pages etc.) converge into the gateway registry within one heartbeat interval, no restart needed;
+                # a failed re-read keeps the version from registration time, heartbeat keepalive is not interrupted
                 try:
                     beat_manifest = load_manifest()
                 except Exception as e:
-                    logger.warning(f"shell 心跳重读 manifest 失败, 沿用注册时版本: {e}")
+                    logger.warning(f"shell heartbeat manifest re-read failed, keeping registration-time version: {e}")
                     beat_manifest = manifest
                 resp = await client.post(
                     f"{gateway}/api/v1/shell/manifests/{module_id}/heartbeat", json=beat_manifest, headers=headers
                 )
                 if resp.status_code == 404:
-                    logger.info(f"shell 心跳 404, 重注册 {module_id}")
+                    logger.info(f"shell heartbeat 404, re-registering {module_id}")
                     registered = False
                 elif resp.status_code == 401 and module_key:
-                    # 签发密钥被轮换/吊销 — 重注册走 admin key 重新获取
-                    logger.warning(f"shell 心跳 401 (签发密钥失效), 重注册 {module_id}")
+                    # Issued key rotated/revoked — re-register via the admin key to obtain a fresh one
+                    logger.warning(f"shell heartbeat 401 (issued key invalid), re-registering {module_id}")
                     registered = False
                 elif resp.status_code != 200:
+                    # i18n: user-facing
                     raise RuntimeError(f"shell 心跳失败: {resp.status_code} {resp.text[:200]}")
-                # 心跳成功 — 连败计数清零, /health 恢复 registered
+                # Heartbeat succeeded — reset the failure streak, /health reports registered again
                 consecutive_failures = 0
                 _mark_registration(True, error="")
         except asyncio.CancelledError:
-            logger.info(f"shell 注册循环已取消 (module={module_id})")
+            logger.info(f"shell registration loop cancelled (module={module_id})")
             raise
         except Exception as e:
             consecutive_failures += 1
@@ -250,15 +258,17 @@ async def _registry_loop_body(client: Any, manifest: Dict[str, Any], interval: f
             _mark_registration(False, error=detail)
             now = time.monotonic()
             if consecutive_failures >= FAIL_STREAK_ERROR_THRESHOLD:
-                # issue #448: 持续故障降频 — 阈值后每小时至多一条 ERROR 摘要 (带连败
-                # 次数与目标 URL), 不再逐拍 WARNING 刷屏
+                # issue #448: sustained-failure down-sampling — after the threshold, at most one ERROR summary per hour
+                # (with the failure streak count and target URL), no more per-beat WARNING spam
                 if consecutive_failures == FAIL_STREAK_ERROR_THRESHOLD or now - last_error_log_at >= (
                     ERROR_SUMMARY_INTERVAL_SECONDS
                 ):
-                    logger.error(f"shell 注册连续失败 {consecutive_failures} 次 (最近错误): {detail}")
+                    logger.error(
+                        f"shell registration failed {consecutive_failures} times in a row (latest error): {detail}"
+                    )
                     last_error_log_at = now
             else:
-                logger.warning(f"shell 注册循环错误 (将重试): {detail}")
+                logger.warning(f"shell registration loop error (will retry): {detail}")
         await asyncio.sleep(interval)
 
 
@@ -270,11 +280,11 @@ def _safe_json(resp: Any) -> Any:
 
 
 async def shell_registry_loop(client: Any = None, interval: float = REGISTER_INTERVAL_SECONDS) -> None:
-    """注册一次, 心跳保活; 网关重启 (404) 后重注册。失败仅告警重试, 不影响服务。"""
+    """Register once, keep alive with heartbeats; re-register after a gateway restart (404). Failures only warn and retry, the service is unaffected."""
     try:
         manifest = load_manifest()
     except Exception as e:
-        logger.error(f"shell 注册禁用 (manifest 不可用): {e}")
+        logger.error(f"shell registration disabled (manifest unavailable): {e}")
         return
     if client is None:
         import httpx

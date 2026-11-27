@@ -1,7 +1,8 @@
-"""Hook 系统 — 14 种 Hook 事件 (对标 Claude Cowork)。
+"""Hook system — 14 hook event types (parity with Claude Cowork).
 
-节点执行前/后、工作流开始/结束、权限请求、配置变更、智能体启停、会话起止、
-压缩前、通知、节点错误、工作流取消等事件可被自定义处理器拦截。
+Pre/post node execution, workflow start/end, permission request, config change,
+agent start/stop, session start/end, pre-compact, notification, node error,
+workflow cancel — custom handlers can intercept these events.
 
 #521 drop-fallback ruling (2026-11-18): this is the primary cowork hook
 implementation, NOT an in-tree fallback copy. fusion-harness is a mandatory
@@ -56,11 +57,11 @@ class HookContext:
 
 
 class HookManager:
-    """Hook 管理器 — 注册/触发事件处理器。"""
+    """Hook manager — register/fire event handlers."""
 
     def __init__(self):
         self._handlers: Dict[HookEvent, List[tuple]] = {}
-        # R-3: _handlers 并发保护 — register/unregister/clear 与 fire 遍历竞态。
+        # R-3: concurrency protection for _handlers — register/unregister/clear vs fire traversal race.
         self._lock = threading.Lock()
 
     def register(self, event: HookEvent, handler: Callable, priority: int = 0) -> None:
@@ -69,7 +70,9 @@ class HookManager:
                 self._handlers[event] = []
             self._handlers[event].append((priority, handler))
             self._handlers[event].sort(key=lambda x: x[0], reverse=True)
-        logger.info(f"Hook 注册: {event.value} → {getattr(handler, '__name__', str(handler))} (priority={priority})")
+        logger.info(
+            f"Hook registered: {event.value} → {getattr(handler, '__name__', str(handler))} (priority={priority})"
+        )
 
     def unregister(self, event: HookEvent, handler: Callable) -> None:
         with self._lock:
@@ -79,13 +82,13 @@ class HookManager:
     async def fire(self, event: HookEvent, data: Dict[str, Any] = None) -> HookContext:
         ctx = HookContext(event=event, data=data or {})
 
-        # R-3: 拷贝 handlers 列表 (勿返引用) — fire 期间 register/unregister 不影响本轮, 也无竞态。
+        # R-3: copy the handlers list (never return a reference) — register/unregister during fire does not affect this round, and there is no race.
         with self._lock:
             handlers = list(self._handlers.get(event, []))
         if not handlers:
             return ctx
 
-        # E-14: PRE_* 验证类事件 — handler 抛异常 = 校验器故障, fail-closed 取消 (勿静默跳过)。
+        # E-14: PRE_* validation events — a handler raising = validator failure, fail-closed cancels (never silently skip).
         fail_closed = event in (HookEvent.PRE_NODE_EXECUTE, HookEvent.PERMISSION_REQUEST, HookEvent.PRE_COMPACT)
         loop = asyncio.get_event_loop()
 
@@ -94,15 +97,15 @@ class HookManager:
                 if asyncio.iscoroutinefunction(handler):
                     await handler(ctx)
                 else:
-                    # E-14: 同步 handler 走 run_in_executor, 勿阻塞事件循环 (原 handler(ctx) 直跑)。
+                    # E-14: sync handlers go through run_in_executor, never block the event loop (previously handler(ctx) ran inline).
                     await loop.run_in_executor(None, handler, ctx)
                 if ctx.cancelled:
-                    logger.info(f"Hook 取消: {event.value} (by {getattr(handler, '__name__', '?')})")
+                    logger.info(f"Hook cancel: {event.value} (by {getattr(handler, '__name__', '?')})")
                     break
             except Exception as e:
-                logger.error(f"Hook 处理异常: {event.value} → {e}", exc_info=True)
+                logger.error(f"Hook handler error: {event.value} → {e}", exc_info=True)
                 if fail_closed:
-                    logger.warning(f"Hook fail-closed: {event.value} handler 异常, 取消事件流")
+                    logger.warning(f"Hook fail-closed: {event.value} handler raised, canceling event stream")
                     ctx.cancel()
                     break
 

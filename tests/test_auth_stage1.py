@@ -1,10 +1,10 @@
-"""Stage 1 认证基线测试 — CR-1/CR-5/HI-1/2/HI-3/12。
+"""Stage 1 auth baseline tests — CR-1/CR-5/HI-1/2/HI-3/12.
 
-- CR-1: DeskRPC UDS 认证 token 校验 + 身份字段剥离
-- CR-5: IDOR 拒绝 (caller 自带身份被剥离; space 访问守卫)
-- HI-1/2: MCP HTTP/streamable Bearer 认证 (mcp.auth_token)
+- CR-1: DeskRPC UDS auth token validation + identity field stripping
+- CR-5: IDOR denial (caller-supplied identity stripped; space access guard)
+- HI-1/2: MCP HTTP/streamable Bearer auth (mcp.auth_token)
 - HI-3: RemoteControlServer TLS fail-closed
-- HI-12: CrossDeviceSync WS token 校验 + 入站 TLS fail-closed
+- HI-12: CrossDeviceSync WS token validation + inbound TLS fail-closed
 """
 
 import pytest
@@ -24,7 +24,7 @@ def _clean_config():
     cfg.delete("desk.auth_token")
 
 
-# ── HI-1/2: MCP HTTP Bearer 认证 ──
+# -- HI-1/2: MCP HTTP Bearer auth --
 
 
 class TestMCPHttpAuth:
@@ -124,7 +124,7 @@ class TestRemoteTLSFailClosed:
         cert.write_text("not a cert")
         key.write_text("not a key")
         server = RemoteControlServer(tls_cert=str(cert), tls_key=str(key))
-        with pytest.raises(RuntimeError, match="拒绝降级明文"):
+        with pytest.raises(RuntimeError, match="拒绝降级明文"):  # i18n: user-facing
             server._build_ssl_context()
 
     def test_no_cert_returns_none(self):
@@ -133,7 +133,7 @@ class TestRemoteTLSFailClosed:
         assert RemoteControlServer()._build_ssl_context() is None
 
 
-# ── HI-12: CrossDeviceSync 入站 TLS fail-closed ──
+# -- HI-12: CrossDeviceSync inbound TLS fail-closed --
 
 
 class TestSyncTLSFailClosed:
@@ -145,7 +145,7 @@ class TestSyncTLSFailClosed:
         cert.write_text("not a cert")
         key.write_text("not a key")
         sync = CrossDeviceSync(ssl_cert=str(cert), ssl_key=str(key))
-        with pytest.raises(RuntimeError, match="拒绝降级明文"):
+        with pytest.raises(RuntimeError, match="拒绝降级明文"):  # i18n: user-facing
             sync._build_server_ssl_context()
 
     def test_no_cert_returns_none(self):
@@ -154,7 +154,7 @@ class TestSyncTLSFailClosed:
         assert CrossDeviceSync()._build_server_ssl_context() is None
 
 
-# ── CR-5: DeskRPC 身份字段剥离 + IDOR 守卫 ──
+# -- CR-5: DeskRPC identity field stripping + IDOR guard --
 
 
 class TestDeskAuthStripsIdentity:
@@ -173,16 +173,16 @@ class TestDeskAuthStripsIdentity:
             "data": "kept",
         }
         authed = server._authenticate(params)
-        # 身份字段全部被剥离, 注入可信 principal = local_user
+        # Identity fields all stripped, trusted principal = local_user injected
         assert "operator_id" in authed and authed["operator_id"] == "local_user"
         assert authed.get("user_id") == "local_user"
         assert authed.get("author_id") == "local_user"
         assert authed.get("inviter_id") == "local_user"
         assert authed.get("__principal__") == "local_user"
-        # 调用方自带的身份 + token 被拒收
+        # Caller-supplied identity + token rejected
         assert authed.get("from_user_id") is None
         assert authed.get("_auth_token") is None
-        # 非身份字段保留
+        # Non-identity fields kept
         assert authed.get("data") == "kept"
 
     def test_authenticate_rejects_bad_token(self):
@@ -190,7 +190,7 @@ class TestDeskAuthStripsIdentity:
 
         ConfigCenter.get_instance().set("desk.auth_token", "good")
         server = DeskRPCServer()
-        # start() 才读 token, 这里直接置
+        # Token is only read in start(); set it directly here
         server._auth_token = "good"
         res = server._authenticate({"_auth_token": "bad", "space_id": "sp1"})
         assert isinstance(res, dict) and "__auth_error__" in res
@@ -206,7 +206,7 @@ class TestDeskAuthStripsIdentity:
         assert authed.get("__principal__") == "local_user"
 
 
-# ── CR-5 IDOR: space 访问守卫 (真实 SpaceStore) ──
+# -- CR-5 IDOR: space access guard (real SpaceStore) --
 
 
 class TestDeskIDORGuard:
@@ -236,7 +236,7 @@ class TestDeskIDORGuard:
         )
         await store.create_space(sp)
         server = DeskRPCServer(space_store=store)
-        # local_user 是 owner → 放行 (即便 action=manage_space)
+        # local_user is the owner -> allowed (even with action=manage_space)
         err = await server._require_space_access("sp_owner", "local_user", "manage_space")
         assert err is None
         await store.close()
@@ -267,9 +267,9 @@ class TestDeskIDORGuard:
         )
         await store.create_space(sp)
         server = DeskRPCServer(space_store=store)
-        # local_user 非成员 → IDOR 拒绝
+        # local_user is not a member -> IDOR denial
         err = await server._require_space_access("sp_priv", "local_user", "")
-        assert err is not None and "无权访问" in err["error"]
+        assert err is not None and "无权访问" in err["error"]  # i18n: user-facing
         await store.close()
 
     @pytest.mark.asyncio
@@ -303,7 +303,7 @@ class TestDeskIDORGuard:
             updated_at=now,
         )
         await store.create_space(sp)
-        # local_user 是 VIEWER 成员
+        # local_user is a VIEWER member
         await store.add_member(
             SpaceMember(
                 space_id="sp_member",
@@ -315,10 +315,10 @@ class TestDeskIDORGuard:
             )
         )
         server = DeskRPCServer(space_store=store)
-        # VIEWER 无 manage_space → 拒
+        # VIEWER lacks manage_space -> denied
         err = await server._require_space_access("sp_member", "local_user", "manage_space")
-        assert err is not None and "权限不足" in err["error"]
-        # VIEWER 可 view_artifact
+        assert err is not None and "权限不足" in err["error"]  # i18n: user-facing
+        # VIEWER can view_artifact
         err2 = await server._require_space_access("sp_member", "local_user", "view_artifact")
         assert err2 is None
         await store.close()
@@ -332,5 +332,5 @@ class TestDeskIDORGuard:
         await store.initialize()
         server = DeskRPCServer(space_store=store)
         err = await server._check_space_access("desk.space.get", {"space_id": "nope", "__principal__": "local_user"})
-        assert err is not None and "不存在" in err["error"]
+        assert err is not None and "不存在" in err["error"]  # i18n: user-facing
         await store.close()

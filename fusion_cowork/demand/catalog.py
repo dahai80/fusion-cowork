@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 SEED_PATH = Path(__file__).parent / "catalog_seed.json"
-BUDGET_RE = re.compile(r"[$¥€]?\s?([\d][\d,.]*)\s?(k|w|万)?", re.IGNORECASE)
+BUDGET_RE = re.compile(r"[$¥€]?\s?([\d][\d,.]*)\s?(k|w|万)?", re.IGNORECASE)  # i18n: user-facing
 
 
 def default_catalog_path() -> str:
@@ -51,7 +51,7 @@ def load_catalog(path: str = "") -> Dict[str, Any]:
 
 
 def _budget_to_cny(text: str) -> Optional[tuple]:
-    """Parse budget hint like '$500-1000' / '¥2万' -> (low, high) CNY-ish numbers."""
+    """Parse budget hint like '$500-1000' / '¥2万' -> (low, high) CNY-ish numbers."""  # i18n: user-facing
     if not text:
         return None
     nums = []
@@ -63,7 +63,7 @@ def _budget_to_cny(text: str) -> Optional[tuple]:
         unit = (m.group(2) or "").lower()
         if unit == "k":
             val *= 1000
-        elif unit in ("w", "万"):
+        elif unit in ("w", "万"):  # i18n: user-facing
             val *= 10000
         nums.append(val)
     if not nums:

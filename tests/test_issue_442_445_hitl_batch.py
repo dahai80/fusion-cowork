@@ -1,9 +1,12 @@
-"""issues #442/#443/#444/#445 批次。
+"""issues #442/#443/#444/#445 batch.
 
-- #442: 闸门批准 (非 once) 必须放行 — #340 起闸门不落 approve 规则, 原地复查必然拒绝
-- #445: pause/resume 与 HITL 共用同一事件 — resume 唤醒无决定 = 重新挂起, 绝不合成拒绝
-- #444: base 判定原始 matched 也置空 (output_data 经 runs API 逐字暴露)
-- #443: 模板 n1 座位输入携带原始需求 (task_title/task_prompt)
+- #442: gate approval (non-once) must let the run proceed — since #340 gates persist
+  no approve rule, an in-place recheck would always deny
+- #445: pause/resume and HITL share the same event — resume waking without a decision
+  = re-arm the wait, never synthesize a denial
+- #444: base verdict blanks the raw matched field too (output_data is exposed verbatim
+  through the runs API)
+- #443: template n1 seat input carries the original requirement (task_title/task_prompt)
 """
 
 from __future__ import annotations
@@ -88,7 +91,7 @@ def _make_app(eng, tmp_path, monkeypatch):
 
 
 class TestGateApproveWithoutOnce:
-    # issue #442: 非 once 批准闸门必须放行 (闸门不落规则, 复查必然拒绝)
+    # issue #442: non-once gate approval must let the run proceed (gates persist no rule; recheck would deny)
 
     def test_gate_approve_proceeds(self, hitl_env, tmp_path, monkeypatch):
         from fastapi.testclient import TestClient
@@ -133,7 +136,7 @@ class TestGateApproveWithoutOnce:
 
 
 class TestResumeAtGateRearms:
-    # issue #445: pause/resume 穿过 HITL 闸门 — resume 后闸门重新等待, 不合成拒绝
+    # issue #445: pause/resume passes through the HITL gate — after resume the gate waits again, no synthesized denial
 
     def test_resume_keeps_gate_pending_then_approve_completes(self, hitl_env, tmp_path, monkeypatch):
         from fastapi.testclient import TestClient
@@ -147,12 +150,13 @@ class TestResumeAtGateRearms:
             assert _wait_pending(eng, run_id)
             assert eng.pause(run_id) is True
             assert eng.resume(run_id) is True
-            # resume 唤醒但无审批决定 — 闸门必须仍在等待 (旧代码此处合成拒绝, run 秒挂)
+            # resume wakes the run but no approval decision — gate must still wait
+            # (old code synthesized a denial here, run failed instantly)
             time.sleep(0.4)
             assert eng.hitl_pending(run_id), "resume without decision must re-arm the HITL wait"
             detail = client.get(f"/api/runs/{run_id}", headers=auth).json()
             assert detail["status"] == "running", detail
-            # 随后 once 批准到达 — 唤醒并完成
+            # Then the once approval arrives — wakes and completes
             action_id = client.get("/api/permissions/pending", headers=auth).json()["approvals"][0]["action_id"]
             client.post(
                 f"/api/permissions/pending/{action_id}/confirm",
@@ -165,7 +169,7 @@ class TestResumeAtGateRearms:
 
 
 class TestBaseVerdictHidesRawMatched:
-    # issue #444: base 判定原始 matched 置空 — runs API step output_data 不泄露他客户项目
+    # issue #444: base verdict blanks the raw matched — runs API step output_data must not leak other customers' projects
 
     async def test_base_matched_empty(self):
         from fusion_cowork.nodes.ops.match_node import HistoricalMatchNode
@@ -210,7 +214,7 @@ class TestBaseVerdictHidesRawMatched:
 
 
 class TestSeatInputCarriesRequirement:
-    # issue #443: n1 座位输入必须携带 task_title/task_prompt — 只给 slug 时 BA 编造 PRD
+    # issue #443: n1 seat input must carry task_title/task_prompt — with only a slug the BA would invent the PRD
 
     def test_template_n1_input_has_placeholders(self):
         tpl = TemplateManager().get_template("product_lifecycle")
@@ -221,8 +225,9 @@ class TestSeatInputCarriesRequirement:
     def test_assembled_n1_input_embeds_requirement(self):
         wf = TemplateManager().template_to_workflow(
             "product_lifecycle",
+            # i18n: user-facing
             {"slug": "tiny-todo", "repo": "o/r", "task_title": "实现极简待办清单 CLI", "task_prompt": "支持增删查"},
         )
         n1_input = wf.nodes["n1"].config.params["input"]
-        assert "实现极简待办清单 CLI" in n1_input
-        assert "支持增删查" in n1_input
+        assert "实现极简待办清单 CLI" in n1_input  # i18n: user-facing
+        assert "支持增删查" in n1_input  # i18n: user-facing

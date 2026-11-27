@@ -24,7 +24,7 @@ export function WorkflowsPage({ onEdit }: { onEdit: (id: string) => void }) {
             window.location.hash = '#/runs';
         } catch (e) {
             console.error('[cowork-web] run failed', e);
-            sdk.toast.show({ level: 'error', message: t('运行提交失败', 'Failed to submit run') });
+            sdk.toast.show({ level: 'error', message: t('运行提交失败', 'Failed to submit run') }); // i18n: user-facing
         }
     }
 
@@ -37,7 +37,7 @@ export function WorkflowsPage({ onEdit }: { onEdit: (id: string) => void }) {
             setReloadKey((k) => k + 1);
         } catch (e) {
             console.error('[cowork-web] delete failed', e);
-            sdk.toast.show({ level: 'error', message: t('删除失败', 'Delete failed') });
+            sdk.toast.show({ level: 'error', message: t('删除失败', 'Delete failed') }); // i18n: user-facing
         }
     }
 
@@ -46,7 +46,7 @@ export function WorkflowsPage({ onEdit }: { onEdit: (id: string) => void }) {
         return (
             <ErrorState
                 message={error.message}
-                retryLabel={t('重试', 'Retry')}
+                retryLabel={t('重试', 'Retry')} // i18n: user-facing
                 onRetry={manualRetry}
                 retrying={attempt > 0 ? attempt : undefined}
             />
@@ -57,9 +57,11 @@ export function WorkflowsPage({ onEdit }: { onEdit: (id: string) => void }) {
         <div className="flex flex-col gap-4">
             <div className="flex items-center justify-between">
                 <div>
-                    <div className="text-lg font-medium text-text-primary">{t('工作流', 'Workflows')}</div>
+                    <div className="text-lg font-medium text-text-primary">
+                        {t('工作流', 'Workflows') /*// i18n: user-facing*/}
+                    </div>
                     <div className="text-xs text-text-muted">
-                        {t('已保存的 DAG 工作流定义', 'Saved DAG workflow definitions')}
+                        {t('已保存的 DAG 工作流定义', 'Saved DAG workflow definitions') /*// i18n: user-facing*/}
                     </div>
                 </div>
                 <button
@@ -69,21 +71,21 @@ export function WorkflowsPage({ onEdit }: { onEdit: (id: string) => void }) {
                         window.location.hash = '#/canvas';
                     }}
                 >
-                    {t('新建工作流', 'New workflow')}
+                    {t('新建工作流', 'New workflow') /*// i18n: user-facing*/}
                 </button>
             </div>
             <DataTable<WorkflowListItem>
                 columns={[
                     {
                         key: 'name',
-                        header: t('名称', 'Name'),
+                        header: t('名称', 'Name'), // i18n: user-facing
                         sortable: true,
                         render: (r) => <span className="text-text-primary">{r.name}</span>,
                     },
-                    { key: 'node_count', header: t('节点数', 'Nodes'), sortable: true },
+                    { key: 'node_count', header: t('节点数', 'Nodes'), sortable: true }, // i18n: user-facing
                     {
                         key: 'updated_at',
-                        header: t('更新时间', 'Updated'),
+                        header: t('更新时间', 'Updated'), // i18n: user-facing
                         sortable: true,
                         render: (r) => <span className="font-mono text-xs">{fmtTime(r.updated_at, lang)}</span>,
                     },
@@ -97,21 +99,21 @@ export function WorkflowsPage({ onEdit }: { onEdit: (id: string) => void }) {
                                     className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
                                     onClick={() => void runFlow(r)}
                                 >
-                                    {t('运行', 'Run')}
+                                    {t('运行', 'Run') /*// i18n: user-facing*/}
                                 </button>
                                 <button
                                     type="button"
                                     className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
                                     onClick={() => onEdit(r.id)}
                                 >
-                                    {t('编辑', 'Edit')}
+                                    {t('编辑', 'Edit') /*// i18n: user-facing*/}
                                 </button>
                                 <button
                                     type="button"
                                     className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-error/10"
                                     onClick={() => setPendingDelete(r)}
                                 >
-                                    {t('删除', 'Delete')}
+                                    {t('删除', 'Delete') /*// i18n: user-facing*/}
                                 </button>
                             </div>
                         ),
@@ -121,9 +123,9 @@ export function WorkflowsPage({ onEdit }: { onEdit: (id: string) => void }) {
                 rowKey={(r) => r.id}
                 emptyState={
                     <EmptyState
-                        title={t('暂无工作流', 'No workflows yet')}
+                        title={t('暂无工作流', 'No workflows yet')} // i18n: user-facing
                         description={t(
-                            '点击「新建工作流」在画布上编排第一个 DAG',
+                            '点击「新建工作流」在画布上编排第一个 DAG', // i18n: user-facing
                             'Click "New workflow" to compose your first DAG on the canvas'
                         )}
                         action={
@@ -134,7 +136,7 @@ export function WorkflowsPage({ onEdit }: { onEdit: (id: string) => void }) {
                                     window.location.hash = '#/canvas';
                                 }}
                             >
-                                {t('新建工作流', 'New workflow')}
+                                {t('新建工作流', 'New workflow') /*// i18n: user-facing*/}
                             </button>
                         }
                     />
@@ -142,15 +144,15 @@ export function WorkflowsPage({ onEdit }: { onEdit: (id: string) => void }) {
             />
             <ConfirmDialog
                 open={pendingDelete !== null}
-                title={t('删除工作流', 'Delete workflow')}
+                title={t('删除工作流', 'Delete workflow')} // i18n: user-facing
                 description={t(
-                    `将永久删除「${pendingDelete?.name ?? ''}」, 该操作不可撤销。`,
+                    `将永久删除「${pendingDelete?.name ?? ''}」, 该操作不可撤销。`, // i18n: user-facing
                     `This permanently deletes "${pendingDelete?.name ?? ''}". This cannot be undone.`
                 )}
                 danger
                 confirmName={pendingDelete?.id}
-                confirmLabel={t('删除', 'Delete')}
-                cancelLabel={t('取消', 'Cancel')}
+                confirmLabel={t('删除', 'Delete')} // i18n: user-facing
+                cancelLabel={t('取消', 'Cancel')} // i18n: user-facing
                 onConfirm={() => void confirmDelete()}
                 onCancel={() => setPendingDelete(null)}
             />

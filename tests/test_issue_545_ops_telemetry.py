@@ -1,8 +1,8 @@
 """issue #545: DAG run/node telemetry into fusion_ops.ops_events (flywheel Loop D).
 
-验收: 失败节点产生稳定 failure signature (跨 run 相同 cluster key);
-payload 不含节点输入/输出 (tenant data 红线, 只有 workflow 定义 sha256);
-telemetry 关闭 (无 FUSION_OPS_DSN) = 引擎行为零变化; emit 永不阻塞/抛错。
+Acceptance: failed nodes produce a stable failure signature (same cluster key across runs);
+the payload contains no node inputs/outputs (tenant data red line, only the workflow definition sha256);
+telemetry off (no FUSION_OPS_DSN) = zero engine behavior change; emit never blocks/raises.
 """
 
 from __future__ import annotations

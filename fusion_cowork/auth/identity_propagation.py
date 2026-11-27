@@ -85,8 +85,8 @@ def friendly_quota_error(status_code: int, body: Any) -> Optional[str]:
         detail = body
     if "quota" not in detail.lower():
         return None
-    logger.warning(f"LLM 调用被网关配额拒绝: {detail}")
-    return (
+    logger.warning(f"LLM call rejected by gateway quota: {detail}")
+    return (  # i18n: user-facing
         "每日 token 配额已用尽 (daily token quota exceeded) — 请明日再试或联系管理员提升预算; "
         f"quota={body.get('quota') if isinstance(body, dict) else ''}"
     )

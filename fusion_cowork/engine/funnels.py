@@ -1,6 +1,6 @@
 # 111: fusion-harness kernel shim for structural funnels.
-# #190/#2: fusion-harness is required at import — no in-tree fallback. 裸装
-# 缺包时给出可执行安装指引 (issue #196, fail-visible, not fail-silent).
+# #190/#2: fusion-harness is required at import — no in-tree fallback. Bare
+# installs without the package get actionable install guidance (issue #196, fail-visible, not fail-silent).
 
 from __future__ import annotations
 

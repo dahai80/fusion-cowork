@@ -1,8 +1,8 @@
-"""Issue #135 F-2 回归测试 — /api/runs 坏边形状 400 而非 500 KeyError。
+"""Issue #135 F-2 regression — /api/runs returns 400 for a malformed edge shape instead of a 500 KeyError.
 
-Edge.from_dict / Workflow.from_dict 对缺 source_id/target_id 的边抛可读
-ValueError (对齐既有含环 ValueError 先例), runs_create API 边界转 400。
-"""
+Edge.from_dict / Workflow.from_dict raise a readable ValueError for edges missing
+source_id/target_id (aligned with the existing cycle ValueError precedent), and the
+runs_create API boundary converts it to 400."""
 
 from __future__ import annotations
 
@@ -116,7 +116,7 @@ class TestRunsCreateEdgeShape:
             headers=_auth(),
         )
         assert r.status_code == 400
-        assert "环" in r.json()["detail"]["message"]
+        assert "环" in r.json()["detail"]["message"]  # i18n: user-facing
 
     def test_valid_workflow_still_202(self, client):
         r = client.post(

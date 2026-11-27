@@ -1,11 +1,11 @@
-"""issue #154 + #156: 跨设备接管 / 推送出口 / 管理台 / OTel 审计导出。
+"""issue #154 + #156: cross-device takeover / push egress / admin console / OTel audit export.
 
 Covered:
-- PushEgress: 未配置 no-op; 配置后 webhook 送达 (MockTransport), 失败不抛
-- 审批入队回调 on_pending_created (本地高风险拒绝)
-- RunRegistry 终态 push (run_finished)
-- WS /ws/takeover/{run_id}: 快照帧, 转向帧, 认证失败 4401, 运行不存在 4404
-- 管理台: admin key 503/401, members/usage, audit export OTLP 形状, push test
+- PushEgress: no-op when unconfigured; webhook delivered when configured (MockTransport), failures do not raise
+- Approval enqueue callback on_pending_created (local high-risk denial)
+- RunRegistry terminal-state push (run_finished)
+- WS /ws/takeover/{run_id}: snapshot frame, steering frame, auth failure 4401, missing run 4404
+- Admin console: admin key 503/401, members/usage, audit export OTLP shape, push test
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def client(tmp_path, monkeypatch):
     @register_node
     class MockSleepNode154(BaseNode):
         name = "mock_sleep_154"
-        display_name = "慢回显"
+        display_name = "慢回显"  # i18n: user-facing
         category = NodeCategory.TOOL
 
         async def execute(self, params):
@@ -126,7 +126,7 @@ class TestPushEgress:
         assert await egress2.push_event("k", {}) is False
 
 
-# ── 审批回调 / run push ─────────────────────────────────────────────────────
+# ── Approval callback / run push ────────────────────────────────────────────
 
 
 class TestPendingPushHooks:
@@ -138,7 +138,7 @@ class TestPendingPushHooks:
         seen = []
         mgr.on_pending_created = seen.append
         allowed = await mgr.check("clipboard", action="read")
-        assert allowed is False, "高风险节点无批准必须拒绝"
+        assert allowed is False, "高风险节点无批准必须拒绝"  # i18n: user-facing
         assert len(seen) == 1
         info = seen[0]
         assert info["tool_name"] == "clipboard"
@@ -170,7 +170,7 @@ class TestPendingPushHooks:
         @register_node
         class PushMockNode(BaseNode):
             name = "push_mock_154"
-            display_name = "推送回显"
+            display_name = "推送回显"  # i18n: user-facing
             category = NodeCategory.TOOL
 
             async def execute(self, params):
@@ -195,7 +195,7 @@ class TestPendingPushHooks:
                 if fake.events:
                     break
                 await asyncio.sleep(0.05)
-            assert fake.events, "run 终态应触发 webhook push"
+            assert fake.events, "run 终态应触发 webhook push"  # i18n: user-facing
             kind, payload = fake.events[0]
             assert kind == "run_finished"
             assert payload["run_id"] == rid
@@ -238,10 +238,10 @@ class TestTakeoverWs:
         with client.websocket_connect(f"/ws/takeover/run_missing?token={STATIC_KEY}") as ws:
             frame = ws.receive_json()
             assert frame["event"] == "error"
-            assert "不存在" in frame["message"]
+            assert "不存在" in frame["message"]  # i18n: user-facing
 
 
-# ── 管理台 ─────────────────────────────────────────────────────────────────
+# ── Admin console ──────────────────────────────────────────────────────────
 
 
 class TestAdminConsole:
@@ -272,11 +272,11 @@ class TestAdminConsole:
 
     def test_audit_export_otlp(self, client):
         registry = client.app.state.run_registry
-        # 直接构造 fixture run 记录 (含终态时间 + 失败错误)
+        # Build the fixture run record directly (with terminal timestamps + failure error)
         registry._runs["run_audit_1"] = {
             "run_id": "run_audit_1",
             "workflow_id": "wf_a",
-            "workflow_name": "审计工作流",
+            "workflow_name": "审计工作流",  # i18n: user-facing
             "status": "failed",
             "created_at": 1.0,
             "finished_at": 2.0,
@@ -287,7 +287,7 @@ class TestAdminConsole:
         assert resp.status_code == 200, resp.text
         data = resp.json()
         logs = data["resourceLogs"][0]["scopeLogs"][0]["logRecords"]
-        assert logs, "导出应至少含 run.finished 记录"
+        assert logs, "导出应至少含 run.finished 记录"  # i18n: user-facing
         # export mixes audit rows and run records — locate the run.finished one
         target = None
         for rec in logs:
@@ -295,7 +295,7 @@ class TestAdminConsole:
             if attrs.get("event.name") == "run.finished":
                 target = (rec, attrs)
                 break
-        assert target, "run.finished 记录缺失"
+        assert target, "run.finished 记录缺失"  # i18n: user-facing
         rec, attrs = target
         assert attrs["event.name"] == "run.finished"
         assert attrs["run_id"] == "run_audit_1"

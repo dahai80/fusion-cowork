@@ -1,7 +1,7 @@
-"""Fusion-Cowork 内嵌浏览器集成 — macOS WKWebView 原生浏览器模块。
+"""Fusion-Cowork embedded browser integration — macOS WKWebView native browser module.
 
-通过 CLI 控制浏览器：启动、打开 URL、自动化、状态查询。
-与 Swift 原生浏览器通过 HTTP 桥接通信。
+Control the browser via CLI: launch, open URL, automation, status queries.
+Communicates with the Swift native browser over an HTTP bridge.
 """
 
 from __future__ import annotations
@@ -25,14 +25,14 @@ from ...engine.node import (
 
 logger = logging.getLogger(__name__)
 
-# 浏览器桥接服务端口
+# Browser bridge service port
 BROWSER_BRIDGE_PORT = 9234
-# 浏览器应用路径
+# Browser app path
 BROWSER_APP_PATH = Path(__file__).parent.parent.parent.parent / "browser" / ".build" / "release" / "FusionBrowser.app"
 
 
 class BrowserClient:
-    """浏览器桥接客户端 — 与 Swift 原生浏览器通信。"""
+    """Browser bridge client — communicates with the Swift native browser."""
 
     def __init__(self, port: int = BROWSER_BRIDGE_PORT):
         self.port = port
@@ -53,60 +53,60 @@ class BrowserClient:
             self._client = None
 
     async def open_url(self, url: str) -> Dict[str, Any]:
-        """在浏览器中打开 URL。"""
+        """Open a URL in the browser."""
         resp = await self.client.post("/api/browser/open", json={"url": url})
         resp.raise_for_status()
         return resp.json()
 
     async def execute_script(self, script: str) -> Dict[str, Any]:
-        """在激活标签页中执行 JS。"""
+        """Execute JS in the active tab."""
         resp = await self.client.post("/api/browser/execute", json={"script": script})
         resp.raise_for_status()
         return resp.json()
 
     async def get_page_text(self) -> str:
-        """获取当前页面文本内容。"""
+        """Get the current page text content."""
         resp = await self.client.get("/api/browser/page/text")
         resp.raise_for_status()
         data = resp.json()
         return data.get("text", "")
 
     async def get_page_html(self) -> str:
-        """获取当前页面 HTML。"""
+        """Get the current page HTML."""
         resp = await self.client.get("/api/browser/page/html")
         resp.raise_for_status()
         data = resp.json()
         return data.get("html", "")
 
     async def click_element(self, selector: str) -> bool:
-        """点击元素。"""
+        """Click an element."""
         resp = await self.client.post("/api/browser/click", json={"selector": selector})
         resp.raise_for_status()
         data = resp.json()
         return data.get("success", False)
 
     async def fill_input(self, selector: str, value: str) -> bool:
-        """输入文本。"""
+        """Type text."""
         resp = await self.client.post("/api/browser/fill", json={"selector": selector, "value": value})
         resp.raise_for_status()
         data = resp.json()
         return data.get("success", False)
 
     async def screenshot(self) -> Optional[bytes]:
-        """截图。"""
+        """Take a screenshot."""
         resp = await self.client.get("/api/browser/screenshot")
         resp.raise_for_status()
         return resp.content
 
     async def list_tabs(self) -> List[Dict[str, Any]]:
-        """列出所有标签页。"""
+        """List all tabs."""
         resp = await self.client.get("/api/browser/tabs")
         resp.raise_for_status()
         data = resp.json()
         return data.get("tabs", [])
 
     async def get_status(self) -> Dict[str, Any]:
-        """获取浏览器状态。"""
+        """Get browser status."""
         try:
             resp = await self.client.get("/api/browser/status", timeout=2.0)
             return resp.json()
@@ -114,7 +114,7 @@ class BrowserClient:
             return {"running": False}
 
     async def close_browser(self) -> bool:
-        """关闭浏览器。"""
+        """Close the browser."""
         try:
             resp = await self.client.post("/api/browser/close")
             return resp.status_code == 200
@@ -122,7 +122,7 @@ class BrowserClient:
             return False
 
     def is_running(self) -> bool:
-        """检查浏览器是否在运行（通过进程检测）。"""
+        """Check whether the browser is running (via process detection)."""
         try:
             result = subprocess.run(
                 ["pgrep", "-f", "FusionBrowser"],
@@ -136,15 +136,15 @@ class BrowserClient:
 
 
 class BrowserManager:
-    """浏览器进程管理器。"""
+    """Browser process manager."""
 
     @staticmethod
     def launch() -> bool:
-        """启动浏览器应用。"""
+        """Launch the browser app."""
         app_path = BROWSER_APP_PATH
         if not app_path.exists():
-            logger.error(f"浏览器应用未找到: {app_path}")
-            logger.info("请先构建: cd browser && swift build -c release")
+            logger.error(f"Browser app not found: {app_path}")
+            logger.info("Build it first: cd browser && swift build -c release")
             return False
 
         try:
@@ -153,15 +153,15 @@ class BrowserManager:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            logger.info(f"已启动浏览器: {app_path}")
+            logger.info(f"Browser launched: {app_path}")
             return True
         except Exception as e:
-            logger.error(f"启动浏览器失败: {e}")
+            logger.error(f"Failed to launch browser: {e}")
             return False
 
     @staticmethod
     def build() -> bool:
-        """构建浏览器应用。"""
+        """Build the browser app."""
         browser_dir = BROWSER_APP_PATH.parent.parent.parent
         try:
             result = subprocess.run(
@@ -172,39 +172,40 @@ class BrowserManager:
                 timeout=300,
             )
             if result.returncode == 0:
-                logger.info("浏览器构建成功")
+                logger.info("Browser build succeeded")
                 return True
             else:
-                logger.error(f"构建失败:\n{result.stderr}")
+                logger.error(f"Build failed:\n{result.stderr}")
                 return False
         except Exception as e:
-            logger.error(f"构建异常: {e}")
+            logger.error(f"Build error: {e}")
             return False
 
 
 @register_node
 class BrowserOpenNode(BaseNode):
-    """浏览器打开节点 — 在浏览器中打开指定 URL。"""
+    """Browser open node — opens a given URL in the browser."""
 
     name = "browser_open"
-    display_name = "浏览器打开"
+    display_name = "浏览器打开"  # i18n: user-facing
     category = NodeCategory.TOOL
-    description = "在 Fusion 内嵌浏览器中打开 URL"
+    description = "在 Fusion 内嵌浏览器中打开 URL"  # i18n: user-facing
     icon = "🌐"
-    default_label = "浏览器打开"
+    default_label = "浏览器打开"  # i18n: user-facing
 
     inputs = [
         {"key": "url", "label": "URL", "type": "string"},
     ]
     outputs = [
-        {"key": "result", "label": "结果", "type": "dict"},
+        {"key": "result", "label": "结果", "type": "dict"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "url": {"type": "string", "description": "要打开的 URL"},
+                "url": {"type": "string", "description": "要打开的 URL"},  # i18n: user-facing
+                # i18n: user-facing
                 "new_tab": {"type": "boolean", "default": True, "description": "在新标签页打开"},
             },
             "required": ["url"],
@@ -219,8 +220,8 @@ class BrowserOpenNode(BaseNode):
         if not url:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="未指定 URL",
-                summary="未指定 URL",
+                error="未指定 URL",  # i18n: user-facing
+                summary="未指定 URL",  # i18n: user-facing
             )
 
         client = BrowserClient()
@@ -229,13 +230,13 @@ class BrowserOpenNode(BaseNode):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"result": result, "url": url},
-                summary=f"已打开: {url}",
+                summary=f"已打开: {url}",  # i18n: user-facing
             )
         except Exception as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"打开失败: {e}",
-                summary="打开失败",
+                error=f"打开失败: {e}",  # i18n: user-facing
+                summary="打开失败",  # i18n: user-facing
             )
         finally:
             await client.close()
@@ -243,28 +244,30 @@ class BrowserOpenNode(BaseNode):
 
 @register_node
 class BrowserExtractNode(BaseNode):
-    """浏览器内容提取节点 — 从网页提取文本/HTML。"""
+    """Browser extract node — extracts text/HTML from a page."""
 
     name = "browser_extract"
-    display_name = "浏览器提取"
+    display_name = "浏览器提取"  # i18n: user-facing
     category = NodeCategory.TOOL
-    description = "从网页提取文本内容"
+    description = "从网页提取文本内容"  # i18n: user-facing
     icon = "📄"
-    default_label = "提取内容"
+    default_label = "提取内容"  # i18n: user-facing
 
     inputs = [
         {"key": "url", "label": "URL", "type": "string", "optional": True},
     ]
     outputs = [
-        {"key": "text", "label": "文本内容", "type": "string"},
-        {"key": "html", "label": "HTML 源码", "type": "string"},
+        {"key": "text", "label": "文本内容", "type": "string"},  # i18n: user-facing
+        {"key": "html", "label": "HTML 源码", "type": "string"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "url": {"type": "string", "description": "要提取的 URL（留空使用当前页面）"},
+                # i18n: user-facing
                 "extract_html": {"type": "boolean", "default": False, "description": "是否提取 HTML"},
             },
         }
@@ -281,7 +284,7 @@ class BrowserExtractNode(BaseNode):
         try:
             if url:
                 await client.open_url(url)
-                await asyncio.sleep(1)  # 等待页面加载
+                await asyncio.sleep(1)  # wait for the page to load
 
             text = await client.get_page_text()
             html = await client.get_page_html() if extract_html else ""
@@ -293,13 +296,13 @@ class BrowserExtractNode(BaseNode):
                     "html": html,
                     "text_length": len(text),
                 },
-                summary=f"提取 {len(text)} 字符",
+                summary=f"提取 {len(text)} 字符",  # i18n: user-facing
             )
         except Exception as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"提取失败: {e}",
-                summary="提取失败",
+                error=f"提取失败: {e}",  # i18n: user-facing
+                summary="提取失败",  # i18n: user-facing
             )
         finally:
             await client.close()
@@ -307,31 +310,32 @@ class BrowserExtractNode(BaseNode):
 
 @register_node
 class BrowserAutomateNode(BaseNode):
-    """浏览器自动化节点 — 自动点击、输入、截图。"""
+    """Browser automation node — automated click, type, screenshot."""
 
     name = "browser_automate"
-    display_name = "浏览器自动化"
+    display_name = "浏览器自动化"  # i18n: user-facing
     category = NodeCategory.TOOL
-    description = "自动操作网页元素"
+    description = "自动操作网页元素"  # i18n: user-facing
     icon = "🤖"
-    default_label = "网页自动化"
+    default_label = "网页自动化"  # i18n: user-facing
 
     inputs = [
         {"key": "url", "label": "URL", "type": "string", "optional": True},
-        {"key": "actions", "label": "操作列表", "type": "list[dict]"},
+        {"key": "actions", "label": "操作列表", "type": "list[dict]"},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "results", "label": "操作结果", "type": "list[dict]"},
-        {"key": "screenshot", "label": "截图", "type": "bytes", "optional": True},
+        {"key": "results", "label": "操作结果", "type": "list[dict]"},  # i18n: user-facing
+        {"key": "screenshot", "label": "截图", "type": "bytes", "optional": True},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "url": {"type": "string", "description": "目标 URL"},
+                "url": {"type": "string", "description": "目标 URL"},  # i18n: user-facing
                 "actions": {
                     "type": "array",
+                    # i18n: user-facing
                     "description": "操作列表，每项: {type: 'click'|'fill'|'wait'|'extract', selector: '...', value: '...'}",
                 },
                 "take_screenshot": {"type": "boolean", "default": False},
@@ -353,12 +357,12 @@ class BrowserAutomateNode(BaseNode):
         results = []
 
         try:
-            # 打开页面
+            # Open the page
             if url:
                 await client.open_url(url)
                 await asyncio.sleep(1)
 
-            # 执行操作
+            # Execute actions
             for action in actions:
                 action_type = action.get("type", "")
                 selector = action.get("selector", "")
@@ -379,7 +383,7 @@ class BrowserAutomateNode(BaseNode):
 
                 await asyncio.sleep(wait_time)
 
-            # 截图
+            # Screenshot
             screenshot_data = None
             if take_screenshot:
                 screenshot_data = await client.screenshot()
@@ -391,14 +395,14 @@ class BrowserAutomateNode(BaseNode):
                     "screenshot": screenshot_data,
                     "action_count": len(results),
                 },
-                summary=f"完成 {len(results)} 个操作",
+                summary=f"完成 {len(results)} 个操作",  # i18n: user-facing
             )
 
         except Exception as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"自动化失败: {e}",
-                summary="自动化失败",
+                error=f"自动化失败: {e}",  # i18n: user-facing
+                summary="自动化失败",  # i18n: user-facing
             )
         finally:
             await client.close()
@@ -406,25 +410,25 @@ class BrowserAutomateNode(BaseNode):
 
 @register_node
 class ManagedBrowserNode(BaseNode):
-    """托管浏览器节点 — 自动拉起独立 profile 的 Chromium 并开 CDP (issue #153)。
+    """Managed browser node — launches a standalone-profile Chromium with CDP enabled (issue #153).
 
-    action=launch: 启动托管浏览器 (独立 user-data-dir + 自动调试端口), 并把
-    FUSION_BROWSER_CDP 指向该端口, 后续 cdp_* 节点直接复用同一会话。
-    action=close / status: 关闭或查询当前托管浏览器。
-    import_cookies: Netscape cookies.txt 路径, 启动后经 CDP Network.setCookies 导入。
+    action=launch: start the managed browser (isolated user-data-dir + auto debug port) and point
+    FUSION_BROWSER_CDP at that port so subsequent cdp_* nodes reuse the same session.
+    action=close / status: close or query the current managed browser.
+    import_cookies: Netscape cookies.txt path; imported via CDP Network.setCookies after launch.
     """
 
     name = "managed_browser"
-    display_name = "托管浏览器"
+    display_name = "托管浏览器"  # i18n: user-facing
     category = NodeCategory.TOOL
-    description = "启动独立 profile 的 Chromium (自动 CDP 端口), 复用 cdp_* 节点"
+    description = "启动独立 profile 的 Chromium (自动 CDP 端口), 复用 cdp_* 节点"  # i18n: user-facing
     icon = "🌐"
-    default_label = "托管浏览器"
+    default_label = "托管浏览器"  # i18n: user-facing
 
     inputs = [{"key": "url", "label": "URL", "type": "string", "optional": True}]
     outputs = [
-        {"key": "port", "label": "CDP 端口", "type": "integer"},
-        {"key": "status", "label": "状态", "type": "dict"},
+        {"key": "port", "label": "CDP 端口", "type": "integer"},  # i18n: user-facing
+        {"key": "status", "label": "状态", "type": "dict"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -433,9 +437,10 @@ class ManagedBrowserNode(BaseNode):
             "properties": {
                 "action": {"type": "string", "enum": ["launch", "close", "status"], "default": "launch"},
                 "url": {"type": "string", "default": "about:blank"},
-                "port": {"type": "integer", "default": 0, "description": "0 = 自动分配"},
+                "port": {"type": "integer", "default": 0, "description": "0 = 自动分配"},  # i18n: user-facing
                 "headless": {"type": "boolean", "default": False},
                 "profile_dir": {"type": "string", "default": ""},
+                # i18n: user-facing
                 "import_cookies": {"type": "string", "default": "", "description": "Netscape cookies.txt 路径"},
             },
             "required": ["action"],
@@ -453,13 +458,14 @@ class ManagedBrowserNode(BaseNode):
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
                     data={"closed": closed, "status": browser.status()},
-                    summary="托管浏览器已关闭" if closed else "托管浏览器未运行",
+                    summary="托管浏览器已关闭" if closed else "托管浏览器未运行",  # i18n: user-facing
                 )
             if action == "status":
                 status = browser.status()
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
                     data=status,
+                    # i18n: user-facing
                     summary=f"托管浏览器端口 {status['port']}" if status.get("running") else "托管浏览器未运行",
                 )
             url = str(inputs.get("url") or params.get("url") or "about:blank")
@@ -472,29 +478,32 @@ class ManagedBrowserNode(BaseNode):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data=info,
-                summary=f"托管浏览器已启动 (CDP 端口 {info['port']})",
+                summary=f"托管浏览器已启动 (CDP 端口 {info['port']})",  # i18n: user-facing
             )
         except ManagedBrowserError as e:
-            logger.error(f"托管浏览器失败: {e}")
+            logger.error(f"Managed browser failed: {e}")
+            # i18n: user-facing
             return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="托管浏览器启动失败")
         except Exception as e:
-            logger.error(f"托管浏览器异常: {e}")
+            logger.error(f"Managed browser error: {e}")
+            # i18n: user-facing
             return NodeResult(status=NodeStatus.FAILED, error=f"托管浏览器异常: {e}", summary="托管浏览器失败")
 
 
 @register_node
 class FusionBrowserNode(BaseNode):
     name = "fusion_browser"
-    display_name = "fusion-browser 引擎"
+    display_name = "fusion-browser 引擎"  # i18n: user-facing
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "托管 fusion-browser 引擎 (UDS): 每运行独立 profile + 登录态导入 + 面板截图流"
     icon = "🧭"
     default_label = "fusion-browser"
 
     inputs = [{"key": "url", "label": "URL", "type": "string", "optional": True}]
     outputs = [
-        {"key": "session_id", "label": "会话", "type": "string"},
-        {"key": "status", "label": "状态", "type": "dict"},
+        {"key": "session_id", "label": "会话", "type": "string"},  # i18n: user-facing
+        {"key": "status", "label": "状态", "type": "dict"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -517,6 +526,7 @@ class FusionBrowserNode(BaseNode):
                     ],
                     "default": "launch",
                 },
+                # i18n: user-facing
                 "run_id": {"type": "string", "default": "", "description": "工作流运行 ID (profile 归属)"},
                 "profile_id": {"type": "string", "default": ""},
                 "url": {"type": "string", "default": ""},
@@ -568,13 +578,14 @@ class FusionBrowserNode(BaseNode):
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
                     data=info,
-                    summary=f"fusion-browser 已启动 pid={info.get('pid')}",
+                    summary=f"fusion-browser 已启动 pid={info.get('pid')}",  # i18n: user-facing
                 )
             if action == "status":
                 info = await asyncio.to_thread(browser.status)
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
                     data=info,
+                    # i18n: user-facing
                     summary="fusion-browser 运行中" if info.get("running") else "fusion-browser 未运行",
                 )
             if action == "create_session":
@@ -589,10 +600,12 @@ class FusionBrowserNode(BaseNode):
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
                     data=info,
+                    # i18n: user-facing
                     summary=f"会话已创建 {info['session_id']} (profile {info.get('profile_id') or '临时'})",
                 )
             if action == "import_cookies":
                 if not session_id:
+                    # i18n: user-facing
                     return NodeResult(status=NodeStatus.FAILED, error="session_id 必填", summary="导入失败")
                 counters = await asyncio.to_thread(
                     browser.import_cookies,
@@ -604,13 +617,14 @@ class FusionBrowserNode(BaseNode):
                     status=NodeStatus.SUCCESS,
                     data=counters,
                     summary=(
-                        f"登录态导入 {counters['browser']}: imported {counters['imported']}, "
+                        f"登录态导入 {counters['browser']}: imported {counters['imported']}, "  # i18n: user-facing
                         f"skipped_app_bound {counters['skipped_app_bound']}, "
                         f"skipped_other {counters['skipped_other']}"
                     ),
                 )
             if action == "execute":
                 if not session_id:
+                    # i18n: user-facing
                     return NodeResult(status=NodeStatus.FAILED, error="session_id 必填", summary="执行失败")
                 cdp_action = str(params.get("cdp_action") or "navigate")
                 payload_text = str(params.get("payload_text") or "")
@@ -626,31 +640,35 @@ class FusionBrowserNode(BaseNode):
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
                     data=result,
-                    summary=f"{cdp_action} 完成 url={result.get('url', '')}",
+                    summary=f"{cdp_action} 完成 url={result.get('url', '')}",  # i18n: user-facing
                 )
             if action == "screenshot":
                 if not session_id:
+                    # i18n: user-facing
                     return NodeResult(status=NodeStatus.FAILED, error="session_id 必填", summary="截图失败")
                 png = await asyncio.to_thread(browser.screenshot_png, session_id)
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
                     data={"bytes": len(png), "session_id": session_id},
-                    summary=f"截图 {len(png)} 字节",
+                    summary=f"截图 {len(png)} 字节",  # i18n: user-facing
                 )
             if action == "close_session":
                 if not session_id:
+                    # i18n: user-facing
                     return NodeResult(status=NodeStatus.FAILED, error="session_id 必填", summary="关闭失败")
                 await asyncio.to_thread(browser.close_session, session_id)
+                # i18n: user-facing
                 return NodeResult(status=NodeStatus.SUCCESS, data={"session_id": session_id}, summary="会话已关闭")
             if action == "delete_profile":
                 profile_id = str(params.get("profile_id") or "")
                 if not profile_id:
+                    # i18n: user-facing
                     return NodeResult(status=NodeStatus.FAILED, error="profile_id 必填", summary="删除失败")
                 deleted = await asyncio.to_thread(browser.delete_profile, profile_id)
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
                     data={"profile_id": profile_id, "deleted": deleted},
-                    summary=f"profile {profile_id} {'已删除' if deleted else '不存在'}",
+                    summary=f"profile {profile_id} {'已删除' if deleted else '不存在'}",  # i18n: user-facing
                 )
             if action == "finish":
                 result = await asyncio.to_thread(
@@ -661,17 +679,23 @@ class FusionBrowserNode(BaseNode):
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
                     data=result,
-                    summary=f"收尾完成 (关闭 {len(result['closed_sessions'])} 会话)",
+                    summary=f"收尾完成 (关闭 {len(result['closed_sessions'])} 会话)",  # i18n: user-facing
                 )
             if action == "close":
                 info = await asyncio.to_thread(browser.close)
+                # i18n: user-facing
                 return NodeResult(status=NodeStatus.SUCCESS, data=info, summary="fusion-browser 已停止")
+            # i18n: user-facing
             return NodeResult(status=NodeStatus.FAILED, error=f"未知 action: {action}", summary="参数错误")
         except FusionBrowserError as e:
-            logger.error(f"fusion-browser 节点失败 action={action}: {e}")
+            logger.error(f"fusion-browser node failed action={action}: {e}")
+            # i18n: user-facing
             return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="fusion-browser 失败")
         except Exception as e:
-            logger.error(f"fusion-browser 节点异常 action={action}: {e}")
+            logger.error(f"fusion-browser node error action={action}: {e}")
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"fusion-browser 异常: {e}", summary="fusion-browser 失败"
+                # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=f"fusion-browser 异常: {e}",  # i18n: user-facing
+                summary="fusion-browser 失败",
             )

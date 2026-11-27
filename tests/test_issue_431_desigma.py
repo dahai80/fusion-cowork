@@ -1,8 +1,8 @@
-"""issue #431: desigma-mcp 接入 — mcp_client stdio 传输 + design_context 节点 + product_lifecycle 挂载。
+"""issue #431: desigma-mcp integration — mcp_client stdio transport + design_context node + product_lifecycle mounting.
 
-离线桩: 伪 asyncio 子进程回放 newline-delimited JSON-RPC; 无真实 desigma-mcp。
-红线: 零设计稿 (workspace 空) 空转成功, 管线行为不变; spawn 由
-FUSION_COWORK_MCP_STDIO_ALLOW 白名单把关, 缺省空 = 一律拒绝 (fail-closed)。
+Offline stub: a fake asyncio subprocess replays newline-delimited JSON-RPC; no real desigma-mcp.
+Red line: with zero design drafts (empty workspace) the run still succeeds and pipeline behavior is unchanged; spawn is
+gated by the FUSION_COWORK_MCP_STDIO_ALLOW whitelist, empty default = always rejected (fail-closed).
 """
 
 from __future__ import annotations
@@ -189,7 +189,7 @@ class TestMcpClientStdio:
         assert result.status == NodeStatus.SUCCESS
 
     def test_http_mode_untouched(self, allow_env):
-        # 回归: transport 缺省 http — 缺 url 报参数缺失 (原语义)
+        # Regression: transport defaults to http — missing url reports a missing-parameter error (original semantics)
         node = MCPClientNode(config=NodeConfig(params={"tool": "x"}))
         result = asyncio.run(node.execute({}))
         assert result.status == NodeStatus.FAILED
@@ -306,6 +306,7 @@ class TestDesignContextNode:
         allow_env.setattr(node, "_spawn", fake_spawn)
         result = asyncio.run(node.execute({}))
         assert result.status == NodeStatus.FAILED
+        # i18n: user-facing
         assert "desigma-mcp 导出失败" in result.error
 
 
@@ -337,7 +338,7 @@ class TestTemplateWiring:
 
 class TestNoDesignPipelineUnchanged:
     def test_empty_design_section_yields_byte_identical_prompt(self):
-        # 零设计稿红线: design_section 空串拼接后 prompt 与旧版逐字节一致
+        # Zero-design-draft red line: with design_section concatenated as an empty string, the prompt is byte-identical to the old version
         from fusion_cowork.nodes.ecosystem.desigma_node import DesignContextNode
 
         node = DesignContextNode(config=NodeConfig(params={}))

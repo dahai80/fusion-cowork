@@ -85,9 +85,10 @@ def _tail(text: str, lines: int) -> str:
 
 @register_node
 class DeployServiceNode(BaseNode):
-    """部署执行节点 — 拉起交付应用到健康检查通过的可访问端点 (issue #489)。"""
+    """Deploy execution node — bring the delivered app up to a reachable, health-checked endpoint (issue #489)."""
 
     name = "deploy_service"
+    # i18n: user-facing
     display_name = "应用部署"
     category = NodeCategory.TOOL
     description = (
@@ -96,17 +97,18 @@ class DeployServiceNode(BaseNode):
         "status, log excerpts and retry; exposes the app endpoint for preview"
     )
     icon = "🚀"
+    # i18n: user-facing
     default_label = "应用部署"
 
     inputs = [
-        {"key": "image", "label": "镜像/交付物", "type": "string"},
-        {"key": "install_script", "label": "安装脚本", "type": "string"},
+        {"key": "image", "label": "镜像/交付物", "type": "string"},  # i18n: user-facing
+        {"key": "install_script", "label": "安装脚本", "type": "string"},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "deployed", "label": "部署结果", "type": "boolean"},
-        {"key": "endpoint", "label": "应用端点", "type": "string"},
-        {"key": "stages", "label": "阶段链", "type": "array"},
-        {"key": "summary", "label": "部署摘要", "type": "string"},
+        {"key": "deployed", "label": "部署结果", "type": "boolean"},  # i18n: user-facing
+        {"key": "endpoint", "label": "应用端点", "type": "string"},  # i18n: user-facing
+        {"key": "stages", "label": "阶段链", "type": "array"},  # i18n: user-facing
+        {"key": "summary", "label": "部署摘要", "type": "string"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -116,49 +118,54 @@ class DeployServiceNode(BaseNode):
                 "target": {
                     "type": "string",
                     "enum": ["docker", "launchd", "script"],
+                    # i18n: user-facing
                     "description": "部署方式: docker = pull+run 容器; launchd = macOS launchd 服务; script = 安装脚本",
                     "default": "docker",
                 },
+                # i18n: user-facing
                 "image": {"type": "string", "description": "docker 镜像 (target=docker 必填); 可由上游输入 image 提供"},
+                # i18n: user-facing
                 "container_name": {"type": "string", "description": "docker 容器名 (缺省 fusion-deploy)"},
+                # i18n: user-facing
                 "ports": {"type": "string", "description": "docker 端口映射 (如 8080:8080, 传给 docker run -p)"},
                 "env": {
                     "type": "object",
-                    "description": "docker 容器环境变量 (k=v, 传给 docker run -e)",
+                    "description": "docker 容器环境变量 (k=v, 传给 docker run -e)",  # i18n: user-facing
                     "additionalProperties": {"type": "string"},
                 },
+                # i18n: user-facing
                 "plist_path": {"type": "string", "description": "launchd plist 路径 (target=launchd 必填)"},
                 "install_script": {
                     "type": "string",
-                    "description": "安装/启动脚本 (target=script 必填); 可由上游输入 install_script 提供",
+                    "description": "安装/启动脚本 (target=script 必填); 可由上游输入 install_script 提供",  # i18n: user-facing
                 },
                 "healthcheck_url": {
                     "type": "string",
-                    "description": "应用健康检查端点 (必填) — 部署成功后即为可访问的应用端点",
+                    "description": "应用健康检查端点 (必填) — 部署成功后即为可访问的应用端点",  # i18n: user-facing
                 },
                 "healthcheck_timeout": {
                     "type": "number",
-                    "description": f"健康检查轮询总时限秒数 (缺省 {_DEFAULT_HEALTH_TIMEOUT:.0f})",
+                    "description": f"健康检查轮询总时限秒数 (缺省 {_DEFAULT_HEALTH_TIMEOUT:.0f})",  # i18n: user-facing
                     "default": _DEFAULT_HEALTH_TIMEOUT,
                 },
                 "healthcheck_interval": {
                     "type": "number",
-                    "description": f"健康检查轮询间隔秒数 (缺省 {_DEFAULT_HEALTH_INTERVAL:.0f})",
+                    "description": f"健康检查轮询间隔秒数 (缺省 {_DEFAULT_HEALTH_INTERVAL:.0f})",  # i18n: user-facing
                     "default": _DEFAULT_HEALTH_INTERVAL,
                 },
                 "stage_retries": {
                     "type": "integer",
-                    "description": f"每阶段失败重试次数 (缺省 {_DEFAULT_STAGE_RETRIES})",
+                    "description": f"每阶段失败重试次数 (缺省 {_DEFAULT_STAGE_RETRIES})",  # i18n: user-facing
                     "default": _DEFAULT_STAGE_RETRIES,
                 },
                 "cmd_timeout": {
                     "type": "number",
-                    "description": f"单条命令超时秒数 (缺省 {_DEFAULT_CMD_TIMEOUT:.0f})",
+                    "description": f"单条命令超时秒数 (缺省 {_DEFAULT_CMD_TIMEOUT:.0f})",  # i18n: user-facing
                     "default": _DEFAULT_CMD_TIMEOUT,
                 },
                 "log_tail": {
                     "type": "integer",
-                    "description": f"阶段日志保留行数 (缺省 {_DEFAULT_LOG_TAIL})",
+                    "description": f"阶段日志保留行数 (缺省 {_DEFAULT_LOG_TAIL})",  # i18n: user-facing
                     "default": _DEFAULT_LOG_TAIL,
                 },
             },
@@ -169,20 +176,25 @@ class DeployServiceNode(BaseNode):
         params = getattr(self.config, "params", {}) or {}
         target = str(params.get("target") or "docker").strip().lower()
         if target not in ("docker", "launchd", "script"):
+            # i18n: user-facing
             return NodeResult(status=NodeStatus.FAILED, error=f"deploy_service target 非法: {target}")
         health_url = str(params.get("healthcheck_url") or "").strip()
         if not health_url:
+            # i18n: user-facing
             return NodeResult(status=NodeStatus.FAILED, error="deploy_service 参数 healthcheck_url 必填")
         if not health_url.startswith(("http://", "https://")):
+            # i18n: user-facing
             return NodeResult(status=NodeStatus.FAILED, error=f"healthcheck_url 必须 http(s): {health_url}")
 
         image = str(params.get("image") or inputs.get("image") or "").strip()
         install_script = str(params.get("install_script") or inputs.get("install_script") or "").strip()
         if target == "docker" and not image:
+            # i18n: user-facing
             return NodeResult(status=NodeStatus.FAILED, error="target=docker 需要 image (params 或上游输入)")
         if target == "launchd" and not str(params.get("plist_path") or "").strip():
-            return NodeResult(status=NodeStatus.FAILED, error="target=launchd 需要 plist_path")
+            return NodeResult(status=NodeStatus.FAILED, error="target=launchd 需要 plist_path")  # i18n: user-facing
         if target == "script" and not install_script:
+            # i18n: user-facing
             return NodeResult(status=NodeStatus.FAILED, error="target=script 需要 install_script (params 或上游输入)")
 
         try:
@@ -192,11 +204,11 @@ class DeployServiceNode(BaseNode):
             cmd_timeout = float(params.get("cmd_timeout", _DEFAULT_CMD_TIMEOUT))
             log_tail = max(int(params.get("log_tail", _DEFAULT_LOG_TAIL)), 1)
         except (TypeError, ValueError) as e:
-            return NodeResult(status=NodeStatus.FAILED, error=f"deploy_service 参数类型非法: {e}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"deploy_service 参数类型非法: {e}")  # i18n: user-facing
 
         container_name = str(params.get("container_name") or "fusion-deploy").strip()
         logger.info(
-            f"deploy_service 开始: target={target} image={image[:80]!r} endpoint={health_url} retries={stage_retries}"
+            f"deploy_service start: target={target} image={image[:80]!r} endpoint={health_url} retries={stage_retries}"
         )
 
         stages: List[Dict[str, Any]] = []
@@ -218,10 +230,10 @@ class DeployServiceNode(BaseNode):
                 }
                 if rc == 0:
                     stages.append(entry)
-                    logger.info(f"deploy_service 阶段完成: {stage} (第 {attempts} 次尝试, {dur}s)")
+                    logger.info(f"deploy_service stage done: {stage} (attempt {attempts}, {dur}s)")
                     return None
                 entry["error"] = f"exit={rc}"
-                logger.warning(f"deploy_service 阶段失败: {stage} 第 {attempts} 次尝试 exit={rc}")
+                logger.warning(f"deploy_service stage failed: {stage} attempt {attempts} exit={rc}")
                 if attempts <= stage_retries:
                     await asyncio.sleep(min(2.0 * attempts, 10.0))
             stages.append(entry)
@@ -243,6 +255,7 @@ class DeployServiceNode(BaseNode):
         elif target == "launchd":
             plist = str(params.get("plist_path") or "").strip()
             if not Path(plist).expanduser().is_file():
+                # i18n: user-facing
                 stages.append({"stage": "pull", "status": "failed", "attempts": 1, "error": f"plist 不存在: {plist}"})
                 fail = stages[-1]
             else:
@@ -256,7 +269,7 @@ class DeployServiceNode(BaseNode):
             fail = await run_stage("start", install_script)
 
         if fail is not None:
-            summary = f"deploy_service 部署失败于 {fail['stage']} 阶段 (尝试 {fail.get('attempts', 1)} 次)"
+            summary = f"deploy_service 部署失败于 {fail['stage']} 阶段 (尝试 {fail.get('attempts', 1)} 次)"  # i18n: user-facing
             logger.error(f"{summary}; endpoint={health_url}")
             return NodeResult(
                 status=NodeStatus.FAILED,
@@ -278,7 +291,7 @@ class DeployServiceNode(BaseNode):
         )
         endpoint = health_url if ok else ""
         if not ok:
-            summary = f"deploy_service 服务已启动但健康检查未通过: {detail}"
+            summary = f"deploy_service 服务已启动但健康检查未通过: {detail}"  # i18n: user-facing
             logger.error(f"{summary}; stages={[(s['stage'], s['status']) for s in stages]}")
             return NodeResult(
                 status=NodeStatus.FAILED,
@@ -287,7 +300,7 @@ class DeployServiceNode(BaseNode):
                 summary=summary,
             )
 
-        summary = f"deploy_service 部署成功: {target} 运行中, 端点 {endpoint}"
+        summary = f"deploy_service 部署成功: {target} 运行中, 端点 {endpoint}"  # i18n: user-facing
         logger.info(summary)
         return NodeResult(
             status=NodeStatus.SUCCESS,

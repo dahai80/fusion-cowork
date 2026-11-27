@@ -1,4 +1,4 @@
-"""#117 B2: 运行步骤 SSE + 空间聊天 SSE (轮询为降级)。"""
+"""#117 B2: run step SSE + space chat SSE (polling as fallback)."""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def _seed_run(app, run_id: str = "run-117") -> None:
     app.state.run_registry._runs[run_id] = {
         "run_id": run_id,
         "workflow_id": "wf-117",
-        "workflow_name": "演示流程",
+        "workflow_name": "演示流程",  # i18n: user-facing
         "status": "running",
         "created_at": time.time(),
         "finished_at": None,
@@ -147,7 +147,7 @@ class TestRunEventsSse:
 class TestSpaceSse:
     def test_ready_frame(self, client):
         tc, app = client
-        created = tc.post("/api/space/spaces", json={"name": "SSE 空间"}, headers=_auth())
+        created = tc.post("/api/space/spaces", json={"name": "SSE 空间"}, headers=_auth())  # i18n: user-facing
         assert created.status_code == 201, created.text
         space_id = created.json()["id"]
         endpoint = _route(app.state.space_api, "/spaces/{space_id}/stream")

@@ -1,10 +1,10 @@
-"""认证模块 (v0.4.0 Stage 2) — JWT 校验 + 静态 token fallback。
+"""Auth module (v0.4.0 Stage 2) — JWT verification + static token fallback.
 
-- JWTVerifier (jwt.py): PyJWT 校验 HS256/RS256, 从 claim 提取 tenant_id/user_id。
-- verify_static_token (fallback.py): 本地/桌面保留的静态 token fallback, 生产强制 JWT。
-- IdentityClient (identity.py, issue #88): fusion-identity 集成 — 统一 JWT 签发 + 租户注册中心。
+- JWTVerifier (jwt.py): PyJWT verification HS256/RS256, extracts tenant_id/user_id from claims.
+- verify_static_token (fallback.py): static token fallback kept for local/desktop, JWT enforced in production.
+- IdentityClient (identity.py, issue #88): fusion-identity integration — unified JWT issuance + tenant registry.
 
-不泄 token 原文到日志 (仅记校验失败原因 + token 前 8 char 指纹)。
+Never leaks the raw token to logs (only logs the verification failure reason + the token's first 8 chars as a fingerprint).
 """
 
 from fusion_cowork.auth.fallback import require_jwt, verify_any_token, verify_static_token

@@ -66,11 +66,11 @@ class HeadlessRunner:
         json_schema: Optional[Dict] = None,
         max_budget_usd: float = 0.0,
     ) -> Dict[str, Any]:
-        """执行工作流, 支持 output_format/json_schema/budget。
+        """Execute a workflow, supports output_format/json_schema/budget.
 
-        output_format: json (默认, 返回 dict) | print (返回 {"text": ...}) | stream-json (调用 run_workflow_stream)。
-        json_schema: 校验最终输出的 JSON Schema, 失败返回 status=schema_error。
-        max_budget_usd: >0 时启用预算上限 (复用 BudgetTracker)。
+        output_format: json (default, returns dict) | print (returns {"text": ...}) | stream-json (calls run_workflow_stream).
+        json_schema: JSON Schema validating the final output; on failure returns status=schema_error.
+        max_budget_usd: >0 enables the budget cap (reuses BudgetTracker).
         """
         logger.info(f"HeadlessRunner: running workflow format={output_format}")
         from fusion_cowork.engine import Workflow
@@ -97,14 +97,14 @@ class HeadlessRunner:
             if json_schema is not None:
                 valid, err = self._validate_schema(final_data, json_schema)
                 if not valid:
-                    logger.warning(f"HeadlessRunner: 最终输出 schema 校验失败: {err}")
+                    logger.warning(f"HeadlessRunner: final output schema validation failed: {err}")
                     payload["status"] = "schema_error"
                     payload["schema_error"] = err
 
             if output_format == "print":
                 payload = {"text": json.dumps(payload, ensure_ascii=False, indent=2)}
             elif output_format == "stream-json":
-                # 流式调用方应直接用 run_workflow_stream; 这里返回性末帧
+                # streaming callers should use run_workflow_stream directly; here we return the final frame
                 payload = {"type": "result", "data": payload}
 
             return payload
@@ -120,10 +120,10 @@ class HeadlessRunner:
         inputs: dict = None,
         max_budget_usd: float = 0.0,
     ) -> AsyncIterator[Dict[str, Any]]:
-        """流式执行 — 逐节点 yield stream-json 事件帧。
+        """Streamed execution - yields stream-json event frames node by node.
 
-        事件帧 type: workflow_start | node_start | node_end | workflow_end | error。
-        每帧一行 JSON (stream-json 格式), 适合 stdout 管道消费。
+        Event frame types: workflow_start | node_start | node_end | workflow_end | error.
+        Each frame is one JSON line (stream-json format), suitable for stdout pipe consumption.
         """
         from fusion_cowork.engine import Workflow
 
@@ -135,7 +135,7 @@ class HeadlessRunner:
         wf = Workflow.from_dict(workflow_def)
         self._running = True
 
-        # asyncio.Queue 桥接同步进度回调 → 异步生成器
+        # asyncio.Queue bridges the sync progress callback -> async generator
         loop = asyncio.get_event_loop()
         queue: asyncio.Queue = asyncio.Queue()
         node_events: list = []
@@ -153,7 +153,7 @@ class HeadlessRunner:
             try:
                 loop.call_soon_threadsafe(queue.put_nowait, frame)
             except Exception as e:
-                logger.debug(f"HeadlessRunner stream 回调入队失败: {e}")
+                logger.debug(f"HeadlessRunner stream callback enqueue failed: {e}")
 
         self._engine.on_progress(_on_step)
 
@@ -163,7 +163,7 @@ class HeadlessRunner:
         }
         try:
             exec_task = asyncio.ensure_future(self._engine.execute(wf))
-            # 边执行边吐帧, 直到执行结束
+            # yield frames while executing, until the run ends
             while not exec_task.done():
                 try:
                     frame = await asyncio.wait_for(asyncio.shield(queue.get()), timeout=0.2)
@@ -172,7 +172,7 @@ class HeadlessRunner:
                     continue
             result = await exec_task
             self._last_execution_id = result.id
-            # 排空残留帧
+            # drain leftover frames
             while not queue.empty():
                 yield queue.get_nowait()
             yield {
@@ -185,10 +185,10 @@ class HeadlessRunner:
         except asyncio.CancelledError:
             yield {"type": "error", "error": "cancelled"}
         except Exception as e:
-            logger.error(f"HeadlessRunner: stream 异常: {e}")
+            logger.error(f"HeadlessRunner: stream error: {e}")
             yield {"type": "error", "error": str(e)}
         finally:
-            # 移除回调, 防止累积
+            # remove the callback to prevent accumulation
             try:
                 self._engine._progress_callbacks.remove(_on_step)
             except (AttributeError, ValueError):
@@ -196,24 +196,24 @@ class HeadlessRunner:
             self._running = False
 
     def _extract_final_output(self, result) -> Dict[str, Any]:
-        """从执行结果提取最终输出 (最后成功节点 output_data)。"""
+        """Extract the final output from the execution result (last successful node's output_data)."""
         try:
-            # LO-2: 原嵌套三元 `x == "success" if hasattr(...) else False` 优先级歧义;
-            # 拆为显式判定: 取 status 值, 字符串比较
+            # LO-2: the original nested ternary `x == "success" if hasattr(...) else False` had ambiguous precedence;
+            # split into an explicit check: take the status value, compare as string
             for step in reversed(result.steps):
                 status_val = step.status.value if hasattr(step.status, "value") else str(step.status)
                 if status_val == "success":
                     return step.output_data or {}
-            # 无成功节点: 取最后一个有 output_data 的
+            # no successful node: take the last one with output_data
             for step in reversed(result.steps):
                 if getattr(step, "output_data", None):
                     return step.output_data
         except Exception as e:
-            logger.debug(f"HeadlessRunner _extract_final_output 异常: {e}")
+            logger.debug(f"HeadlessRunner _extract_final_output exception: {e}")
         return {}
 
     def _make_progress_callback(self):
-        """已弃用 — 流式改用 on_progress + asyncio.Queue 桥接。保留空接口兼容。"""
+        """Deprecated - streaming now uses on_progress + asyncio.Queue bridging. Kept as an empty interface for compat."""
 
         def _noop(*args, **kwargs) -> None:
             return None
@@ -225,7 +225,8 @@ class HeadlessRunner:
             from fusion_cowork.engine.schema import OutputSchema
 
             ok = OutputSchema.validate(data, schema)
-            return (bool(ok), "" if ok else "schema 校验未通过")
+            # i18n: user-facing
+            return (bool(ok), "" if ok else "schema 校验未通过")  # i18n: user-facing
         except Exception as e:
             return (False, str(e))
 

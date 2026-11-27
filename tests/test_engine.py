@@ -1,4 +1,4 @@
-"""Fusion-Cowork 核心引擎单元测试。"""
+"""Fusion-Cowork core engine unit tests."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import fusion_cowork.nodes.ai
 import fusion_cowork.nodes.io
 import fusion_cowork.nodes.logic
 
-# 导入所有节点模块确保它们被注册
+# Import all node modules so they get registered
 import fusion_cowork.nodes.macos
 import fusion_cowork.nodes.tools  # noqa: F401
 from fusion_cowork.engine.node import (
@@ -33,53 +33,53 @@ from fusion_cowork.engine.node import (
 )
 from fusion_cowork.engine.workflow import Edge, Workflow, WorkflowEngine, WorkflowStatus
 
-# ── 测试用 Mock 节点 ──
+# ── Test mock nodes ──
 
 
 @register_node
 class MockSuccessNode(BaseNode):
     name = "mock_success"
-    display_name = "Mock 成功节点"
+    display_name = "Mock 成功节点"  # i18n: user-facing
     category = NodeCategory.IO
-    description = "测试用：总是成功"
+    description = "测试用：总是成功"  # i18n: user-facing
     icon = "🧪"
-    default_label = "Mock 成功"
+    default_label = "Mock 成功"  # i18n: user-facing
 
     async def execute(self, inputs: dict) -> NodeResult:
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"result": "ok", "input": inputs},
-            summary="Mock 执行成功",
+            summary="Mock 执行成功",  # i18n: user-facing
         )
 
 
 @register_node
 class MockFailNode(BaseNode):
     name = "mock_fail"
-    display_name = "Mock 失败节点"
+    display_name = "Mock 失败节点"  # i18n: user-facing
     category = NodeCategory.IO
-    description = "测试用：总是失败"
+    description = "测试用：总是失败"  # i18n: user-facing
     icon = "🧪"
-    default_label = "Mock 失败"
+    default_label = "Mock 失败"  # i18n: user-facing
 
     async def execute(self, inputs: dict) -> NodeResult:
         return NodeResult(
             status=NodeStatus.FAILED,
-            error="Mock 执行失败",
-            summary="Mock 执行失败",
+            error="Mock 执行失败",  # i18n: user-facing
+            summary="Mock 执行失败",  # i18n: user-facing
         )
 
 
 @register_node
 class MockTransformNode(BaseNode):
-    """测试用：转换输入数据。"""
+    """Test node: transforms input data."""
 
     name = "mock_transform"
-    display_name = "Mock 转换"
+    display_name = "Mock 转换"  # i18n: user-facing
     category = NodeCategory.IO
-    description = "测试用：数据转换"
+    description = "测试用：数据转换"  # i18n: user-facing
     icon = "🧪"
-    default_label = "Mock 转换"
+    default_label = "Mock 转换"  # i18n: user-facing
 
     def get_params_schema(self) -> dict:
         return {
@@ -94,11 +94,11 @@ class MockTransformNode(BaseNode):
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"transformed": f"{prefix}{json.dumps(inputs)}"},
-            summary="转换完成",
+            summary="转换完成",  # i18n: user-facing
         )
 
 
-# ── NodeRegistry 测试 ──
+# ── NodeRegistry tests ──
 
 
 class TestNodeRegistry:
@@ -114,10 +114,10 @@ class TestNodeRegistry:
         assert isinstance(node, BaseNode)
 
     def test_create_with_config(self):
-        config = NodeConfig(label="测试节点", params={"key": "value"})
+        config = NodeConfig(label="测试节点", params={"key": "value"})  # i18n: user-facing
         node = NodeRegistry.create("mock_success", config=config)
         assert node is not None
-        assert node.config.label == "测试节点"
+        assert node.config.label == "测试节点"  # i18n: user-facing
         assert node.config.params["key"] == "value"
 
     def test_create_unknown(self):
@@ -136,20 +136,20 @@ class TestNodeRegistry:
             assert n["category"] == "io"
 
     def test_register_decorator(self):
-        # register_node 装饰器已在类定义时调用
+        # register_node decorator already invoked at class definition time
         assert NodeRegistry.get("mock_success") is not None
 
     def test_clear(self):
-        # 保存注册表状态，避免破坏其他测试
+        # Save registry state to avoid breaking other tests
         saved_registry = dict(NodeRegistry._registry)
         NodeRegistry.clear()
         assert NodeRegistry.get("mock_success") is None
-        # 恢复注册表
+        # Restore registry
         NodeRegistry._registry.clear()
         NodeRegistry._registry.update(saved_registry)
 
 
-# ── BaseNode 测试 ──
+# ── BaseNode tests ──
 
 
 class TestBaseNode:
@@ -164,9 +164,9 @@ class TestBaseNode:
         assert node.id == "test_123"
 
     def test_node_with_config(self):
-        config = NodeConfig(label="测试", params={"key": "value"})
+        config = NodeConfig(label="测试", params={"key": "value"})  # i18n: user-facing
         node = MockSuccessNode(config=config)
-        assert node.config.label == "测试"
+        assert node.config.label == "测试"  # i18n: user-facing
         assert node.config.params["key"] == "value"
 
     def test_validate_config_default(self):
@@ -175,24 +175,24 @@ class TestBaseNode:
         assert errors == []
 
     def test_to_dict(self):
-        node = MockSuccessNode(node_id="test_id", config=NodeConfig(label="测试"))
+        node = MockSuccessNode(node_id="test_id", config=NodeConfig(label="测试"))  # i18n: user-facing
         d = node.to_dict()
         assert d["id"] == "test_id"
         assert d["name"] == "mock_success"
-        assert d["config"]["label"] == "测试"
+        assert d["config"]["label"] == "测试"  # i18n: user-facing
 
     def test_from_dict(self):
         data = {
             "id": "test_id",
             "name": "mock_success",
             "config": {
-                "label": "测试节点",
+                "label": "测试节点",  # i18n: user-facing
                 "params": {"key": "value"},
             },
         }
         node = MockSuccessNode.from_dict(data)
         assert node.id == "test_id"
-        assert node.config.label == "测试节点"
+        assert node.config.label == "测试节点"  # i18n: user-facing
         assert node.config.params["key"] == "value"
 
     @pytest.mark.asyncio
@@ -201,24 +201,24 @@ class TestBaseNode:
         result = await node.execute({"input": "test"})
         assert result.status == NodeStatus.SUCCESS
         assert result.data["result"] == "ok"
-        assert result.summary == "Mock 执行成功"
+        assert result.summary == "Mock 执行成功"  # i18n: user-facing
 
     @pytest.mark.asyncio
     async def test_execute_fail(self):
         node = MockFailNode()
         result = await node.execute({})
         assert result.status == NodeStatus.FAILED
-        assert result.error == "Mock 执行失败"
+        assert result.error == "Mock 执行失败"  # i18n: user-facing
 
 
-# ── Workflow 测试 ──
+# ── Workflow tests ──
 
 
 class TestWorkflow:
     def test_create_workflow(self):
-        wf = Workflow(name="测试工作流", description="测试描述")
-        assert wf.name == "测试工作流"
-        assert wf.description == "测试描述"
+        wf = Workflow(name="测试工作流", description="测试描述")  # i18n: user-facing
+        assert wf.name == "测试工作流"  # i18n: user-facing
+        assert wf.description == "测试描述"  # i18n: user-facing
         assert wf.id.startswith("wf_")
         assert len(wf.nodes) == 0
         assert len(wf.edges) == 0
@@ -253,7 +253,7 @@ class TestWorkflow:
         wf.add_node(MockSuccessNode(node_id="n1"))
         wf.add_node(MockSuccessNode(node_id="n2"))
         wf.connect("n1", "n2")
-        # 尝试反向连接会形成环
+        # Connecting in reverse would form a cycle
         assert not wf.connect("n2", "n1")
 
     def test_topological_sort(self):
@@ -274,7 +274,7 @@ class TestWorkflow:
         wf.connect("n1", "n3")
         wf.connect("n2", "n3")
         order = wf.topological_sort()
-        # n1 和 n2 顺序不定，但都必须在 n3 之前
+        # n1 and n2 order is not deterministic, but both must come before n3
         assert order[0] in ("n1", "n2")
         assert order[1] in ("n1", "n2")
         assert order[2] == "n3"
@@ -301,7 +301,7 @@ class TestWorkflow:
         wf = Workflow()
         errors = wf.validate()
         assert len(errors) > 0
-        assert any("没有节点" in e for e in errors)
+        assert any("没有节点" in e for e in errors)  # i18n: user-facing
 
     def test_validate_isolated_nodes(self):
         wf = Workflow()
@@ -312,41 +312,43 @@ class TestWorkflow:
         assert len(errors) == 0
 
     def test_serialization_roundtrip(self):
-        wf = Workflow(name="测试", description="序列化测试")
-        wf.add_node(MockSuccessNode(node_id="n1", config=NodeConfig(label="节点1")))
-        wf.add_node(MockTransformNode(node_id="n2", config=NodeConfig(label="节点2", params={"prefix": "test_"})))
+        wf = Workflow(name="测试", description="序列化测试")  # i18n: user-facing
+        wf.add_node(MockSuccessNode(node_id="n1", config=NodeConfig(label="节点1")))  # i18n: user-facing
+        wf.add_node(
+            MockTransformNode(node_id="n2", config=NodeConfig(label="节点2", params={"prefix": "test_"}))  # i18n: user-facing
+        )  # i18n: user-facing
         wf.connect("n1", "n2")
 
-        # 序列化
+        # Serialize
         d = wf.to_dict()
-        assert d["name"] == "测试"
+        assert d["name"] == "测试"  # i18n: user-facing
         assert len(d["nodes"]) == 2
         assert len(d["edges"]) == 1
 
-        # 反序列化
+        # Deserialize
         wf2 = Workflow.from_dict(d)
-        assert wf2.name == "测试"
+        assert wf2.name == "测试"  # i18n: user-facing
         assert len(wf2.nodes) == 2
         assert len(wf2.edges) == 1
         assert wf2.nodes["n1"].name == "mock_success"
         assert wf2.nodes["n2"].config.params["prefix"] == "test_"
 
     def test_json_roundtrip(self):
-        wf = Workflow(name="JSON测试")
+        wf = Workflow(name="JSON测试")  # i18n: user-facing
         wf.add_node(MockSuccessNode(node_id="n1"))
         json_str = wf.to_json()
         wf2 = Workflow.from_json(json_str)
-        assert wf2.name == "JSON测试"
+        assert wf2.name == "JSON测试"  # i18n: user-facing
         assert "n1" in wf2.nodes
 
 
-# ── WorkflowEngine 测试 ──
+# ── WorkflowEngine tests ──
 
 
 class TestWorkflowEngine:
     @pytest.mark.asyncio
     async def test_execute_simple_workflow(self):
-        wf = Workflow(name="简单工作流")
+        wf = Workflow(name="简单工作流")  # i18n: user-facing
         wf.add_node(MockSuccessNode(node_id="n1"))
         wf.add_node(MockSuccessNode(node_id="n2"))
         wf.connect("n1", "n2")
@@ -361,7 +363,7 @@ class TestWorkflowEngine:
 
     @pytest.mark.asyncio
     async def test_execute_with_failure(self):
-        wf = Workflow(name="失败工作流")
+        wf = Workflow(name="失败工作流")  # i18n: user-facing
         wf.add_node(MockSuccessNode(node_id="n1"))
         wf.add_node(MockFailNode(node_id="n2"))
         wf.connect("n1", "n2")
@@ -371,11 +373,11 @@ class TestWorkflowEngine:
 
         assert execution.status == WorkflowStatus.FAILED
         assert execution.error is not None
-        assert "Mock 执行失败" in execution.error
+        assert "Mock 执行失败" in execution.error  # i18n: user-facing
 
     @pytest.mark.asyncio
     async def test_execute_continue_on_error(self):
-        wf = Workflow(name="继续执行")
+        wf = Workflow(name="继续执行")  # i18n: user-facing
         cfg = NodeConfig(continue_on_error=True)
         wf.add_node(MockSuccessNode(node_id="n1"))
         wf.add_node(MockFailNode(node_id="n2", config=cfg))
@@ -386,20 +388,20 @@ class TestWorkflowEngine:
         engine = WorkflowEngine()
         execution = await engine.execute(wf)
 
-        # 即使 n2 失败，因为 continue_on_error，n3 也会执行
+        # Even though n2 fails, n3 still executes because of continue_on_error
         assert execution.status == WorkflowStatus.SUCCESS
         assert len(execution.steps) == 3
 
     @pytest.mark.asyncio
     async def test_execute_empty_workflow(self):
-        wf = Workflow(name="空工作流")
+        wf = Workflow(name="空工作流")  # i18n: user-facing
         engine = WorkflowEngine()
         execution = await engine.execute(wf)
         assert execution.status == WorkflowStatus.FAILED
 
     @pytest.mark.asyncio
     async def test_execute_with_data_passing(self):
-        wf = Workflow(name="数据传递")
+        wf = Workflow(name="数据传递")  # i18n: user-facing
         wf.add_node(MockTransformNode(node_id="n1", config=NodeConfig(params={"prefix": "data_"})))
         wf.add_node(MockSuccessNode(node_id="n2"))
         wf.connect("n1", "n2")
@@ -408,27 +410,27 @@ class TestWorkflowEngine:
         execution = await engine.execute(wf, initial_input={"key": "value"})
 
         assert execution.status == WorkflowStatus.SUCCESS
-        # n2 应该收到 n1 的输出数据
+        # n2 should receive n1's output data
         n2_step = execution.steps[1]
         assert n2_step.node_id == "n2"
 
     @pytest.mark.asyncio
     async def test_execute_resume_skips_completed(self):
-        # P1-2 断点续跑: resume_steps 中已成功节点跳过重跑, 下游用缓存输出
-        wf = Workflow(name="断点续跑")
+        # P1-2 resume: completed nodes in resume_steps skip re-run, downstream uses cached output
+        wf = Workflow(name="断点续跑")  # i18n: user-facing
         wf.add_node(MockTransformNode(node_id="n1", config=NodeConfig(params={"prefix": "resume_"})))
         wf.add_node(MockSuccessNode(node_id="n2"))
         wf.connect("n1", "n2")
 
-        # n1 的快照: 已成功, output_data 是缓存输出 (模拟之前执行结果)
+        # n1 snapshot: already succeeded, output_data is cached output (simulating prior execution result)
         resume_steps = [
             {
                 "node_id": "n1",
                 "node_name": "mock_transform",
-                "node_display_name": "Mock 转换",
+                "node_display_name": "Mock 转换",  # i18n: user-facing
                 "status": "success",
                 "output_data": {"transformed": "resume_CACHED_OUTPUT"},
-                "summary": "恢复自快照",
+                "summary": "恢复自快照",  # i18n: user-facing
             }
         ]
 
@@ -437,19 +439,19 @@ class TestWorkflowEngine:
 
         assert execution.status == WorkflowStatus.SUCCESS
         assert len(execution.steps) == 2
-        # n1 跳过, 状态 SKIPPED
+        # n1 skipped, status SKIPPED
         assert execution.steps[0].node_id == "n1"
         assert execution.steps[0].status == NodeStatus.SKIPPED
-        assert execution.steps[0].summary == "恢复自快照, 跳过重跑"
-        # n2 实际执行, 收到 n1 的缓存输出作为输入
+        assert execution.steps[0].summary == "恢复自快照, 跳过重跑"  # i18n: user-facing
+        # n2 actually executes, receiving n1's cached output as input
         assert execution.steps[1].node_id == "n2"
         assert execution.steps[1].status == NodeStatus.SUCCESS
         assert execution.steps[1].input_data.get("transformed") == "resume_CACHED_OUTPUT"
 
     @pytest.mark.asyncio
     async def test_execute_resume_partial_snapshot(self):
-        # P1-2: resume_steps 含非 success 步骤, 仅恢复成功节点
-        wf = Workflow(name="部分快照续跑")
+        # P1-2: resume_steps contains non-success steps, only success nodes are restored
+        wf = Workflow(name="部分快照续跑")  # i18n: user-facing
         wf.add_node(MockSuccessNode(node_id="n1"))
         wf.add_node(MockSuccessNode(node_id="n2"))
         wf.connect("n1", "n2")
@@ -463,23 +465,23 @@ class TestWorkflowEngine:
         execution = await engine.execute(wf, resume_steps=resume_steps)
 
         assert execution.status == WorkflowStatus.SUCCESS
-        # n1 跳过 (success 快照), n2 重跑 (failed 快照不计入已完成)
+        # n1 skipped (success snapshot), n2 re-runs (failed snapshot does not count as completed)
         assert execution.steps[0].status == NodeStatus.SKIPPED
         assert execution.steps[1].status == NodeStatus.SUCCESS
 
     @pytest.mark.asyncio
     async def test_cancel_execution(self):
-        wf = Workflow(name="可取消")
+        wf = Workflow(name="可取消")  # i18n: user-facing
         wf.add_node(MockSuccessNode(node_id="n1"))
 
         engine = WorkflowEngine()
-        # 先开始执行，但 MockSuccessNode 是立即完成的，所以取消可能来不及
-        # 这里只测试 cancel 方法不会报错
+        # Execution starts first, but MockSuccessNode completes instantly, so cancel may be too late
+        # Here we only test that the cancel method does not raise
         assert not engine.cancel("non_existent_id")
 
     @pytest.mark.asyncio
     async def test_progress_callback(self):
-        wf = Workflow(name="回调测试")
+        wf = Workflow(name="回调测试")  # i18n: user-facing
         wf.add_node(MockSuccessNode(node_id="n1"))
 
         engine = WorkflowEngine()
@@ -499,7 +501,7 @@ class TestWorkflowEngine:
         assert isinstance(execs, list)
 
 
-# ── 节点配置测试 ──
+# ── Node config tests ──
 
 
 class TestNodeConfig:
@@ -511,20 +513,20 @@ class TestNodeConfig:
         assert cfg.params == {}
 
     def test_config_with_params(self):
-        cfg = NodeConfig(label="测试", params={"path": "~/Desktop", "recursive": True})
-        assert cfg.label == "测试"
+        cfg = NodeConfig(label="测试", params={"path": "~/Desktop", "recursive": True})  # i18n: user-facing
+        assert cfg.label == "测试"  # i18n: user-facing
         assert cfg.params["path"] == "~/Desktop"
         assert cfg.params["recursive"] is True
 
 
-# ── 文件 IO 测试 ──
+# ── File IO tests ──
 
 
 class TestFileIONodes:
     @pytest.mark.asyncio
     async def test_file_input_dir(self, tmp_path):
-        """测试文件输入节点读取目录。"""
-        # 创建临时文件
+        """Test file input node reading a directory."""
+        # Create temp files
         (tmp_path / "test1.txt").write_text("hello")
         (tmp_path / "test2.pdf").write_text("world")
         (tmp_path / "test3.py").write_text("print('hi')")
@@ -586,7 +588,7 @@ class TestFileIONodes:
         assert result.data["file_path"] is not None
 
 
-# ── 逻辑节点测试 ──
+# ── Logic node tests ──
 
 
 class TestLogicNodes:
@@ -624,8 +626,8 @@ class TestLogicNodes:
         files = ["a.txt", "b.pdf", "c.md"]
         result = await node.execute({"data": files})
         assert result.status == NodeStatus.SUCCESS
-        assert len(result.data["passed"]) == 2  # 非 .txt 的
-        assert len(result.data["filtered"]) == 1  # .txt 被过滤
+        assert len(result.data["passed"]) == 2  # non-.txt files
+        assert len(result.data["filtered"]) == 1  # .txt filtered out
 
     @pytest.mark.asyncio
     async def test_loop_node(self):
@@ -657,7 +659,7 @@ class TestLogicNodes:
         assert result.data["merged"] == [1, 2, 3, 4]
 
 
-# ── 模板测试 ──
+# ── Template tests ──
 
 
 class TestTemplateManager:
@@ -675,7 +677,7 @@ class TestTemplateManager:
         mgr = TemplateManager()
         tpl = mgr.get_template("desktop_daily_cleanup")
         assert tpl is not None
-        assert tpl["name"] == "桌面每日规整"
+        assert tpl["name"] == "桌面每日规整"  # i18n: user-facing
 
     def test_template_not_found(self):
         from fusion_cowork.templates import TemplateManager
@@ -703,16 +705,16 @@ class TestTemplateManager:
         from fusion_cowork.templates import TemplateManager
 
         mgr = TemplateManager()
-        results = mgr.search_templates("桌面")
+        results = mgr.search_templates("桌面")  # i18n: user-facing
         assert len(results) > 0
 
 
-# ── 工作流序列化测试 ──
+# ── Workflow serialization tests ──
 
 
 class TestWorkflowSerialization:
     def test_save_and_load_json(self, tmp_path):
-        wf = Workflow(name="测试工作流")
+        wf = Workflow(name="测试工作流")  # i18n: user-facing
         wf.add_node(MockSuccessNode(node_id="n1"))
         wf.add_node(MockTransformNode(node_id="n2", config=NodeConfig(params={"prefix": "p_"})))
         wf.connect("n1", "n2")
@@ -721,24 +723,24 @@ class TestWorkflowSerialization:
         json_path.write_text(wf.to_json(), encoding="utf-8")
 
         loaded = Workflow.from_json(json_path.read_text(encoding="utf-8"))
-        assert loaded.name == "测试工作流"
+        assert loaded.name == "测试工作流"  # i18n: user-facing
         assert len(loaded.nodes) == 2
         assert len(loaded.edges) == 1
         assert loaded.nodes["n2"].config.params["prefix"] == "p_"
 
     def test_workflow_with_tags(self):
-        wf = Workflow(name="带标签", tags=["桌面", "清理"])
-        assert "桌面" in wf.tags
-        assert "清理" in wf.tags
+        wf = Workflow(name="带标签", tags=["桌面", "清理"])  # i18n: user-facing
+        assert "桌面" in wf.tags  # i18n: user-facing
+        assert "清理" in wf.tags  # i18n: user-facing
 
         d = wf.to_dict()
-        assert "桌面" in d["tags"]
+        assert "桌面" in d["tags"]  # i18n: user-facing
 
     def test_edge_creation(self):
-        edge = Edge(source_id="n1", target_id="n2", label="连接")
+        edge = Edge(source_id="n1", target_id="n2", label="连接")  # i18n: user-facing
         assert edge.source_id == "n1"
         assert edge.target_id == "n2"
-        assert edge.label == "连接"
+        assert edge.label == "连接"  # i18n: user-facing
 
         d = edge.to_dict()
         assert d["source_id"] == "n1"
@@ -747,22 +749,22 @@ class TestWorkflowSerialization:
         assert e2.source_id == "n1"
 
 
-# ── 节点注册表清理测试 ──
+# ── Node registry cleanup tests ──
 
 
 class TestNodeRegistryCleanup:
     def test_unregister(self):
-        # 保存注册表状态，避免破坏其他测试
+        # Save registry state to avoid breaking other tests
         saved_registry = dict(NodeRegistry._registry)
         NodeRegistry.register(MockSuccessNode)
         NodeRegistry.unregister("mock_success")
         assert NodeRegistry.get("mock_success") is None
-        # 恢复注册表
+        # Restore registry
         NodeRegistry._registry.clear()
         NodeRegistry._registry.update(saved_registry)
 
 
-# ── macOS 节点测试（基础功能） ──
+# ── macOS node tests (basic) ──
 
 
 class TestMacOSNodes:
@@ -778,7 +780,7 @@ class TestMacOSNodes:
         )
         assert node is not None
 
-        # 使用临时文件
+        # Use temp files
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
             f.write(b"test")
             pdf_path = f.name
@@ -789,7 +791,9 @@ class TestMacOSNodes:
         try:
             result = await node.execute({"files": [pdf_path, jpg_path]})
             assert result.status == NodeStatus.SUCCESS
-            assert result.data["classified_files"][0]["category"] == "文档" or "文档" in str(result.data["categories"])
+            assert result.data["classified_files"][0]["category"] == "文档" or "文档" in str(  # i18n: user-facing
+                result.data["categories"]
+            )  # i18n: user-facing
         finally:
             os.unlink(pdf_path)
             os.unlink(jpg_path)
@@ -841,7 +845,7 @@ class TestMacOSNodes:
         assert "total_freed" in result.data
 
 
-# ── AI 客户端测试 ──
+# ── AI client tests ──
 
 
 class TestAIClient:
@@ -849,10 +853,10 @@ class TestAIClient:
     async def test_mlx_client_health_check(self):
         from fusion_cowork.ai import FusionMLXClient
 
-        client = FusionMLXClient(base_url="http://localhost:18000/v1")  # 使用非标准端口避免冲突
+        client = FusionMLXClient(base_url="http://localhost:18000/v1")  # non-standard port to avoid conflicts
         try:
             health = await client.health()
-            # 不报错即可
+            # Must not raise
             assert isinstance(health, bool)
         finally:
             await client.close()
@@ -865,11 +869,11 @@ class TestAIClient:
         assert resp.finish_reason == "stop"
 
 
-# ── 参数类型强制转换测试（吸纳自 Squish _coerce_* 机制） ──
+# ── Param type coercion tests (adopted from the Squish _coerce_* mechanism) ──
 
 
 class TestTypeCoercion:
-    """测试参数类型强制转换（整合自 Squish tool_registry.py 的 _coerce_* 函数族）。"""
+    """Test param type coercion (consolidated from the Squish tool_registry.py _coerce_* function family)."""
 
     def test_coerce_int_from_str(self):
         assert _coerce_int("42") == 42
@@ -881,7 +885,7 @@ class TestTypeCoercion:
         assert _coerce_int(3.0) == 3
 
     def test_coerce_int_from_bool(self):
-        # bool 是 int 的子类 — 不强制转换
+        # bool is a subclass of int — no coercion
         assert _coerce_int(True) is True
         assert _coerce_int(False) is False
 
@@ -936,7 +940,7 @@ class TestTypeCoercion:
         assert result["name"] == "test"
 
 
-# ── 工具节点测试（吸纳自 Squish 内置工具集） ──
+# ── Tool node tests (adopted from the Squish built-in tool set) ──
 
 
 class TestToolNodes:
@@ -1067,25 +1071,25 @@ class TestToolNodes:
             result = await node.execute({})
             assert result.status == NodeStatus.SUCCESS
             assert result.data["changes"] == 1
-            # 验证文件内容已更新
+            # Verify file content was updated
             content = Path(tmp_path).read_text()
             assert "new content" in content
         finally:
             os.unlink(tmp_path)
 
 
-# ── 别名解析测试（吸纳自 Squish tool_name_map.py） ──
+# ── Alias resolution tests (adopted from Squish tool_name_map.py) ──
 
 
 class TestNodeAliases:
     def test_register_alias(self):
-        # 测试别名注册
-        NodeRegistry.register_alias("测试别名", "mock_success")
-        assert NodeRegistry.get("测试别名") is not None
+        # Test alias registration
+        NodeRegistry.register_alias("测试别名", "mock_success")  # i18n: user-facing
+        assert NodeRegistry.get("测试别名") is not None  # i18n: user-facing
 
     def test_alias_lookup(self):
-        NodeRegistry.register_alias("成功节点", "mock_success")
-        cls = NodeRegistry.get("成功节点")
+        NodeRegistry.register_alias("成功节点", "mock_success")  # i18n: user-facing
+        cls = NodeRegistry.get("成功节点")  # i18n: user-facing
         assert cls is not None
         assert cls.name == "mock_success"
 
@@ -1096,22 +1100,22 @@ class TestNodeAliases:
 
     def test_resolve_alias_unknown(self):
         resolved = NodeRegistry.resolve_alias("unknown_name")
-        assert resolved == "unknown_name"  # 未知名称原样返回
+        assert resolved == "unknown_name"  # unknown name returned as-is
 
     def test_resolve_alias_direct(self):
         resolved = NodeRegistry.resolve_alias("mock_success")
-        assert resolved == "mock_success"  # 直接名称直接返回
+        assert resolved == "mock_success"  # direct name returned as-is
 
 
-# ── Lazy Import 测试（吸纳自 Squish __getattr__ 机制） ──
+# ── Lazy Import tests (adopted from the Squish __getattr__ mechanism) ──
 
 
 class TestLazyImport:
     def test_lazy_import_workflow(self):
         import fusion_cowork
 
-        wf = fusion_cowork.Workflow(name="延迟导入测试")
-        assert wf.name == "延迟导入测试"
+        wf = fusion_cowork.Workflow(name="延迟导入测试")  # i18n: user-facing
+        assert wf.name == "延迟导入测试"  # i18n: user-facing
 
     def test_lazy_import_node(self):
         import fusion_cowork
@@ -1146,7 +1150,7 @@ class TestLazyImport:
     def test_lazy_import_cached(self):
         import fusion_cowork
 
-        # 第二次访问应使用缓存
+        # Second access should use the cache
         wf1 = fusion_cowork.Workflow
         wf2 = fusion_cowork.Workflow
-        assert wf1 is wf2  # 同一对象
+        assert wf1 is wf2  # same object

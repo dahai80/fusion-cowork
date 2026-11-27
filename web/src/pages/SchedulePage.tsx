@@ -33,11 +33,11 @@ export function SchedulePage() {
     async function create() {
         if (busy) return;
         if (!form.name.trim() || !form.workflow_id) {
-            sdk.toast.show({ level: 'warning', message: t('名称与工作流必填', 'Name and workflow required') });
+            sdk.toast.show({ level: 'warning', message: t('名称与工作流必填', 'Name and workflow required') }); // i18n: user-facing
             return;
         }
         if (!form.cron.trim() && !form.interval_minutes.trim()) {
-            sdk.toast.show({ level: 'warning', message: t('cron 或间隔分钟必填其一', 'cron or interval required') });
+            sdk.toast.show({ level: 'warning', message: t('cron 或间隔分钟必填其一', 'cron or interval required') }); // i18n: user-facing
             return;
         }
         setBusy('create');
@@ -49,12 +49,12 @@ export function SchedulePage() {
             if (form.cron.trim()) body.cron = form.cron.trim();
             if (form.interval_minutes.trim()) body.interval_minutes = Number(form.interval_minutes);
             await api.createSchedulerTask(body);
-            sdk.toast.show({ level: 'success', message: t('已创建定时任务', 'Task created') });
+            sdk.toast.show({ level: 'success', message: t('已创建定时任务', 'Task created') }); // i18n: user-facing
             setForm({ name: '', workflow_id: '', cron: '', interval_minutes: '' });
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] schedule create failed', e);
-            sdk.toast.show({ level: 'error', message: t('创建失败', 'Create failed') });
+            sdk.toast.show({ level: 'error', message: t('创建失败', 'Create failed') }); // i18n: user-facing
         } finally {
             setBusy('');
         }
@@ -72,7 +72,7 @@ export function SchedulePage() {
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] schedule toggle failed', e);
-            sdk.toast.show({ level: 'error', message: t('操作失败', 'Operation failed') });
+            sdk.toast.show({ level: 'error', message: t('操作失败', 'Operation failed') }); // i18n: user-facing
         } finally {
             setBusy('');
         }
@@ -83,12 +83,12 @@ export function SchedulePage() {
         setBusy(confirmId);
         try {
             await api.deleteSchedulerTask(confirmId);
-            sdk.toast.show({ level: 'success', message: t('已删除', 'Deleted') });
+            sdk.toast.show({ level: 'success', message: t('已删除', 'Deleted') }); // i18n: user-facing
             setConfirmId('');
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] schedule delete failed', e);
-            sdk.toast.show({ level: 'error', message: t('删除失败', 'Delete failed') });
+            sdk.toast.show({ level: 'error', message: t('删除失败', 'Delete failed') }); // i18n: user-facing
         } finally {
             setBusy('');
         }
@@ -98,12 +98,12 @@ export function SchedulePage() {
         <div className="mx-auto max-w-4xl">
             <div className="mb-3 rounded-lg border border-border bg-bg-elevated p-3">
                 <div className="pb-2 text-sm font-medium text-text-primary">
-                    {t('新建定时任务', 'New scheduled task')}
+                    {t('新建定时任务', 'New scheduled task') /*// i18n: user-facing*/}
                 </div>
                 <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
                     <input
                         className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
-                        placeholder={t('任务名称', 'Task name')}
+                        placeholder={t('任务名称', 'Task name')} // i18n: user-facing
                         value={form.name}
                         onChange={(e) => setForm({ ...form, name: e.target.value })}
                     />
@@ -112,7 +112,7 @@ export function SchedulePage() {
                         value={form.workflow_id}
                         onChange={(e) => setForm({ ...form, workflow_id: e.target.value })}
                     >
-                        <option value="">{t('选择工作流', 'Pick workflow')}</option>
+                        <option value="">{t('选择工作流', 'Pick workflow') /*// i18n: user-facing*/}</option>
                         {workflowOptions.map((w) => (
                             <option key={w.id} value={w.id}>
                                 {w.name}
@@ -128,7 +128,7 @@ export function SchedulePage() {
                     <div className="flex gap-2">
                         <input
                             className="min-w-0 flex-1 rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
-                            placeholder={t('间隔分钟', 'Interval min')}
+                            placeholder={t('间隔分钟', 'Interval min')} // i18n: user-facing
                             value={form.interval_minutes}
                             onChange={(e) => setForm({ ...form, interval_minutes: e.target.value })}
                         />
@@ -138,7 +138,9 @@ export function SchedulePage() {
                             disabled={!!busy}
                             onClick={() => void create()}
                         >
-                            {busy === 'create' ? t('创建中…', 'Creating…') : t('创建', 'Create')}
+                            {busy === 'create'
+                                ? t('创建中…', 'Creating…') /*// i18n: user-facing*/
+                                : t('创建', 'Create')}
                         </button>
                     </div>
                 </div>
@@ -150,8 +152,8 @@ export function SchedulePage() {
                 <ErrorState message={retry.error.message} onRetry={retry.manualRetry} />
             ) : tasks.length === 0 ? (
                 <EmptyState
-                    title={t('暂无定时任务', 'No scheduled tasks')}
-                    description={t('创建后按 cron/间隔自动运行', 'Runs automatically by cron/interval')}
+                    title={t('暂无定时任务', 'No scheduled tasks')} // i18n: user-facing
+                    description={t('创建后按 cron/间隔自动运行', 'Runs automatically by cron/interval')} // i18n: user-facing
                 />
             ) : (
                 <div className="space-y-2">
@@ -166,8 +168,9 @@ export function SchedulePage() {
                                 <div className="truncate text-xs text-text-muted">
                                     {task.trigger_type === 'cron'
                                         ? `cron ${String(task.trigger_config?.cron ?? '')}`
-                                        : `${t('每', 'every')} ${String(task.trigger_config?.minutes ?? '')} min`}{' '}
-                                    · {t('下次', 'next')} {fmtTime(task.next_run, sdk.i18n.lang())}
+                                        : `${t('每', 'every') /*// i18n: user-facing*/} ${String(task.trigger_config?.minutes ?? '')} min`}{' '}
+                                    · {t('下次', 'next') /*// i18n: user-facing*/}{' '}
+                                    {fmtTime(task.next_run, sdk.i18n.lang())}
                                 </div>
                             </div>
                             <div className="shrink-0 font-mono text-[10px] text-text-muted">
@@ -180,7 +183,9 @@ export function SchedulePage() {
                                     disabled={!!busy}
                                     onClick={() => void toggle(task)}
                                 >
-                                    {task.status === 'active' ? t('暂停', 'Pause') : t('恢复', 'Resume')}
+                                    {task.status === 'active'
+                                        ? t('暂停', 'Pause') /*// i18n: user-facing*/
+                                        : t('恢复', 'Resume')}
                                 </button>
                                 <button
                                     type="button"
@@ -188,7 +193,7 @@ export function SchedulePage() {
                                     disabled={!!busy}
                                     onClick={() => setConfirmId(task.id)}
                                 >
-                                    {t('删除', 'Delete')}
+                                    {t('删除', 'Delete') /*// i18n: user-facing*/}
                                 </button>
                             </div>
                         </div>
@@ -197,7 +202,7 @@ export function SchedulePage() {
             )}
             <ConfirmDialog
                 open={!!confirmId}
-                title={t('删除定时任务', 'Delete scheduled task')}
+                title={t('删除定时任务', 'Delete scheduled task')} // i18n: user-facing
                 description={confirmId ? (tasks.find((x) => x.id === confirmId)?.name ?? confirmId) : ''}
                 danger
                 confirmName={confirmId}

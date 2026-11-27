@@ -1,10 +1,10 @@
-"""issue #382: fusion-harness outbox 内核接线 — 事务性落账 + 幂等写回执 + 启动 reconcile。
+"""issue #382: fusion-harness outbox kernel wiring — transactional ledger writes + idempotent receipt writes + startup reconcile.
 
-- OutboxBridge: 内核缺失/环境开关关闭 → 禁用 (一次响亮警告, 零行为变化)
-- 引擎 record_step: 节点结果单事务入 run_events; effects 声明入口 collect_outbox_effects
-- execute_idempotent_async: 回执命中跳过重复写; 未命中写后落回执
-- GitHubNode issue_create: 引擎 outbox ctx 下 POST/PUT 经回执, 重放不重复写
-- recover_persisted: 废弃 run 的 effects 诚实退役 (reconcile)
+- OutboxBridge: kernel missing / env switch off → disabled (one loud warning, zero behavior change)
+- Engine record_step: node results enter run_events in a single transaction; effects declaration entry point collect_outbox_effects
+- execute_idempotent_async: receipt hit skips duplicate writes; on miss, write then record the receipt
+- GitHubNode issue_create: under the engine outbox ctx, POST/PUT go through receipts, replays do not duplicate writes
+- recover_persisted: discarded run's effects retire honestly (reconcile)
 """
 
 import asyncio
@@ -89,7 +89,7 @@ class TestBridgeEnablement:
         assert get_outbox_bridge() is None
 
     def test_disabled_bridge_noop(self, outbox_env, monkeypatch):
-        # 内核缺失路径: store=None 的桥一切调用零影响
+        # Kernel-missing path: a bridge with store=None has zero impact on all calls
         monkeypatch.setattr("fusion_cowork.engine.outbox.OutboxStore", None)
         reset_outbox_bridge()
         bridge = get_outbox_bridge()
@@ -115,7 +115,7 @@ class TestEngineJournal:
         assert res.status == WorkflowStatus.SUCCESS
         effects = bridge._store.effects_for_run(res.id)
         assert [e.action for e in effects] == ["notify_test"]
-        # 同 receipt_key 重跑不重复入队
+        # Re-run with the same receipt_key does not enqueue twice
         res2 = await engine.execute(wf, execution_id=res.id)
         assert res2.status == WorkflowStatus.SUCCESS
         assert len(bridge._store.effects_for_run(res.id)) == 1
@@ -123,7 +123,7 @@ class TestEngineJournal:
     def test_record_step_failure_does_not_raise(self, outbox_env):
         bridge = get_outbox_bridge()
         bridge._store.close()
-        # 关闭后的 store 落账失败: 响亮警告, 不抛
+        # Ledger write fails on a closed store: loud warning, no raise
         bridge.record_step("run_x", "n1", "success", "s", [])
 
 
@@ -261,7 +261,7 @@ class TestReconcileAndWorker:
 
 class TestRecoverPersistedReconcile:
     async def test_recover_retires_discarded_run_effects(self, outbox_env, tmp_path, monkeypatch):
-        # run_store 返回坏 workflow_def 行 → 废弃 → 其 effects 经 reconcile 退役
+        # run_store returns a bad workflow_def row → discarded → its effects retire via reconcile
         from fusion_cowork.server.web_api import RunRegistry
 
         bridge = get_outbox_bridge()

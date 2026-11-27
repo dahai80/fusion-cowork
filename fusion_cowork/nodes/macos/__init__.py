@@ -1,18 +1,18 @@
-"""Fusion-Cowork macOS 系统自动化节点。"""
+"""Fusion-Cowork macOS system automation nodes."""
 
 import subprocess
 from typing import Tuple
 
 
 def run_osascript(script: str, timeout: int = 30) -> Tuple[int, str]:
-    """通过 osascript 运行 AppleScript 代码。
+    """Run AppleScript code via osascript.
 
     Args:
-        script: AppleScript 代码
-        timeout: 超时秒数
+        script: AppleScript code
+        timeout: timeout in seconds
 
     Returns:
-        (return_code, stdout) 元组
+        (return_code, stdout) tuple
     """
     proc = subprocess.run(
         ["osascript", "-e", script],

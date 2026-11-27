@@ -1,12 +1,11 @@
-"""#94: union-web 模块 — web_api REST 面 / 静态密钥鉴权 / 运行生命周期 / manifest。
+"""#94: union-web module — web_api REST surface / static-key auth / run lifecycle / manifest.
 
 Contract:
-- FUSION_COWORK_WEB_API_KEY 配置后, /api/* 401 无密钥, Bearer 或 x-api-key
-  接受静态密钥 (gateway /shell 代理注入路径), 错误密钥 401; /health 免鉴权。
-- 工作流定义 CRUD 走隔离的临时目录 (WorkflowDefStore root 注入)。
-- 运行生命周期: 提交 (202 running) → 轮询至终态 → cancel 未运行项 404。
-- GET / 托管 web/dist SPA (未构建则跳过); manifest.json 字段符合 PRD §5.1。
-"""
+- With FUSION_COWORK_WEB_API_KEY set, /api/* returns 401 without a key; Bearer or x-api-key
+  accepts the static key (gateway /shell proxy injection path), wrong key 401; /health is exempt.
+- Workflow definition CRUD uses an isolated temp directory (WorkflowDefStore root injected).
+- Run lifecycle: submit (202 running) -> poll to terminal state -> cancel of a non-running run 404.
+- GET / serves the web/dist SPA (skipped when not built); manifest.json fields follow PRD §5.1."""
 
 from __future__ import annotations
 
@@ -41,7 +40,7 @@ def client(static_key_env, store_root, tmp_path):
     from fusion_cowork.engine.node import NodeRegistry
     from fusion_cowork.server.web_api import create_web_app
 
-    # mock 节点注册 (保存/恢复 registry 状态, 对齐测试约定)
+    # Mock node registration (saves/restores registry state, per test conventions)
     saved = dict(NodeRegistry._registry)
     try:
         from fusion_cowork.engine.node import BaseNode, NodeCategory, NodeResult, NodeStatus, register_node
@@ -125,10 +124,13 @@ class TestWorkflowCrud:
 
     def test_create_get_list_delete(self, client):
         wf_def = {
+            # i18n: user-facing
             "name": "测试流",
+            # i18n: user-facing
             "description": "crud 用例",
             "workflow": {
                 "id": "wf_crud",
+                # i18n: user-facing
                 "name": "测试流",
                 "nodes": [],
                 "edges": [],
@@ -140,6 +142,7 @@ class TestWorkflowCrud:
 
         got = client.get(f"/api/workflows/{wf_id}", headers=self._hdr())
         assert got.status_code == 200
+        # i18n: user-facing
         assert got.json()["workflow"]["name"] == "测试流"
 
         listed = client.get("/api/workflows", headers=self._hdr())
@@ -147,9 +150,13 @@ class TestWorkflowCrud:
         assert any(w["id"] == wf_id for w in listed.json()["workflows"])
 
         updated = client.put(
-            f"/api/workflows/{wf_id}", json={"name": "改名", "workflow": wf_def["workflow"]}, headers=self._hdr()
+            # i18n: user-facing
+            f"/api/workflows/{wf_id}",
+            json={"name": "改名", "workflow": wf_def["workflow"]},  # i18n: user-facing
+            headers=self._hdr(),
         )
         assert updated.status_code == 200
+        # i18n: user-facing
         assert updated.json()["name"] == "改名"
 
         deleted = client.delete(f"/api/workflows/{wf_id}", headers=self._hdr())
@@ -177,6 +184,7 @@ class TestRunLifecycle:
     def _wf_def(self):
         return {
             "id": "wf_run",
+            # i18n: user-facing
             "name": "运行用例",
             "nodes": [
                 {"id": "n1", "name": "mock_web_node", "config": {"params": {}}},
@@ -185,6 +193,7 @@ class TestRunLifecycle:
         }
 
     def test_run_to_completion(self, client):
+        # i18n: user-facing
         started = client.post("/api/runs", json={"workflow": self._wf_def(), "name": "运行用例"}, headers=self._hdr())
         assert started.status_code == 202
         run_id = started.json()["run_id"]
@@ -206,6 +215,7 @@ class TestRunLifecycle:
     def test_run_by_workflow_id(self, client):
         created = client.post(
             "/api/workflows",
+            # i18n: user-facing
             json={"id": "wf_run_ref", "name": "引用运行", "workflow": self._wf_def()},
             headers=self._hdr(),
         )

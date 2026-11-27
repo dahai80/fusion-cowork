@@ -1,8 +1,7 @@
-"""issue #207: run 归因 — source/labels 从 POST /api/runs 落到 run 记录, 随列表/详情/webhook 外发。
+"""issue #207: run attribution — source/labels from POST /api/runs land on the run record and are exported via list/detail/webhook.
 
-覆盖: HTTP 校验与透传、GET 列表/详情透出、run_finished webhook 载荷、
-审批事件 run 归因 (run_source/run_labels, 不覆盖 approval 自身 source)。
-"""
+Covers: HTTP validation and pass-through, GET list/detail exposure, the run_finished webhook payload,
+and approval-event run attribution (run_source/run_labels, without overwriting the approval's own source)."""
 
 from __future__ import annotations
 
@@ -25,6 +24,7 @@ class _EchoNode(BaseNode):
     name = ECHO_NODE
     display_name = "Echo Probe 207"
     category = NodeCategory.LOGIC
+    # i18n: user-facing
     description = "测试用: 回显输入 (#207)"
     icon = "🧪"
     default_label = "Echo"
@@ -114,10 +114,10 @@ class TestRunsCreateForwarding:
             message_input=None,
             source="",
             labels=None,
-            space_id="",  # issue #223: runs_create 透传工作区归属
-            hitl_pause=None,  # issue #260: per-run HITL 覆盖
+            space_id="",  # issue #223: runs_create forwards workspace ownership
+            hitl_pause=None,  # issue #260: per-run HITL override
             identity_token="",  # issue #288: caller identity JWT for quota metering
-            **kwargs,  # issue #461: concurrency_key/concurrency 等新透传参数
+            **kwargs,  # issue #461: new pass-through params like concurrency_key/concurrency
         ):
             started.append(
                 {
@@ -168,7 +168,7 @@ class TestRunsCreateForwarding:
         self._capture_start(monkeypatch, client)
         r = client.post("/api/runs", json={"workflow": _wf_def(), "labels": {"k": 1}}, headers=_auth())
         assert r.status_code == 400
-        # JSON 对象键必为字符串, 非字符串值 (嵌套/list) 同样拒绝
+        # JSON object keys must be strings; non-string values (nested/list) are rejected too
         r2 = client.post("/api/runs", json={"workflow": _wf_def(), "labels": {"k": ["v"]}}, headers=_auth())
         assert r2.status_code == 400
 
@@ -213,7 +213,7 @@ class TestWebhookAttribution:
             if fake.events:
                 break
             await asyncio.sleep(0.02)
-        assert fake.events, "run_finished 未推送"
+        assert fake.events, "run_finished 未推送"  # i18n: user-facing
         event, payload = fake.events[0]
         assert event == "run_finished"
         assert payload["run_id"] == run_id
@@ -248,7 +248,7 @@ class TestApprovalPushAttribution:
         assert fake.events
         event, payload = fake.events[0]
         assert event == "approval_requested"
-        # approval 自身 source (guard/local) 保留, run 归因走独立键
+        # The approval's own source (guard/local) is preserved; run attribution uses a separate key
         assert payload["source"] == "guard"
         assert payload["run_source"] == "email"
         assert payload["run_labels"] == {"tenant": "t1"}

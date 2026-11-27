@@ -23,7 +23,7 @@ async def _cleanup_handler(args: str = "") -> Any:
         ),
     )
     if node is None:
-        return {"error": "desktop_clean 节点不可用"}
+        return {"error": "desktop_clean 节点不可用"}  # i18n: user-facing
     result = await node.execute({})
     return {"status": result.status.value, "summary": result.summary}
 
@@ -41,7 +41,7 @@ async def _classify_handler(args: str = "") -> Any:
         ),
     )
     if node is None:
-        return {"error": "ai_classify 节点不可用"}
+        return {"error": "ai_classify 节点不可用"}  # i18n: user-facing
     result = await node.execute({"path": path})
     return {"status": result.status.value, "summary": result.summary}
 
@@ -58,7 +58,7 @@ async def _screenshot_handler(args: str = "") -> Any:
         ),
     )
     if node is None:
-        return {"error": "screen_capture 节点不可用"}
+        return {"error": "screen_capture 节点不可用"}  # i18n: user-facing
     result = await node.execute({})
     return {"status": result.status.value, "summary": result.summary, "data": result.data}
 
@@ -68,7 +68,7 @@ async def _search_handler(args: str = "") -> Any:
 
     query = args.strip()
     if not query:
-        return {"error": "请提供搜索关键词"}
+        return {"error": "请提供搜索关键词"}  # i18n: user-facing
     node = NodeRegistry.create(
         "web_search",
         config=NodeConfig(
@@ -79,7 +79,7 @@ async def _search_handler(args: str = "") -> Any:
         ),
     )
     if node is None:
-        return {"error": "web_search 节点不可用"}
+        return {"error": "web_search 节点不可用"}  # i18n: user-facing
     result = await node.execute({"query": query})
     return {"status": result.status.value, "data": result.data}
 
@@ -98,7 +98,7 @@ async def _organize_handler(args: str = "") -> Any:
         ),
     )
     if node is None:
-        return {"error": "download_organizer 节点不可用"}
+        return {"error": "download_organizer 节点不可用"}  # i18n: user-facing
     result = await node.execute({})
     return {"status": result.status.value, "summary": result.summary}
 
@@ -119,17 +119,19 @@ async def _diskclean_handler(args: str = "") -> Any:
         ),
     )
     if node is None:
-        return {"error": "disk_cleaner 节点不可用"}
+        return {"error": "disk_cleaner 节点不可用"}  # i18n: user-facing
     result = await node.execute({})
     return {"status": result.status.value, "summary": result.summary}
 
 
 async def _spreadsheet_recon_handler(args: str = "") -> Any:
-    """issue #151: /spreadsheet-recon — 导出对账。args: "<budget.xlsx> <exports_dir>"。
+    """issue #151: /spreadsheet-recon — export reconciliation. args: "<budget.xlsx> <exports_dir>".
 
-    预算文件 sheet 前两列 = (科目, 预算额); exports_dir 下 *.xlsx/*.csv 各前两列 =
-    (科目, 实际额, 同科目多文件累加)。产出对账工作簿 (差异 + 超阈值打标) +
-    未对齐项备注, 全程本地确定性计算。
+    Budget file sheet's first two columns = (account, budget amount); each *.xlsx/*.csv
+    under exports_dir contributes first two columns = (account, actual amount, summed
+    across files for the same account). Produces a reconciliation workbook (variance +
+    over-threshold flagging) plus notes for unmatched items; fully local deterministic
+    computation.
     """
     import csv as _csv
     from pathlib import Path
@@ -138,24 +140,24 @@ async def _spreadsheet_recon_handler(args: str = "") -> Any:
 
     parts = args.split()
     if len(parts) < 2:
-        return {"error": "用法: /spreadsheet-recon <budget.xlsx> <exports_dir> [threshold_pct=10]"}
+        return {"error": "用法: /spreadsheet-recon <budget.xlsx> <exports_dir> [threshold_pct=10]"}  # i18n: user-facing
     budget_path = Path(parts[0]).expanduser()
     exports_dir = Path(parts[1]).expanduser()
     threshold_pct = float(parts[2]) if len(parts) > 2 else 10.0
     if not budget_path.is_file():
-        return {"error": f"预算文件不存在: {budget_path}"}
+        return {"error": f"预算文件不存在: {budget_path}"}  # i18n: user-facing
     if not exports_dir.is_dir():
-        return {"error": f"导出目录不存在: {exports_dir}"}
+        return {"error": f"导出目录不存在: {exports_dir}"}  # i18n: user-facing
     scope = get_scoped_folder_manager()
     for p in (budget_path, exports_dir):
         if not scope.ensure_allowed(p):
-            return {"error": f"沙箱拒绝越界读取: {p}"}
+            return {"error": f"沙箱拒绝越界读取: {p}"}  # i18n: user-facing
 
     try:
         import openpyxl
         from openpyxl.styles import Font, PatternFill
     except ImportError as e:
-        return {"error": f"缺少依赖 openpyxl ({e}) — 安装: pip install -e '.[office]'"}
+        return {"error": f"缺少依赖 openpyxl ({e}) — 安装: pip install -e '.[office]'"}  # i18n: user-facing
 
     def _num(v):
         try:
@@ -196,7 +198,10 @@ async def _spreadsheet_recon_handler(args: str = "") -> Any:
             a = actual[key]
             variance = a - b
             pct = (variance / abs(b) * 100) if b else (0.0 if variance == 0 else float("inf"))
-            matched.append([key, b, a, round(variance, 2), "" if abs(pct) <= threshold_pct else "⚠️ 超阈值"])
+            matched.append(
+                # i18n: user-facing
+                [key, b, a, round(variance, 2), "" if abs(pct) <= threshold_pct else "⚠️ 超阈值"]
+            )
         else:
             unreconciled_budget.append(key)
     for key in sorted(set(actual) - set(budget)):
@@ -204,11 +209,11 @@ async def _spreadsheet_recon_handler(args: str = "") -> Any:
 
     out_path = exports_dir / f"reconciliation_{time.strftime('%Y%m%d_%H%M%S')}.xlsx"
     if not scope.ensure_allowed(out_path):
-        return {"error": f"沙箱拒绝越界写入: {out_path}"}
+        return {"error": f"沙箱拒绝越界写入: {out_path}"}  # i18n: user-facing
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "对账结果"
-    headers = ["科目", "预算", "实际", "差异", "标记"]
+    ws.title = "对账结果"  # i18n: user-facing
+    headers = ["科目", "预算", "实际", "差异", "标记"]  # i18n: user-facing
     ws.append(headers)
     flag_fill = PatternFill(start_color="FFFFC7CE", end_color="FFFFC7CE", fill_type="solid")
     for col in range(1, len(headers) + 1):
@@ -222,12 +227,14 @@ async def _spreadsheet_recon_handler(args: str = "") -> Any:
                 ws.cell(row=ws.max_row, column=col).fill = flag_fill
     wb.save(out_path)
 
-    note = f"未对齐预算科目: {', '.join(unreconciled_budget) or '无'}; 无预算的实报科目: {', '.join(unreconciled_actual) or '无'}"
+    note = f"未对齐预算科目: {', '.join(unreconciled_budget) or '无'}; 无预算的实报科目: {', '.join(unreconciled_actual) or '无'}"  # i18n: user-facing
     flagged = sum(1 for r in matched if r[4])
-    logger.info(f"spreadsheet-recon: {len(matched)} 项对账, {flagged} 项超 {threshold_pct}% 阈值, 输出 {out_path}")
+    logger.info(
+        f"spreadsheet-recon: {len(matched)} reconciled, {flagged} over {threshold_pct}% threshold, output {out_path}"
+    )
     return {
         "status": "success",
-        "summary": f"对账 {len(matched)} 项, {flagged} 项超阈值, 输出 {out_path.name}",
+        "summary": f"对账 {len(matched)} 项, {flagged} 项超阈值, 输出 {out_path.name}",  # i18n: user-facing
         "data": {
             "file_path": str(out_path),
             "matched": len(matched),
@@ -242,52 +249,52 @@ async def _spreadsheet_recon_handler(args: str = "") -> Any:
 BUILTIN_SKILLS = [
     Skill(
         name="/cleanup",
-        description="一键桌面清理 — 按类型自动规整桌面文件",
+        description="一键桌面清理 — 按类型自动规整桌面文件",  # i18n: user-facing
         handler=_cleanup_handler,
         category="desktop",
-        aliases=["清理桌面", "桌面规整"],
+        aliases=["清理桌面", "桌面规整"],  # i18n: user-facing
     ),
     Skill(
         name="/classify",
-        description="AI 文件分类 — 根据文件内容语义智能分类",
+        description="AI 文件分类 — 根据文件内容语义智能分类",  # i18n: user-facing
         handler=_classify_handler,
         category="ai",
-        aliases=["文件分类", "智能分类"],
+        aliases=["文件分类", "智能分类"],  # i18n: user-facing
     ),
     Skill(
         name="/screenshot",
-        description="截屏 — 截取当前屏幕并保存到剪贴板",
+        description="截屏 — 截取当前屏幕并保存到剪贴板",  # i18n: user-facing
         handler=_screenshot_handler,
         category="desktop",
-        aliases=["截屏", "屏幕截图"],
+        aliases=["截屏", "屏幕截图"],  # i18n: user-facing
     ),
     Skill(
         name="/search",
-        description="网页搜索 — 搜索互联网信息",
+        description="网页搜索 — 搜索互联网信息",  # i18n: user-facing
         handler=_search_handler,
         category="tool",
-        aliases=["搜索", "网页搜索"],
+        aliases=["搜索", "网页搜索"],  # i18n: user-facing
     ),
     Skill(
         name="/organize",
-        description="下载整理 — 自动归档下载文件夹",
+        description="下载整理 — 自动归档下载文件夹",  # i18n: user-facing
         handler=_organize_handler,
         category="desktop",
-        aliases=["下载整理", "下载归档"],
+        aliases=["下载整理", "下载归档"],  # i18n: user-facing
     ),
     Skill(
         name="/diskclean",
-        description="磁盘清理 — 清理缓存、临时文件等垃圾",
+        description="磁盘清理 — 清理缓存、临时文件等垃圾",  # i18n: user-facing
         handler=_diskclean_handler,
         category="desktop",
-        aliases=["磁盘清理", "清理磁盘"],
+        aliases=["磁盘清理", "清理磁盘"],  # i18n: user-facing
     ),
     Skill(
         name="/spreadsheet-recon",
-        description="导出对账 — 预算 vs 导出目录差异对账, 产出对账工作簿 (issue #151)",
+        description="导出对账 — 预算 vs 导出目录差异对账, 产出对账工作簿 (issue #151)",  # i18n: user-facing
         handler=_spreadsheet_recon_handler,
         category="office",
-        aliases=["导出对账", "对账"],
+        aliases=["导出对账", "对账"],  # i18n: user-facing
     ),
 ]
 
@@ -295,4 +302,4 @@ BUILTIN_SKILLS = [
 def register_builtin_skills(registry: SkillRegistry) -> None:
     for skill in BUILTIN_SKILLS:
         registry.register(skill)
-    logger.info(f"注册 {len(BUILTIN_SKILLS)} 个内置技能")
+    logger.info(f"Registered {len(BUILTIN_SKILLS)} builtin skills")

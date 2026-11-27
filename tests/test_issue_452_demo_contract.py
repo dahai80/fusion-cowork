@@ -1,6 +1,6 @@
-"""issue #452: demo_contract — 演示三件套契约门 + bundle 清单 + executor 注册钩子。
+"""issue #452: demo_contract — demo trio contract gate + bundle manifest + executor registration hook.
 
-离线: 全部文件桩在 tmp_path, executor 注册用 MockTransport, 不触网。
+Offline: all file stubs in tmp_path, executor registration via MockTransport, no network.
 """
 
 from __future__ import annotations
@@ -236,4 +236,4 @@ class TestTemplateWiring:
         assert NodeRegistry.get("demo_contract") is DemoContractNode
         from fusion_cowork import NODE_NAME_ALIASES
 
-        assert NODE_NAME_ALIASES["演示契约"] == "demo_contract"
+        assert NODE_NAME_ALIASES["演示契约"] == "demo_contract"  # i18n: user-facing

@@ -1,4 +1,4 @@
-"""M1 里程碑测试 — MCP stdio 传输, Desk RPC, Agent 真实执行。"""
+"""M1 milestone tests — MCP stdio transport, Desk RPC, real Agent execution."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class TestMCPToolRegistry:
         registry = MCPToolRegistry()
         registry.register_tools()
         for tool in registry.list_tools():
-            assert "inputSchema" in tool, f"{tool['name']} 缺少 inputSchema"
+            assert "inputSchema" in tool, f"{tool['name']} 缺少 inputSchema"  # i18n: user-facing
 
 
 # ── StdioTransport ──
@@ -97,7 +97,7 @@ class TestStdioTransport:
             mock_err.assert_called_once()
 
 
-# ── MCPServer 门面 ──
+# ── MCPServer facade ──
 
 
 class TestMCPServer:
@@ -141,7 +141,7 @@ class TestDeskRPCServer:
 
         rpc = DeskRPCServer()
         result = await rpc._handle_health({})
-        # v0.4.0 Stage 4: /health 深度检查 (db/disk/上游 MLX); MLX 未起 → degraded 不阻断
+        # v0.4.0 Stage 4: /health deep checks (db/disk/upstream MLX); degraded does not block when MLX is down
         assert result["status"] in ("ok", "degraded")
         assert result["service"] == "fusion-cowork"
         assert "checks" in result
@@ -165,7 +165,7 @@ class TestDeskRPCServer:
         assert response["error"]["code"] == -32601
 
 
-# ── Agent 执行器 ──
+# ── Agent executors ──
 
 
 class TestExecutors:
@@ -220,7 +220,7 @@ class TestExecutors:
         assert "executor_shell" in DEFAULT_EXECUTORS
 
 
-# ── AgentOrchestrator 增强 ──
+# ── AgentOrchestrator enhancements ──
 
 
 class TestAgentOrchestratorEnhanced:
@@ -300,7 +300,7 @@ class TestAgentMessageBus:
 
 class TestMCPHttpApp:
     def test_create_http_app(self):
-        pytest.importorskip("fastapi", reason="需要 [web] 依赖")
+        pytest.importorskip("fastapi", reason="requires the [web] extra")
         from fusion_cowork.server.mcp_http import create_http_app
         from fusion_cowork.server.mcp_server import MCPToolRegistry
 

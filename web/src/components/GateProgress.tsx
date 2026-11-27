@@ -37,7 +37,10 @@ export function GateProgress({ gates }: { gates: GateProgressItem[] }) {
         pending: 'border-border text-text-muted',
     } as const;
     return (
-        <div className="flex flex-wrap items-center gap-1" title={t('闸门进度', 'Gate progress')}>
+        <div
+            className="flex flex-wrap items-center gap-1"
+            title={t('闸门进度', 'Gate progress') /* i18n: user-facing */}
+        >
             {gates.map((g) => (
                 <span key={g.id} className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${cls[g.state]}`}>
                     {mark[g.state]} {g.label}

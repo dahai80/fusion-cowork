@@ -136,7 +136,7 @@ class WorkflowAssetStore:
     def _asset_dir(self, workflow_id: str) -> Path:
         safe = "".join(c for c in workflow_id if c.isalnum() or c in "-_")
         if not safe or safe != workflow_id:
-            raise ValueError(f"非法工作流 id: {workflow_id}")
+            raise ValueError(f"非法工作流 id: {workflow_id}")  # i18n: user-facing
         d = self._root / safe
         (d / "versions").mkdir(parents=True, exist_ok=True)
         return d
@@ -157,7 +157,7 @@ class WorkflowAssetStore:
         try:
             return json.loads(p.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as e:
-            logger.warning(f"asset version 读取失败 {workflow_id} v{version}: {e}")
+            logger.warning(f"asset version read failed {workflow_id} v{version}: {e}")
             return None
 
     def current_version(self, workflow_id: str) -> int:
@@ -320,7 +320,7 @@ class WorkflowAssetStore:
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as e:
-            logger.warning(f"golden 套件读取失败 {workflow_id}: {e}")
+            logger.warning(f"golden suite read failed {workflow_id}: {e}")
             return {"cases": []}
         return data if isinstance(data, dict) and isinstance(data.get("cases"), list) else {"cases": []}
 

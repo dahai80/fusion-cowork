@@ -1,9 +1,9 @@
-"""P1 web 迁移批次 (migration doc §6): NL 委托 + 会话列表。
+"""P1 web migration batch (migration doc §6): NL delegation + session list.
 
 Contract:
-- POST /api/ai/generate-workflow: prompt 必填 400; 注入生成器 200 含 workflow;
-  生成器异常 502; 空 nodes 502。
-- GET /api/sessions + /{id}: SessionStore 注入隔离 (tmp db), 列表/详情/404。
+- POST /api/ai/generate-workflow: missing prompt 400; injected generator 200 with workflow;
+  generator exception 502; empty nodes 502.
+- GET /api/sessions + /{id}: SessionStore injected with isolation (tmp db), list/detail/404.
 """
 
 from __future__ import annotations

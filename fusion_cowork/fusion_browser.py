@@ -36,12 +36,14 @@ def find_fusion_browser_binary() -> str:
     override = os.environ.get(BINARY_ENV)
     if override:
         if not Path(override).is_file():
+            # i18n: user-facing
             raise FusionBrowserError(f"fusion-browser 二进制不存在: {override}")
         return override
     for candidate in DEFAULT_BINARY_CANDIDATES:
         if candidate.is_file():
             return str(candidate)
     searched = ", ".join(str(c) for c in DEFAULT_BINARY_CANDIDATES)
+    # i18n: user-facing
     raise FusionBrowserError(f"未找到 fusion-browser 二进制 (查过 {searched}); 可设 {BINARY_ENV}")
 
 
@@ -104,7 +106,7 @@ class FusionBrowserManaged:
             if isinstance(data, dict):
                 self.profiles = {str(k): str(v) for k, v in data.items() if isinstance(v, str)}
         except (OSError, ValueError) as e:
-            logger.warning(f"fusion-browser profile 状态读取失败 (忽略): {e}")
+            logger.warning(f"fusion-browser profile state read failed (ignoring): {e}")
 
     def _save_profiles(self) -> None:
         try:
@@ -113,7 +115,7 @@ class FusionBrowserManaged:
             tmp.write_text(json.dumps(self.profiles, ensure_ascii=False, indent=2), encoding="utf-8")
             os.replace(tmp, self._profiles_file())
         except OSError as e:
-            logger.warning(f"fusion-browser profile 状态写入失败: {e}")
+            logger.warning(f"fusion-browser profile state write failed: {e}")
 
     def profile_id_for(self, run_id: str) -> str:
         return self.profiles.get(run_id) or f"run-{run_id}"
@@ -136,6 +138,7 @@ class FusionBrowserManaged:
             return self.status()
         self.binary = self.binary or find_fusion_browser_binary()
         if not Path(self.binary).is_file():
+            # i18n: user-facing
             raise FusionBrowserError(f"fusion-browser 二进制不存在: {self.binary}")
         for origin in resolve_allowed_origins(url):
             if origin not in self.allowed_origins:
@@ -168,7 +171,7 @@ class FusionBrowserManaged:
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
             )
-        logger.info(f"fusion-browser 启动 pid={self.proc.pid} socket={self.socket_path} log={log_path}")
+        logger.info(f"fusion-browser launched pid={self.proc.pid} socket={self.socket_path} log={log_path}")
         try:
             self._wait_socket()
         except FusionBrowserError:
@@ -183,25 +186,29 @@ class FusionBrowserManaged:
         deadline = time.monotonic() + SOCKET_WAIT_SECONDS
         while time.monotonic() < deadline:
             if self.proc is not None and self.proc.poll() is not None:
+                # i18n: user-facing
                 raise FusionBrowserError(f"fusion-browser 提前退出 (code {self.proc.returncode})")
             if Path(self.socket_path).exists():
                 client = FusionBrowserClient(socket_path=self.socket_path, token=self.token, timeout=5.0)
                 try:
                     client.metrics()
                     client.close()
-                    logger.info("fusion-browser socket 就绪并且鉴权通过")
+                    logger.info("fusion-browser socket ready and auth verified")
                     return
                 except FBError as e:
                     if e.code not in ("connection_closed", "internal_error"):
+                        # i18n: user-facing
                         raise FusionBrowserError(f"fusion-browser 鉴权失败: {e}") from e
                     client.close()
             time.sleep(0.05)
+        # i18n: user-facing
         raise FusionBrowserError(f"fusion-browser socket 在 {SOCKET_WAIT_SECONDS}s 内未就绪: {self.socket_path}")
 
     def _require_client(self) -> FusionBrowserClient:
         if self._client is None:
             if not self.socket_path:
-                raise FusionBrowserError("fusion-browser 未启动, 先调用 launch")
+                # i18n: user-facing
+                raise FusionBrowserError("fusion-browser 未启动, 先调用 launch")  # i18n: user-facing
             self._client = FusionBrowserClient(socket_path=self.socket_path, token=self.token)
         return self._client
 
@@ -210,7 +217,8 @@ class FusionBrowserManaged:
         try:
             return func(*args, **kwargs)
         except FBError as e:
-            logger.error(f"fusion-browser {label} 失败 code={e.code} retryable={e.retryable}: {e.message}")
+            logger.error(f"fusion-browser {label} failed code={e.code} retryable={e.retryable}: {e.message}")
+            # i18n: user-facing
             raise FusionBrowserError(f"{label} 失败: {e.code}: {e.message}") from e
 
     def create_session(
@@ -221,8 +229,10 @@ class FusionBrowserManaged:
         mode: Optional[str] = None,
     ) -> dict[str, Any]:
         if self.proc is not None and self.proc.poll() is not None:
+            # i18n: user-facing
             raise FusionBrowserError(f"fusion-browser 进程已退出 (code {self.proc.returncode})")
         if not self.socket_path:
+            # i18n: user-facing
             raise FusionBrowserError("fusion-browser 未运行, 先调用 launch")
         if profile_id is None and run_id:
             profile_id = self.profile_id_for(run_id)
@@ -244,7 +254,7 @@ class FusionBrowserManaged:
         if run_id and profile_id:
             self.profiles[run_id] = profile_id
             self._save_profiles()
-        logger.info(f"fusion-browser 会话创建 session={session_id} profile={profile_id} run={run_id}")
+        logger.info(f"fusion-browser session created session={session_id} profile={profile_id} run={run_id}")
         return dict(meta)
 
     def import_cookies(self, session_id: str, browser: str, profile: Optional[str] = None) -> dict[str, Any]:
@@ -265,7 +275,7 @@ class FusionBrowserManaged:
         if meta is not None:
             meta["cookies"] = counters
         logger.info(
-            f"fusion-browser cookie 导入 browser={counters['browser']} imported={counters['imported']} "
+            f"fusion-browser cookie import browser={counters['browser']} imported={counters['imported']} "
             f"skipped_app_bound={counters['skipped_app_bound']} skipped_other={counters['skipped_other']}"
         )
         return counters
@@ -278,6 +288,7 @@ class FusionBrowserManaged:
         payload_text: Optional[str] = None,
     ) -> dict[str, Any]:
         if action not in ("navigate", "click", "type_text", "scroll", "screenshot", "evaluate", "state", "close"):
+            # i18n: user-facing
             raise FusionBrowserError(f"未知 action: {action}")
         info = self._call(
             f"execute:{action}",
@@ -317,20 +328,22 @@ class FusionBrowserManaged:
     def screenshot_png(self, session_id: str) -> bytes:
         info = self._call("screenshot", self._require_client().screenshot, session_id)
         if info.screenshotPng is None:
+            # i18n: user-facing
             raise FusionBrowserError("fusion-browser 截图返回空")
         return info.screenshotPng
 
     def stream_frames(self, session_id: str):
         if not self.socket_path:
-            raise FusionBrowserError("fusion-browser 未启动, 先调用 launch")
+            # i18n: user-facing
+            raise FusionBrowserError("fusion-browser 未启动, 先调用 launch")  # i18n: user-facing
         stream = FusionBrowserStream(session_id, socket_path=self.socket_path, token=self.token)
-        logger.info(f"fusion-browser 面板流订阅 session={session_id}")
+        logger.info(f"fusion-browser panel stream subscribed session={session_id}")
         return stream.frames()
 
     def close_session(self, session_id: str) -> bool:
         self._call("close_session", self._require_client().close_session, session_id)
         self.sessions.pop(session_id, None)
-        logger.info(f"fusion-browser 会话关闭 session={session_id}")
+        logger.info(f"fusion-browser session closed session={session_id}")
         return True
 
     def delete_profile(self, profile_id: str) -> bool:
@@ -339,7 +352,7 @@ class FusionBrowserManaged:
             if stored == profile_id:
                 self.profiles.pop(run_id, None)
         self._save_profiles()
-        logger.info(f"fusion-browser profile 删除 profile={profile_id} deleted={deleted}")
+        logger.info(f"fusion-browser profile deleted profile={profile_id} deleted={deleted}")
         return bool(deleted)
 
     def finish(self, run_id: Optional[str] = None, delete_profile: bool = True) -> dict[str, Any]:
@@ -351,7 +364,7 @@ class FusionBrowserManaged:
                 self.close_session(session_id)
                 closed.append(session_id)
             except FusionBrowserError as e:
-                logger.warning(f"fusion-browser 会话关闭失败 session={session_id}: {e}")
+                logger.warning(f"fusion-browser session close failed session={session_id}: {e}")
         deleted: list[str] = []
         if delete_profile:
             targets = []
@@ -364,7 +377,7 @@ class FusionBrowserManaged:
                     if self.delete_profile(profile_id):
                         deleted.append(profile_id)
                 except FusionBrowserError as e:
-                    logger.warning(f"fusion-browser profile 删除失败 profile={profile_id}: {e}")
+                    logger.warning(f"fusion-browser profile delete failed profile={profile_id}: {e}")
         shutting_down = run_id is None
         if shutting_down:
             self.close()
@@ -379,11 +392,11 @@ class FusionBrowserManaged:
             try:
                 proc.send_signal(signal.SIGTERM)
             except OSError as e:
-                logger.warning(f"fusion-browser SIGTERM 发送失败: {e}")
+                logger.warning(f"fusion-browser SIGTERM send failed: {e}")
             try:
                 proc.wait(timeout=TERMINATE_WAIT_SECONDS)
             except subprocess.TimeoutExpired:
-                logger.warning("fusion-browser SIGTERM 超时, 改发 SIGKILL")
+                logger.warning("fusion-browser SIGTERM timed out, sending SIGKILL")
                 proc.kill()
                 proc.wait(timeout=TERMINATE_WAIT_SECONDS)
 
@@ -392,14 +405,14 @@ class FusionBrowserManaged:
             try:
                 self._client.close()
             except OSError as e:
-                logger.warning(f"fusion-browser 连接关闭失败: {e}")
+                logger.warning(f"fusion-browser connection close failed: {e}")
             self._client = None
         self._terminate_proc()
         if self.run_dir is not None and self.run_dir.is_dir():
             shutil.rmtree(self.run_dir, ignore_errors=True)
         self.run_dir = None
         self.sessions.clear()
-        logger.info("fusion-browser 引擎已停止")
+        logger.info("fusion-browser engine stopped")
         return self.status()
 
 

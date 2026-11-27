@@ -1,8 +1,10 @@
 """Orchestration benchmark (issue #466, W8) — executable orchestration eval in CI.
 
-自建可执行编排评测: 一组确定性场景工作流 (无 LLM 依赖, 离线跑), 经真实
-WorkflowEngine 执行后断言编排语义 (波次调度/数据传递/类型强转/重试/过滤/
-子工作流嵌套)。CI 与 fusion-bench 并行运行, score=100% 为门禁。
+Self-contained executable orchestration eval: a set of deterministic scenario
+workflows (no LLM dependency, runs offline) executed by the real WorkflowEngine,
+asserting orchestration semantics (wave scheduling / data passing / type coercion /
+retry / filtering / sub-workflow nesting). Runs in CI alongside fusion-bench;
+score=100% is the gate.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ _PROBES_REGISTERED = False
 
 
 def _ensure_probe_nodes() -> None:
-    # 评测探针节点 — 幂等注册 (重复导入/多次 run 不覆盖报错)
+    # Benchmark probe nodes — idempotent registration (re-import / repeated runs do not raise on overwrite)
     global _PROBES_REGISTERED
     if _PROBES_REGISTERED:
         return
@@ -149,10 +151,10 @@ def _linear() -> Tuple[Dict[str, Any], Callable[[Any], Tuple[bool, str]]]:
     def check(execution) -> Tuple[bool, str]:
         ok_steps = [s for s in execution.steps if s.status.value == "success"]
         if execution.status.value != "success":
-            return False, f"终态 {execution.status.value}: {execution.error}"
+            return False, f"终态 {execution.status.value}: {execution.error}"  # i18n: user-facing
         if len(ok_steps) != 3:
-            return False, f"成功步骤 {len(ok_steps)} != 3"
-        return True, "3 节点线性链全成功"
+            return False, f"成功步骤 {len(ok_steps)} != 3"  # i18n: user-facing
+        return True, "3 节点线性链全成功"  # i18n: user-facing
 
     return d, check
 
@@ -176,11 +178,11 @@ def _diamond() -> Tuple[Dict[str, Any], Callable[[Any], Tuple[bool, str]]]:
 
     def check(execution) -> Tuple[bool, str]:
         if execution.status.value != "success":
-            return False, f"终态 {execution.status.value}: {execution.error}"
+            return False, f"终态 {execution.status.value}: {execution.error}"  # i18n: user-facing
         d_steps = [s for s in execution.steps if s.node_id == "d" and s.status.value == "success"]
         if len(d_steps) != 1:
-            return False, f"汇点 d 执行 {len(d_steps)} 次 (期待 1)"
-        return True, "菱形 fan-out/fan-in 汇点单次执行"
+            return False, f"汇点 d 执行 {len(d_steps)} 次 (期待 1)"  # i18n: user-facing
+        return True, "菱形 fan-out/fan-in 汇点单次执行"  # i18n: user-facing
 
     return d, check
 
@@ -201,8 +203,8 @@ def _retry() -> Tuple[Dict[str, Any], Callable[[Any], Tuple[bool, str]]]:
 
     def check(execution) -> Tuple[bool, str]:
         if execution.status.value != "success":
-            return False, f"终态 {execution.status.value}: {execution.error}"
-        return True, "首次失败重试后成功"
+            return False, f"终态 {execution.status.value}: {execution.error}"  # i18n: user-facing
+        return True, "首次失败重试后成功"  # i18n: user-facing
 
     return d, check
 
@@ -228,12 +230,15 @@ def _parallel() -> Tuple[Dict[str, Any], Callable[[Any], Tuple[bool, str]]]:
 
     def check(execution) -> Tuple[bool, str]:
         if execution.status.value != "success":
-            return False, f"终态 {execution.status.value}: {execution.error}"
+            return False, f"终态 {execution.status.value}: {execution.error}"  # i18n: user-facing
         if execution.concurrency < 2:
-            return False, f"并发未生效: concurrency={execution.concurrency}"
+            return False, f"并发未生效: concurrency={execution.concurrency}"  # i18n: user-facing
         if execution.total_time >= 0.3:
-            return False, f"同波串行执行: {execution.total_time:.2f}s >= 0.3s"
-        return True, f"3 节点同波并行 (concurrency={execution.concurrency}, {execution.total_time:.2f}s)"
+            return False, f"同波串行执行: {execution.total_time:.2f}s >= 0.3s"  # i18n: user-facing
+        return (
+            True,
+            f"3 节点同波并行 (concurrency={execution.concurrency}, {execution.total_time:.2f}s)",  # i18n: user-facing
+        )  # i18n: user-facing
 
     return d, check
 
@@ -261,17 +266,17 @@ def _subworkflow() -> Tuple[Dict[str, Any], Callable[[Any], Tuple[bool, str]]]:
 
     def check(execution) -> Tuple[bool, str]:
         if execution.status.value != "success":
-            return False, f"终态 {execution.status.value}: {execution.error}"
+            return False, f"终态 {execution.status.value}: {execution.error}"  # i18n: user-facing
         out = execution.steps[0].output_data or {}
         if out.get("outputs", {}).get("seed") != "bench":
-            return False, f"子工作流参数继承失败: {out.get('outputs')}"
-        return True, "子工作流嵌套执行 + 参数继承"
+            return False, f"子工作流参数继承失败: {out.get('outputs')}"  # i18n: user-facing
+        return True, "子工作流嵌套执行 + 参数继承"  # i18n: user-facing
 
     return d, check
 
 
 class OrchestrationBenchmark:
-    """可执行编排评测 — 场景集经真实引擎执行, 输出通过率/得分。"""
+    """Executable orchestration eval — scenario set executed by the real engine, outputs pass rate/score."""
 
     def __init__(self, permission_manager: Optional[Any] = None):
         _ensure_probe_nodes()
@@ -283,7 +288,7 @@ class OrchestrationBenchmark:
         pm = self._permission_manager
         if pm is None:
             pm = PermissionManager(level=PermissionLevel.BYPASS)
-            # BYPASS 兜底再显式放行探针 + 用到的内置节点
+            # After the BYPASS fallback, explicitly allow probes + built-in nodes in use
             for tool in ("bench_echo", "bench_count", "bench_flaky", "bench_gate", "bench_slow", "sub_workflow"):
                 pm.approve(tool)
         from ..engine.workflow import WorkflowEngine
@@ -308,14 +313,14 @@ class OrchestrationBenchmark:
                 execution = await asyncio.wait_for(engine.execute(_wf(wf_def), **(engine_kwargs or {})), timeout=60)
                 ok, detail = check(execution)
             except Exception as e:
-                ok, detail = False, f"场景异常: {e}"
+                ok, detail = False, f"场景异常: {e}"  # i18n: user-facing
             results.append({"name": name, "ok": ok, "detail": detail, "duration": round(time.time() - t0, 3)})
             if ok:
                 logger.info(f"orch-bench PASS: {name} ({detail})")
             else:
                 logger.warning(f"orch-bench FAIL: {name} ({detail})")
 
-        # 类型强转场景不走引擎 (测 NodeRegistry.create 强转路径)
+        # Type coercion scenario bypasses the engine (exercises the NodeRegistry.create coercion path)
         async def run_coercion() -> None:
             from ..engine.node import NodeConfig, NodeRegistry
 
@@ -330,9 +335,11 @@ class OrchestrationBenchmark:
                     and res.status.value == "success"
                     and res.data.get("count") == 7
                 )
-                detail = "字符串参数强转为 int" if ok else f"coerced={coerced!r} count={res.data.get('count')!r}"
+                detail = (
+                    "字符串参数强转为 int" if ok else f"coerced={coerced!r} count={res.data.get('count')!r}"  # i18n: user-facing
+                )  # i18n: user-facing
             except Exception as e:
-                ok, detail = False, f"场景异常: {e}"
+                ok, detail = False, f"场景异常: {e}"  # i18n: user-facing
             results.append(
                 {"name": "type_coercion", "ok": ok, "detail": detail, "duration": round(time.time() - t0, 3)}
             )

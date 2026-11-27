@@ -1,17 +1,18 @@
-"""fusion-identity 集成 (issue #88) — 统一 JWT 签发 + 租户注册中心。
+"""fusion-identity integration (issue #88) — unified JWT issuance + tenant registry.
 
-fusion-identity (端口 11470) 是 Fusion 生态唯一的 JWT 签发者 + 租户注册表。
-本模块通过 POST /api/v1/auth/verify 委托校验, 替代本地 JWT/RBAC/配额重实现。
+fusion-identity (port 11470) is the Fusion ecosystem's sole JWT issuer + tenant registry.
+This module delegates verification via POST /api/v1/auth/verify, replacing local
+JWT/RBAC/quota re-implementations.
 
-opt-in: env FUSION_IDENTITY_ENABLED=1 激活。默认 OFF = 零行为变化 (CI 无 fusion-identity)。
-启用后 fail-closed: identity 不可达 → 401, 不静默降级本地 JWT (生产模式)。
+opt-in: env FUSION_IDENTITY_ENABLED=1 activates. Default OFF = zero behavior change (CI has no fusion-identity).
+When enabled it is fail-closed: identity unreachable → 401, no silent fallback to local JWT (production mode).
 
-融合设计:
-- sync httpx.Client (fusion_core.tenant middleware 要求 verify_jwt 同步)
-- jti→claims cache (TTL 60s, cap 1024) 削减重复 /verify 调用
-- revoke=True / tenant_status!=active → None (负缓存 30s)
-- 配额从 VerifyResponse.quota 取 (替代 ConfigCenter)
-- usage 上报 POST /api/v1/tenants/{tid}/usage (best-effort)
+Fused design:
+- sync httpx.Client (fusion_core.tenant middleware requires verify_jwt to be synchronous)
+- jti→claims cache (TTL 60s, cap 1024) to reduce repeated /verify calls
+- revoke=True / tenant_status!=active → None (negative cache 30s)
+- quotas read from VerifyResponse.quota (replacing ConfigCenter)
+- usage reported via POST /api/v1/tenants/{tid}/usage (best-effort)
 """
 
 from __future__ import annotations
@@ -61,7 +62,7 @@ def _extract_jti(token: str) -> str:
         if jti:
             return f"jti:{jti}"
     except Exception as e:
-        logger.debug("identity jti 解析失败, 回退 token hash: %s", e)
+        logger.debug("identity jti parse failed, falling back to token hash: %s", e)
     return "sha:" + hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
 
 
@@ -84,7 +85,7 @@ class IdentityClient:
 
         self._client = httpx.Client(timeout=timeout)
         logger.info(
-            "IdentityClient 启用: base_url=%s timeout=%s cache_ttl=%s cap=%s",
+            "IdentityClient enabled: base_url=%s timeout=%s cache_ttl=%s cap=%s",
             self._base_url,
             timeout,
             cache_ttl,
@@ -109,7 +110,7 @@ class IdentityClient:
 
     def verify(self, token: str) -> Optional[IdentityVerifyResult]:
         if not token or not isinstance(token, str):
-            logger.warning("identity verify 失败: token 缺失")
+            logger.warning("identity verify failed: token missing")
             return None
         key = _extract_jti(token)
         cached = self._cache_get(key)
@@ -125,12 +126,12 @@ class IdentityClient:
                 json={"token": token},
             )
             if resp.status_code != 200:
-                logger.warning("identity /verify 非 200: status=%s", resp.status_code)
+                logger.warning("identity /verify non-200: status=%s", resp.status_code)
                 self._cache_put(key, None)
                 return None
             data = resp.json()
         except Exception as e:
-            logger.warning("identity /verify 请求失败 (fail-closed): %s", e)
+            logger.warning("identity /verify request failed (fail-closed): %s", e)
             return None
         result = IdentityVerifyResult(
             tid=str(data.get("tid") or data.get("tenant") or ""),
@@ -141,18 +142,18 @@ class IdentityClient:
             revoked=bool(data.get("revoked", False)),
         )
         if result.revoked:
-            logger.warning("identity verify: token 已吊销 tid=%s", result.tid)
+            logger.warning("identity verify: token revoked tid=%s", result.tid)
             self._cache_put(key, None)
             return None
         if result.tenant_status != "active":
-            logger.warning("identity verify: 租户非活跃 tid=%s status=%s", result.tid, result.tenant_status)
+            logger.warning("identity verify: tenant not active tid=%s status=%s", result.tid, result.tenant_status)
             self._cache_put(key, None)
             return None
         if not result.tid:
-            logger.warning("identity verify: 响应无 tid")
+            logger.warning("identity verify: response has no tid")
             return None
         self._cache_put(key, result)
-        logger.info("identity verify 通过: tid=%s role=%s scopes=%s", result.tid, result.role, len(result.scopes))
+        logger.info("identity verify passed: tid=%s role=%s scopes=%s", result.tid, result.role, len(result.scopes))
         return result
 
     def emit_usage(
@@ -177,10 +178,10 @@ class IdentityClient:
             )
             ok = resp.status_code in (200, 201, 202, 204)
             if not ok:
-                logger.debug("identity usage 上报非 2xx: status=%s metric=%s", resp.status_code, metric)
+                logger.debug("identity usage report non-2xx: status=%s metric=%s", resp.status_code, metric)
             return ok
         except Exception as e:
-            logger.debug("identity usage 上报失败 (best-effort): %s", e)
+            logger.debug("identity usage report failed (best-effort): %s", e)
             return False
 
     def get_user_email(self, user_id: str) -> Optional[str]:
@@ -207,7 +208,7 @@ class IdentityClient:
             resp = self._client.get(self._base_url + "/health")
             return resp.status_code == 200
         except Exception as e:
-            logger.debug("identity ping 失败: %s", e)
+            logger.debug("identity ping failed: %s", e)
             return False
 
     def close(self) -> None:
@@ -228,7 +229,9 @@ def get_identity_client() -> Optional[IdentityClient]:
         url = os.environ.get("FUSION_IDENTITY_URL", _DEFAULT_IDENTITY_URL)
         token = os.environ.get("FUSION_IDENTITY_SERVICE_TOKEN", "")
         if not token:
-            logger.warning("FUSION_IDENTITY_ENABLED=1 但 FUSION_IDENTITY_SERVICE_TOKEN 未配, identity 降级禁用")
+            logger.warning(
+                "FUSION_IDENTITY_ENABLED=1 but FUSION_IDENTITY_SERVICE_TOKEN not configured, identity disabled (degraded)"
+            )
             return None
         _IDENTITY_CLIENT = IdentityClient(base_url=url, service_token=token)
     return _IDENTITY_CLIENT
@@ -245,7 +248,7 @@ def make_verify_jwt_callback(client: IdentityClient) -> Callable[[str], dict[str
     def _cb(token: str) -> dict[str, Any]:
         result = client.verify(token)
         if result is None:
-            raise IdentityError("identity verify 失败或 token 已吊销")
+            raise IdentityError("identity verify 失败或 token 已吊销")  # i18n: user-facing
         return {
             "tid": result.tid,
             "role": result.role,

@@ -1,12 +1,12 @@
-"""团队消息 durable 收件箱 (issue #190) — 与 agent-studio durable_roster 同构。
+"""Team message durable inbox (issue #190) — schema-isomorphic to agent-studio durable_roster.
 
-mailbox 表与 agent-studio 完全同构: 双方 daemon 指向同一个
-FUSION_TEAM_DB 文件即可跨仓互通 (cowork agent ↔ agent-studio agent)。
-ack 语义 at-least-once: 消息派发成功之后才 ack, 崩溃重放不丢消息。
+The mailbox table is fully isomorphic with agent-studio: point both daemons at the same
+FUSION_TEAM_DB file and they interoperate across repos (cowork agent <-> agent-studio agent).
+Ack semantics are at-least-once: ack only after the message dispatches successfully; crash replay loses no messages.
 
-cowork 自己的 roster 落在 cowork_roster 表 — 不改 agent-studio 的
-roster 表语义 (其 inbox consumer 按 autonomous_inbox 抢消息), 两个
-daemon 各管各的花名册, 共用一个信箱。
+cowork keeps its own roster in the cowork_roster table — agent-studio roster table semantics are unchanged
+(its inbox consumer claims messages autonomous_inbox style); the two daemons each manage
+their own roster and share one mailbox.
 
 issue #494 (K4) kernel convergence note: fusion_harness.team_runtime
 TeamRuntime.send is also disk-write-confirmed (persist failure rolls back
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_DB = str(Path.home() / ".fusion-cowork" / "team.db")
 _MAX_BODY = 20000
 
-# mailbox 表与 agent-studio agent_runtime/durable_roster.py 同构 (跨仓协议)
+# mailbox table isomorphic to agent-studio agent_runtime/durable_roster.py (cross-repo protocol)
 _MAILBOX_SQL = """
     CREATE TABLE IF NOT EXISTS mailbox (
         message_id TEXT PRIMARY KEY,
@@ -66,7 +66,7 @@ _COWORK_ROSTER_SQL = """
 
 
 def resolve_db_path(path: Optional[str] = None) -> str:
-    # FUSION_COWORK_TEAM_DB 优先, 其次沿用 agent-studio 的 FUSION_TEAM_DB (共享信箱)
+    # FUSION_COWORK_TEAM_DB first, else reuse agent-studio FUSION_TEAM_DB (shared mailbox)
     return str(path or os.environ.get("FUSION_COWORK_TEAM_DB") or os.environ.get("FUSION_TEAM_DB") or DEFAULT_DB)
 
 
@@ -104,14 +104,14 @@ def _connect(path: str):
 
 
 class TeamMailbox:
-    """durable 点对点信箱 — send/inbox/ack, ack 前消息永不丢。"""
+    """Durable point-to-point mailbox — send/inbox/ack; messages are never lost before ack."""
 
     def __init__(self, path: Optional[str] = None):
         self.path = resolve_db_path(path)
         self._init()
-        # 进程内推送钩子: runner pool 注册 wake() 后, 本地发送即刻唤醒消费
+        # In-process push hook: once the runner pool registers wake(), a local send wakes consumption immediately
         self.on_send = None
-        logger.info(f"团队信箱就绪: {self.path}")
+        logger.info(f"Team mailbox ready: {self.path}")
 
     def _init(self) -> None:
         with _connect(self.path) as conn:
@@ -127,7 +127,7 @@ class TeamMailbox:
         team: str = "",
     ) -> Dict[str, Any]:
         if not sender or not recipient:
-            raise ValueError("sender 和 recipient 必填")
+            raise ValueError("sender 和 recipient 必填")  # i18n: user-facing
         message_id = uuid.uuid4().hex[:16]
         now = time.time()
         with _connect(self.path) as conn:
@@ -139,13 +139,13 @@ class TeamMailbox:
                 """,
                 (message_id, sender, recipient, team, kind, str(body)[:_MAX_BODY], now),
             )
-        logger.info(f"信箱投递: {message_id} {sender} → {recipient} kind={kind}")
+        logger.info(f"Mailbox delivered: {message_id} {sender} -> {recipient} kind={kind}")
         hook = self.on_send
         if hook is not None:
             try:
                 hook(recipient)
             except Exception as e:
-                logger.warning(f"信箱推送钩子失败 (忽略) {recipient}: {e}")
+                logger.warning(f"Mailbox push hook failed (ignored) {recipient}: {e}")
         return {
             "message_id": message_id,
             "sender": sender,
@@ -173,7 +173,7 @@ class TeamMailbox:
                 (time.time(), message_id, recipient),
             )
         ok = cur.rowcount > 0
-        logger.info(f"信箱 ack: {message_id} recipient={recipient} ok={ok}")
+        logger.info(f"Mailbox ack: {message_id} recipient={recipient} ok={ok}")
         return ok
 
     def depth(self, recipient: str = "") -> int:
@@ -207,12 +207,12 @@ class TeamMailbox:
 
 
 class CoworkRoster:
-    """cowork 侧 durable 花名册 — 只有这里登记的 agent 才被本仓 consumer 消费。"""
+    """cowork-side durable roster — only agents registered here are consumed by this repo consumer."""
 
     def __init__(self, path: Optional[str] = None):
         self.path = resolve_db_path(path)
         self._init()
-        logger.info(f"cowork 花名册就绪: {self.path}")
+        logger.info(f"cowork roster ready: {self.path}")
 
     def _init(self) -> None:
         with _connect(self.path) as conn:
@@ -230,9 +230,9 @@ class CoworkRoster:
     ) -> Dict[str, Any]:
         agent_id = (agent_id or "").strip()
         if not agent_id:
-            raise ValueError("agent_id 必填")
+            raise ValueError("agent_id 必填")  # i18n: user-facing
         if not workflow_id:
-            raise ValueError(f"agent {agent_id} 缺 workflow_id 绑定 (收件后跑哪个工作流)")
+            raise ValueError(f"agent {agent_id} 缺 workflow_id 绑定 (收件后跑哪个工作流)")  # i18n: user-facing
         now = time.time()
         with _connect(self.path) as conn:
             conn.execute(
@@ -247,7 +247,7 @@ class CoworkRoster:
                 """,
                 (agent_id, name or agent_id, team, workflow_id, int(bool(enabled)), now),
             )
-        logger.info(f"花名册登记: agent={agent_id} workflow={workflow_id} team={team} enabled={enabled}")
+        logger.info(f"Roster registered: agent={agent_id} workflow={workflow_id} team={team} enabled={enabled}")
         return self.get(agent_id) or {}
 
     def get(self, agent_id: str) -> Optional[Dict[str, Any]]:
@@ -268,5 +268,5 @@ class CoworkRoster:
         with _connect(self.path) as conn:
             cur = conn.execute("DELETE FROM cowork_roster WHERE agent_id = ?", (agent_id,))
         ok = cur.rowcount > 0
-        logger.info(f"花名册移除: agent={agent_id} ok={ok}")
+        logger.info(f"Roster removed: agent={agent_id} ok={ok}")
         return ok

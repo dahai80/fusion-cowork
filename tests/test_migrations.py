@@ -1,6 +1,7 @@
-"""迁移版本管理测试 (v0.4.0 Stage 3).
+"""Migration version-management tests (v0.4.0 Stage 3).
 
-sqlite 路径始终跑 (aiosqlite 无需 asyncpg); MigrationRunner 幂等 + 版本递增 + 失败回滚。
+The sqlite path always runs (aiosqlite needs no asyncpg); MigrationRunner idempotency
++ version increments + failure rollback.
 """
 
 import aiosqlite
@@ -15,7 +16,7 @@ pytestmark = pytest.mark.asyncio
 async def sqlite_runner(tmp_path):
     db_path = str(tmp_path / "mig.db")
     db = await aiosqlite.connect(db_path)
-    # 建空表供 ADD COLUMN 迁移用 (模拟旧库 schema)
+    # Create empty tables for the ADD COLUMN migrations (simulating a legacy schema)
     for t in [
         "spaces",
         "space_members",
@@ -29,7 +30,7 @@ async def sqlite_runner(tmp_path):
         "sync_events",
     ]:
         await db.execute(f"CREATE TABLE {t} (id TEXT PRIMARY KEY)")
-    # issue #253: 模拟 v0.4.0 之前的旧表 — space_notifications / sidebar_modules 无 tenant_id
+    # issue #253: simulate pre-v0.4.0 legacy tables — space_notifications / sidebar_modules without tenant_id
     await db.execute(
         "CREATE TABLE space_notifications (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, read INTEGER NOT NULL DEFAULT 0)"
     )
@@ -72,7 +73,7 @@ async def test_version_recorded(sqlite_runner):
 
 async def test_only_pending_applied(sqlite_runner):
     runner, db = sqlite_runner
-    # 预置 v1 已应用
+    # Preset v1 as already applied
     await runner._ensure_migration_table()
     await runner._record(MIGRATIONS[0])
     applied = await runner.run_pending()
@@ -88,7 +89,7 @@ async def test_tenant_id_columns_added(sqlite_runner):
 
 
 async def test_v3_legacy_tables_get_tenant_id(sqlite_runner):
-    # issue #253: 旧库 space_notifications / sidebar_modules 补 tenant_id, 通知查询不再 500
+    # issue #253: legacy space_notifications / sidebar_modules tables get tenant_id; notification queries no longer 500
     runner, db = sqlite_runner
     await runner.run_pending()
     for t in ("space_notifications", "sidebar_modules"):
@@ -100,7 +101,7 @@ async def test_v3_legacy_tables_get_tenant_id(sqlite_runner):
 
 
 async def test_v3_skipped_when_already_applied(sqlite_runner):
-    # 已记录 v3 的库重复 init 不再重放 ADD COLUMN (runner 吞 duplicate column 错, 幂等)
+    # Repeated init on a DB that already recorded v3 must not replay ADD COLUMN (runner swallows duplicate-column errors, idempotent)
     runner, db = sqlite_runner
     first = await runner.run_pending()
     second = await runner.run_pending()

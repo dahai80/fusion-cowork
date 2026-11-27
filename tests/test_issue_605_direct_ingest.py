@@ -17,14 +17,14 @@ def _catalog(path):
                 "id": "rag-qa",
                 "enabled": True,
                 "price_cny": 2000,
-                "keywords": ["rag", "知识库"],
+                "keywords": ["rag", "知识库"],  # i18n: user-facing
                 "skills": ["retrieval", "rag"],
             },
             {
                 "id": "doc-extraction",
                 "enabled": True,
                 "price_cny": 1800,
-                "keywords": ["extraction", "抽取"],
+                "keywords": ["extraction", "抽取"],  # i18n: user-facing
                 "skills": ["ocr", "parse"],
             },
         ],

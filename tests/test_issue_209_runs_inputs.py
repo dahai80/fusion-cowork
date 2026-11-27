@@ -1,6 +1,7 @@
-"""issue #209: POST /api/runs 的 per-run 输入 — inputs (initial_input 别名) 注入首节点。
+"""issue #209: per-run inputs on POST /api/runs — inputs (alias of initial_input) injected into the first node.
 
-覆盖: 路由透传 message_input、非对象 400、别名与优先级、真实引擎首节点输入快照。
+Covers: route passthrough of message_input, non-object 400, alias and priority,
+real-engine first-node input snapshot.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ class _EchoNode(BaseNode):
     name = ECHO_NODE
     display_name = "Echo Probe 209"
     category = NodeCategory.LOGIC
-    description = "测试用: 回显输入 (#209)"
+    description = "测试用: 回显输入 (#209)"  # i18n: user-facing
     icon = "🧪"
     default_label = "Echo"
 
@@ -90,10 +91,10 @@ class TestRunsCreateInputs:
             message_input=None,
             source="",
             labels=None,
-            space_id="",  # issue #223: runs_create 透传工作区归属
-            hitl_pause=None,  # issue #260: per-run HITL 覆盖
+            space_id="",  # issue #223: runs_create passes through workspace ownership
+            hitl_pause=None,  # issue #260: per-run HITL override
             identity_token="",  # issue #288: caller identity JWT for quota metering
-            **kwargs,  # issue #461: concurrency_key/concurrency 等新透传参数
+            **kwargs,  # issue #461: concurrency_key/concurrency and other new passthrough params
         ):
             started.append({"message_input": message_input})
             return {"run_id": "run_stub", "status": "running"}

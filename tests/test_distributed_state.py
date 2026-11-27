@@ -1,13 +1,13 @@
-"""分布式状态层测试 (issue #79) — mock, 无 live 集群。
+"""Distributed state layer tests (issue #79) — mocked, no live cluster.
 
-覆盖:
-- DistributedStateStore 原子落盘/读回/损坏重建
-- heartbeat + 节点存活判定 + 超时剔除
-- vRAM 账本: 记录/释放/集群汇总/限额检查
-- 插件状态跨集群可见
-- ClusterNodeRegistry / ClusterTaskScheduler 包装合并 peer + 故障转移
-- opt-in OFF: get_cluster_state_store() None, 零行为变化
-- 清理 temp 状态文件
+Covers:
+- DistributedStateStore atomic write/read-back/corruption rebuild
+- heartbeat + node liveness + timeout eviction
+- vRAM ledger: record/release/cluster summary/quota check
+- plugin state visible across the cluster
+- ClusterNodeRegistry / ClusterTaskScheduler wrappers merging peers + failover
+- opt-in OFF: get_cluster_state_store() None, zero behavior change
+- temp state file cleanup
 """
 
 from __future__ import annotations

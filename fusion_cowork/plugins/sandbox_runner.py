@@ -33,7 +33,7 @@ def _serialize(obj: Any) -> Any:
 def _load_module(entry_file: str):
     spec = importlib.util.spec_from_file_location("__sandbox_plugin__", entry_file)
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"无法加载插件模块: {entry_file}")
+        raise RuntimeError(f"无法加载插件模块: {entry_file}")  # i18n: user-facing
     module = importlib.util.module_from_spec(spec)
     sys.modules["__sandbox_plugin__"] = module
     spec.loader.exec_module(module)
@@ -69,7 +69,7 @@ def _introspect(entry_file: str) -> Dict[str, Any]:
                 "category": cat.value if hasattr(cat, "value") else str(cat),
                 "description": getattr(attr, "description", ""),
                 "icon": getattr(attr, "icon", "📦"),
-                "default_label": getattr(attr, "default_label", "插件节点"),
+                "default_label": getattr(attr, "default_label", "插件节点"),  # i18n: user-facing
                 "params_schema": schema,
             }
         )
@@ -82,12 +82,12 @@ async def _run_node(entry_file: str, class_name: str, inputs: Dict[str, Any]) ->
     module = _load_module(entry_file)
     node_cls = getattr(module, class_name, None)
     if node_cls is None or not (isinstance(node_cls, type) and issubclass(node_cls, BaseNode)):
-        raise RuntimeError(f"节点类不存在或非 BaseNode 子类: {class_name}")
+        raise RuntimeError(f"节点类不存在或非 BaseNode 子类: {class_name}")  # i18n: user-facing
 
     node = node_cls(node_id=f"sandbox_{class_name}", config=NodeConfig())
     result = await node.execute(inputs or {})
     if not isinstance(result, NodeResult):
-        raise RuntimeError(f"节点 execute 未返回 NodeResult: {type(result)}")
+        raise RuntimeError(f"节点 execute 未返回 NodeResult: {type(result)}")  # i18n: user-facing
     return _serialize(result)
 
 
@@ -97,19 +97,19 @@ def _emit(payload: Dict[str, Any]) -> None:
 
 
 async def main() -> int:
-    # CR-15: stdin 有界读 (限 16MB), 防 OOM + 任意长度输入攻击
+    # CR-15: bounded stdin read (16MB cap), prevents OOM + arbitrary-length input attacks
     max_input = 16 * 1024 * 1024
     raw = sys.stdin.read(max_input + 1)
     if len(raw) > max_input:
-        _emit({"ok": False, "error": "输入超过 16MB 上限"})
+        _emit({"ok": False, "error": "输入超过 16MB 上限"})  # i18n: user-facing
         return 1
     if not raw:
-        _emit({"ok": False, "error": "空输入"})
+        _emit({"ok": False, "error": "空输入"})  # i18n: user-facing
         return 1
     try:
         req = json.loads(raw)
     except json.JSONDecodeError as e:
-        _emit({"ok": False, "error": f"输入 JSON 解析失败: {e}"})
+        _emit({"ok": False, "error": f"输入 JSON 解析失败: {e}"})  # i18n: user-facing
         return 1
 
     action = req.get("action", "introspect")
@@ -123,11 +123,11 @@ async def main() -> int:
             _emit({"ok": True, "data": data})
             return 0
         else:
-            _emit({"ok": False, "error": f"未知 action: {action}"})
+            _emit({"ok": False, "error": f"未知 action: {action}"})  # i18n: user-facing
             return 1
     except Exception as e:
-        # CR-15: traceback 仅服务端日志, 不进 RPC payload (防信息泄漏)
-        logger.error(f"sandbox_runner 执行失败: {e}\n{traceback.format_exc()}")
+        # CR-15: traceback only in server-side logs, never in the RPC payload (info-leak prevention)
+        logger.error(f"sandbox_runner execution failed: {e}\n{traceback.format_exc()}")
         _emit({"ok": False, "error": f"{type(e).__name__}: {e}"})
         return 1
 

@@ -1,9 +1,10 @@
-"""issue #389: pipeline 节点边界契约测试包 — 模板占位符 × 产出节点输出契约。
+"""issue #389: pipeline node-boundary contract test pack — template placeholders x producer node output contracts.
 
-- 全部内置模板通过占位符-契约校验 + 节点注册名解析
-- ${param.f} 必须在模板参数中; ${step.<nid>} 必须引用存在节点
-- ${result.*}/${step.<nid>.*} 首段命中产出节点输出契约 (n12 级字段改名 → CI 红并点名缺失字段)
-- 共享 fixture 供生产/消费两侧使用 (agent-studio 伴随包同路径)
+- All built-in templates pass placeholder-contract validation + node registered-name resolution
+- ${param.f} must exist in template params; ${step.<nid>} must reference an existing node
+- ${result.*}/${step.<nid>.*} first segment must hit the producer node output contract
+  (an n12-level field rename turns CI red and names the missing field)
+- Shared fixtures used by both producer and consumer sides (agent-studio companion pack, same path)
 """
 
 import pytest
@@ -87,7 +88,7 @@ class TestParamContract:
             },
         }
         errors = validate_template_placeholders(tpl)
-        assert any("缺少字段路径" in e for e in errors)
+        assert any("缺少字段路径" in e for e in errors)  # i18n: user-facing
 
 
 class TestOutputContract:
@@ -109,7 +110,7 @@ class TestOutputContract:
         assert validate_template_placeholders(tpl) == []
 
     def test_n12_class_rename_fails_with_named_field(self):
-        # n12 原型: 模板写 ${result.number}, 生产者给的是 pr_number → CI 红, 点名缺失字段
+        # n12 prototype: template writes ${result.number}, producer supplies pr_number -> CI red, missing field named
         tpl = self._tpl({"op": "linked_pr", "repo": "o/r", "issue_number": 1})
         tpl["workflow"]["nodes"][1]["config"]["params"]["url"] = "${result.number}"
         errors = validate_template_placeholders(tpl)
@@ -159,7 +160,7 @@ class TestOutputContract:
 
 class TestSharedFixtures:
     def test_fixture_file_exists_and_declares_contract_consumers(self):
-        # 跨仓共享 fixture: 路径 + 版本落盘, agent-studio 伴随包消费同一文件
+        # Cross-repo shared fixture: path + version persisted on disk, agent-studio companion pack consumes the same file
         from pathlib import Path
 
         fixture = Path(__file__).resolve().parent.parent / "fusion_cowork" / "templates" / "contracts.json"
@@ -169,5 +170,5 @@ class TestSharedFixtures:
         data = json.loads(fixture.read_text())
         assert data.get("version") >= 1
         assert data.get("consumers") and "agent-studio" in " ".join(data["consumers"])
-        # fixture 与模块注册表一致 (单一事实来源由模块持有, fixture 是导出快照)
+        # Fixture matches the module registry (single source of truth held by the module; fixture is an exported snapshot)
         assert set(data["nodes"]) == set(NODE_OUTPUT_CONTRACTS)

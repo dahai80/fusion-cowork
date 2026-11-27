@@ -52,9 +52,10 @@ def _extract_json_block(text: str) -> str:
 
 @register_node
 class VerifyObjectiveNode(BaseNode):
-    """目标校验节点 — 交付物对照顶层目标 + rubric 的显式验证步 (issue #480)。"""
+    """Objective verification node — explicit validation step of the deliverable against the top-level objective + rubric (issue #480)."""
 
     name = "verify_objective"
+    # i18n: user-facing
     display_name = "目标校验"
     category = NodeCategory.LOGIC
     description = (
@@ -63,47 +64,56 @@ class VerifyObjectiveNode(BaseNode):
         "verification miss fails the run by default"
     )
     icon = "✅"
+    # i18n: user-facing
     default_label = "目标校验"
 
     inputs = [
-        {"key": "deliverable", "label": "待验交付物", "type": "string"},
-        {"key": "objective", "label": "顶层目标", "type": "string"},
+        {"key": "deliverable", "label": "待验交付物", "type": "string"},  # i18n: user-facing
+        {"key": "objective", "label": "顶层目标", "type": "string"},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "passed", "label": "校验结论", "type": "boolean"},
-        {"key": "rubric_results", "label": "逐项结果", "type": "array"},
-        {"key": "objective", "label": "校验目标", "type": "string"},
-        {"key": "summary", "label": "结论摘要", "type": "string"},
+        {"key": "passed", "label": "校验结论", "type": "boolean"},  # i18n: user-facing
+        {"key": "rubric_results", "label": "逐项结果", "type": "array"},  # i18n: user-facing
+        {"key": "objective", "label": "校验目标", "type": "string"},  # i18n: user-facing
+        {"key": "summary", "label": "结论摘要", "type": "string"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "objective": {"type": "string", "description": "顶层目标 (对照基准); 空时取上游输入 objective"},
+                "objective": {
+                    "type": "string",
+                    "description": "顶层目标 (对照基准); 空时取上游输入 objective",  # i18n: user-facing
+                },  # i18n: user-facing
                 "deliverable": {
                     "type": "string",
-                    "description": "待验交付物文本; 空时取上游输入 deliverable/data 文本",
+                    "description": "待验交付物文本; 空时取上游输入 deliverable/data 文本",  # i18n: user-facing
                 },
+                # i18n: user-facing
                 "rubric": {"type": "array", "description": "校验项清单 (字符串列表)", "items": {"type": "string"}},
                 "strategy": {
                     "type": "string",
                     "enum": ["keyword", "llm"],
-                    "description": "keyword = 确定性子串包含 (零 LLM, 缺省); llm = chat judge 逐项判",
+                    "description": "keyword = 确定性子串包含 (零 LLM, 缺省); llm = chat judge 逐项判",  # i18n: user-facing
                     "default": "keyword",
                 },
                 "min_ratio": {
                     "type": "number",
-                    "description": f"rubric 通过比例阈值 (缺省 {_DEFAULT_MIN_RATIO})",
+                    "description": f"rubric 通过比例阈值 (缺省 {_DEFAULT_MIN_RATIO})",  # i18n: user-facing
                     "default": _DEFAULT_MIN_RATIO,
                 },
                 "on_fail": {
                     "type": "string",
                     "enum": ["fail", "flag"],
+                    # i18n: user-facing
                     "description": "fail = 校验不过节点 FAILED (缺省); flag = SUCCESS 但 passed=false (分支路由)",
                     "default": "fail",
                 },
-                "llm_model": {"type": "string", "description": "strategy=llm 的判官模型 (空 = 引擎选模)"},
+                "llm_model": {
+                    "type": "string",
+                    "description": "strategy=llm 的判官模型 (空 = 引擎选模)",  # i18n: user-facing
+                },  # i18n: user-facing
             },
             "required": ["rubric"],
         }
@@ -114,19 +124,21 @@ class VerifyObjectiveNode(BaseNode):
         deliverable = str(params.get("deliverable") or inputs.get("deliverable") or inputs.get("data") or "").strip()
         rubric_raw = params.get("rubric")
         if not isinstance(rubric_raw, list) or not rubric_raw:
+            # i18n: user-facing
             return NodeResult(status=NodeStatus.FAILED, error="verify_objective 参数 rubric 必填 (非空数组)")
         rubric = [str(item) for item in rubric_raw if str(item).strip()]
         if not rubric:
+            # i18n: user-facing
             return NodeResult(status=NodeStatus.FAILED, error="verify_objective 参数 rubric 必填 (非空数组)")
         if not objective:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="verify_objective 缺 objective — 顶层目标对照基准必填 (params.objective 或上游输入)",
+                error="verify_objective 缺 objective — 顶层目标对照基准必填 (params.objective 或上游输入)",  # i18n: user-facing
             )
         if not deliverable:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="verify_objective 缺 deliverable — 待验交付物必填 (params.deliverable 或上游输入)",
+                error="verify_objective 缺 deliverable — 待验交付物必填 (params.deliverable 或上游输入)",  # i18n: user-facing
             )
         try:
             min_ratio = float(params.get("min_ratio", _DEFAULT_MIN_RATIO))
@@ -136,7 +148,7 @@ class VerifyObjectiveNode(BaseNode):
         on_fail = str(params.get("on_fail") or "fail").strip().lower()
 
         logger.info(
-            f"verify_objective 开始: strategy={strategy} rubric={len(rubric)} 项 "
+            f"verify_objective start: strategy={strategy} rubric={len(rubric)} items "
             f"deliverable={len(deliverable)} chars objective={objective[:60]!r}"
         )
         if strategy == "llm":
@@ -148,10 +160,12 @@ class VerifyObjectiveNode(BaseNode):
         ratio = passed_count / len(rubric_results) if rubric_results else 0.0
         overall = ratio >= min_ratio
         summary = (
+            # i18n: user-facing
             f"verify_objective: {passed_count}/{len(rubric_results)} rubric 项通过 (ratio={ratio:.2f} ≥ {min_ratio})"
             if overall
+            # i18n: user-facing
             else (
-                f"verify_objective 未通过: {passed_count}/{len(rubric_results)} rubric 项通过 (ratio={ratio:.2f} < {min_ratio})"
+                f"verify_objective 未通过: {passed_count}/{len(rubric_results)} rubric 项通过 (ratio={ratio:.2f} < {min_ratio})"  # i18n: user-facing
             )
         )
         data = {
@@ -165,7 +179,7 @@ class VerifyObjectiveNode(BaseNode):
         }
         if not overall and on_fail != "flag":
             failed_items = [r["item"] for r in rubric_results if not r["passed"]]
-            logger.warning(f"{summary}; 未过项: {failed_items}")
+            logger.warning(f"{summary}; failed items: {failed_items}")
             return NodeResult(status=NodeStatus.FAILED, error=summary, data=data)
         logger.info(summary)
         return NodeResult(

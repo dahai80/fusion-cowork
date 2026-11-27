@@ -1,4 +1,4 @@
-"""Fusion-Cowork 协作空间模块单元测试。"""
+"""Fusion-Cowork collaboration space module unit tests."""
 
 from __future__ import annotations
 
@@ -539,7 +539,7 @@ class TestSpaceMemberService:
         sp = await store.create_space(_make_space("me", "u1"))
         await store.add_member(_make_member(sp.id, "u1", SpaceRole.OWNER))
         code = await member_svc.invite(sp.id, "u1", role=SpaceRole.MEMBER.value, expires_hours=-1)
-        with pytest.raises(ValueError, match="过期"):
+        with pytest.raises(ValueError, match="过期"):  # i18n: user-facing
             await member_svc.join(code, user_id="u2")
 
     @pytest.mark.asyncio
@@ -548,7 +548,7 @@ class TestSpaceMemberService:
         await store.add_member(_make_member(sp.id, "u1", SpaceRole.OWNER))
         code = await member_svc.invite(sp.id, "u1", role=SpaceRole.MEMBER.value, max_uses=1)
         await member_svc.join(code, user_id="u2")
-        with pytest.raises(ValueError, match="已用完"):
+        with pytest.raises(ValueError, match="已用完"):  # i18n: user-facing
             await member_svc.join(code, user_id="u3")
 
     @pytest.mark.asyncio
@@ -790,7 +790,7 @@ class TestSpaceKBService:
     async def test_upload_no_kb_bound(self, kb_svc, store):
         sp = await store.create_space(_make_space("kbun", "u1"))
         await store.add_member(_make_member(sp.id, "u1", SpaceRole.MEMBER))
-        with pytest.raises(ValueError, match="尚未绑定知识库"):
+        with pytest.raises(ValueError, match="尚未绑定知识库"):  # i18n: user-facing
             await kb_svc.upload_document(sp.id, "u1", "/tmp/test.pdf")
 
     @pytest.mark.asyncio
@@ -870,7 +870,7 @@ class TestSpaceAPI:
         # Test-isolation guard: a stale global JWT verifier (module-level
         # _DEFAULT_VERIFIER singleton in fusion_cowork.auth.jwt) left active by
         # an earlier test file made every unauthenticated request here fail
-        # with 401 ("JWT 无效或缺失") under full-suite runs. Force the API
+        # with 401 ("JWT invalid or missing") under full-suite runs. Force the API
         # fixture into a clean auth state and restore afterwards.
         import fusion_cowork.auth.jwt as jwt_mod
 
@@ -1080,8 +1080,9 @@ class TestFusionMLXClientEnhancements:
         import fusion_cowork.ai.mlx_client as mc
         from fusion_cowork.ai.mlx_client import FusionMLXClient
 
-        # force fallback 走手写重试 (连真实无服务端口), 免 path B 激活态走 _chat_core→_get_async_client
-        # 在 CI 无 fusion-core 时 _get_async_client=None 会抛 TypeError 非 ConnectError.
+        # Force the fallback path to use the hand-written retry (connect to a real service-less port),
+        # avoiding path B's active state going through _chat_core→_get_async_client — in CI without
+        # fusion-core, _get_async_client=None raises TypeError instead of ConnectError.
         saved_flag = mc._HAS_FUSION_CORE
         mc._HAS_FUSION_CORE = False
         try:
@@ -1119,7 +1120,8 @@ class TestFusionMLXClientEnhancements:
         import fusion_cowork.ai.mlx_client as mc
         from fusion_cowork.ai.mlx_client import FusionMLXClient
 
-        # 手写重试路径只在 fallback 态触发 (path B 激活态走 fusion_core.with_retry, 另测于 test_fusion_core_pathb.py)
+        # The hand-written retry path only triggers in fallback state (path B active state goes through
+        # fusion_core.with_retry, tested separately in test_fusion_core_pathb.py)
         saved_flag = mc._HAS_FUSION_CORE
         mc._HAS_FUSION_CORE = False
         try:
@@ -1172,7 +1174,7 @@ class TestFusionMLXClientEnhancements:
 
     @pytest.mark.asyncio
     async def test_chat_no_choices_raises_runtime_not_index(self):
-        # E-12: 上游返畸形响应 (空 choices) → RuntimeError 含上下文, 非裸 IndexError
+        # E-12: upstream returns a malformed response (empty choices) → RuntimeError with context, not a bare IndexError
         import fusion_cowork.ai.mlx_client as mc
         from fusion_cowork.ai.mlx_client import FusionMLXClient
 
@@ -1183,18 +1185,18 @@ class TestFusionMLXClientEnhancements:
             mock_resp = MagicMock()
             mock_resp.status_code = 200
             mock_resp.raise_for_status = MagicMock()
-            mock_resp.json.return_value = {"error": "no choices"}  # 无 choices 键
+            mock_resp.json.return_value = {"error": "no choices"}  # no choices key
             client._client = MagicMock()
             client._client.post = AsyncMock(return_value=mock_resp)
-            with pytest.raises(RuntimeError, match="无 choices"):
+            with pytest.raises(RuntimeError, match="无 choices"):  # i18n: user-facing
                 await client.chat(model="test", messages=[{"role": "user", "content": "hi"}])
         finally:
             mc._HAS_FUSION_CORE = saved_flag
 
     @pytest.mark.asyncio
     async def test_chat_zero_iterations_not_raise_none(self):
-        # E-12: max_retries<0 → 零迭代 → last_exc 仍 None。旧版 raise None 抛 TypeError,
-        # 新版降级 RuntimeError ("无有效响应") 不再 TypeError
+        # E-12: max_retries<0 → zero iterations → last_exc stays None. The old version raised None
+        # (TypeError); the new version degrades to a RuntimeError and no longer raises TypeError
         import fusion_cowork.ai.mlx_client as mc
         from fusion_cowork.ai.mlx_client import FusionMLXClient
 
@@ -1970,11 +1972,11 @@ class TestCallAgentPermission:
         assert await perm.check("perm_sp", "viewer_user", "call_agent") is False
 
 
-# ── M8.9: Artifact 权限测试 ──
+# ── M8.9: Artifact permission tests ──
 
 
 class TestSpaceArtifactService:
-    """SpaceArtifactService CRUD + 权限检查。"""
+    """SpaceArtifactService CRUD + permission checks."""
 
     @pytest.fixture
     async def artifact_setup(self):
@@ -2115,7 +2117,7 @@ class TestSpaceArtifactService:
 
 
 class TestArtifactPermissionActions:
-    """15-action 权限矩阵中 artifact 4 动作验证。"""
+    """Verify the 4 artifact actions in the 15-action permission matrix."""
 
     @pytest.fixture
     async def perm_setup(self):
@@ -2181,11 +2183,11 @@ class TestArtifactPermissionActions:
         assert await perm.check("perm2_sp", "viewer_u", "transfer_artifact") is False
 
 
-# ── M8.10: FSB 模块集成测试 ──
+# ── M8.10: FSB module integration tests ──
 
 
 class TestModuleRegistry:
-    """ModuleRegistry — 侧边栏模块注册/启用/禁用。"""
+    """ModuleRegistry — sidebar module register/enable/disable."""
 
     @pytest.fixture
     async def module_setup(self):
@@ -2256,7 +2258,7 @@ class TestModuleRegistry:
 
 
 class TestNotificationService:
-    """NotificationService — 通知推送与订阅。"""
+    """NotificationService — notification push and subscribe."""
 
     @pytest.fixture
     async def notif_setup(self):
@@ -2281,10 +2283,10 @@ class TestNotificationService:
             space_id="sp1",
             user_id="user1",
             notification_type="approval",
-            title="待审批任务",
+            title="待审批任务",  # i18n: user-facing
         )
         assert result["type"] == "approval"
-        assert result["title"] == "待审批任务"
+        assert result["title"] == "待审批任务"  # i18n: user-facing
 
     @pytest.mark.asyncio
     async def test_list_notifications(self, notif_setup):

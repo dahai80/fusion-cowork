@@ -27,7 +27,7 @@ class _ProduceNode(BaseNode):
     name = "produce_327"
     display_name = "Produce 327"
     category = NodeCategory.TOOL
-    description = "测试用: 产出 PRD 形状数据"
+    description = "测试用: 产出 PRD 形状数据"  # i18n: user-facing
     icon = "📦"
     default_label = "Produce"
 
@@ -50,7 +50,7 @@ class _PassthroughNode(BaseNode):
     name = "passthrough_327"
     display_name = "Passthrough 327"
     category = NodeCategory.TOOL
-    description = "测试用: 闸门位直通 (模拟 approval_gate 挡在中间)"
+    description = "测试用: 闸门位直通 (模拟 approval_gate 挡在中间)"  # i18n: user-facing
     icon = "➡️"
     default_label = "Passthrough"
 
@@ -63,7 +63,7 @@ class _ConsumeNode(BaseNode):
     name = "consume_327"
     display_name = "Consume 327"
     category = NodeCategory.TOOL
-    description = "测试用: 记录收到的输入"
+    description = "测试用: 记录收到的输入"  # i18n: user-facing
     icon = "📥"
     default_label = "Consume"
 
@@ -93,8 +93,8 @@ def _engine_wf(param_map: dict) -> Workflow:
 
 class TestStepRefInterpolation:
     async def test_step_ref_resolves_through_gate(self):
-        # 关键场景: n1 -> n2(闸门) -> n3, n3 参数显式引用 n1 产物 —
-        # 不依赖默认边合并, 引用直接从 passed_data 取
+        # Key scenario: n1 -> n2(gate) -> n3, n3 params explicitly reference the n1 artifact —
+        # not relying on default edge merging, the reference is taken directly from passed_data
         _ConsumeNode.seen = []
         eng = WorkflowEngine()
         wf = _engine_wf({"goal": "arch per ${step.n1.result.last_result.report}"})
@@ -103,7 +103,7 @@ class TestStepRefInterpolation:
         assert _ConsumeNode.seen[-1]["params"]["goal"] == "arch per PRD-BODY-CONTENT"
 
     async def test_result_shorthand_resolves_from_merged_input(self):
-        # ${result.*} 速记取已合并的上游输入 — 生产者与消费者直连时可用
+        # ${result.*} shorthand reads the merged upstream input — available when producer and consumer are directly connected
         _ConsumeNode.seen = []
         eng = WorkflowEngine()
         wf = Workflow(name="interp-327-short")
@@ -127,7 +127,7 @@ class TestStepRefInterpolation:
         assert isinstance(_ConsumeNode.seen[-1]["params"]["issue_number"], int)
 
     async def test_unresolved_ref_fails_loud(self):
-        # issue #343: 未命中引用不再留字面量进节点 — 明确 unresolved interpolation 报错
+        # issue #343: unmatched references no longer leave literals into the node — explicit unresolved interpolation error
         _ConsumeNode.seen = []
         eng = WorkflowEngine()
         wf = _engine_wf({"goal": "missing ${step.n1.nope.deep}"})
@@ -144,7 +144,7 @@ class TestStepRefInterpolation:
         assert _ConsumeNode.seen[-1]["params"]["context_links"] == ["/ws/ai-x/CLAUDE.md"]
 
     async def test_step_ref_in_inputs_not_just_params(self):
-        # 引用也可写在节点输入侧 (inputs) — 默认边合并来的字符串同样被解析
+        # References can also be written on the node input side (inputs) — strings merged in via default edges are parsed the same way
         _ConsumeNode.seen = []
         eng = WorkflowEngine()
         wf = Workflow(name="interp-327-input")
@@ -157,7 +157,7 @@ class TestStepRefInterpolation:
         wf.add_node(n2)
         wf.connect("n1", "n2")
         await eng.execute(wf, execution_id="run-327-inputref")
-        # n1 输出经默认边合并进 n2 输入, 输入里的 step 自引用解析为自身产物
+        # n1 output merges into n2 inputs via the default edge; the step self-reference in inputs resolves to its own artifact
         assert _ConsumeNode.seen[-1]["inputs"]["result"]["last_result"]["report"] == "PRD-BODY-CONTENT"
 
 
@@ -171,7 +171,7 @@ class TestProductLifecycleWiring:
         assert "${step.n3.result.last_result.report}" in n9_input
 
     def test_assembly_preserves_step_refs(self):
-        # ${param.*} 装配期替换, ${step.*} 留给引擎运行期解析 — 两者互不干扰
+        # ${param.*} is replaced at assembly time, ${step.*} is left for engine runtime resolution — the two do not interfere
         wf = TemplateManager().template_to_workflow(
             "product_lifecycle", param_values={"slug": "demo", "repo": "o/r", "task_title": "t"}
         )

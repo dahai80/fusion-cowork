@@ -1,7 +1,7 @@
-"""issue #427: 扩展运行可追溯 — extension 标签 + Extension Log 交付契约 + 模板接线。
+"""issue #427: extension run traceability — extension labels + Extension Log delivery contract + template wiring.
 
-- historical_match extend 判定下发 extension_label + extension_contract; new/base 空串
-- github_api 空串标签过滤 (模板按判定插值标签, 非扩展运行标签集不变)
+- historical_match extend decision emits extension_label + extension_contract; new/base use empty strings
+- github_api filters out empty-string labels (templates interpolate labels per decision; non-extension run label sets unchanged)
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ class TestGithubApiLabelFilter:
         node._client = lambda *a, **k: client
         res = await node.execute({})
         assert res.status.value == "success"
-        # 首个请求是去重 search (GET), POST 建单才是标签载体
+        # The first request is the dedup search (GET); the POST issue-create is the label carrier
         post_body = next(json for _, _, json in client.bodies if json is not None and "labels" in (json or {}))
         assert post_body["labels"] == ["state:ready", "extension"]
 
@@ -124,5 +124,5 @@ class TestTemplateWiring:
             "product_lifecycle", {"slug": "demo", "repo": "o/r", "task_title": "t"}
         )
         labels = wf.nodes["n6"].config.params["labels"]
-        # 装配期标签含插值占位符, 运行期非扩展运行为 ["state:ready", ""]
+        # Assembly-time labels carry interpolation placeholders; at runtime a non-extension run is ["state:ready", ""]
         assert "state:ready" in labels

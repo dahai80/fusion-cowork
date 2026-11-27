@@ -12,7 +12,7 @@ from fusion_cowork.engine.node import NodeRegistry
 
 @pytest.fixture(autouse=True)
 def _ensure_nodes_loaded():
-    # 跨测试文件 NodeRegistry 可能被 clear(), 每测试前确保内置节点在册
+    # NodeRegistry may be clear()ed across test files; ensure built-in nodes are registered before each test
     if "fusion_browser" not in NodeRegistry._registry:
         fusion_cowork.nodes.import_all_nodes()
     yield

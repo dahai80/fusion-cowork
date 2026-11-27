@@ -1,9 +1,9 @@
-"""Issue #143 回归测试 — run 瀑布 per-node token + run 头部总 token。
+"""Issue #143 regression tests — run waterfall per-node tokens + run header total tokens.
 
-- _extract_tokens: usage dict 提取/缺省/零值
-- 引擎执行: 节点输出 usage → step.tokens
-- _step_dict 暴露 tokens (SimpleNamespace 兼容)
-- AI 节点 (classify): 跨批次 usage 聚合落输出
+- _extract_tokens: usage dict extraction/missing/zero values
+- Engine execution: node output usage → step.tokens
+- _step_dict exposes tokens (SimpleNamespace compatible)
+- AI node (classify): cross-batch usage aggregation lands in output
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ def test_engine_captures_step_tokens():
     engine = WorkflowEngine()
     wf = Workflow.from_dict({"name": "wf-tok", "nodes": {"n1": {"name": "issue143_usage_node"}}, "edges": []})
     execution = asyncio.run(engine.execute(wf))
-    assert execution.steps, "应有步骤记录"
+    assert execution.steps, "应有步骤记录"  # i18n: user-facing
     tok = execution.steps[0].tokens
     assert tok is not None
     assert tok["prompt_tokens"] == 12 and tok["completion_tokens"] == 8 and tok["total_tokens"] == 20

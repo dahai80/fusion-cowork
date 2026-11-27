@@ -1,11 +1,11 @@
-"""协作层 WebSocket 双向通道 — 补 SSE 单向推送。
+"""Collaboration-layer WebSocket bidirectional channel — complements one-way SSE push.
 
-CollabHub 按 space_id 分房间, 每条 WS 连接绑定 (space_id, user_id):
-  入站消息 (client→server): chat_send / cursor_move / presence / ping / leave
-  出站广播 (server→room): chat / cursor / presence / member_join / member_leave / pong
+CollabHub rooms by space_id; each WS connection binds (space_id, user_id):
+  inbound messages (client→server): chat_send / cursor_move / presence / ping / leave
+  outbound broadcasts (server→room): chat / cursor / presence / member_join / member_leave / pong
 
-集成: SpaceChatService (持久化聊天), PresenceManager (在线/光标)。
-降级: websockets 未安装 → serve_ws 抛 ImportError, hub 仍可用于进程内广播。
+Integration: SpaceChatService (persisted chat), PresenceManager (online/cursor).
+Degradation: websockets not installed → serve_ws raises ImportError, the hub still works for in-process broadcasts.
 """
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ from typing import Any, Dict, Optional, Set
 
 logger = logging.getLogger(__name__)
 
-# R-6: 单连接广播超时 — 慢客户端超过此值放弃, 不拖累全房广播。
+# R-6: per-connection broadcast timeout — give up on slow clients beyond this, don't drag the whole-room broadcast.
 _BROADCAST_SEND_TIMEOUT = 5.0
-# R-6: 单条聊天内容上限, 防巨型消息拖垮序列化/广播。
+# R-6: per-message chat content cap, prevents giant messages from crushing serialization/broadcast.
 _CHAT_CONTENT_MAX = 32 * 1024
 
 
@@ -38,13 +38,13 @@ class CollabHub:
         self._conn_meta: Dict[Any, Dict[str, str]] = {}
         self._chat_svc = chat_svc
         self._presence = presence_manager
-        # LO-13: space_store 校验成员资格; auth_token 校验 hello (防无认证注入/presence 冒充)
+        # LO-13: space_store validates membership; auth_token validates hello (prevents unauthenticated injection/presence spoofing)
         self._space_store = space_store
         self._auth_token = auth_token
-        # Stage 6: per-tenant 连接上限 (防单租户耗尽 WS 资源), 默认 50。
+        # Stage 6: per-tenant connection cap (prevents a single tenant exhausting WS resources), default 50.
         self._max_per_tenant = max(1, int(max_per_tenant))
         self._tenant_conn_count: Dict[str, int] = {}
-        logger.debug(f"CollabHub 初始化 max_per_tenant={self._max_per_tenant}")
+        logger.debug(f"CollabHub init max_per_tenant={self._max_per_tenant}")
 
     async def join(self, websocket: Any, space_id: str, user_id: str, display_name: str = "") -> Dict[str, Any]:
         room = self._rooms.setdefault(space_id, set())
@@ -78,7 +78,7 @@ class CollabHub:
             return
         space_id = meta["space_id"]
         user_id = meta["user_id"]
-        # Stage 6: per-tenant 连接计数递减 (join 时 _conn_meta 记了 tenant_id)。
+        # Stage 6: per-tenant connection count decrement (_conn_meta recorded tenant_id at join).
         _tid = meta.get("tenant_id")
         if _tid:
             self._tenant_conn_count[_tid] = max(0, self._tenant_conn_count.get(_tid, 0) - 1)
@@ -105,11 +105,11 @@ class CollabHub:
     async def handle_message(self, websocket: Any, raw: str) -> Optional[Dict[str, Any]]:
         meta = self._conn_meta.get(websocket)
         if not meta:
-            return {"error": "未加入房间"}
+            return {"error": "未加入房间"}  # i18n: user-facing
         try:
             msg = json.loads(raw)
         except json.JSONDecodeError as e:
-            return {"error": f"消息非 JSON: {e}"}
+            return {"error": f"消息非 JSON: {e}"}  # i18n: user-facing
         mtype = msg.get("type", "")
         space_id = meta["space_id"]
         user_id = meta["user_id"]
@@ -125,21 +125,21 @@ class CollabHub:
         if mtype == "leave":
             await self.leave(websocket)
             return None
-        logger.warning(f"未知 WS 消息类型: {mtype}")
-        return {"error": f"未知消息类型: {mtype}"}
+        logger.warning(f"unknown WS message type: {mtype}")
+        return {"error": f"未知消息类型: {mtype}"}  # i18n: user-facing
 
     async def _handle_chat(self, websocket: Any, msg: Dict[str, Any], space_id: str, user_id: str) -> Dict[str, Any]:
         content = str(msg.get("content", "")).strip()
         if not content:
-            return {"error": "内容为空"}
-        # R-6: 聊天内容无上限 → 单条巨型消息拖垮广播 (序列化+内存)。限 32KiB。
+            return {"error": "内容为空"}  # i18n: user-facing
+        # R-6: uncapped chat content → a single giant message crushes broadcast (serialization+memory). Capped at 32KiB.
         if len(content) > _CHAT_CONTENT_MAX:
-            return {"error": f"内容过长 ({len(content)} > {_CHAT_CONTENT_MAX} 字符)"}
+            return {"error": f"内容过长 ({len(content)} > {_CHAT_CONTENT_MAX} 字符)"}  # i18n: user-facing
         if self._chat_svc:
             try:
                 await self._chat_svc.send_message(space_id, user_id=user_id, content=content)
             except Exception as e:
-                logger.warning(f"聊天持久化失败 (仍广播): {e}")
+                logger.warning(f"chat persistence failed (still broadcasting): {e}")
         msg_id = msg.get("msg_id") or f"msg_{uuid.uuid4().hex[:12]}"
         out = {
             "type": "chat",
@@ -193,14 +193,14 @@ class CollabHub:
         if not targets:
             return
 
-        # R-6: 旧版顺序 await ws.send → 一个慢客户端阻塞全房广播 (广播风暴)。
-        # 改并发 gather, 每连接独立超时隔离慢客户端, 超时不拖累其他。
+        # R-6: the old sequential await ws.send → one slow client blocked the whole-room broadcast (broadcast storm).
+        # Switched to concurrent gather with an independent timeout per connection to isolate slow clients; timeouts don't drag others.
         async def _one(ws: Any) -> bool:
             try:
                 await asyncio.wait_for(ws.send(payload), timeout=_BROADCAST_SEND_TIMEOUT)
                 return True
             except Exception as e:
-                logger.debug(f"广播发送失败/超时, 标记移除: {e}")
+                logger.debug(f"broadcast send failed/timed out, marking for removal: {e}")
                 return False
 
         results = await asyncio.gather(*[_one(ws) for ws in targets], return_exceptions=True)
@@ -212,7 +212,7 @@ class CollabHub:
         try:
             await websocket.send(json.dumps(data, ensure_ascii=False))
         except Exception as e:
-            logger.debug(f"单发失败: {e}")
+            logger.debug(f"single send failed: {e}")
 
     def room_size(self, space_id: str) -> int:
         return len(self._rooms.get(space_id, set()))
@@ -225,10 +225,10 @@ class CollabHub:
 
         async def _handler(websocket):
             try:
-                # LO-13: hello 必须带认证 + 身份校验, 防无认证注入/presence 冒充
+                # LO-13: hello must carry authentication + identity validation, prevents unauthenticated injection/presence spoofing
                 first = await websocket.recv()
                 hello = json.loads(first)
-                # auth_token 配了则校验 hello.token (Stage 2: JWT 也可通过), 缺/错拒连
+                # When auth_token is configured, validate hello.token (Stage 2: JWT also accepted); missing/wrong → reject connection
                 _principal = None
                 if self._auth_token:
                     from fusion_cowork.auth import verify_any_token
@@ -236,38 +236,46 @@ class CollabHub:
                     token = str(hello.get("token", ""))
                     _principal = verify_any_token(token, self._auth_token)
                     if _principal is None:
-                        logger.warning("CollabHub WS 认证失败: hello token 无效")
-                        await websocket.send(json.dumps({"type": "error", "error": "认证失败"}))
+                        logger.warning("CollabHub WS auth failed: invalid hello token")
+                        await websocket.send(json.dumps({"type": "error", "error": "认证失败"}))  # i18n: user-facing
                         await websocket.close()
                         return
-                # Stage 6: per-tenant 连接上限 — 提 tenant_id (JWT claim 或默认租户), 超限拒。
+                # Stage 6: per-tenant connection cap — tenant_id from JWT claim or default tenant; over the cap → reject.
                 _tenant_id = getattr(_principal, "tenant_id", "") or "default"
                 cur = self._tenant_conn_count.get(_tenant_id, 0)
                 if cur >= self._max_per_tenant:
-                    logger.warning(f"CollabHub WS 拒连: tenant={_tenant_id} 连接数 {cur} 达上限 {self._max_per_tenant}")
-                    await websocket.send(json.dumps({"type": "error", "error": "租户连接数已达上限"}))
+                    logger.warning(
+                        f"CollabHub WS rejected: tenant={_tenant_id} connections {cur} reached cap {self._max_per_tenant}"
+                    )
+                    await websocket.send(
+                        json.dumps({"type": "error", "error": "租户连接数已达上限"})  # i18n: user-facing
+                    )  # i18n: user-facing
                     await websocket.close()
                     return
                 self._tenant_conn_count[_tenant_id] = cur + 1
                 space_id = str(hello.get("space_id", "")).strip()
                 user_id = str(hello.get("user_id", "")).strip()
                 if not space_id or not user_id:
-                    logger.warning("CollabHub WS 拒绝: hello 缺 space_id/user_id")
-                    await websocket.send(json.dumps({"type": "error", "error": "缺 space_id/user_id"}))
+                    logger.warning("CollabHub WS rejected: hello missing space_id/user_id")
+                    await websocket.send(
+                        json.dumps({"type": "error", "error": "缺 space_id/user_id"})  # i18n: user-facing
+                    )  # i18n: user-facing
                     await websocket.close()
                     return
-                # space_store 配了则校验成员资格, 非成员拒入房
+                # When space_store is configured, validate membership; non-members are rejected from the room
                 if self._space_store is not None:
                     member = await self._space_store.get_member(space_id, user_id)
                     if member is None:
                         space = await self._space_store.get_space(space_id)
-                        # A-5: get_space 返回 Space dataclass (.owner_id 属性), 非 dict —
-                        # 旧 space.get("owner_id") 在 dataclass 上 AttributeError (非成员路径恒崩,
-                        # 异常被外层 except 吞 → 连接静默断, 攻击者可探测空间存在性)。
+                        # A-5: get_space returns a Space dataclass (.owner_id attribute), not a dict —
+                        # the old space.get("owner_id") raised AttributeError on the dataclass (non-member path always crashed,
+                        # the exception was swallowed by the outer except → connection dropped silently, letting attackers probe space existence).
                         owner_id = getattr(space, "owner_id", "") if space else ""
                         if not space or owner_id != user_id:
-                            logger.warning(f"CollabHub WS 拒绝: user={user_id} 非 space={space_id} 成员")
-                            await websocket.send(json.dumps({"type": "error", "error": "非空间成员"}))
+                            logger.warning(f"CollabHub WS rejected: user={user_id} not a member of space={space_id}")
+                            await websocket.send(
+                                json.dumps({"type": "error", "error": "非空间成员"})  # i18n: user-facing
+                            )  # i18n: user-facing
                             await websocket.close()
                             return
                 await self.join(websocket, space_id, user_id, hello.get("display_name", ""))
@@ -275,10 +283,10 @@ class CollabHub:
                 async for raw in websocket:
                     await self.handle_message(websocket, raw)
             except Exception as e:
-                logger.debug(f"WS 连接结束: {e}")
+                logger.debug(f"WS connection ended: {e}")
             finally:
                 await self.leave(websocket)
 
         server = await websockets.serve(_handler, host, port)
-        logger.info(f"CollabHub WS 监听: ws://{host}:{port} (auth={'on' if self._auth_token else 'off'})")
+        logger.info(f"CollabHub WS listening: ws://{host}:{port} (auth={'on' if self._auth_token else 'off'})")
         return server

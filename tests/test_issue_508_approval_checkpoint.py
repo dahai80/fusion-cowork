@@ -248,7 +248,7 @@ class TestGateNodeUnit:
         result = await node.execute({"payload": {"x": 1}, "human_reply": {"choice": "a"}})
         assert result.data["human_reply"] == {"choice": "a"}
         assert result.data["approved"] is True
-        assert "回复" in result.summary
+        assert "回复" in result.summary  # i18n: user-facing
 
     def test_gate_schema_declares_timeout_policy(self):
 

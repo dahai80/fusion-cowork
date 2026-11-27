@@ -1,9 +1,9 @@
-"""Artifact 权限服务 — 协同会话 Artifact 只读共享 + 创建者编辑。
+"""Artifact permission service — collaboration session Artifact read-only sharing + creator editing.
 
-前置实现（等 fusion-artifacts-engine P3/P4 上游就绪后对接）:
-- Artifact ownership 追踪 (owner_user_id)
-- view/edit/share/transfer 权限检查
-- artifact.updated SSE 事件预留
+Prerequisite implementation (to be wired once fusion-artifacts-engine P3/P4 upstream is ready):
+- Artifact ownership tracking (owner_user_id)
+- view/edit/share/transfer permission checks
+- artifact.updated SSE event reserved
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ class ConflictError(Exception):
 
 
 class SpaceArtifactService:
-    """Artifact 权限管理 — 创建者编辑 + 参与者只读 + 所有权转交。"""
+    """Artifact permission management — creator edit + participant read-only + ownership transfer."""
 
     def __init__(self, store: SpaceStore, permission: SpacePermission):
         self._store = store
@@ -53,7 +53,7 @@ class SpaceArtifactService:
 
         artifact_id = f"art_{uuid.uuid4().hex[:8]}"
         now = datetime.now().isoformat()
-        # A-8: 经 store 串行写事务, 与 SpaceStore 写隔离 (单共享连接)。
+        # A-8: goes through store serialized write transaction, write-isolated from SpaceStore (single shared connection).
         async with self._store.write_tx(tid) as h:
             cur = await h.fetchval(
                 "SELECT COUNT(*) FROM space_artifacts WHERE space_id = ? AND tenant_id = ?",
@@ -64,7 +64,7 @@ class SpaceArtifactService:
             except Exception as e:
                 if "QuotaExceeded" in type(e).__name__:
                     raise
-                logger.debug(f"配额校验跳过: {e}")
+                logger.debug(f"quota check skipped: {e}")
             await h.exec(
                 "INSERT INTO space_artifacts "
                 "(id, space_id, name, artifact_type, content, owner_user_id, "
@@ -125,7 +125,7 @@ class SpaceArtifactService:
         if not await self._perm.check(space_id, user_id, "edit_artifact"):
             raise PermissionError(f"User {user_id} cannot edit artifact in space {space_id}")
         now = datetime.now().isoformat()
-        # A-8: 读版本 + 乐观写同一串行事务, 防 SELECT→UPDATE 间被并发写覆盖。
+        # A-8: version read + optimistic write in the same serialized transaction, preventing concurrent-write clobber between SELECT and UPDATE.
         async with self._store.write_tx(tid) as h:
             row = await h.fetchone(
                 "SELECT * FROM space_artifacts WHERE id = ? AND space_id = ? AND tenant_id = ?",
@@ -150,7 +150,7 @@ class SpaceArtifactService:
             if metadata is not None:
                 sets.append("metadata = ?")
                 vals.append(json.dumps(metadata, ensure_ascii=False))
-            # A-8: 乐观锁 — WHERE version=current 防并发编辑丢更新, rowcount=0 即冲突。
+            # A-8: optimistic lock — WHERE version=current prevents concurrent-edit update loss, rowcount=0 means conflict.
             vals.extend([artifact_id, space_id, tid, current_version])
             res = await h.exec(
                 f"UPDATE space_artifacts SET {', '.join(sets)} "
@@ -158,8 +158,10 @@ class SpaceArtifactService:
                 vals,
             )
             if res.rowcount == 0:
-                logger.warning(f"SpaceArtifactService.update_artifact 乐观锁冲突 id={artifact_id} v={current_version}")
-                raise ConflictError(f"Artifact {artifact_id} 已被他人修改, 请刷新重试")
+                logger.warning(
+                    f"SpaceArtifactService.update_artifact optimistic-lock conflict id={artifact_id} v={current_version}"
+                )
+                raise ConflictError(f"Artifact {artifact_id} 已被他人修改, 请刷新重试")  # i18n: user-facing
         logger.info(f"SpaceArtifactService.update_artifact id={artifact_id} v={new_version} tenant={tid}")
         return {"id": artifact_id, "version": new_version, "updated_at": now}
 
@@ -172,8 +174,8 @@ class SpaceArtifactService:
         note: str = "",
         tenant_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        # W9 交付审查状态机: unreviewed → approved/rejected (可重审, 幂等覆盖)。
-        # 状态存 metadata.review (无 schema 变更), 审查权限同 delete (owner/admin)。
+        # W9 delivery review state machine: unreviewed → approved/rejected (re-reviewable, idempotent overwrite).
+        # State stored in metadata.review (no schema change), review permission same as delete (owner/admin).
         tid = resolve_tenant_id(tenant_id)
         if not await self._perm.is_owner_or_admin(space_id, reviewer_id):
             raise PermissionError(f"Only owner/admin can review artifact: {artifact_id}")
@@ -291,16 +293,16 @@ class SpaceArtifactService:
                 if share.get("code") != share_code:
                     continue
                 if share.get("revoked"):
-                    raise ValueError("分享码已被撤销")
+                    raise ValueError("分享码已被撤销")  # i18n: user-facing
                 expires_at = share.get("expires_at") or ""
                 if expires_at:
                     try:
                         if datetime.now() > datetime.fromisoformat(expires_at):
-                            raise ValueError("分享码已过期")
+                            raise ValueError("分享码已过期")  # i18n: user-facing
                     except ValueError:
                         raise
                 return {"artifact": art, "shared_by": share.get("shared_by", "")}
-        raise ValueError("分享码无效")
+        raise ValueError("分享码无效")  # i18n: user-facing
 
     async def transfer_ownership(
         self,

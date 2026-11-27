@@ -166,7 +166,7 @@ class TestValidationRule:
         assert wf.validate() == []
 
     def test_verify_as_terminal_passes_strict(self):
-        # 校验节点本身就是终端交付节点 — 合法
+        # The verify node itself is the terminal delivery node — legal
         wf = Workflow(name="wf-480b", verification_policy="strict")
         v = NodeRegistry.create("verify_objective", node_id="nv")
         v.config.params = {"objective": "o", "rubric": ["ok"], "deliverable": "ok"}
@@ -230,5 +230,5 @@ class TestJournalFeed:
         assert NodeRegistry.get("verify_objective") is not None
         from fusion_cowork import NODE_NAME_ALIASES
 
-        assert NODE_NAME_ALIASES.get("目标校验") == "verify_objective"
-        assert NODE_NAME_ALIASES.get("交付验证") == "verify_objective"
+        assert NODE_NAME_ALIASES.get("目标校验") == "verify_objective"  # i18n: user-facing
+        assert NODE_NAME_ALIASES.get("交付验证") == "verify_objective"  # i18n: user-facing

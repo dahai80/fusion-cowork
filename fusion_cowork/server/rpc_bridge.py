@@ -1,13 +1,13 @@
-"""RPC 桥接层 — 托管 /rpc 端点, 委托 plugins/* 方法给 fusion-plugins-ecosystem。
+"""RPC bridge layer — hosts the /rpc endpoint, delegating plugins/* methods to fusion-plugins-ecosystem.
 
-Issue #48: fusion-studio 插件生态集成面板通过 POST /rpc 消费 15 个 plugins/* 方法。
-本模块构造 fusion-plugins-ecosystem.MCPHandler, 注入 fusion-cowork runtime 句柄,
-使 Studio 的 JSON-RPC 请求路由到上层 handler。
+Issue #48: the fusion-studio plugin-ecosystem integration panel consumes the 15 plugins/* methods via POST /rpc.
+This module constructs fusion-plugins-ecosystem.MCPHandler, injecting fusion-cowork runtime handles,
+so Studio's JSON-RPC requests route to the upstream handler.
 
-设计:
-- 懒加载: 首次请求 /rpc 时构造 MCPHandler, 避免无 plugins 依赖环境的启动开销
-- 降级: fusion-plugins-ecosystem 未安装时, /rpc 返回 -32603 + 可操作提示
-- 节点发现: DeskRuntime 注入 NodeRegistry, desk.list_nodes() 返回 cowork 已注册节点
+Design:
+- Lazy loading: MCPHandler is constructed on the first /rpc request, avoiding startup cost in environments without the plugins dependency
+- Degradation: when fusion-plugins-ecosystem is not installed, /rpc returns -32603 + an actionable hint
+- Node discovery: DeskRuntime injects NodeRegistry, desk.list_nodes() returns cowork's registered nodes
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from fusion_cowork.observability.trace import get_trace_id
 
 logger = logging.getLogger(__name__)
 
-# plugins/* 方法白名单 (Studio PluginBridge.swift 调用的 15 个)
+# plugins/* method allowlist (the 15 called by Studio PluginBridge.swift)
 PLUGINS_METHODS = frozenset(
     {
         "plugins.ping",
@@ -41,8 +41,8 @@ PLUGINS_METHODS = frozenset(
     }
 )
 
-# HI-4: 每方法必填 params 字段 (method→[required_keys]); 缺则 -32602 拒, 不进 handler
-# 键名对齐上游 MCPHandler: state.get/install/uninstall 用 plugin_id; config.set 需 ≥1 键
+# HI-4: per-method required params fields (method→[required_keys]); missing → rejected with -32602, never reaches the handler
+# Key names align with upstream MCPHandler: state.get/install/uninstall use plugin_id; config.set requires ≥1 key
 _PARAMS_REQUIRED: Dict[str, frozenset] = {
     "plugins/install": frozenset({"plugin_id"}),
     "plugins/uninstall": frozenset({"plugin_id"}),
@@ -56,11 +56,12 @@ _DEFAULTS_MOUNTED: bool = False
 
 
 def _build_desk_runtime() -> Any:
-    """构造 DeskRuntime, 注入 fusion-cowork runtime 句柄。
+    """Construct DeskRuntime, injecting fusion-cowork runtime handles.
 
-    issue #79: 集群 opt-in (FUSION_CLUSTER_ENABLED=1) 时, 用 ClusterNodeRegistry /
-    ClusterTaskScheduler 包装注入句柄, 使插件生态跨节点可见 + 任务跨节点派发。
-    默认 OFF → 注入裸 NodeRegistry + TaskScheduler (零行为变化)。
+    issue #79: on cluster opt-in (FUSION_CLUSTER_ENABLED=1), wrap the injected handles with
+    ClusterNodeRegistry / ClusterTaskScheduler so the plugin ecosystem is visible across nodes
+    and tasks dispatch across nodes.
+    Default OFF → injects bare NodeRegistry + TaskScheduler (zero behavior change).
     """
     from fusion_plugins_ecosystem.desk_runtime import DeskRuntime
 
@@ -72,7 +73,7 @@ def _build_desk_runtime() -> Any:
 
         mlx_client = FusionMLXClient()
     except Exception as e:
-        logger.warning("rpc_bridge: FusionMLXClient 构造失败, 降级为 None: %s", e)
+        logger.warning("rpc_bridge: FusionMLXClient construction failed, degrading to None: %s", e)
         mlx_client = None
 
     node_registry = NodeRegistry
@@ -86,26 +87,26 @@ def _build_desk_runtime() -> Any:
 
         node_registry = ClusterNodeRegistry(NodeRegistry, store)
         task_scheduler = ClusterTaskScheduler(TaskScheduler(), store)
-        logger.info("rpc_bridge: 集群模式启用, 注入集群感知句柄包装 node=%s", store.node_id)
+        logger.info("rpc_bridge: cluster mode enabled, injecting cluster-aware handle wrappers node=%s", store.node_id)
 
     desk = DeskRuntime(
         node_registry=node_registry,
         task_scheduler=task_scheduler,
         mlx_client=mlx_client,
     )
-    logger.info("rpc_bridge: DeskRuntime 已构造, 注入 NodeRegistry + TaskScheduler")
+    logger.info("rpc_bridge: DeskRuntime constructed, injected NodeRegistry + TaskScheduler")
     return desk
 
 
 def get_plugins_handler() -> Any:
-    """懒加载 MCPHandler 单例 (注入 cowork runtime)。
+    """Lazily build the MCPHandler singleton (with cowork runtime injected).
 
-    返回 fusion-plugins-ecosystem.MCPHandler 实例。
-    依赖缺失时抛 ImportError, 由调用方转 JSON-RPC 错误。
+    Returns a fusion-plugins-ecosystem.MCPHandler instance.
+    Raises ImportError when the dependency is missing; the caller converts it to a JSON-RPC error.
 
-    构造时 register_builtin() 注册内置插件 (caveman_compress 等),
-    使 plugins/list 可发现。default_mounted 插件的 enable 延迟到
-    首次 dispatch_rpc (见 _mount_defaults), 因 enable 是 async。
+    On construction register_builtin() registers built-in plugins (caveman_compress etc.)
+    so plugins/list can discover them. enable for default_mounted plugins is deferred to
+    the first dispatch_rpc (see _mount_defaults), because enable is async.
     """
     global _HANDLER, _DESK_RUNTIME, _LIFECYCLE
     if _HANDLER is not None:
@@ -129,19 +130,19 @@ def get_plugins_handler() -> Any:
     )
     builtin_count = len(registry.list())
     logger.info(
-        "rpc_bridge: MCPHandler 已构造 (plugins/* 委托就绪, 内置 %d 个)",
+        "rpc_bridge: MCPHandler constructed (plugins/* delegation ready, %d built-ins)",
         builtin_count,
     )
     return _HANDLER
 
 
 async def _mount_defaults() -> None:
-    """首次 dispatch 时懒触发: enable 所有 default_mounted 插件。
+    """Lazily triggered on first dispatch: enable all default_mounted plugins.
 
-    MCP 语义要求 tools/list 暴露的工具可直接调用, 但 lifecycle.execute
-    门控 state==ENABLED。register_builtin 仅注册不 enable, 故默认插件
-    (caveman_compress) 需显式 load+enable。config.default_mount_compressor
-    关闭时跳过。
+    MCP semantics require tools exposed via tools/list to be directly callable, but
+    lifecycle.execute gates on state==ENABLED. register_builtin only registers without
+    enabling, so the default plugin (caveman_compress) needs an explicit load+enable.
+    Skipped when config.default_mount_compressor is off.
     """
     global _DEFAULTS_MOUNTED
     if _DEFAULTS_MOUNTED or _LIFECYCLE is None or _HANDLER is None:
@@ -155,13 +156,13 @@ async def _mount_defaults() -> None:
         if manifest.id not in _LIFECYCLE._instances:
             try:
                 await _LIFECYCLE.enable(manifest.id)
-                logger.info("rpc_bridge: auto-mount %s 已启用", manifest.id)
+                logger.info("rpc_bridge: auto-mount %s enabled", manifest.id)
             except Exception as e:
-                logger.warning("rpc_bridge: auto-mount %s 失败: %s", manifest.id, e)
+                logger.warning("rpc_bridge: auto-mount %s failed: %s", manifest.id, e)
 
 
 def is_plugins_available() -> bool:
-    """检查 fusion-plugins-ecosystem 是否可导入 (不构造 handler)。"""
+    """Check whether fusion-plugins-ecosystem is importable (without building the handler)."""
     try:
         import fusion_plugins_ecosystem  # noqa: F401
 
@@ -171,18 +172,18 @@ def is_plugins_available() -> bool:
 
 
 async def dispatch_rpc(request: Dict[str, Any]) -> Dict[str, Any]:
-    """分发 /rpc JSON-RPC 请求到 MCPHandler。
+    """Dispatch a /rpc JSON-RPC request to MCPHandler.
 
     Args:
-        request: 完整 JSON-RPC 2.0 请求 dict
+        request: full JSON-RPC 2.0 request dict
 
     Returns:
-        JSON-RPC 2.0 响应 dict (含 result 或 error)
+        JSON-RPC 2.0 response dict (with result or error)
     """
     request_id = request.get("id")
     method = request.get("method", "")
 
-    # LO-10: 显式分发 — 白名单方法或 plugins/* 前缀走校验+dispatch, 其余 -32601
+    # LO-10: explicit dispatch — allowlisted methods or plugins/* prefix go through validation+dispatch, everything else -32601
     is_plugins_method = method in PLUGINS_METHODS or method.startswith("plugins/")
     if not is_plugins_method:
         return {
@@ -190,11 +191,11 @@ async def dispatch_rpc(request: Dict[str, Any]) -> Dict[str, Any]:
             "id": request_id,
             "error": {
                 "code": -32601,
-                "message": f"Method not found: {method} (/rpc 仅托管 plugins/*)",
+                "message": f"Method not found: {method} (/rpc 仅托管 plugins/*)",  # i18n: user-facing
             },
         }
 
-    # HI-4: 处理前校验 params 形状 — 必填字段缺失拒 -32602, 不把畸形请求喂给 handler
+    # HI-4: validate params shape before handling — missing required fields rejected with -32602, malformed requests never reach the handler
     required = _PARAMS_REQUIRED.get(method)
     if required is not None:
         params = request.get("params")
@@ -202,17 +203,21 @@ async def dispatch_rpc(request: Dict[str, Any]) -> Dict[str, Any]:
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
-                "error": {"code": -32602, "message": "params 缺失或非对象", "data": {"method": method}},
+                "error": {
+                    "code": -32602,
+                    "message": "params 缺失或非对象",  # i18n: user-facing
+                    "data": {"method": method},
+                },  # i18n: user-facing
             }
         missing = [k for k in required if not params.get(k)]
         if missing:
-            logger.warning("rpc_bridge: %s 缺必填参数 %s", method, missing)
+            logger.warning("rpc_bridge: %s missing required params %s", method, missing)
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "error": {
                     "code": -32602,
-                    "message": "参数校验失败",
+                    "message": "参数校验失败",  # i18n: user-facing
                     "data": {"method": method, "missing": missing},
                 },
             }
@@ -220,17 +225,17 @@ async def dispatch_rpc(request: Dict[str, Any]) -> Dict[str, Any]:
     try:
         handler = get_plugins_handler()
     except ImportError as e:
-        logger.error("rpc_bridge: fusion-plugins-ecosystem 不可用: %s", e)
+        logger.error("rpc_bridge: fusion-plugins-ecosystem unavailable: %s", e)
         return {
             "jsonrpc": "2.0",
             "id": request_id,
             "error": {
                 "code": -32603,
-                "message": ("plugins runtime 未安装: pip install fusion-plugins-ecosystem"),
+                "message": ("plugins runtime 未安装: pip install fusion-plugins-ecosystem"),  # i18n: user-facing
             },
         }
 
-    # 首次 dispatch 懒触发默认插件挂载 (caveman_compress 等), 使 tools/call 可调
+    # First dispatch lazily mounts default plugins (caveman_compress etc.) so tools/call can invoke them
     await _mount_defaults()
 
     try:
@@ -239,10 +244,10 @@ async def dispatch_rpc(request: Dict[str, Any]) -> Dict[str, Any]:
             return {"jsonrpc": "2.0", "result": None, "id": request_id}
         return response
     except Exception as e:
-        # HI-5: 不泄 str(e) 进 RPC; 仅服务端日志 + 回 trace_id 供排障
+        # HI-5: never leak str(e) into the RPC; server-side log only + trace_id returned for troubleshooting
         trace_id = get_trace_id()
         logger.error(
-            "rpc_bridge: dispatch 异常 trace_id=%s method=%s err=%s\n%s",
+            "rpc_bridge: dispatch exception trace_id=%s method=%s err=%s\n%s",
             trace_id,
             method,
             e,
@@ -260,9 +265,9 @@ async def dispatch_rpc(request: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def list_nodes_for_plugins() -> list:
-    """供 desk.list_nodes() 使用的节点发现桥 (issue #48 第 3 点)。
+    """Node-discovery bridge for desk.list_nodes() (issue #48 item 3).
 
-    返回 cowork NodeRegistry.list() 的结果; 依赖缺失时返回空列表。
+    Returns the result of cowork NodeRegistry.list(); returns an empty list when the dependency is missing.
     """
     if _DESK_RUNTIME is None or _DESK_RUNTIME.node_registry is None:
         try:
@@ -270,6 +275,6 @@ def list_nodes_for_plugins() -> list:
 
             return NodeRegistry.list()
         except Exception as e:
-            logger.warning("rpc_bridge: 节点发现失败: %s", e)
+            logger.warning("rpc_bridge: node discovery failed: %s", e)
             return []
     return _DESK_RUNTIME.node_registry.list()

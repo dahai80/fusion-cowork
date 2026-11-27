@@ -1,4 +1,4 @@
-"""#196: harness 缺包时引擎 shim 给出可执行安装指引, 不再裸抛 ImportError。"""
+"""#196: when the harness package is missing, engine shims give an actionable install hint instead of a bare ImportError."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import pytest
 
 from fusion_cowork.engine._harness_guard import HARNESS_INSTALL_HINT
 
-# 4 个引擎 shim 模块在 import 期 unconditionally 取 fusion_harness 符号
+# The 4 engine shim modules unconditionally pull fusion_harness symbols at import time
 SHIM_MODULES = [
     "fusion_cowork.engine.hooks",
     "fusion_cowork.engine.funnels",
@@ -26,7 +26,7 @@ SHIM_MODULES = [
 
 
 def _make_blocker(tmp_path: Path) -> Path:
-    # 假 fusion_harness 包: import 即抛 ImportError, 模拟裸装缺包
+    # Fake fusion_harness package: raises ImportError on import, simulating a bare install with the package missing
     pkg = tmp_path / "fusion_harness"
     pkg.mkdir()
     (pkg / "__init__.py").write_text('raise ImportError("blocked for test")\n')
@@ -51,7 +51,7 @@ class TestHarnessGuard:
         blocker = _make_blocker(tmp_path)
         proc = _run_import(module, str(blocker))
         assert proc.returncode != 0
-        # 报错必须带可执行安装指引, 原始异常链也保留
+        # The error must carry the actionable install hint, and the original exception chain is preserved
         assert HARNESS_INSTALL_HINT in proc.stderr
         assert "fusion-harness kernel package is missing" in proc.stderr
         assert "blocked for test" in proc.stderr
@@ -61,6 +61,6 @@ class TestHarnessGuard:
         assert "git+https://github.com/dahai80/fusion-harness" in HARNESS_INSTALL_HINT
 
     def test_harness_present_imports_clean(self):
-        # 工作区 venv 装有 fusion-harness — 4 个 shim 正常导入, guard 不触发
+        # The workspace venv has fusion-harness installed — the 4 shims import normally, guard does not trigger
         for module in SHIM_MODULES:
             __import__(module)

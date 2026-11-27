@@ -43,11 +43,11 @@ class TestKernelScopeMatching:
         rule = Permission(tool_name="file_write", allowed=True, scope="file:~/Desktop/**")
         assert rule.matches("file_write", {"path": str(home / "Desktop" / "a.txt")})
         assert not rule.matches("file_write", {"path": str(home / "Documents" / "a.txt")})
-        # E-3: 值侧 ~ 也展开
+        # E-3: ~ on the value side is expanded too
         assert rule.matches("file_write", {"path": "~/Desktop/b.txt"})
 
     def test_file_scope_path_boundary_kernel_fix(self, tmp_path, monkeypatch):
-        # kernel 修复项: file:/data 不再误中 /database (上游 raw startswith quirk)
+        # kernel fix: file:/data no longer wrongly matches /database (upstream raw startswith quirk)
         home = tmp_path / "home"
         monkeypatch.setenv("HOME", str(home))
         rule = Permission(tool_name="file_read", scope="file:~/data")
@@ -73,25 +73,25 @@ class TestKernelScopeMatching:
         assert not rule.matches("mcp_client", {"url": "http://127.0.0.1:9101/tools"})
 
     def test_no_params_matches_any_scope_parity(self):
-        # 上游与 kernel 一致: 无参调用匹配任意 scope (deny 规则在 check() 先扫,
-        # 语义由 check() 的闸门豁免保护 — 匹配层保持原语义)
+        # Upstream and kernel agree: calls without params match any scope (deny rules are scanned first
+        # in check(); the semantics are protected by check()'s gate exemption — the matching layer keeps the original semantics)
         rule = Permission(tool_name="shell_exec", allowed=False, scope="file:~/x/**")
         assert rule.matches("shell_exec", None)
         assert rule.matches("shell_exec", {})
 
     def test_params_without_key_no_match_parity(self):
-        # parity: params 存在但无 command/url 键 → 不匹配 (kernel 空 resource 匹配, 不复制)
+        # parity: params present but without command/url key → no match (kernel's empty-resource match NOT copied)
         assert not Permission(tool_name="shell_exec", scope="command:git").matches("shell_exec", {"cwd": "/tmp"})
         assert not Permission(tool_name="mcp_client", scope="url:http://x/**").matches("mcp_client", {"timeout": 1})
 
     def test_unknown_prefix_scope_fallback_true_parity(self):
-        # parity: 未知前缀 scope → True (kernel 改 resource 前缀匹配, 不复制)
+        # parity: unknown prefix scope → True (kernel's resource-prefix match NOT copied)
         assert Permission(tool_name="shell_exec", scope="weird:prefix").matches("shell_exec", {"anything": 1})
 
 
 class TestOnDiskCompat:
     def test_permissions_json_fixture_loads_unchanged(self, tmp_path):
-        # 现网 on-disk 格式 (level + rules[tool_name/allowed/scope]) 经新匹配层照常加载生效
+        # Production on-disk format (level + rules[tool_name/allowed/scope]) loads and works via the new matching layer unchanged
         fixture = {
             "level": "confirm",
             "rules": [
@@ -105,7 +105,7 @@ class TestOnDiskCompat:
         pm.load(str(path))
         assert pm.level == PermissionLevel.CONFIRM
         assert len(pm.rules) == 2
-        # deny 规则经 kernel 匹配层仍命中
+        # deny rules still hit through the kernel matching layer
         import asyncio
 
         assert asyncio.run(pm.check("http_request", params={"url": "http://evil.example/api"})) is False
@@ -124,8 +124,8 @@ class TestOnDiskCompat:
         assert pm2.rules[0].matches("shell_exec", {"command": "git push"})
 
     def test_journal_pending_entries_restore_via_engine_path(self):
-        # #463 审批日志 pending 行 (现网 on-disk 形状) 经 restore_pending_details 重建,
-        # confirm 路由照常消费 — 队列切换后 persisted entries 可读
+        # #463 approval-journal pending rows (production on-disk shape) rebuilt via restore_pending_details,
+        # confirm route consumes them as usual — persisted entries readable after the queue switch
         pm = PermissionManager()
         restored = pm.restore_pending_details(
             [
@@ -140,7 +140,7 @@ class TestOnDiskCompat:
         assert details["execution_id"] == "run_x"
         assert details["restored"] is True
         assert pm.find_pending_by_execution("run_y")["tool_name"] == "deploy_service"
-        # confirm 批准 → 落 approve 规则 (闸门工具除外 — #340)
+        # confirm approve → lands an approve rule (gate tools excepted — #340)
         import asyncio
 
         assert asyncio.run(pm.confirm_guard("local_ab12cd34", True, approved_by="op")) is True
@@ -150,29 +150,29 @@ class TestOnDiskCompat:
 
 class TestConsumerWiringUnchanged:
     def test_hitl_gate_tool_exempt_from_deny_rules(self):
-        # #340: 闸门不吃 deny 规则 — kernel 迁移后 consumer wiring 保持。
-        # deny 规则存在与否不改变闸门 check 结果 (闸门走高风险 HITL 路径,
-        # deny 规则扫描被豁免 — 对比无规则 manager 行为一致)
+        # #340: gates do not consume deny rules — consumer wiring preserved after the kernel migration.
+        # Whether deny rules exist does not change the gate check result (gates take the high-risk HITL path;
+        # deny-rule scanning is exempted — behavior matches a rule-less manager)
         import asyncio
 
         pm = PermissionManager()
         pm.deny("approval_gate")
         pm_clean = PermissionManager()
         assert asyncio.run(pm.check("approval_gate")) == asyncio.run(pm_clean.check("approval_gate"))
-        # 非闸门工具 deny 规则照常命中
+        # deny rules on non-gate tools still hit as usual
         pm.deny("shell_exec")
         assert asyncio.run(pm.check("shell_exec", params={"command": "ls"})) is False
 
     def test_high_risk_set_still_cowork_authoritative(self):
-        # cowork HIGH_RISK_NODES 是权威集 (kernel 自带子集不覆盖新节点)
+        # cowork's HIGH_RISK_NODES is the authoritative set (the kernel's built-in subset does not cover new nodes)
         for node in ("deploy_service", "team_call", "coordinator_fanout", "claude_dispatch"):
             assert node in HIGH_RISK_NODES
         assert "approval_gate" in HIGH_RISK_NODES
         assert isinstance(HITL_GATE_TOOLS, set)
 
     def test_bypass_overrides_deny_rule_order_unchanged(self):
-        # 顺序未变: BYPASS 判定先于 deny 结果返回 (check() 现序: deny 扫描 → hook →
-        # BYPASS → denied) — kernel 迁移不改变 CR-16/A-6 顺序
+        # Order unchanged: the BYPASS verdict returns before the deny result (check() current order:
+        # deny scan → hook → BYPASS → denied) — the kernel migration does not change the CR-16/A-6 order
         pm = PermissionManager(level=PermissionLevel.BYPASS)
         pm.deny("shell_exec")
         pm_confirm = PermissionManager()
@@ -188,7 +188,7 @@ def test_shim_reexports_kernel_engine():
 
     assert perm_shim.KernelScopedPermissionEngine is not None
     assert perm_shim.KERNEL_DECISIONS == ("allow", "deny", "ask")
-    # kernel 匹配函数即 Permission.matches 委托目标
+    # The kernel matching function is exactly what Permission.matches delegates to
     from fusion_harness.scoped_permissions import _scope_match
 
     assert _scope_match("command:git", "git status")

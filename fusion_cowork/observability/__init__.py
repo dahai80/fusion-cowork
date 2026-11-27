@@ -1,11 +1,11 @@
-"""可观测性模块 (v0.4.0 Stage 4).
+"""Observability module (v0.4.0 Stage 4).
 
-- trace: 统一 trace_id (contextvar 跨 await 传播)
-- metrics: OpenTelemetry 计数/直方图 + prometheus exporter
-- tracing: OpenTelemetry span + OTLP exporter
-- health: 深度健康检查 (DB SELECT 1 / 磁盘 / 上游)
+- trace: unified trace_id (contextvar propagated across awaits)
+- metrics: OpenTelemetry counters/histograms + prometheus exporter
+- tracing: OpenTelemetry spans + OTLP exporter
+- health: deep health checks (DB SELECT 1 / disk / upstream)
 
-替代散落各 server 的 secrets.token_hex(8) / mcp_<hex> trace_id (格式不一致, 不跨 await 传播)。
+Replaces the scattered secrets.token_hex(8) / mcp_<hex> trace_ids in various servers (inconsistent formats, not propagated across awaits).
 """
 
 from fusion_cowork.observability.health import HealthCheck, run_health

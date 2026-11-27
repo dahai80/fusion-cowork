@@ -1,10 +1,11 @@
-"""Stage 6 — 静态加密 (Fernet at-rest)。
+"""Stage 6 — at-rest encryption (Fernet).
 
-encrypt_at_rest(value, key) / decrypt_at_rest(value, key): Fernet 对称加解密, 值带 fernet: 前缀标识。
-derive_key(master, salt): HKDF 从 master+salt 派生 32 字节 Fernet key。
-get_encryption_key(): 读 env FUSION_ENCRYPTION_KEY (urlsafe base64 32 bytes), 缺返 None。
+encrypt_at_rest(value, key) / decrypt_at_rest(value, key): Fernet symmetric encrypt/decrypt,
+values carry the fernet: prefix marker.
+derive_key(master, salt): HKDF derives a 32-byte Fernet key from master+salt.
+get_encryption_key(): reads env FUSION_ENCRYPTION_KEY (urlsafe base64 32 bytes), returns None when missing.
 
-opt-in: 无 key → encrypt_at_rest 返原值 + WARN (本地明文兼容), 现有测试行为不变。
+opt-in: no key → encrypt_at_rest returns the original value + WARN (local plaintext compatibility), existing tests unchanged.
 """
 
 from __future__ import annotations
@@ -23,16 +24,16 @@ _ENC_ENV = "FUSION_ENCRYPTION_KEY"
 
 
 def derive_key(master: str, salt: str = "fusion-cowork-config-v1") -> bytes:
-    """HKDF-SHA256 从 master+salt 派生 32 字节, 返 urlsafe base64 (Fernet 要求)。"""
+    """HKDF-SHA256 derives 32 bytes from master+salt, returns urlsafe base64 (Fernet requirement)."""
     prk = hmac.new(b"fusion-cowork-salt", master.encode("utf-8"), hashlib.sha256).digest()
     okm = hashlib.pbkdf2_hmac("sha256", prk, salt.encode("utf-8"), 1000, dklen=32)
     return base64.urlsafe_b64encode(okm)
 
 
 def get_encryption_key() -> Optional[bytes]:
-    """读 env FUSION_ENCRYPTION_KEY, 返 Fernet key (urlsafe base64 32 bytes)。缺/错返 None。
+    """Read env FUSION_ENCRYPTION_KEY, return the Fernet key (urlsafe base64 32 bytes). Missing/invalid → None.
 
-    接受: urlsafe base64 32 字节, 或 32 字节原始串。统一编码成 Fernet 要求的 base64。
+    Accepts: urlsafe base64 32 bytes, or a raw 32-byte string. Uniformly encoded to the base64 Fernet requires.
     """
     raw = os.environ.get(_ENC_ENV, "").strip()
     if not raw:
@@ -41,24 +42,32 @@ def get_encryption_key() -> Optional[bytes]:
         decoded = base64.urlsafe_b64decode(raw)
         if len(decoded) == 32:
             return base64.urlsafe_b64encode(decoded)
-        logger.warning(f"FUSION_ENCRYPTION_KEY 解码后 {len(decoded)} 字节 (期望 32), 静态加密未启")
+        logger.warning(
+            f"FUSION_ENCRYPTION_KEY decodes to {len(decoded)} bytes (expected 32), at-rest encryption not enabled"
+        )
         return None
     except Exception:
-        logger.warning("FUSION_ENCRYPTION_KEY 格式错 (期望 urlsafe base64 32 字节), 静态加密未启")
+        logger.warning(
+            "FUSION_ENCRYPTION_KEY malformed (expected urlsafe base64 32 bytes), at-rest encryption not enabled"
+        )
         return None
 
 
 def encrypt_at_rest(value: str, key: Optional[bytes] = None) -> str:
-    """加密字符串, 返 fernet:<ciphertext>。无 key → 返原值 + WARN (本地兼容)。"""
+    """Encrypt a string, returns fernet:<ciphertext>. No key → returns the original value + WARN (local compatibility)."""
     if key is None:
         key = get_encryption_key()
     if key is None:
-        logger.warning("无 FUSION_ENCRYPTION_KEY, secret 值明文落盘 (仅本地/测试兼容, 生产勿用)")
+        logger.warning(
+            "No FUSION_ENCRYPTION_KEY, secret value stored in plaintext (local/test compatibility only, never in production)"
+        )
         return value
     try:
         from cryptography.fernet import Fernet
     except ImportError:
-        logger.warning("cryptography 未装, 静态加密降级明文 (pip install fusion-cowork[cloud])")
+        logger.warning(
+            "cryptography not installed, at-rest encryption falls back to plaintext (pip install fusion-cowork[cloud])"
+        )
         return value
     f = Fernet(key)
     ct = f.encrypt(value.encode("utf-8"))
@@ -66,18 +75,20 @@ def encrypt_at_rest(value: str, key: Optional[bytes] = None) -> str:
 
 
 def decrypt_at_rest(value: str, key: Optional[bytes] = None) -> str:
-    """解密 fernet:<ciphertext>。非密文 (无前缀) → 返原值 (向后兼容明文)。"""
+    """Decrypt fernet:<ciphertext>. Non-ciphertext (no prefix) → returns the original value (plaintext back-compat)."""
     if not isinstance(value, str) or not value.startswith(_PREFIX):
         return value
     if key is None:
         key = get_encryption_key()
     if key is None:
-        logger.warning(f"密文值无 FUSION_ENCRYPTION_KEY 无法解, 返原密文: {value[:24]}...")
+        logger.warning(
+            f"Ciphertext value cannot be decrypted without FUSION_ENCRYPTION_KEY, returning ciphertext: {value[:24]}..."
+        )
         return value
     try:
         from cryptography.fernet import Fernet
     except ImportError:
-        logger.error("cryptography 未装, 密文无法解密")
+        logger.error("cryptography not installed, ciphertext cannot be decrypted")
         return value
     f = Fernet(key)
     pt = f.decrypt(value[len(_PREFIX) :].encode("utf-8"))
@@ -85,5 +96,5 @@ def decrypt_at_rest(value: str, key: Optional[bytes] = None) -> str:
 
 
 def is_encrypted(value: str) -> bool:
-    """判断值是否已加密 (带 fernet: 前缀)。"""
+    """Whether the value is already encrypted (carries the fernet: prefix)."""
     return isinstance(value, str) and value.startswith(_PREFIX)
