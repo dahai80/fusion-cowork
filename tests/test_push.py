@@ -44,7 +44,12 @@ def test_push_bark_success():
         mock_client_cls.return_value = client
         result = asyncio.run(
             push(
-                "标题", "内容", provider="bark", url="https://api.day.app", token="abc", sound="minuet"  # i18n: user-facing
+                "标题",  # i18n: user-facing
+                "内容",  # i18n: user-facing
+                provider="bark",
+                url="https://api.day.app",
+                token="abc",
+                sound="minuet",  # i18n: user-facing
             )  # i18n: user-facing
         )
         assert result.success is True

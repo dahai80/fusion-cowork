@@ -123,7 +123,9 @@ class TestInterrupt:
         assert "user_instruction" not in probe.execute.attempts[0]
         assert probe.execute.attempts[1].get("user_instruction") == "stop and fix"
         markers = [
-            s for s in execution.steps if s.user_correction and "用户中断" in (s.summary or "")  # i18n: user-facing
+            s
+            for s in execution.steps
+            if s.user_correction and "用户中断" in (s.summary or "")  # i18n: user-facing
         ]  # i18n: user-facing
         assert markers, "interrupt must record an audit marker step"
         assert eng._interrupt_events.get(exec_id) is None, "interrupt event consumed at boundary"

@@ -51,7 +51,8 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
         )
     if path == "/v1/agents":
         return httpx.Response(
-            200, json={"data": [{"agent_id": "a_reviewer", "name": "审查员", "status": "active"}]}  # i18n: user-facing
+            200,
+            json={"data": [{"agent_id": "a_reviewer", "name": "审查员", "status": "active"}]},  # i18n: user-facing
         )  # i18n: user-facing
     if path == "/v1/graphs/g_research":
         return httpx.Response(200, json={"graph_id": "g_research", "graph_data": {"nodes": []}})
@@ -90,7 +91,12 @@ def skills_dir(tmp_path):
     pack.mkdir(parents=True)
     (pack / "skill.json").write_text(
         json.dumps(
-            {"name": "echo-pack", "type": "node", "node": "ai_summarize", "description": "回声技能"}  # i18n: user-facing
+            {
+                "name": "echo-pack",
+                "type": "node",
+                "node": "ai_summarize",
+                "description": "回声技能",  # i18n: user-facing
+            }  # i18n: user-facing
         ),  # i18n: user-facing
         encoding="utf-8",
     )
@@ -456,7 +462,8 @@ class TestSubagents:
         assert r.status_code == 409
         assert r.json()["detail"]["code"] == "spawn_approval_required"
         r = client.post(
-            url, json={"workspace_id": WORKSPACE_A, "input": "调研竞品", "approve": True}  # i18n: user-facing
+            url,
+            json={"workspace_id": WORKSPACE_A, "input": "调研竞品", "approve": True},  # i18n: user-facing
         )  # i18n: user-facing
         assert r.status_code == 200, r.text
         assert r.json()["kind"] == "graph"

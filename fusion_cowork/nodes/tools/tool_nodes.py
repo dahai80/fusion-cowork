@@ -1377,7 +1377,9 @@ class WorktreeNode(BaseNode):
             )
             if not wt:
                 return NodeResult(
-                    status=NodeStatus.FAILED, error="worktree 创建失败", summary="创建失败"  # i18n: user-facing
+                    status=NodeStatus.FAILED,
+                    error="worktree 创建失败",  # i18n: user-facing
+                    summary="创建失败",  # i18n: user-facing
                 )  # i18n: user-facing
             return NodeResult(
                 status=NodeStatus.SUCCESS,
@@ -1409,12 +1411,16 @@ class WorktreeNode(BaseNode):
             if params.get("trust_source") and mgr.is_untrusted(name):
                 if not mgr.mark_trusted(name):
                     return NodeResult(
-                        status=NodeStatus.FAILED, error="信任标记失败", summary="门禁错误"  # i18n: user-facing
+                        status=NodeStatus.FAILED,
+                        error="信任标记失败",  # i18n: user-facing
+                        summary="门禁错误",  # i18n: user-facing
                     )  # i18n: user-facing
             command = inputs.get("command", params.get("command", ""))
             if not command:
                 return NodeResult(
-                    status=NodeStatus.FAILED, error="缺少 command", summary="参数缺失"  # i18n: user-facing
+                    status=NodeStatus.FAILED,
+                    error="缺少 command",  # i18n: user-facing
+                    summary="参数缺失",  # i18n: user-facing
                 )  # i18n: user-facing
             result = await mgr.exec_in(name, command, timeout=params.get("timeout", 30))
             if "error" in result:
@@ -1442,7 +1448,9 @@ class WorktreeNode(BaseNode):
                 summary=f"已合并 {name} ({result.get('branch')}) -> {result.get('target')}",  # i18n: user-facing
             )
         return NodeResult(
-            status=NodeStatus.FAILED, error=f"未知 action: {action}", summary="参数错误"  # i18n: user-facing
+            status=NodeStatus.FAILED,
+            error=f"未知 action: {action}",  # i18n: user-facing
+            summary="参数错误",  # i18n: user-facing
         )  # i18n: user-facing
 
 
@@ -1574,7 +1582,9 @@ class PushNode(BaseNode):
         message = inputs.get("message", "")
         if not message:
             return NodeResult(
-                status=NodeStatus.FAILED, error="推送内容不能为空", summary="未指定内容"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error="推送内容不能为空",  # i18n: user-facing
+                summary="未指定内容",  # i18n: user-facing
             )  # i18n: user-facing
 
         result = await push_send(
@@ -1599,5 +1609,8 @@ class PushNode(BaseNode):
             # i18n: user-facing
             return NodeResult(status=NodeStatus.SUCCESS, data=data, summary=f"推送成功 via {result.provider}{tag}")
         return NodeResult(
-            status=NodeStatus.FAILED, error=result.error, data=data, summary="推送失败"  # i18n: user-facing
+            status=NodeStatus.FAILED,
+            error=result.error,
+            data=data,
+            summary="推送失败",  # i18n: user-facing
         )  # i18n: user-facing

@@ -156,7 +156,8 @@ class WorkflowLadderNode(BaseNode):
         stages = params.get("stages") or inputs.get("stages")
         if not isinstance(stages, list) or not stages:
             return NodeResult(
-                status=NodeStatus.FAILED, error="workflow_ladder 参数 stages 必填 (非空数组)"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error="workflow_ladder 参数 stages 必填 (非空数组)",  # i18n: user-facing
             )  # i18n: user-facing
         try:
             runner = _load_runner()
@@ -171,13 +172,15 @@ class WorkflowLadderNode(BaseNode):
         for idx, stage in enumerate(stages, start=1):
             if not isinstance(stage, dict):
                 return NodeResult(
-                    status=NodeStatus.FAILED, error=f"workflow_ladder 第 {idx} 阶段必须是对象"  # i18n: user-facing
+                    status=NodeStatus.FAILED,
+                    error=f"workflow_ladder 第 {idx} 阶段必须是对象",  # i18n: user-facing
                 )  # i18n: user-facing
             stage_name = str(stage.get("name") or f"stage-{idx}")
             workers = stage.get("workers")
             if not isinstance(workers, list) or not workers:
                 return NodeResult(
-                    status=NodeStatus.FAILED, error=f"workflow_ladder 阶段 '{stage_name}' 缺 workers"  # i18n: user-facing
+                    status=NodeStatus.FAILED,
+                    error=f"workflow_ladder 阶段 '{stage_name}' 缺 workers",  # i18n: user-facing
                 )  # i18n: user-facing
             for w in workers:
                 if not isinstance(w, dict):
@@ -190,14 +193,16 @@ class WorkflowLadderNode(BaseNode):
                 except ValueError as e:
                     logger.error(f"workflow_ladder stage '{stage_name}' invalid model_tier: {e}")
                     return NodeResult(
-                        status=NodeStatus.FAILED, error=f"workflow_ladder 阶段 '{stage_name}': {e}"  # i18n: user-facing
+                        status=NodeStatus.FAILED,
+                        error=f"workflow_ladder 阶段 '{stage_name}': {e}",  # i18n: user-facing
                     )  # i18n: user-facing
             try:
                 _stage_fanout_warnings(workers)
             except ValueError as e:
                 logger.error(f"workflow_ladder stage '{stage_name}' fan-out bound: {e}")
                 return NodeResult(
-                    status=NodeStatus.FAILED, error=f"workflow_ladder 阶段 '{stage_name}': {e}"  # i18n: user-facing
+                    status=NodeStatus.FAILED,
+                    error=f"workflow_ladder 阶段 '{stage_name}': {e}",  # i18n: user-facing
                 )  # i18n: user-facing
 
         try:
@@ -240,13 +245,15 @@ class WorkflowLadderNode(BaseNode):
         for idx, stage in enumerate(stages, start=1):
             if not isinstance(stage, dict):
                 return NodeResult(
-                    status=NodeStatus.FAILED, error=f"workflow_ladder 第 {idx} 阶段必须是对象"  # i18n: user-facing
+                    status=NodeStatus.FAILED,
+                    error=f"workflow_ladder 第 {idx} 阶段必须是对象",  # i18n: user-facing
                 )  # i18n: user-facing
             stage_name = str(stage.get("name") or f"stage-{idx}")
             workers = stage.get("workers")
             if not isinstance(workers, list) or not workers:
                 return NodeResult(
-                    status=NodeStatus.FAILED, error=f"workflow_ladder 阶段 '{stage_name}' 缺 workers"  # i18n: user-facing
+                    status=NodeStatus.FAILED,
+                    error=f"workflow_ladder 阶段 '{stage_name}' 缺 workers",  # i18n: user-facing
                 )  # i18n: user-facing
             total += len(workers)
             # issue #563: pre-dispatch fan-out guidance — validation already ran

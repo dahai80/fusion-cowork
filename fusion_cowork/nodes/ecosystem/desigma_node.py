@@ -159,7 +159,9 @@ class DesignContextNode(BaseNode):
         except Exception as e:
             logger.warning(f"design_context: desigma-mcp export failed workspace={workspace}: {e}")
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"desigma-mcp 导出失败: {e}", summary="设计导出失败"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=f"desigma-mcp 导出失败: {e}",  # i18n: user-facing
+                summary="设计导出失败",  # i18n: user-facing
             )  # i18n: user-facing
 
         section_lines = [

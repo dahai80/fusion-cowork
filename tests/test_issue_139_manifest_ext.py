@@ -110,7 +110,8 @@ class TestSearch:
         assert r.status_code == 200
         items = r.json()["items"]
         assert any(
-            i["route"] == f"/canvas/{wf_id}" and "整理下载文件夹" in i["title"] for i in items  # i18n: user-facing
+            i["route"] == f"/canvas/{wf_id}" and "整理下载文件夹" in i["title"]  # i18n: user-facing
+            for i in items  # i18n: user-facing
         )  # i18n: user-facing
 
     def test_empty_q_empty_items(self, client):

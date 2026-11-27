@@ -211,7 +211,11 @@ class TestDocumentNode:
         _patch_transports(monkeypatch, office_app=_office_stub_app(outcomes))
         out = tmp_path / "weekly.docx"
         node = _make(
-            "office_document", op="write", markdown="# 周报\n内容", output_path=str(out), rollout_id="ro-3"  # i18n: user-facing
+            "office_document",
+            op="write",
+            markdown="# 周报\n内容",  # i18n: user-facing
+            output_path=str(out),
+            rollout_id="ro-3",  # i18n: user-facing
         )  # i18n: user-facing
         r = _run(node)
         assert r.status == NodeStatus.SUCCESS

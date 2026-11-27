@@ -350,10 +350,17 @@ def show_template(template_id: str):
 @click.option("--dry-run", "-n", is_flag=True, help="预览模式")  # i18n: user-facing
 @click.option("--params", "-p", default="", help="覆盖参数 JSON (按节点 id)")  # i18n: user-facing
 @click.option(
-    "--vars", "-v", "template_vars", default="", help="模板级参数 JSON (替换节点配置里的 ${param.X})"  # i18n: user-facing
+    "--vars",
+    "-v",
+    "template_vars",
+    default="",
+    help="模板级参数 JSON (替换节点配置里的 ${param.X})",  # i18n: user-facing
 )  # i18n: user-facing
 @click.option(
-    "--resume", "session_id", default="", help="断点续跑: 指定 session_id, 跳过已完成步骤从断点续跑"  # i18n: user-facing
+    "--resume",
+    "session_id",
+    default="",
+    help="断点续跑: 指定 session_id, 跳过已完成步骤从断点续跑",  # i18n: user-facing
 )  # i18n: user-facing
 def run_template(template_id: str, dry_run: bool, params: str, template_vars: str, session_id: str):
     """Run a template.
@@ -587,7 +594,10 @@ def workflow():
 @click.argument("workflow_file", type=click.Path(exists=True))
 @click.option("--dry-run", "-n", is_flag=True, help="预览模式")  # i18n: user-facing
 @click.option(
-    "--resume", "session_id", default="", help="断点续跑: 指定 session_id, 跳过已完成步骤从断点续跑"  # i18n: user-facing
+    "--resume",
+    "session_id",
+    default="",
+    help="断点续跑: 指定 session_id, 跳过已完成步骤从断点续跑",  # i18n: user-facing
 )  # i18n: user-facing
 def run_workflow_file(workflow_file: str, dry_run: bool, session_id: str):
     """Load and execute a workflow from a JSON file.
@@ -1074,7 +1084,10 @@ def desk():
 @desk.command("rpc")
 @click.option("--sock", "-s", default="/tmp/fusion-cowork.sock", help="UDS 路径")  # i18n: user-facing
 @click.option(
-    "--http-port", default=11438, show_default=True, help="HTTP 端口 (/rpc /health /mcp /sse); 0=不启动 HTTP"  # i18n: user-facing
+    "--http-port",
+    default=11438,
+    show_default=True,
+    help="HTTP 端口 (/rpc /health /mcp /sse); 0=不启动 HTTP",  # i18n: user-facing
 )  # i18n: user-facing
 def desk_rpc(sock: str, http_port: int):
     """Start the Desk RPC service — for Fusion-Studio to call.
@@ -1172,7 +1185,10 @@ def web():
 
 @web.command("serve")
 @click.option(
-    "--port", default=11461, show_default=True, help="Web API HTTP 端口 (port-registry: fusion-cowork-web)"  # i18n: user-facing
+    "--port",
+    default=11461,
+    show_default=True,
+    help="Web API HTTP 端口 (port-registry: fusion-cowork-web)",  # i18n: user-facing
 )  # i18n: user-facing
 @click.option("--host", default=None, help="绑定地址 (默认 FUSION_BIND_HOST 或 127.0.0.1)")  # i18n: user-facing
 def web_serve(port: int, host: str):
@@ -1329,7 +1345,10 @@ def team_remove(agent_id):
 @team.command("send")
 @click.option("--from", "sender", required=True, help="发送方 agent id")  # i18n: user-facing
 @click.option(
-    "--to", "recipient", required=True, help="接收方 agent id (可跨仓: agent-studio agent)"  # i18n: user-facing
+    "--to",
+    "recipient",
+    required=True,
+    help="接收方 agent id (可跨仓: agent-studio agent)",  # i18n: user-facing
 )  # i18n: user-facing
 @click.option("--kind", default="message", show_default=True, help="消息类型")  # i18n: user-facing
 @click.option("--team", "team_name", default="", help="团队标签")  # i18n: user-facing
@@ -1762,7 +1781,11 @@ def skill_search(query: str):
 @click.option("--description", "-d", default="", help="技能描述")  # i18n: user-facing
 @click.option("--category", "-c", default="custom", help="分类")  # i18n: user-facing
 @click.option(
-    "--type", "stype", type=click.Choice(["workflow", "node", "script"]), default="node", help="handler 类型"  # i18n: user-facing
+    "--type",
+    "stype",
+    type=click.Choice(["workflow", "node", "script"]),
+    default="node",
+    help="handler 类型",  # i18n: user-facing
 )  # i18n: user-facing
 @click.option("--template-id", default="", help="workflow 类型: 模板 id")  # i18n: user-facing
 @click.option("--node", default="", help="node 类型: 节点名")  # i18n: user-facing
@@ -2348,7 +2371,11 @@ def push():
 @click.argument("title")
 @click.argument("message")
 @click.option(
-    "--provider", "-p", type=click.Choice(["auto", "bark", "ntfy", "local"]), default="auto", help="推送渠道"  # i18n: user-facing
+    "--provider",
+    "-p",
+    type=click.Choice(["auto", "bark", "ntfy", "local"]),
+    default="auto",
+    help="推送渠道",  # i18n: user-facing
 )  # i18n: user-facing
 @click.option("--url", "-u", default="", help="Bark/ntfy server URL")
 @click.option("--token", "-t", default="", help="Bark device key / ntfy topic")
@@ -2398,7 +2425,9 @@ def push_config(bark_url, ntfy_url, ntfy_token, sound, priority):
         # Stage 2: token masking for display (first 4 / last 4, middle *)
         _ntfy = cc.get("push.ntfy_token", "") or ""
         _shown = (
-            f"{_ntfy[:4]}***{_ntfy[-4:]}" if len(_ntfy) > 8 else ("(已设置)" if _ntfy else "(未设置)")  # i18n: user-facing
+            f"{_ntfy[:4]}***{_ntfy[-4:]}"
+            if len(_ntfy) > 8
+            else ("(已设置)" if _ntfy else "(未设置)")  # i18n: user-facing
         )  # i18n: user-facing
         console.print_info(f"ntfy Token: {_shown}")
         console.print_info(f"提示音: {cc.get('push.sound', '(未设置)')}")  # i18n: user-facing
@@ -2492,7 +2521,10 @@ def review():
 @click.argument("paths", nargs=-1)
 @click.option("--model", "-m", default="", help="fusion-mlx 模型 (空则自动)")  # i18n: user-facing
 @click.option(
-    "--lens", "-l", multiple=True, help="审查视角 (security/correctness/style/tests, 可多次)"  # i18n: user-facing
+    "--lens",
+    "-l",
+    multiple=True,
+    help="审查视角 (security/correctness/style/tests, 可多次)",  # i18n: user-facing
 )  # i18n: user-facing
 @click.option("--diff", "use_diff", is_flag=True, help="审查 git diff 变更文件 (忽略 paths)")  # i18n: user-facing
 @click.option("--output", "-o", default="", help="输出 Markdown 文件路径 (空则打印)")  # i18n: user-facing
@@ -3510,10 +3542,15 @@ def db_migrate(dsn: str):
 
 @cli.command("serve")
 @click.option(
-    "--host", default="", help="绑定地址 (默认读 FUSION_BIND_HOST, 再默认 127.0.0.1 单机)"  # i18n: user-facing
+    "--host",
+    default="",
+    help="绑定地址 (默认读 FUSION_BIND_HOST, 再默认 127.0.0.1 单机)",  # i18n: user-facing
 )  # i18n: user-facing
 @click.option(
-    "--port", default=11438, show_default=True, help="HTTP 端口 (/rpc /health /mcp /sse)"  # i18n: user-facing
+    "--port",
+    default=11438,
+    show_default=True,
+    help="HTTP 端口 (/rpc /health /mcp /sse)",  # i18n: user-facing
 )  # i18n: user-facing
 @click.option("--json-log", "json_log", is_flag=True, help="结构化 JSON 日志 (structlog, 生产)")  # i18n: user-facing
 @click.option("--metrics-port", default=0, help="prometheus /metrics 端口 (0=不启)")  # i18n: user-facing

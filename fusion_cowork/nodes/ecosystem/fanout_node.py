@@ -97,7 +97,8 @@ class CoordinatorFanoutNode(BaseNode):
         workers = params.get("workers") or inputs.get("workers")
         if not isinstance(workers, list) or not workers:
             return NodeResult(
-                status=NodeStatus.FAILED, error="coordinator_fanout 参数 workers 必填 (非空数组)"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error="coordinator_fanout 参数 workers 必填 (非空数组)",  # i18n: user-facing
             )  # i18n: user-facing
         try:
             runner = _load_runner()
@@ -183,7 +184,8 @@ class CoordinatorFanoutNode(BaseNode):
                 raw = list(await asyncio.gather(*(run_worker(w) for w in workers)))
         except TimeoutError:
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"coordinator_fanout 扇出超时 ({timeout:g}s)"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=f"coordinator_fanout 扇出超时 ({timeout:g}s)",  # i18n: user-facing
             )  # i18n: user-facing
         except ImportError as e:
             return NodeResult(status=NodeStatus.FAILED, error=str(e))
@@ -200,7 +202,9 @@ class CoordinatorFanoutNode(BaseNode):
                 data=data,
             )
         return NodeResult(
-            status=NodeStatus.SUCCESS, data=data, summary=f"{len(raw)} worker 完成 ({len(failed)} 失败)"  # i18n: user-facing
+            status=NodeStatus.SUCCESS,
+            data=data,
+            summary=f"{len(raw)} worker 完成 ({len(failed)} 失败)",  # i18n: user-facing
         )  # i18n: user-facing
 
 
@@ -250,7 +254,8 @@ class SessionForkNode(BaseNode):
         branches = params.get("branches") or inputs.get("branches")
         if not isinstance(branches, list) or not branches:
             return NodeResult(
-                status=NodeStatus.FAILED, error="session_fork 参数 branches 必填 (非空数组)"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error="session_fork 参数 branches 必填 (非空数组)",  # i18n: user-facing
             )  # i18n: user-facing
         parent = _parent_session_id()
 
@@ -284,7 +289,8 @@ class SessionForkNode(BaseNode):
                 raw = list(await asyncio.gather(*(run_branch(b, i) for i, b in enumerate(branches))))
         except TimeoutError:
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"session_fork 分叉超时 ({timeout:g}s)"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=f"session_fork 分叉超时 ({timeout:g}s)",  # i18n: user-facing
             )  # i18n: user-facing
         branch_out: Dict[str, Any] = {}
         failed_names: List[str] = []

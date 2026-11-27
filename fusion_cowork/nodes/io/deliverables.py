@@ -128,7 +128,9 @@ class XlsxWriteNode(BaseNode):
         )
         if out_path is None:
             return NodeResult(
-                status=NodeStatus.FAILED, error=err, summary="授权文件夹外路径被拦截"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=err,
+                summary="授权文件夹外路径被拦截",  # i18n: user-facing
             )  # i18n: user-facing
 
         _OP_MAP = {
@@ -185,7 +187,9 @@ class XlsxWriteNode(BaseNode):
         except Exception as e:
             logger.error(f"xlsx_write failed to write: {e}")
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"工作簿写入失败: {e}", summary="写入失败"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=f"工作簿写入失败: {e}",  # i18n: user-facing
+                summary="写入失败",  # i18n: user-facing
             )  # i18n: user-facing
 
         logger.info(f"xlsx_write done: {out_path} ({len(wb.sheetnames)} sheets, {total_rows} rows)")
@@ -319,7 +323,9 @@ class PptxWriteNode(BaseNode):
         )
         if out_path is None:
             return NodeResult(
-                status=NodeStatus.FAILED, error=err, summary="授权文件夹外路径被拦截"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=err,
+                summary="授权文件夹外路径被拦截",  # i18n: user-facing
             )  # i18n: user-facing
 
         prs = Presentation()
@@ -386,7 +392,9 @@ class PptxWriteNode(BaseNode):
         except Exception as e:
             logger.error(f"pptx_write failed to write: {e}")
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"PPT 写入失败: {e}", summary="写入失败"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=f"PPT 写入失败: {e}",  # i18n: user-facing
+                summary="写入失败",  # i18n: user-facing
             )  # i18n: user-facing
 
         logger.info(f"pptx_write done: {out_path} ({len(prs.slides)} slides)")

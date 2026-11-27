@@ -2353,7 +2353,8 @@ def create_web_app(
         result = asset_store.diff(workflow_id, v1, v2)
         if result is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"版本不存在: v{v1} 或 v{v2}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"版本不存在: v{v1} 或 v{v2}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return {"v1": v1, "v2": v2, "diff": result}
 
@@ -2362,7 +2363,8 @@ def create_web_app(
         rec = asset_store.get_version(workflow_id, version)
         if rec is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"版本不存在: v{version}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"版本不存在: v{version}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return rec
 
@@ -2401,7 +2403,8 @@ def create_web_app(
     async def triggers_delete(trigger_id: str):
         if not triggers.delete(trigger_id):
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"触发器不存在: {trigger_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"触发器不存在: {trigger_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return {"deleted": True}
 
@@ -2412,17 +2415,20 @@ def create_web_app(
         if not trigger:
             logger.warning(f"trigger hook token invalid: {token[:12]}…")
             raise HTTPException(
-                status_code=401, detail={"code": "unauthorized", "message": "trigger token 无效"}  # # i18n: user-facing
+                status_code=401,
+                detail={"code": "unauthorized", "message": "trigger token 无效"},  # # i18n: user-facing
             )  # i18n: user-facing
         try:
             payload = json.loads((await request.body()).decode("utf-8") or "{}")
         except Exception as exc:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "请求体须为 JSON"},  # # i18n: user-facing
             ) from exc  # i18n: user-facing
         if not isinstance(payload, dict):
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON 对象"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "请求体须为 JSON 对象"},  # # i18n: user-facing
             )  # i18n: user-facing
         workflow_id = str(trigger.get("workflow_id") or "")
         record = store.get(workflow_id)
@@ -2466,11 +2472,13 @@ def create_web_app(
             payload = json.loads((await request.body()).decode("utf-8") or "{}")
         except Exception as exc:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "请求体须为 JSON"},  # # i18n: user-facing
             ) from exc  # i18n: user-facing
         if not isinstance(payload, dict):
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON 对象"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "请求体须为 JSON 对象"},  # # i18n: user-facing
             )  # i18n: user-facing
         from ..engine.event_bus import get_event_bus
 
@@ -2511,20 +2519,23 @@ def create_web_app(
             memory = body.get("memory", True)
             if not isinstance(memory, bool):
                 raise HTTPException(
-                    status_code=400, detail={"code": "bad_request", "message": "memory 须为 boolean"}  # # i18n: user-facing
+                    status_code=400,
+                    detail={"code": "bad_request", "message": "memory 须为 boolean"},  # # i18n: user-facing
                 )  # i18n: user-facing
             # issue #209: per-run input — same semantics as mail dispatch (message_input injected into the first node),
             # inputs takes precedence, initial_input kept as a compat alias; non-dict always 400, no longer silently dropped
             inputs_obj = body.get("inputs", body.get("initial_input"))
             if inputs_obj is not None and not isinstance(inputs_obj, dict):
                 raise HTTPException(
-                    status_code=400, detail={"code": "bad_request", "message": "inputs 须为 JSON 对象"}  # # i18n: user-facing
+                    status_code=400,
+                    detail={"code": "bad_request", "message": "inputs 须为 JSON 对象"},  # # i18n: user-facing
                 )  # i18n: user-facing
             # issue #207: per-run source/labels — all optional, type-checked then stored on the run record
             source = body.get("source", "")
             if not isinstance(source, str):
                 raise HTTPException(
-                    status_code=400, detail={"code": "bad_request", "message": "source 须为字符串"}  # # i18n: user-facing
+                    status_code=400,
+                    detail={"code": "bad_request", "message": "source 须为字符串"},  # # i18n: user-facing
                 )  # i18n: user-facing
             labels = body.get("labels")
             if labels is None:
@@ -2540,7 +2551,8 @@ def create_web_app(
             space_id = body.get("space_id", "")
             if not isinstance(space_id, str):
                 raise HTTPException(
-                    status_code=400, detail={"code": "bad_request", "message": "space_id 须为字符串"}  # # i18n: user-facing
+                    status_code=400,
+                    detail={"code": "bad_request", "message": "space_id 须为字符串"},  # # i18n: user-facing
                 )  # i18n: user-facing
             # issue #260: per-run HITL gate override — unattended acceptance runs can fail fast
             # (true/false explicit override; default follows the engine-global FUSION_COWORK_HITL_PAUSE)
@@ -2568,7 +2580,8 @@ def create_web_app(
             params_obj = body.get("params")
             if params_obj is not None and not isinstance(params_obj, dict):
                 raise HTTPException(
-                    status_code=400, detail={"code": "bad_request", "message": "params 须为 JSON 对象"}  # # i18n: user-facing
+                    status_code=400,
+                    detail={"code": "bad_request", "message": "params 须为 JSON 对象"},  # # i18n: user-facing
                 )  # i18n: user-facing
             template_id = str((record or {}).get("template_id") or "")
             if params_obj and not template_id:
@@ -2699,7 +2712,8 @@ def create_web_app(
                 ) from None
             if not candidate.is_dir():
                 raise HTTPException(
-                    status_code=404, detail={"code": "not_found", "message": f"目录不存在: {path}"}  # # i18n: user-facing
+                    status_code=404,
+                    detail={"code": "not_found", "message": f"目录不存在: {path}"},  # # i18n: user-facing
                 )  # i18n: user-facing
             current = candidate
             rel = candidate.relative_to(resolved_root).as_posix()
@@ -2729,7 +2743,8 @@ def create_web_app(
         record = runs.get(run_id)
         if not record:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"运行不存在: {run_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         # issue #461: live token/spend attribution — per-step usage rollup, computed on the fly even for old records without the field
         if record.get("steps"):
@@ -2787,7 +2802,8 @@ def create_web_app(
         record = runs.get(run_id)
         if not record:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"运行不存在: {run_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         artifacts = record.get("artifacts") or []
         return {"artifacts": artifacts, "count": len(artifacts), "review": record.get("review")}
@@ -2798,7 +2814,8 @@ def create_web_app(
         record = runs.get(run_id)
         if not record:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"运行不存在: {run_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
 
         async def event_stream():
@@ -2828,7 +2845,8 @@ def create_web_app(
     async def runs_cancel(run_id: str):
         if not runs.cancel(run_id):
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"运行不可取消: {run_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"运行不可取消: {run_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return {"status": "cancelling", "run_id": run_id}
 
@@ -2837,7 +2855,8 @@ def create_web_app(
     async def runs_pause(run_id: str):
         if not runs.pause(run_id):
             raise HTTPException(
-                status_code=409, detail={"code": "not_running", "message": f"运行不可暂停: {run_id}"}  # # i18n: user-facing
+                status_code=409,
+                detail={"code": "not_running", "message": f"运行不可暂停: {run_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return {"status": "paused", "run_id": run_id}
 
@@ -2845,7 +2864,8 @@ def create_web_app(
     async def runs_resume(run_id: str):
         if not runs.resume(run_id):
             raise HTTPException(
-                status_code=409, detail={"code": "not_paused", "message": f"运行不可恢复: {run_id}"}  # # i18n: user-facing
+                status_code=409,
+                detail={"code": "not_paused", "message": f"运行不可恢复: {run_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return {"status": "running", "run_id": run_id}
 
@@ -2855,12 +2875,14 @@ def create_web_app(
         approved = body.get("approved")
         if not isinstance(approved, bool):
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "approved 必须是布尔值"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "approved 必须是布尔值"},  # # i18n: user-facing
             )  # i18n: user-facing
         err, result = runs.review(run_id, approved, str(body.get("note") or ""))
         if err == "not_found":
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"运行不存在: {run_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         if err == "not_pending":
             raise HTTPException(
@@ -2892,7 +2914,8 @@ def create_web_app(
             raise HTTPException(status_code=status, detail={"code": err.get("code"), "message": err.get("message")})
         if err:
             raise HTTPException(
-                status_code=409, detail={"code": err, "message": f"运行改向被拒绝: {run_id}"}  # # i18n: user-facing
+                status_code=409,
+                detail={"code": err, "message": f"运行改向被拒绝: {run_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return {"status": "queued", "run_id": run_id, "action": body.get("action")}
 
@@ -2902,7 +2925,8 @@ def create_web_app(
         node_id = str(body.get("node_id") or "").strip()
         if not node_id:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "node_id 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "node_id 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         try:
             return runs.resume_from(run_id, node_id)
@@ -2925,7 +2949,8 @@ def create_web_app(
                 ) from exc
             # no_workflow_def / from_dict validation failure → 400
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": f"无法重跑: {msg}"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": f"无法重跑: {msg}"},  # # i18n: user-facing
             ) from exc  # i18n: user-facing
 
     # ── issue #489: gate-denial rewind — idempotent rewind + history (who/when/which rule) ──
@@ -2934,7 +2959,8 @@ def create_web_app(
         node_id = str(body.get("node_id") or "").strip()
         if not node_id:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "node_id 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "node_id 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         rule = str(body.get("rule") or "").strip()
         actor = str(body.get("actor") or "").strip()
@@ -2958,7 +2984,8 @@ def create_web_app(
                     detail={"code": "unknown_node", "message": f"步骤不存在于工作流: {node_id}"},  # i18n: user-facing
                 ) from exc
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": f"无法回退: {msg}"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": f"无法回退: {msg}"},  # # i18n: user-facing
             ) from exc  # i18n: user-facing
 
     # ── issue #233: artifact card proxy (fusion-artifacts-engine v0.6.0 contract) ──
@@ -3014,7 +3041,8 @@ def create_web_app(
         tpl = _tpl_manager().get_template(template_id)
         if not tpl:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"模板不存在: {template_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return tpl
 
@@ -3025,7 +3053,8 @@ def create_web_app(
             body = await request.json()
         except Exception as e:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "请求体须为 JSON"},  # # i18n: user-facing
             ) from e  # i18n: user-facing
         name = str(body.get("name") or "").strip()
         wf = body.get("workflow")
@@ -3048,7 +3077,8 @@ def create_web_app(
             tpl["params"] = body["params"]
         if not _tpl_manager().save_custom_template(tpl):
             raise HTTPException(
-                status_code=500, detail={"code": "save_failed", "message": "模板保存失败"}  # # i18n: user-facing
+                status_code=500,
+                detail={"code": "save_failed", "message": "模板保存失败"},  # # i18n: user-facing
             )  # i18n: user-facing
         logger.info(f"template published: {tpl_id} ({name})")
         return {"id": tpl_id, "name": name}
@@ -3060,16 +3090,19 @@ def create_web_app(
             body = await request.json()
         except Exception as e:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "请求体须为 JSON"},  # # i18n: user-facing
             ) from e  # i18n: user-facing
         if not isinstance(body, dict):
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON 对象"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "请求体须为 JSON 对象"},  # # i18n: user-facing
             )  # i18n: user-facing
         wf = body.get("workflow") if isinstance(body.get("workflow"), dict) else body
         if not isinstance(wf, dict) or not wf.get("nodes"):
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "workflow.nodes 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "workflow.nodes 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         name = str(body.get("name") or wf.get("name") or "").strip() or "imported-template"
         tpl_id = _tpl_slug(str(body.get("id") or name))
@@ -3085,7 +3118,8 @@ def create_web_app(
             tpl["params"] = body["params"]
         if not _tpl_manager().save_custom_template(tpl):
             raise HTTPException(
-                status_code=500, detail={"code": "save_failed", "message": "模板保存失败"}  # # i18n: user-facing
+                status_code=500,
+                detail={"code": "save_failed", "message": "模板保存失败"},  # # i18n: user-facing
             )  # i18n: user-facing
         logger.info(f"template imported: {tpl_id} ({name})")
         return {"id": tpl_id, "name": name}
@@ -3096,7 +3130,8 @@ def create_web_app(
         tpl = _tpl_manager().get_template(template_id)
         if not tpl:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"模板不存在: {template_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         import json as _json
 
@@ -3125,14 +3160,16 @@ def create_web_app(
         tpl = tm.get_template(template_id)
         if not tpl:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"模板不存在: {template_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         body = body if isinstance(body, dict) else {}
         param_values = body.get("params") if isinstance(body.get("params"), dict) else {}
         wf = tm.template_to_workflow(template_id, param_values=param_values)
         if wf is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"模板不存在: {template_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         errors = wf.validate()
         if errors:
@@ -3174,19 +3211,22 @@ def create_web_app(
         tpl = _tpl_manager().get_template(template_id)
         if not tpl:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"模板不存在: {template_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         try:
             body = await request.json()
         except Exception as e:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "请求体须为 JSON"},  # # i18n: user-facing
             ) from e  # i18n: user-facing
         param_values = body.get("params") if isinstance(body.get("params"), dict) else {}
         wf = _tpl_manager().template_to_workflow(template_id, param_values=param_values)
         if wf is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"模板不存在: {template_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         errors = wf.validate()
         if errors:
@@ -3236,13 +3276,15 @@ def create_web_app(
         tpl = _tpl_manager().get_template(template_id)
         if not tpl:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"模板不存在: {template_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         try:
             body = await request.json()
         except Exception as e:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "请求体须为 JSON"},  # # i18n: user-facing
             ) from e  # i18n: user-facing
         requirement = str(body.get("requirement") or "")
         slug_hint = str(body.get("slug_hint") or "")
@@ -3285,7 +3327,8 @@ def create_web_app(
             ) from exc
         if wf is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"模板不存在: {template_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"模板不存在: {template_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         errors = wf.validate()
         if errors:
@@ -3343,7 +3386,8 @@ def create_web_app(
         org = (org or "").strip()
         if not org:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "org 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "org 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         try:
             repos = await _wizard().list_repos(org)
@@ -3363,7 +3407,8 @@ def create_web_app(
         repos = [r for r in (body.get("repos") or []) if str(r).strip()]
         if not org or not repos:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "org 与 repos 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "org 与 repos 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         try:
             plans = await _wizard().preview(
@@ -3385,7 +3430,8 @@ def create_web_app(
         repos = [r for r in (body.get("repos") or []) if str(r).strip()]
         if not org or not repos:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "org 与 repos 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "org 与 repos 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         try:
             results = await _wizard().apply(
@@ -3407,7 +3453,8 @@ def create_web_app(
         repos = [r for r in (body.get("repos") or []) if str(r).strip()]
         if not org or not repos:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "org 与 repos 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "org 与 repos 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         try:
             results = await _wizard().teardown(org, repos)
@@ -3468,7 +3515,8 @@ def create_web_app(
         workflow_id = str(body.get("workflow_id") or "").strip()
         if not name or not workflow_id:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "name 与 workflow_id 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "name 与 workflow_id 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         if not store.get(workflow_id):
             raise HTTPException(
@@ -3508,7 +3556,8 @@ def create_web_app(
             raise
         except ValueError as e:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": f"触发器无效: {e}"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": f"触发器无效: {e}"},  # # i18n: user-facing
             ) from e  # i18n: user-facing
         t = scheduler.get_task(task_id)
         return {"id": task_id, "name": name, "workflow_id": workflow_id, "status": t.status.value if t else "active"}
@@ -3517,7 +3566,8 @@ def create_web_app(
     async def scheduler_tasks_pause(task_id: str):
         if not scheduler.pause_task(task_id):
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"任务不存在: {task_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return {"id": task_id, "status": "paused"}
 
@@ -3525,7 +3575,8 @@ def create_web_app(
     async def scheduler_tasks_resume(task_id: str):
         if not scheduler.resume_task(task_id):
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"任务不存在: {task_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return {"id": task_id, "status": "active"}
 
@@ -3540,7 +3591,8 @@ def create_web_app(
             raise HTTPException(status_code=409, detail={"code": "task_not_active", "message": str(e)}) from e
         if not triggered:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"任务不存在: {task_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         t = scheduler.get_task(task_id)
         return {
@@ -3585,7 +3637,8 @@ def create_web_app(
     async def scheduler_tasks_delete(task_id: str):
         if not scheduler.remove_task(task_id):
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"任务不存在: {task_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"任务不存在: {task_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return {"deleted": True}
 
@@ -3595,7 +3648,8 @@ def create_web_app(
         prompt = str(body.get("prompt") or "").strip()
         if not prompt:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "prompt 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "prompt 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         context = body.get("context") if isinstance(body.get("context"), dict) else None
         # W17: optional model override — build a temporary generator with the request's own mlx client (never mutates the shared instance)
@@ -3611,11 +3665,13 @@ def create_web_app(
         except Exception as e:
             logger.error(f"web API NL generation failed: {e}")
             raise HTTPException(
-                status_code=502, detail={"code": "upstream_error", "message": f"生成失败: {e}"}  # # i18n: user-facing
+                status_code=502,
+                detail={"code": "upstream_error", "message": f"生成失败: {e}"},  # # i18n: user-facing
             ) from e  # i18n: user-facing
         if not isinstance(workflow, dict) or not workflow.get("nodes"):
             raise HTTPException(
-                status_code=502, detail={"code": "upstream_error", "message": "生成结果缺少 nodes"}  # # i18n: user-facing
+                status_code=502,
+                detail={"code": "upstream_error", "message": "生成结果缺少 nodes"},  # # i18n: user-facing
             )  # i18n: user-facing
         return {"workflow": workflow}
 
@@ -3629,7 +3685,8 @@ def create_web_app(
         prompt = str(body.get("prompt") or "").strip()
         if not prompt:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "prompt 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "prompt 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         context = body.get("context") if isinstance(body.get("context"), dict) else None
         model = str(body.get("model") or "").strip()
@@ -3645,11 +3702,13 @@ def create_web_app(
         except Exception as e:
             logger.error(f"web API chat-delegate generation failed: {e}")
             raise HTTPException(
-                status_code=502, detail={"code": "upstream_error", "message": f"生成失败: {e}"}  # # i18n: user-facing
+                status_code=502,
+                detail={"code": "upstream_error", "message": f"生成失败: {e}"},  # # i18n: user-facing
             ) from e  # i18n: user-facing
         if not isinstance(workflow, dict) or not workflow.get("nodes"):
             raise HTTPException(
-                status_code=502, detail={"code": "upstream_error", "message": "生成结果缺少 nodes"}  # # i18n: user-facing
+                status_code=502,
+                detail={"code": "upstream_error", "message": "生成结果缺少 nodes"},  # # i18n: user-facing
             )  # i18n: user-facing
 
         from ..engine.node import NodeRegistry
@@ -3712,24 +3771,28 @@ def create_web_app(
     async def files_read(path: str = "", line_start: int = 0, line_end: int = 0):
         if not path:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "path 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "path 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         from ..security import get_scoped_folder_manager
 
         p = Path(path).expanduser()
         if not get_scoped_folder_manager().ensure_allowed(p):
             raise HTTPException(
-                status_code=403, detail={"code": "forbidden", "message": f"路径不在授权范围内: {path}"}  # # i18n: user-facing
+                status_code=403,
+                detail={"code": "forbidden", "message": f"路径不在授权范围内: {path}"},  # # i18n: user-facing
             )  # i18n: user-facing
         if not p.is_file():
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"文件不存在: {path}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"文件不存在: {path}"},  # # i18n: user-facing
             )  # i18n: user-facing
         try:
             raw = p.read_text(encoding="utf-8", errors="replace")
         except OSError as e:
             raise HTTPException(
-                status_code=400, detail={"code": "read_error", "message": f"读取失败: {e}"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "read_error", "message": f"读取失败: {e}"},  # # i18n: user-facing
             ) from e  # i18n: user-facing
         lines = raw.splitlines()
         total_lines = len(lines)
@@ -3816,12 +3879,14 @@ def create_web_app(
         values = body.get("params") if isinstance(body, dict) and "params" in body else body
         if not isinstance(values, dict):
             raise HTTPException(
-                status_code=400, detail={"code": "invalid_params", "message": "params 必须是对象"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "invalid_params", "message": "params 必须是对象"},  # # i18n: user-facing
             )  # i18n: user-facing
         registry = get_package_registry()
         if registry.get(name) is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"未知 skill 包: {name}"},  # # i18n: user-facing
             )  # i18n: user-facing
         result = await registry.run(name, values)
         if "error" in result:
@@ -3852,7 +3917,8 @@ def create_web_app(
         pkg = get_package_registry().get(name)
         if pkg is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"未知 skill 包: {name}"},  # # i18n: user-facing
             )  # i18n: user-facing
         editable = bool(pkg.source) and pkg.source.startswith(str(USER_PACKAGES_DIR))
         markdown = ""
@@ -3862,7 +3928,8 @@ def create_web_app(
             except OSError as e:
                 logger.warning(f"[skills] failed to read package source {pkg.source}: {e}")
                 raise HTTPException(
-                    status_code=500, detail={"code": "read_failed", "message": "读取技能包失败"}  # # i18n: user-facing
+                    status_code=500,
+                    detail={"code": "read_failed", "message": "读取技能包失败"},  # # i18n: user-facing
                 ) from e  # i18n: user-facing
         return {"name": pkg.name, "editable": editable, "markdown": markdown}
 
@@ -3878,7 +3945,8 @@ def create_web_app(
         markdown = body.get("markdown") if isinstance(body, dict) else None
         if not isinstance(markdown, str) or not markdown.strip():
             raise HTTPException(
-                status_code=400, detail={"code": "invalid_body", "message": "markdown 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "invalid_body", "message": "markdown 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         try:
             pkg = parse_markdown(markdown)
@@ -3904,13 +3972,15 @@ def create_web_app(
         pkg = get_package_registry().get(name)
         if pkg is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"未知 skill 包: {name}"},  # # i18n: user-facing
             )  # i18n: user-facing
         source = Path(pkg.source or "")
         if not (str(source).startswith(str(USER_PACKAGES_DIR)) and source.exists()):
             logger.warning(f"[skills] refused to delete non-user-directory package: {pkg.name} ({pkg.source})")
             raise HTTPException(
-                status_code=400, detail={"code": "builtin", "message": "内置技能不可删除"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "builtin", "message": "内置技能不可删除"},  # # i18n: user-facing
             )  # i18n: user-facing
         source.unlink()
         _reload_skill_packages()
@@ -3924,7 +3994,8 @@ def create_web_app(
         pkg = get_package_registry().get(name)
         if pkg is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"未知 skill 包: {name}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return pkg.to_dict()
 
@@ -4014,7 +4085,8 @@ def create_web_app(
             raise HTTPException(status_code=400, detail={"code": "invalid_json", "message": "invalid json"}) from e
         if not isinstance(doc, dict):
             raise HTTPException(
-                status_code=400, detail={"code": "invalid_body", "message": "body 必须是 JSON 对象"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "invalid_body", "message": "body 必须是 JSON 对象"},  # # i18n: user-facing
             )  # i18n: user-facing
         name, stype, problems = _validate_skill_doc(doc)
         if problems:
@@ -4058,7 +4130,8 @@ def create_web_app(
         pack = next((p for p in list_skill_packs(skills_dir=skills_dir) if p.name == name), None)
         if pack is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"未知 skill 包: {name}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"未知 skill 包: {name}"},  # # i18n: user-facing
             )  # i18n: user-facing
         started = _time.monotonic()
         result = await make_pack_handler(pack, skills_dir)(args)
@@ -4167,7 +4240,8 @@ def create_web_app(
         wire = bool(body.get("wire")) if isinstance(body, dict) else False
         if not name:
             raise HTTPException(
-                status_code=400, detail={"code": "invalid_name", "message": "name 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "invalid_name", "message": "name 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         client = _extensions_rag()
         try:
@@ -4231,16 +4305,19 @@ def create_web_app(
         upload = form.get("file")
         if upload is None or isinstance(upload, str):
             raise HTTPException(
-                status_code=400, detail={"code": "missing_file", "message": "file 字段必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "missing_file", "message": "file 字段必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         filename = Path(upload.filename or "").name
         if not filename or Path(filename).suffix.lower() not in (".md", ".txt"):
             raise HTTPException(
-                status_code=400, detail={"code": "invalid_type", "message": "仅接受 .md/.txt"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "invalid_type", "message": "仅接受 .md/.txt"},  # # i18n: user-facing
             )  # i18n: user-facing
         if not kb_id or any(c in kb_id for c in "/\\") or kb_id.startswith("."):
             raise HTTPException(
-                status_code=400, detail={"code": "invalid_kb", "message": "非法 kb_id"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "invalid_kb", "message": "非法 kb_id"},  # # i18n: user-facing
             )  # i18n: user-facing
         upload_dir = Path.home() / ".fusion-cowork" / "web" / "rag_uploads" / kb_id
         upload_dir.mkdir(parents=True, exist_ok=True)
@@ -4283,7 +4360,8 @@ def create_web_app(
         query = str(body.get("query") or "").strip() if isinstance(body, dict) else ""
         if not query:
             raise HTTPException(
-                status_code=400, detail={"code": "invalid_query", "message": "query 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "invalid_query", "message": "query 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         try:
             top_k = int(body.get("top_k", 5))
@@ -4321,7 +4399,8 @@ def create_web_app(
             raise HTTPException(status_code=502, detail={"code": "upstream_error", "message": str(e)}) from e
         if space is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"工作区不存在: {ws}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"工作区不存在: {ws}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return ws
 
@@ -4345,7 +4424,8 @@ def create_web_app(
     def _cap_type_or_400(cap_type: str) -> str:
         if cap_type not in _CAP_KIND:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_type", "message": f"未知能力类型: {cap_type}"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_type", "message": f"未知能力类型: {cap_type}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return cap_type
 
@@ -4384,7 +4464,8 @@ def create_web_app(
         item = await _cap_item(ws, cap_type, cap_id)
         if item is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"未知能力: {cap_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"未知能力: {cap_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         entry = capability_store.install(
             ws,
@@ -4414,7 +4495,8 @@ def create_web_app(
         entry = capability_store.set_enabled(ws, cap_type, cap_id, enabled, actor=str(body.get("actor") or ""))
         if entry is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_installed", "message": f"未安装: {cap_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_installed", "message": f"未安装: {cap_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return {"workspace_id": ws, "capability": entry.to_public()}
 
@@ -4425,14 +4507,16 @@ def create_web_app(
         item = await _cap_item(ws, "connector", cap_id)
         if item is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"未知连接器: {cap_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"未知连接器: {cap_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         known = {str(s.get("id")): bool(s.get("sensitive")) for s in item.get("scopes") or []}
         requested = [str(s) for s in body.get("scopes") or [] if str(s)]
         unknown = [s for s in requested if s not in known]
         if unknown:
             raise HTTPException(
-                status_code=400, detail={"code": "unknown_scope", "message": f"未知 scope: {unknown}"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "unknown_scope", "message": f"未知 scope: {unknown}"},  # # i18n: user-facing
             )  # i18n: user-facing
         sensitive = [s for s in requested if known.get(s)]
         if sensitive and body.get("approve") is not True:
@@ -4446,7 +4530,8 @@ def create_web_app(
         entry = capability_store.grant_scopes(ws, cap_id, requested, actor=str(body.get("actor") or ""))
         if entry is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_installed", "message": f"未安装: {cap_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_installed", "message": f"未安装: {cap_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return {"workspace_id": ws, "capability": entry.to_public(), "sensitive_approved": sensitive}
 
@@ -4490,7 +4575,8 @@ def create_web_app(
             )
         if not code:
             raise HTTPException(
-                status_code=400, detail={"code": "oauth_code_missing", "message": "缺少 code"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "oauth_code_missing", "message": "缺少 code"},  # # i18n: user-facing
             )  # i18n: user-facing
         cap_id = str(pending.get("connector_id") or "")
         ws = str(pending.get("workspace_id") or "")
@@ -4525,7 +4611,8 @@ def create_web_app(
         usage = capability_store.usage(ws, cap_type, cap_id)
         if usage is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_installed", "message": f"未安装: {cap_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_installed", "message": f"未安装: {cap_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         usage["workspace_id"] = ws
         return usage
@@ -4536,7 +4623,8 @@ def create_web_app(
         item = await _cap_item(ws, "subagent", cap_id)
         if item is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"未知子代理: {cap_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"未知子代理: {cap_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         kind = str((item.get("detail") or {}).get("kind") or "")
         if kind == "template":
@@ -4545,7 +4633,8 @@ def create_web_app(
             tpl = TemplateManager().get_template(str(item["detail"]["template_id"]))
             if tpl is None:
                 raise HTTPException(
-                    status_code=404, detail={"code": "not_found", "message": "模板不存在"}  # # i18n: user-facing
+                    status_code=404,
+                    detail={"code": "not_found", "message": "模板不存在"},  # # i18n: user-facing
                 )  # i18n: user-facing
             return {"kind": "template", "definition": tpl}
         import httpx
@@ -4579,12 +4668,14 @@ def create_web_app(
         entry = capability_store.get(ws, "subagent", cap_id)
         if entry is None or not entry.enabled:
             raise HTTPException(
-                status_code=409, detail={"code": "not_enabled", "message": f"子代理未启用: {cap_id}"}  # # i18n: user-facing
+                status_code=409,
+                detail={"code": "not_enabled", "message": f"子代理未启用: {cap_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         item = await _cap_item(ws, "subagent", cap_id)
         if item is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"未知子代理: {cap_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"未知子代理: {cap_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         detail = item.get("detail") or {}
         policy = entry.spawn_policy or item.get("spawn_policy") or {}
@@ -4604,7 +4695,8 @@ def create_web_app(
             wf = TemplateManager().template_to_workflow(str(detail.get("template_id") or ""))
             if wf is None:
                 raise HTTPException(
-                    status_code=404, detail={"code": "not_found", "message": "模板不存在"}  # # i18n: user-facing
+                    status_code=404,
+                    detail={"code": "not_found", "message": "模板不存在"},  # # i18n: user-facing
                 )  # i18n: user-facing
             started = runs.start(
                 wf.to_dict(),
@@ -4662,7 +4754,8 @@ def create_web_app(
             body = {}
         if not isinstance(body, dict):
             raise HTTPException(
-                status_code=400, detail={"code": "invalid_body", "message": "body 必须是对象"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "invalid_body", "message": "body 必须是对象"},  # # i18n: user-facing
             )  # i18n: user-facing
         try:
             info = await get_managed_browser().launch(
@@ -4700,7 +4793,8 @@ def create_web_app(
         info = get_managed_browser().status()
         if not info.get("running"):
             raise HTTPException(
-                status_code=409, detail={"code": "not_running", "message": "托管浏览器未运行"}  # # i18n: user-facing
+                status_code=409,
+                detail={"code": "not_running", "message": "托管浏览器未运行"},  # # i18n: user-facing
             )  # i18n: user-facing
         client = CDPClient(port=int(info["port"]))
         try:
@@ -4726,7 +4820,8 @@ def create_web_app(
             body = {}
         if not isinstance(body, dict):
             raise HTTPException(
-                status_code=400, detail={"code": "invalid_body", "message": "body 必须是对象"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "invalid_body", "message": "body 必须是对象"},  # # i18n: user-facing
             )  # i18n: user-facing
         return body
 
@@ -4775,7 +4870,8 @@ def create_web_app(
         session_id = str(body.get("session_id") or "")
         if not session_id:
             raise HTTPException(
-                status_code=400, detail={"code": "missing_session", "message": "session_id 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "missing_session", "message": "session_id 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         try:
             return await asyncio.to_thread(
@@ -4834,7 +4930,8 @@ def create_web_app(
 
         if not session_id:
             raise HTTPException(
-                status_code=400, detail={"code": "missing_session", "message": "session_id 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "missing_session", "message": "session_id 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         try:
             data = await asyncio.to_thread(_fusion_browser().screenshot_png, session_id)
@@ -4849,12 +4946,14 @@ def create_web_app(
 
         if not session_id:
             raise HTTPException(
-                status_code=400, detail={"code": "missing_session", "message": "session_id 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "missing_session", "message": "session_id 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         browser = _fusion_browser()
         if not browser.socket_path:
             raise HTTPException(
-                status_code=409, detail={"code": "not_running", "message": "fusion-browser 未运行"}  # # i18n: user-facing
+                status_code=409,
+                detail={"code": "not_running", "message": "fusion-browser 未运行"},  # # i18n: user-facing
             )  # i18n: user-facing
         try:
             frames = browser.stream_frames(session_id)
@@ -4955,7 +5054,8 @@ def create_web_app(
     async def notifications_approvals():
         if permission_manager is None:
             raise HTTPException(
-                status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"}  # # i18n: user-facing
+                status_code=503,
+                detail={"code": "unavailable", "message": "权限管理器不可用"},  # # i18n: user-facing
             )  # i18n: user-facing
         list_merged = getattr(permission_manager, "list_pending", None)
         approvals = list_merged() if callable(list_merged) else permission_manager.list_pending_guard()
@@ -4993,12 +5093,14 @@ def create_web_app(
     async def instructions_get(space_id: str):
         if space_store is None:
             raise HTTPException(
-                status_code=503, detail={"code": "unavailable", "message": "空间存储不可用"}  # # i18n: user-facing
+                status_code=503,
+                detail={"code": "unavailable", "message": "空间存储不可用"},  # # i18n: user-facing
             )  # i18n: user-facing
         sp = await space_store.get_space(space_id)
         if not sp:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": "空间不存在"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": "空间不存在"},  # # i18n: user-facing
             )  # i18n: user-facing
         return {"space_id": space_id, "instructions": getattr(sp.config, "instructions", "") or ""}
 
@@ -5006,12 +5108,14 @@ def create_web_app(
     async def instructions_put(space_id: str, body: Dict[str, Any]):
         if space_store is None:
             raise HTTPException(
-                status_code=503, detail={"code": "unavailable", "message": "空间存储不可用"}  # # i18n: user-facing
+                status_code=503,
+                detail={"code": "unavailable", "message": "空间存储不可用"},  # # i18n: user-facing
             )  # i18n: user-facing
         sp = await space_store.get_space(space_id)
         if not sp:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": "空间不存在"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": "空间不存在"},  # # i18n: user-facing
             )  # i18n: user-facing
         existing = sp.config.to_dict()
         existing["instructions"] = str(body.get("instructions") or "")
@@ -5071,21 +5175,25 @@ def create_web_app(
         if not provided or not hmac.compare_digest(provided, expected):
             logger.warning(f"webhook callback signature check failed: run={run_id}")
             raise HTTPException(
-                status_code=401, detail={"code": "unauthorized", "message": "HMAC 签名无效"}  # # i18n: user-facing
+                status_code=401,
+                detail={"code": "unauthorized", "message": "HMAC 签名无效"},  # # i18n: user-facing
             )  # i18n: user-facing
         try:
             payload = json.loads(raw.decode("utf-8") or "{}")
         except Exception as exc:
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "请求体须为 JSON"},  # # i18n: user-facing
             ) from exc  # i18n: user-facing
         if not isinstance(payload, dict):
             raise HTTPException(
-                status_code=400, detail={"code": "bad_request", "message": "请求体须为 JSON 对象"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "bad_request", "message": "请求体须为 JSON 对象"},  # # i18n: user-facing
             )  # i18n: user-facing
         if permission_manager is None:
             raise HTTPException(
-                status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"}  # # i18n: user-facing
+                status_code=503,
+                detail={"code": "unavailable", "message": "权限管理器不可用"},  # # i18n: user-facing
             )  # i18n: user-facing
         finder = getattr(permission_manager, "find_pending_by_execution", None)
         pending = finder(run_id) if callable(finder) else None
@@ -5415,7 +5523,8 @@ def create_web_app(
     async def permissions_pending():
         if permission_manager is None:
             raise HTTPException(
-                status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"}  # # i18n: user-facing
+                status_code=503,
+                detail={"code": "unavailable", "message": "权限管理器不可用"},  # # i18n: user-facing
             )  # i18n: user-facing
         list_merged = getattr(permission_manager, "list_pending", None)
         approvals = list_merged() if callable(list_merged) else permission_manager.list_pending_guard()
@@ -5477,7 +5586,8 @@ def create_web_app(
     async def permissions_confirm(action_id: str, body: Dict[str, Any]):
         if permission_manager is None:
             raise HTTPException(
-                status_code=503, detail={"code": "unavailable", "message": "权限管理器不可用"}  # # i18n: user-facing
+                status_code=503,
+                detail={"code": "unavailable", "message": "权限管理器不可用"},  # # i18n: user-facing
             )  # i18n: user-facing
         # issue #287: confirm semantics — {"once": true} without approved is treated as
         # approve-once ("Approve once" card semantics), no longer defaulting to a
@@ -5738,7 +5848,8 @@ def create_web_app(
         record = runs.get(run_id)
         if record is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"运行不存在: {run_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"运行不存在: {run_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         receiver = str(body.get("target_device_id") or "broadcast")
         from .sync import SyncMessage
@@ -6065,7 +6176,8 @@ def create_web_app(
         s = session_store.get(session_id)
         if not s:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"会话不存在: {session_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"会话不存在: {session_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return _serialize_session(s)
 
@@ -6099,7 +6211,8 @@ def create_web_app(
     async def team_roster_remove(agent_id: str):
         if not app.state.team_roster.remove(agent_id):
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"agent 未登记: {agent_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"agent 未登记: {agent_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return {"removed": agent_id}
 
@@ -6122,7 +6235,8 @@ def create_web_app(
     async def team_inbox(agent_id: str, unread: int = 1, limit: int = 100):
         if not agent_id:
             raise HTTPException(
-                status_code=400, detail={"code": "missing_agent", "message": "agent_id 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "missing_agent", "message": "agent_id 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         messages = app.state.team_mailbox.inbox(agent_id, unread_only=bool(unread), limit=limit)
         return {"agent_id": agent_id, "messages": messages, "count": len(messages)}
@@ -6194,11 +6308,13 @@ def create_web_app(
         description = str(body.get("description") or "").strip()[:4000]
         if source != "direct":
             raise HTTPException(
-                status_code=400, detail={"code": "invalid_source", "message": "source 必须是 direct"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "invalid_source", "message": "source 必须是 direct"},  # # i18n: user-facing
             )  # i18n: user-facing
         if not external_id:
             raise HTTPException(
-                status_code=400, detail={"code": "missing_external_id", "message": "external_id 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "missing_external_id", "message": "external_id 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         if not title or not description:
             raise HTTPException(
@@ -6299,7 +6415,8 @@ def create_web_app(
             lead = await store.get_lead(lead_id)
         if lead is None:
             raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": f"lead 不存在: {lead_id}"}  # # i18n: user-facing
+                status_code=404,
+                detail={"code": "not_found", "message": f"lead 不存在: {lead_id}"},  # # i18n: user-facing
             )  # i18n: user-facing
         return lead
 
@@ -6309,14 +6426,16 @@ def create_web_app(
         pick = str(body.get("pick") or "")
         if pick not in ("a", "b"):
             raise HTTPException(
-                status_code=400, detail={"code": "invalid_pick", "message": "pick 必须是 a 或 b"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "invalid_pick", "message": "pick 必须是 a 或 b"},  # # i18n: user-facing
             )  # i18n: user-facing
         edited = str(body.get("text") or "")
         async with _demand_store() as store:
             lead = await store.get_lead(lead_id)
             if lead is None:
                 raise HTTPException(
-                    status_code=404, detail={"code": "not_found", "message": f"lead 不存在: {lead_id}"}  # # i18n: user-facing
+                    status_code=404,
+                    detail={"code": "not_found", "message": f"lead 不存在: {lead_id}"},  # # i18n: user-facing
                 )  # i18n: user-facing
             if lead.get("status") != "drafted":
                 raise HTTPException(
@@ -6350,7 +6469,8 @@ def create_web_app(
             lead = await store.get_lead(lead_id)
             if lead is None:
                 raise HTTPException(
-                    status_code=404, detail={"code": "not_found", "message": f"lead 不存在: {lead_id}"}  # # i18n: user-facing
+                    status_code=404,
+                    detail={"code": "not_found", "message": f"lead 不存在: {lead_id}"},  # # i18n: user-facing
                 )  # i18n: user-facing
             await store.update_lead(lead_id, {"status": "discarded", "discard_reason": reason})
             updated = await store.get_lead(lead_id)
@@ -6384,7 +6504,8 @@ def create_web_app(
             )
         if not str(body.get("version") or "").strip():
             raise HTTPException(
-                status_code=400, detail={"code": "invalid_catalog", "message": "version 必填"}  # # i18n: user-facing
+                status_code=400,
+                detail={"code": "invalid_catalog", "message": "version 必填"},  # # i18n: user-facing
             )  # i18n: user-facing
         old_version = ""
         try:

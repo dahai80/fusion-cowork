@@ -315,7 +315,10 @@ class TestWorkflow:
         wf = Workflow(name="测试", description="序列化测试")  # i18n: user-facing
         wf.add_node(MockSuccessNode(node_id="n1", config=NodeConfig(label="节点1")))  # i18n: user-facing
         wf.add_node(
-            MockTransformNode(node_id="n2", config=NodeConfig(label="节点2", params={"prefix": "test_"}))  # i18n: user-facing
+            MockTransformNode(
+                node_id="n2",
+                config=NodeConfig(label="节点2", params={"prefix": "test_"}),  # i18n: user-facing
+            )  # i18n: user-facing
         )  # i18n: user-facing
         wf.connect("n1", "n2")
 

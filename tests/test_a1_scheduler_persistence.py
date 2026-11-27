@@ -79,7 +79,10 @@ def test_load_warns_missing_executor_but_task_restored(tmp_path, caplog):
     store = tmp_path / "tasks.json"
     sched1 = _make_scheduler(store)
     tid = sched1.add_cron_task(
-        name="无执行器", workflow_id="wf", cron_expression="0 0 * * *", executor=lambda: None  # i18n: user-facing
+        name="无执行器",  # i18n: user-facing
+        workflow_id="wf",
+        cron_expression="0 0 * * *",
+        executor=lambda: None,  # i18n: user-facing
     )  # i18n: user-facing
     sched2 = _make_scheduler(store)
     with caplog.at_level(logging.WARNING):
@@ -94,7 +97,10 @@ def test_register_executor_makes_task_runnable(tmp_path, caplog):
     store = tmp_path / "tasks.json"
     sched1 = _make_scheduler(store)
     tid = sched1.add_cron_task(
-        name="重注册", workflow_id="wf", cron_expression="0 0 * * *", executor=lambda: None  # i18n: user-facing
+        name="重注册",  # i18n: user-facing
+        workflow_id="wf",
+        cron_expression="0 0 * * *",
+        executor=lambda: None,  # i18n: user-facing
     )  # i18n: user-facing
     sched2 = _make_scheduler(store)
     sched2.load_tasks()
@@ -107,7 +113,10 @@ def test_pause_resume_persists_status(tmp_path):
     store = tmp_path / "tasks.json"
     sched = _make_scheduler(store)
     tid = sched.add_cron_task(
-        name="可暂停", workflow_id="wf", cron_expression="0 0 * * *", executor=lambda: None  # i18n: user-facing
+        name="可暂停",  # i18n: user-facing
+        workflow_id="wf",
+        cron_expression="0 0 * * *",
+        executor=lambda: None,  # i18n: user-facing
     )  # i18n: user-facing
     assert sched.pause_task(tid)
     data = json.loads(store.read_text(encoding="utf-8"))
@@ -122,7 +131,10 @@ def test_remove_task_persists_removal(tmp_path):
     store = tmp_path / "tasks.json"
     sched = _make_scheduler(store)
     tid = sched.add_cron_task(
-        name="待删", workflow_id="wf", cron_expression="0 0 * * *", executor=lambda: None  # i18n: user-facing
+        name="待删",  # i18n: user-facing
+        workflow_id="wf",
+        cron_expression="0 0 * * *",
+        executor=lambda: None,  # i18n: user-facing
     )  # i18n: user-facing
     assert sched.remove_task(tid)
     data = json.loads(store.read_text(encoding="utf-8"))

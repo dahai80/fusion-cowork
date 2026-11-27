@@ -2976,12 +2976,16 @@ class WorkflowEngine:
             if nid in running_wave:
                 # Defense line 4: wave semantics — structural changes to mid-wave nodes are rejected (resend at the next wave boundary)
                 self._reject_directive(
-                    execution_id, "mid_wave", f"{label}节点在执行中的波内: {nid}"  # i18n: user-facing
+                    execution_id,
+                    "mid_wave",
+                    f"{label}节点在执行中的波内: {nid}",  # i18n: user-facing
                 )  # i18n: user-facing
                 return False
             if nid in executed:
                 self._reject_directive(
-                    execution_id, "already_executed", f"{label}节点已执行: {nid}"  # i18n: user-facing
+                    execution_id,
+                    "already_executed",
+                    f"{label}节点已执行: {nid}",  # i18n: user-facing
                 )  # i18n: user-facing
                 return False
             return True
@@ -2998,12 +3002,16 @@ class WorkflowEngine:
         new_target_id = str(directive.get("new_target_id") or "")
         if not source_id or not target_id or not new_target_id:
             self._reject_directive(
-                execution_id, "bad_directive", "retarget_edge 需 source_id/target_id/new_target_id"  # i18n: user-facing
+                execution_id,
+                "bad_directive",
+                "retarget_edge 需 source_id/target_id/new_target_id",  # i18n: user-facing
             )  # i18n: user-facing
             return False
         if not any(e.source_id == source_id and e.target_id == target_id for e in wf.edges):
             self._reject_directive(
-                execution_id, "unknown_target", f"边不存在: {source_id}→{target_id}"  # i18n: user-facing
+                execution_id,
+                "unknown_target",
+                f"边不存在: {source_id}→{target_id}",  # i18n: user-facing
             )  # i18n: user-facing
             return False
         if not _node_ok(target_id, "原目标"):  # i18n: user-facing
@@ -3211,7 +3219,9 @@ class WorkflowEngine:
                 node_id = str(directive.get("node_id") or "")
                 if node_id in node_results or node_id in self._wave_running.get(exec_id, set()):
                     self._reject_directive(
-                        exec_id, "already_executed", f"移除目标已执行/执行中: {node_id}"  # i18n: user-facing
+                        exec_id,
+                        "already_executed",
+                        f"移除目标已执行/执行中: {node_id}",  # i18n: user-facing
                     )  # i18n: user-facing
                     continue
                 node = workflow.nodes.get(node_id)
@@ -3233,18 +3243,24 @@ class WorkflowEngine:
                 new_target_id = str(directive.get("new_target_id") or "")
                 if target_id in node_results or target_id in self._wave_running.get(exec_id, set()):
                     self._reject_directive(
-                        exec_id, "already_executed", f"原目标已执行/执行中: {target_id}"  # i18n: user-facing
+                        exec_id,
+                        "already_executed",
+                        f"原目标已执行/执行中: {target_id}",  # i18n: user-facing
                     )  # i18n: user-facing
                     continue
                 if new_target_id not in workflow.nodes or new_target_id in node_results:
                     self._reject_directive(
-                        exec_id, "unknown_target", f"新目标不存在或已执行: {new_target_id}"  # i18n: user-facing
+                        exec_id,
+                        "unknown_target",
+                        f"新目标不存在或已执行: {new_target_id}",  # i18n: user-facing
                     )  # i18n: user-facing
                     continue
                 edge = next((e for e in workflow.edges if e.source_id == source_id and e.target_id == target_id), None)
                 if edge is None:
                     self._reject_directive(
-                        exec_id, "unknown_target", f"边不存在: {source_id}→{target_id}"  # i18n: user-facing
+                        exec_id,
+                        "unknown_target",
+                        f"边不存在: {source_id}→{target_id}",  # i18n: user-facing
                     )  # i18n: user-facing
                     continue
                 edge.target_id = new_target_id

@@ -178,7 +178,9 @@ class TestSpaceInstructions:
 
     def test_instructions_api_roundtrip(self, client):
         r = client.post(
-            "/api/space/spaces", headers=_auth(), json={"name": "知识空间", "description": ""}  # i18n: user-facing
+            "/api/space/spaces",
+            headers=_auth(),
+            json={"name": "知识空间", "description": ""},  # i18n: user-facing
         )  # i18n: user-facing
         sid = r.json()["id"]
         r = client.put(
@@ -197,11 +199,15 @@ class TestSpaceInstructions:
 
     def test_chat_injection_helper(self, client):
         r = client.post(
-            "/api/space/spaces", headers=_auth(), json={"name": "注入空间", "description": ""}  # i18n: user-facing
+            "/api/space/spaces",
+            headers=_auth(),
+            json={"name": "注入空间", "description": ""},  # i18n: user-facing
         )  # i18n: user-facing
         sid = r.json()["id"]
         client.put(
-            f"/api/space/spaces/{sid}/instructions", json={"instructions": "  用中文  "}, headers=_auth()  # i18n: user-facing
+            f"/api/space/spaces/{sid}/instructions",
+            json={"instructions": "  用中文  "},  # i18n: user-facing
+            headers=_auth(),  # i18n: user-facing
         )  # i18n: user-facing
         import asyncio
 

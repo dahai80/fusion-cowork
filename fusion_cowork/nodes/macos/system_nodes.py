@@ -1944,7 +1944,9 @@ class OCRNode(BaseNode):
 
         if not image_path:
             return NodeResult(
-                status=NodeStatus.FAILED, error="未指定图片路径", summary="未指定图片"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error="未指定图片路径",  # i18n: user-facing
+                summary="未指定图片",  # i18n: user-facing
             )  # i18n: user-facing
 
         path = Path(image_path).expanduser()

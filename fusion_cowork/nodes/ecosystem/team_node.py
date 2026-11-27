@@ -209,7 +209,9 @@ class TeamCallNode(BaseNode):
 
         if not team:
             return NodeResult(
-                status=NodeStatus.FAILED, error="缺少必填参数 team", summary="参数不完整"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error="缺少必填参数 team",  # i18n: user-facing
+                summary="参数不完整",  # i18n: user-facing
             )  # i18n: user-facing
         if mode in ("run", "run_member") and not member:
             # i18n: user-facing
@@ -309,7 +311,9 @@ class TeamCallNode(BaseNode):
         except Exception as e:
             logger.exception("TeamCallNode execution exception")
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"团队调用异常: {e}", summary="执行异常"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=f"团队调用异常: {e}",  # i18n: user-facing
+                summary="执行异常",  # i18n: user-facing
             )  # i18n: user-facing
 
     @staticmethod

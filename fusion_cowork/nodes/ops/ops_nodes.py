@@ -111,7 +111,8 @@ class AgentExecNode(BaseNode):
 
         if not isinstance(command, list) or not command or not all(isinstance(c, str) and c for c in command):
             return NodeResult(
-                status=NodeStatus.FAILED, error="command 须为非空字符串数组 (argv, 不经 shell)"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error="command 须为非空字符串数组 (argv, 不经 shell)",  # i18n: user-facing
             )  # i18n: user-facing
         if cwd:
             if not Path(cwd).is_dir():
@@ -272,7 +273,8 @@ class GitHubNode(BaseNode):
         if repo not in allowed:
             logger.warning(f"github_api denied: {repo} not in allowlist {allowed}")
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"仓库 {repo} 不在 allowed_repos 白名单内"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=f"仓库 {repo} 不在 allowed_repos 白名单内",  # i18n: user-facing
             )  # i18n: user-facing
         # issue #387: synthetic E2E — validation still enforces allowlist/op legality, but zero network returns deterministic fake results
         dry_run = params.get("dry_run", False)
@@ -319,7 +321,8 @@ class GitHubNode(BaseNode):
         elif op == "issue_comment":
             if not issue_number:
                 return NodeResult(
-                    status=NodeStatus.FAILED, error="issue_comment 缺少 issue_number"  # i18n: user-facing
+                    status=NodeStatus.FAILED,
+                    error="issue_comment 缺少 issue_number",  # i18n: user-facing
                 )  # i18n: user-facing
             method, path, payload = "POST", f"/repos/{repo}/issues/{issue_number}/comments", {"body": body}
         elif op == "issue_set_labels":
@@ -611,7 +614,8 @@ class CommandEvidenceNode(BaseNode):
         joined = " ".join(command) if isinstance(command, list) else str(command)
         if not isinstance(command, list) or not command or not all(isinstance(c, str) and c for c in command):
             return NodeResult(
-                status=NodeStatus.FAILED, error="command 须为非空字符串数组 (argv, 不经 shell)"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error="command 须为非空字符串数组 (argv, 不经 shell)",  # i18n: user-facing
             )  # i18n: user-facing
         if not allowlist:
             # i18n: user-facing
@@ -644,7 +648,8 @@ class CommandEvidenceNode(BaseNode):
                 proc.kill()
                 await proc.wait()
                 return NodeResult(
-                    status=NodeStatus.FAILED, error=f"命令超时 ({timeout:g}s), 已终止"  # i18n: user-facing
+                    status=NodeStatus.FAILED,
+                    error=f"命令超时 ({timeout:g}s), 已终止",  # i18n: user-facing
                 )  # i18n: user-facing
         except OSError as e:
             return NodeResult(status=NodeStatus.FAILED, error=f"命令启动失败: {e}")  # i18n: user-facing
@@ -1152,7 +1157,8 @@ class ClaudeDispatchNode(BaseNode):
         if repo not in allowed:
             logger.warning(f"claude_dispatch denied: {repo} not in allowlist {allowed}")
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"仓库 {repo} 不在 allowed_repos 白名单内"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=f"仓库 {repo} 不在 allowed_repos 白名单内",  # i18n: user-facing
             )  # i18n: user-facing
         if not issue_number or issue_number < 1:
             return NodeResult(status=NodeStatus.FAILED, error="issue_number 须为正整数")  # i18n: user-facing

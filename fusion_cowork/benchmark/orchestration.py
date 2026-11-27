@@ -336,7 +336,9 @@ class OrchestrationBenchmark:
                     and res.data.get("count") == 7
                 )
                 detail = (
-                    "字符串参数强转为 int" if ok else f"coerced={coerced!r} count={res.data.get('count')!r}"  # i18n: user-facing
+                    "字符串参数强转为 int"  # i18n: user-facing
+                    if ok
+                    else f"coerced={coerced!r} count={res.data.get('count')!r}"  # i18n: user-facing
                 )  # i18n: user-facing
             except Exception as e:
                 ok, detail = False, f"场景异常: {e}"  # i18n: user-facing

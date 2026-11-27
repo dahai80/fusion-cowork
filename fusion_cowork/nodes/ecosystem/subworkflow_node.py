@@ -75,12 +75,14 @@ class SubWorkflowNode(BaseNode):
         wf_def = params.get("workflow") or inputs.get("workflow")
         if not isinstance(wf_def, dict) or not wf_def.get("nodes"):
             return NodeResult(
-                status=NodeStatus.FAILED, error="sub_workflow 参数 workflow 必填 ({nodes, edges})"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error="sub_workflow 参数 workflow 必填 ({nodes, edges})",  # i18n: user-facing
             )  # i18n: user-facing
         parent_engine = _current_engine.get()
         if parent_engine is None:
             return NodeResult(
-                status=NodeStatus.FAILED, error="sub_workflow 只能在引擎执行的节点内使用"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error="sub_workflow 只能在引擎执行的节点内使用",  # i18n: user-facing
             )  # i18n: user-facing
         depth = int(inputs.get("_subworkflow_depth", 0) or 0)
         try:

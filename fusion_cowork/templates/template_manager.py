@@ -414,7 +414,11 @@ BUILTIN_TEMPLATES = [
                     "id": "n3",
                     "name": "file_classifier",
                     "config": {
-                        "params": {"move_to_subdirs": True, "target_base": "~/Desktop/图片", "dry_run": False}  # i18n: user-facing
+                        "params": {
+                            "move_to_subdirs": True,
+                            "target_base": "~/Desktop/图片",  # i18n: user-facing
+                            "dry_run": False,
+                        }  # i18n: user-facing
                     },  # i18n: user-facing
                 },
             ],

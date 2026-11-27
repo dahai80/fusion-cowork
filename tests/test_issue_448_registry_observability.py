@@ -119,9 +119,7 @@ class TestFailureRateLimiting:
         # After the failure streak reaches the threshold: one ERROR summary, the rest downgraded to silent — no more per-beat WARNING/ERROR spam
         with caplog.at_level(logging.DEBUG, logger="fusion_cowork.server.shell_registry"):
             await _run_for(0.35, _FlakyClient(mode="connect_error"), interval=0.01)
-        errors = [
-            r for r in caplog.records if r.levelno >= logging.ERROR and "times in a row" in r.message
-        ]
+        errors = [r for r in caplog.records if r.levelno >= logging.ERROR and "times in a row" in r.message]
         warnings = [
             r for r in caplog.records if r.levelno == logging.WARNING and "registration loop error" in r.message
         ]

@@ -154,7 +154,9 @@ class MCPClientNode(BaseNode):
         # FUSION_COWORK_MCP_STDIO_ALLOW allowlist (exact basename match, empty default = reject all, fail-closed)
         if not command or not tool:
             return NodeResult(
-                status=NodeStatus.FAILED, error="stdio 模式缺少 command 或 tool 参数", summary="参数缺失"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error="stdio 模式缺少 command 或 tool 参数",  # i18n: user-facing
+                summary="参数缺失",  # i18n: user-facing
             )  # i18n: user-facing
         from fusion_cowork.nodes.ecosystem.mcp_stdio import (
             STDIO_ALLOW_ENV,
@@ -179,7 +181,9 @@ class MCPClientNode(BaseNode):
         except Exception as e:
             logger.warning(f"mcp_client: stdio call failed command={command} tool={tool}: {e}")
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"stdio MCP 调用失败: {e}", summary="调用失败"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=f"stdio MCP 调用失败: {e}",  # i18n: user-facing
+                summary="调用失败",  # i18n: user-facing
             )  # i18n: user-facing
         first = results[0] if results else {"text": "", "content": []}
         return NodeResult(
@@ -213,17 +217,23 @@ class MCPClientNode(BaseNode):
                     )
             if not isinstance(arguments, dict):
                 return NodeResult(
-                    status=NodeStatus.FAILED, error="arguments 须为 JSON 对象", summary="参数非法"  # i18n: user-facing
+                    status=NodeStatus.FAILED,
+                    error="arguments 须为 JSON 对象",  # i18n: user-facing
+                    summary="参数非法",  # i18n: user-facing
                 )  # i18n: user-facing
             return await self._execute_stdio(stdio_command, stdio_args, tool, arguments, timeout)
 
         if not url or not tool:
             return NodeResult(
-                status=NodeStatus.FAILED, error="缺少 url 或 tool 参数", summary="参数缺失"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error="缺少 url 或 tool 参数",  # i18n: user-facing
+                summary="参数缺失",  # i18n: user-facing
             )  # i18n: user-facing
         if not url.startswith(("http://", "https://")):
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"非法 URL: {url}", summary="参数非法"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=f"非法 URL: {url}",  # i18n: user-facing
+                summary="参数非法",  # i18n: user-facing
             )  # i18n: user-facing
         if isinstance(arguments, str):
             # issue #211: upstream mcp_client output is text, so this node receives a JSON string over
@@ -241,7 +251,9 @@ class MCPClientNode(BaseNode):
             logger.info(f"mcp_client: arguments parsed from JSON string tool={tool} chars={len(raw_arguments)}")
         if not isinstance(arguments, dict):
             return NodeResult(
-                status=NodeStatus.FAILED, error="arguments 须为 JSON 对象", summary="参数非法"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error="arguments 须为 JSON 对象",  # i18n: user-facing
+                summary="参数非法",  # i18n: user-facing
             )  # i18n: user-facing
 
         base_headers = {"Accept": "application/json, text/event-stream", **extra_headers}
@@ -338,10 +350,14 @@ class MCPClientNode(BaseNode):
         except httpx.TimeoutException as e:
             logger.warning(f"mcp_client: timeout {url}: {e}")
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"MCP 调用超时: {e}", summary="调用超时"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=f"MCP 调用超时: {e}",  # i18n: user-facing
+                summary="调用超时",  # i18n: user-facing
             )  # i18n: user-facing
         except httpx.HTTPError as e:
             logger.warning(f"mcp_client: connection failed {url}: {e}")
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"MCP 连接失败: {e}", summary="连接失败"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=f"MCP 连接失败: {e}",  # i18n: user-facing
+                summary="连接失败",  # i18n: user-facing
             )  # i18n: user-facing

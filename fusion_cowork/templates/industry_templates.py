@@ -39,7 +39,10 @@ INDUSTRY_TEMPLATES: List[Dict[str, Any]] = [
                     "id": "n2",
                     "name": "file_classifier",
                     "config": {
-                        "params": {"move_to_subdirs": True, "target_base": "~/Desktop/设计素材_已归档"}  # i18n: user-facing
+                        "params": {
+                            "move_to_subdirs": True,
+                            "target_base": "~/Desktop/设计素材_已归档",  # i18n: user-facing
+                        }  # i18n: user-facing
                     },  # i18n: user-facing
                 },
             ],
@@ -152,7 +155,10 @@ INDUSTRY_TEMPLATES: List[Dict[str, Any]] = [
                     "id": "n1",
                     "name": "shell_exec",
                     "config": {
-                        "params": {"command": "mkdir -p src tests docs", "workdir": "~/Desktop/新项目"}  # i18n: user-facing
+                        "params": {
+                            "command": "mkdir -p src tests docs",
+                            "workdir": "~/Desktop/新项目",  # i18n: user-facing
+                        }  # i18n: user-facing
                     },  # i18n: user-facing
                 },
                 {

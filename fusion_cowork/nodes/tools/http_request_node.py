@@ -117,7 +117,9 @@ class HttpRequestNode(BaseNode):
             return NodeResult(status=NodeStatus.FAILED, error="缺少 url 参数", summary="参数缺失")  # i18n: user-facing
         if not url.startswith(("http://", "https://")):
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"非法 URL: {url}", summary="参数非法"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=f"非法 URL: {url}",  # i18n: user-facing
+                summary="参数非法",  # i18n: user-facing
             )  # i18n: user-facing
         if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
             # i18n: user-facing
@@ -152,12 +154,16 @@ class HttpRequestNode(BaseNode):
         except httpx.TimeoutException as e:
             logger.warning(f"http_request: timeout {method} {url}: {e}")
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"HTTP 请求超时: {e}", summary="请求超时"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=f"HTTP 请求超时: {e}",  # i18n: user-facing
+                summary="请求超时",  # i18n: user-facing
             )  # i18n: user-facing
         except httpx.HTTPError as e:
             logger.warning(f"http_request: connection failed {method} {url}: {e}")
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"HTTP 连接失败: {e}", summary="连接失败"  # i18n: user-facing
+                status=NodeStatus.FAILED,
+                error=f"HTTP 连接失败: {e}",  # i18n: user-facing
+                summary="连接失败",  # i18n: user-facing
             )  # i18n: user-facing
 
         text = resp.text
