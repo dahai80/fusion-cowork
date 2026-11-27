@@ -3675,91 +3675,36 @@ def create_web_app(
             )  # i18n: user-facing
         return {"workflow": workflow}
 
-    # ── flywheel compile (issue #625 follow-up): trajectory → compiled workflow ──
-    # POST /api/trajectory/compile — session_id (trajectory JSONL file) + optional run_id,
-    # or an inline snapshot list. One LLM condition-extraction call, returns an executable
-    # Workflow definition (skip_if conditions folded into node config, runnable via runs_create).
+    # ── flywheel compile (issue #623 follow-up to #625): 轨迹 → 编译工作流 ──
+    # POST /api/trajectory/compile — session_id (轨迹 JSONL 文件) + 可选 run_id,
+    # 或内联 snapshot 列表。一次 LLM 条件抽取调用, 返回可执行的 Workflow 定义
+    # (skip_if 条件已反转进节点配置, 直接可 runs_create 执行)。
+    # 核心逻辑在 trajectory.compile.compile_trajectory, 与 desk.workflow.compile 共享。
     @app.post("/api/trajectory/compile")
     async def trajectory_compile(body: Dict[str, Any]):
         from ..engine.node import NodeRegistry
-        from ..engine.workflow import Workflow
-        from ..trajectory.compile import compile_workflow, steps_from_jsonl, steps_from_snapshot
-        from ..trajectory.recorder import DEFAULT_TRAJECTORY_DIR
-
-        session_id = str(body.get("session_id") or "").strip()
-        run_id = str(body.get("run_id") or "").strip()
-        model = str(body.get("model") or "").strip()
-        workflow_name = str(body.get("workflow_name") or "").strip()
-        snapshot = body.get("snapshot") if isinstance(body.get("snapshot"), list) else None
-        if not session_id and not snapshot:
-            raise HTTPException(
-                status_code=400,
-                detail={"code": "bad_request", "message": "session_id 或 snapshot 必填"},  # i18n: user-facing
-            )
-        steps: List[Dict[str, Any]] = []
-        if session_id:
-            # session_id is the filename stem under the trajectory dir; whitelist chars prevent path traversal
-            if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
-                raise HTTPException(
-                    status_code=400,
-                    detail={"code": "bad_request", "message": "非法 session_id"},  # i18n: user-facing
-                )
-            path = Path(DEFAULT_TRAJECTORY_DIR) / f"{session_id}.jsonl"
-            if not path.is_file():
-                raise HTTPException(
-                    status_code=404,
-                    detail={"code": "not_found", "message": f"轨迹文件不存在: {session_id}"},  # i18n: user-facing
-                )
-            steps = steps_from_jsonl(path, run_id=run_id)
-        else:
-            steps = steps_from_snapshot(snapshot or [])
-        if not steps:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "empty_trajectory",
-                    "message": "轨迹中无可编译步骤 (无 post_node_execute 记录)",  # i18n: user-facing
-                },
-            )
-        mlx = getattr(nl_generator, "mlx", None)
-        if mlx is None:
-            raise HTTPException(
-                status_code=503,
-                detail={"code": "no_model_client", "message": "模型客户端不可用"},  # i18n: user-facing
-            )
+        from ..trajectory.compile import CompileError, compile_trajectory
 
         def create_node(name: str):
             node = NodeRegistry.create(name)
             if node is None:
-                raise HTTPException(
-                    status_code=422,
-                    detail={"code": "unknown_node", "message": f"轨迹引用了未注册节点: {name}"},  # i18n: user-facing
-                )
+                raise CompileError("unknown_node", f"轨迹引用了未注册节点: {name}")
             return node
 
-        wf = Workflow(name=workflow_name or f"compiled-{session_id or 'snapshot'}")
-        logger.info(
-            f"web API trajectory compile request: session={session_id or '-'} run={run_id or '-'} steps={len(steps)} model={model or '(auto)'}"
-        )
+        mlx = getattr(nl_generator, "mlx", None)
         try:
-            plan, node_ids = await compile_workflow(steps, mlx, create_node, wf, model=model)
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"web API trajectory compile failed: {e}")
-            raise HTTPException(
-                status_code=502,
-                detail={"code": "compile_failed", "message": f"编译失败: {e}"},  # i18n: user-facing
-            ) from e
-        if not node_ids:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "empty_plan",
-                    "message": "条件抽取产出空计划 (轨迹无成功步骤或回复不可解析)",  # i18n: user-facing
-                },
-            )
-        return {"plan": plan, "node_ids": node_ids, "steps_used": len(steps), "workflow": wf.to_dict()}
+            return await compile_trajectory(body, mlx, create_node)
+        except CompileError as e:
+            status = {
+                "bad_request": 400,
+                "not_found": 404,
+                "empty_trajectory": 422,
+                "unknown_node": 422,
+                "empty_plan": 422,
+                "no_model_client": 503,
+                "compile_failed": 502,
+            }.get(e.code, 500)
+            raise HTTPException(status_code=status, detail={"code": e.code, "message": e.message}) from e
 
     # ── issue #148: chat-first delegate — one sentence straight to a deliverable, no forced canvas entry ──
     # Deterministic heuristic (Rule: decisions go through code, not the model): a plan with ≤2 nodes and no

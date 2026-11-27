@@ -120,3 +120,65 @@ def steps_from_snapshot(snapshot: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             }
         )
     return out
+
+
+class CompileError(Exception):
+    # Domain error shared by the web route and the DeskRPC handler; each
+    # caller maps code+message to its own transport convention.
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+async def compile_trajectory(body: Dict[str, Any], mlx: Any, create_node) -> Dict[str, Any]:
+    # Shared compile surface (issue #623): trajectory JSONL by session_id
+    # (+optional run_id) or an inline snapshot -> one condition-extraction
+    # LLM call -> executable Workflow dict with skip_if conditions landed.
+    # Raises CompileError with a stable code; transport layers map it.
+    import re
+    from pathlib import Path
+
+    from fusion_cowork.engine.workflow import Workflow
+    from fusion_cowork.trajectory.recorder import DEFAULT_TRAJECTORY_DIR
+
+    session_id = str(body.get("session_id") or "").strip()
+    run_id = str(body.get("run_id") or "").strip()
+    model = str(body.get("model") or "").strip()
+    workflow_name = str(body.get("workflow_name") or "").strip()
+    snapshot = body.get("snapshot") if isinstance(body.get("snapshot"), list) else None
+    if not session_id and not snapshot:
+        raise CompileError("bad_request", "session_id 或 snapshot 必填")  # i18n: user-facing
+    steps: List[Dict[str, Any]] = []
+    if session_id:
+        # session_id is the trajectory-file stem; whitelist chars block path traversal
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
+            raise CompileError("bad_request", "非法 session_id")  # i18n: user-facing
+        path = Path(DEFAULT_TRAJECTORY_DIR) / f"{session_id}.jsonl"
+        if not path.is_file():
+            raise CompileError("not_found", f"轨迹文件不存在: {session_id}")  # i18n: user-facing
+        steps = steps_from_jsonl(path, run_id=run_id)
+    else:
+        steps = steps_from_snapshot(snapshot or [])
+    if not steps:
+        raise CompileError("empty_trajectory", "轨迹中无可编译步骤 (无 post_node_execute 记录)")  # i18n: user-facing
+    if mlx is None:
+        raise CompileError("no_model_client", "模型客户端不可用")  # i18n: user-facing
+    wf = Workflow(name=workflow_name or f"compiled-{session_id or 'snapshot'}")
+    logger.info(
+        "trajectory compile request: session=%s run=%s steps=%d model=%s",
+        session_id or "-",
+        run_id or "-",
+        len(steps),
+        model or "(auto)",
+    )
+    try:
+        plan, node_ids = await compile_workflow(steps, mlx, create_node, wf, model=model)
+    except CompileError:
+        raise
+    except Exception as e:
+        logger.error("trajectory compile failed: %s", e)
+        raise CompileError("compile_failed", f"编译失败: {e}") from e  # i18n: user-facing
+    if not node_ids:
+        raise CompileError("empty_plan", "条件抽取产出空计划 (轨迹无成功步骤或回复不可解析)")  # i18n: user-facing
+    return {"plan": plan, "node_ids": node_ids, "steps_used": len(steps), "workflow": wf.to_dict()}
