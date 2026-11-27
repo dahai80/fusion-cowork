@@ -1,12 +1,12 @@
-"""Desk RPC 服务端 — JSON-RPC 2.0 over Unix Domain Socket。
+"""Desk RPC server — JSON-RPC 2.0 over Unix Domain Socket.
 
-Fusion-Studio (Swift GUI) 通过 UDS 与 Fusion-Cowork 通信。
-提供 desk.* 命名空间方法，对标 Studio 端 IPCClient。
+Fusion-Studio (Swift GUI) communicates with Fusion-Cowork over UDS.
+Provides desk.* namespace methods, mirroring the Studio-side IPCClient.
 
-协议:
-  - 传输: Unix Domain Socket (/tmp/fusion-cowork.sock)
-  - 编码: JSON-RPC 2.0 (每行一个 JSON 对象)
-  - 命名空间: desk.health, desk.nodes.*, desk.workflow.*, desk.agent.*, desk.mlx.*
+Protocol:
+  - Transport: Unix Domain Socket (/tmp/fusion-cowork.sock)
+  - Encoding: JSON-RPC 2.0 (one JSON object per line)
+  - Namespaces: desk.health, desk.nodes.*, desk.workflow.*, desk.agent.*, desk.mlx.*
 """
 
 from __future__ import annotations
@@ -41,44 +41,44 @@ _IDENTITY_FIELDS = frozenset({"operator_id", "user_id", "inviter_id", "author_id
 _MAX_B64_BYTES = 50 * 1024 * 1024
 _MAX_DECODED_BYTES = 25 * 1024 * 1024
 _MAX_SYNC_FILES = 50
-# MD-1: UDS 单行上限 1MiB + 读超时 5s, 防无 \n 长行 OOM; batch (数组请求) 显式拒 -32600
+# MD-1: UDS per-line limit 1MiB + read timeout 5s to prevent OOM on long lines without \n; batch (array requests) explicitly rejected with -32600
 _MAX_RPC_LINE = 1024 * 1024
 _RPC_READ_TIMEOUT = 5.0
-# HI-13: collab 消息内容上限 (16KiB), 防存储型 prompt 注入 + 撑爆 session 记录
+# HI-13: collab message content cap (16KiB) to prevent stored prompt injection + bloated session records
 _MAX_COLLAB_CONTENT = 16 * 1024
-# Stage 7: collab 会话防泄漏 — idle 超时自动 evict (无心跳 leave), 上限保护
-_COLLAB_IDLE_TIMEOUT = 30 * 60  # 30 分钟无 poll/send 即视为断连
-_COLLAB_MAX_SESSIONS = 1000  # 单实例上限, 超则 evict 最旧 idle
-# HI-15: 文本知识库扩展名白名单 (KB 主要消费文本; 二进制需 allow_binary 单独路径)
+# Stage 7: collab session leak protection — idle timeout auto-evict (no heartbeat/leave), cap guard
+_COLLAB_IDLE_TIMEOUT = 30 * 60  # disconnected after 30 minutes without poll/send
+_COLLAB_MAX_SESSIONS = 1000  # per-instance cap, evict the oldest idle when exceeded
+# HI-15: text KB extension whitelist (KB mainly consumes text; binary needs a separate allow_binary path)
 _TEXT_EXT_WHITELIST = frozenset(
     {".txt", ".md", ".markdown", ".rst", ".json", ".yaml", ".yml", ".csv", ".html", ".htm", ".log", ".py", ".js", ".ts"}
 )
 
 
 def _secure_filename(name: str) -> str:
-    """HI-15: 净化文件名 — 取 basename, 剥路径穿越 (../), 拒空/纯点。
-    返回安全基名或空串 (调用方拒空)。"""
+    """HI-15: sanitize a filename — take the basename, strip path traversal (../), reject empty/dots-only.
+    Returns the safe base name or an empty string (caller rejects empty)."""
     if not isinstance(name, str) or not name.strip():
         return ""
     base = os.path.basename(name.replace("\\", "/"))
     base = base.strip().lstrip(".")
     if not base or base in {".", ".."}:
         return ""
-    # 拒残留分隔符 (basename 后仍含 / 说明异常)
+    # reject residual separators (a / remaining after basename means something abnormal)
     if "/" in base or "\\" in base:
         return ""
     return base[:200]
 
 
 def _strip_control_chars(text: str) -> str:
-    """HI-13: 剥除 C0 控制字符 (保留 \\t \\n \\r), 防终端转义/隐藏指令注入。"""
+    """HI-13: strip C0 control chars (keep \\t \\n \\r) to prevent terminal escape/hidden instruction injection."""
     if not isinstance(text, str):
         return ""
     return "".join(ch for ch in text if ch >= " " or ch in "\t\n\r")
 
 
 class DeskRPCServer:
-    """Desk RPC 服务端 — 监听 UDS，处理 Studio 发来的 JSON-RPC 请求。"""
+    """Desk RPC server — listens on UDS and handles JSON-RPC requests from Studio."""
 
     def __init__(
         self,
@@ -99,8 +99,8 @@ class DeskRPCServer:
         self._permission_manager = permission_manager
         self._hook_manager = hook_manager
         self._space_store = space_store
-        # Stage 1/2: principal_resolver 供外部注入 JWT/SSO 身份解析;
-        # None 时用本地静态身份 (local_user / default tenant)。
+        # Stage 1/2: principal_resolver allows external injection of JWT/SSO identity resolution;
+        # when None, fall back to the local static identity (local_user / default tenant).
         self._principal_resolver = principal_resolver
         self._orchestrator = None
         self._presence_manager = None
@@ -108,61 +108,61 @@ class DeskRPCServer:
         self._collab_sessions: Dict[str, Dict[str, Any]] = {}
         self._collab_queues: Dict[str, asyncio.Queue] = {}
         self._auth_token: Optional[str] = None
-        # Stage 2: JWT verifier (env FUSION_JWT_SECRET/FUSION_JWKS_URL 配了启用)。
-        # _authenticate 优先用 resolver; resolver 缺则用 _jwt_verifier (active 时)。
+        # Stage 2: JWT verifier (enabled when env FUSION_JWT_SECRET/FUSION_JWKS_URL is set).
+        # _authenticate prefers the resolver; when missing, uses _jwt_verifier (if active).
         self._jwt_verifier = None
-        # A-10: 共享 MLX/KB 客户端实例 (旧版 11 处 handler 各 new FusionMLXClient() 不 close,
-        # httpx 连接池泄漏)。handler 取共享实例, stop() 统一关闭。
+        # A-10: shared MLX/KB client instances (previously 11 handlers each new FusionMLXClient() without close,
+        # leaking httpx connection pools). Handlers take the shared instance; stop() closes them uniformly.
         self._mlx_client = None
         self._kb_client = None
-        self._engine = None  # E-7: 复用单例 engine, 避免每请求新建
-        # Stage 6: per-tenant 限流 (env FUSION_RATE_LIMIT 设了启用, 否则无限透传)。
+        self._engine = None  # E-7: reuse the singleton engine, avoid per-request construction
+        # Stage 6: per-tenant rate limiting (enabled when env FUSION_RATE_LIMIT is set, otherwise unlimited passthrough).
         from ..security.rate_limit import get_default_rate_limiter
 
         self._rate_limiter = get_default_rate_limiter()
-        # Stage 6: MLX/KB 上游熔断在 client 层 (mlx_client.py, env FUSION_CB_MLX_THRESHOLD
-        # 门控), 非此处 — 单层熔断, 勿重复 (Rule 7)。
+        # Stage 6: MLX/KB upstream circuit breaking lives in the client layer (mlx_client.py, env FUSION_CB_MLX_THRESHOLD
+        # gated), not here — single-layer breaking, do not duplicate (Rule 7).
         self._register_handlers()
 
     def _get_mlx_client(self):
-        """A-10: 懒构造共享 FusionMLXClient (httpx 连接池复用, stop 统一 close)。"""
+        """A-10: lazily construct the shared FusionMLXClient (reuses the httpx connection pool, closed uniformly in stop)."""
         if self._mlx_client is None:
             from ..ai import FusionMLXClient
 
             self._mlx_client = FusionMLXClient()
-            logger.debug("DeskRPC 共享 FusionMLXClient 已构造")
+            logger.debug("DeskRPC shared FusionMLXClient constructed")
         return self._mlx_client
 
     def _get_kb_client(self):
-        """A-10: 懒构造共享 KBClient。"""
+        """A-10: lazily construct the shared KBClient."""
         if self._kb_client is None:
             from fusion_cowork.ai.mlx_client import KBClient
 
             self._kb_client = KBClient()
-            logger.debug("DeskRPC 共享 KBClient 已构造")
+            logger.debug("DeskRPC shared KBClient constructed")
         return self._kb_client
 
     def _register_handlers(self) -> None:
-        """注册所有 desk.* JSON-RPC 方法。"""
+        """Register all desk.* JSON-RPC methods."""
         self._handlers = {
-            # 健康检查
+            # Health check
             "desk.health": self._handle_health,
-            # 节点管理
+            # Node management
             "desk.nodes.list": self._handle_nodes_list,
             "desk.nodes.info": self._handle_nodes_info,
             "desk.nodes.execute": self._handle_nodes_execute,
             "desk.nodes.categories": self._handle_nodes_categories,
-            # 工作流
+            # Workflows
             "desk.workflow.list": self._handle_workflow_list,
             "desk.workflow.create": self._handle_workflow_create,
             "desk.workflow.run": self._handle_workflow_run,
             "desk.workflow.status": self._handle_workflow_status,
             "desk.workflow.cancel": self._handle_workflow_cancel,
-            # 模板
+            # Templates
             "desk.template.list": self._handle_template_list,
             "desk.template.get": self._handle_template_get,
             "desk.template.run": self._handle_template_run,
-            # 智能体
+            # Agents
             "desk.agent.list": self._handle_agent_list,
             "desk.agent.submit": self._handle_agent_submit,
             "desk.agent.status": self._handle_agent_status,
@@ -175,29 +175,29 @@ class DeskRPCServer:
             # MLX
             "desk.mlx.status": self._handle_mlx_status,
             "desk.mlx.models": self._handle_mlx_models,
-            # 系统
+            # System
             "desk.system.info": self._handle_system_info,
             "desk.system.set_scoped_folder": self._handle_set_scoped_folder,
             "desk.system.scoped_folder": self._handle_get_scoped_folder,
-            # 事件订阅
+            # Event subscription
             "desk.events.subscribe": self._handle_events_subscribe,
             "desk.events.recent": self._handle_events_recent,
             "desk.events.poll": self._handle_events_poll,
-            # 会话
+            # Sessions
             "desk.session.list": self._handle_session_list,
             "desk.session.get": self._handle_session_get,
             "desk.session.fork": self._handle_session_fork,
             "desk.session.create": self._handle_session_create,
             "desk.session.update": self._handle_session_update,
             "desk.session.delete": self._handle_session_delete,
-            # 权限
+            # Permissions
             "desk.permission.check": self._handle_permission_check,
             "desk.permission.approve": self._handle_permission_approve,
             "desk.permission.deny": self._handle_permission_deny,
             "desk.permission.list": self._handle_permission_list,
             "desk.permission.reset": self._handle_permission_reset,
             "desk.permission.confirm_guard": self._handle_permission_confirm_guard,
-            # 协作空间
+            # Collaboration spaces
             "desk.space.create": self._handle_space_create,
             "desk.space.list": self._handle_space_list,
             "desk.space.get": self._handle_space_get,
@@ -209,70 +209,70 @@ class DeskRPCServer:
             "desk.space.member.list": self._handle_space_member_list,
             "desk.space.member.remove": self._handle_space_member_remove,
             "desk.space.member.update_role": self._handle_space_member_update_role,
-            # 协作空间 - Presence + 光标
+            # Collaboration spaces - Presence + cursor
             "desk.space.presence.heartbeat": self._handle_space_presence_heartbeat,
             "desk.space.presence.cursor": self._handle_space_presence_cursor,
             "desk.space.presence.list": self._handle_space_presence_list,
             "desk.space.presence.remove": self._handle_space_presence_remove,
-            # 协作空间 - WS 双向 (轮询桥接, 供非 WS 主机)
+            # Collaboration spaces - WS bidirectional (polling bridge, for non-WS hosts)
             "desk.space.collab.join": self._handle_space_collab_join,
             "desk.space.collab.send": self._handle_space_collab_send,
             "desk.space.collab.cursor": self._handle_space_collab_cursor,
             "desk.space.collab.poll": self._handle_space_collab_poll,
             "desk.space.collab.leave": self._handle_space_collab_leave,
-            # 协作空间 - 对话
+            # Collaboration spaces - Chat
             "desk.space.chat.send": self._handle_space_chat_send,
             "desk.space.chat.list": self._handle_space_chat_list,
             "desk.space.chat.history": self._handle_space_chat_list,
             "desk.space.chat.context": self._handle_space_chat_context,
-            # 协作空间 - 知识库
+            # Collaboration spaces - Knowledge base
             "desk.space.knowledge.bind": self._handle_space_kb_bind,
             "desk.space.knowledge.status": self._handle_space_kb_status,
             "desk.space.knowledge.upload": self._handle_space_kb_upload,
             "desk.space.knowledge.search": self._handle_space_kb_search,
             "desk.space.knowledge.query": self._handle_space_kb_query,
             "desk.space.knowledge.unbind": self._handle_space_kb_unbind,
-            # 协作空间 - Agent
+            # Collaboration spaces - Agent
             "desk.space.agent.list": self._handle_space_agent_list,
             "desk.space.agent.add": self._handle_space_agent_add,
             "desk.space.agent.remove": self._handle_space_agent_remove,
             "desk.space.agent.call": self._handle_space_agent_call,
             "desk.space.agent.relay": self._handle_space_agent_relay,
             "desk.space.agent.update": self._handle_space_agent_update,
-            # 协作空间 - 快照
+            # Collaboration spaces - Snapshots
             "desk.space.snapshot.list": self._handle_space_snapshot_list,
             "desk.space.snapshot.create": self._handle_space_snapshot_create,
             "desk.space.snapshot.clone": self._handle_space_snapshot_clone,
             "desk.space.snapshot.restore": self._handle_space_snapshot_restore,
             "desk.space.snapshot.delete": self._handle_space_snapshot_delete,
-            # 协作空间 - 流式对话
+            # Collaboration spaces - Streaming chat
             "desk.space.chat.stream": self._handle_space_chat_stream,
-            # 协作空间 - 评论
+            # Collaboration spaces - Comments
             "desk.space.comment.create": self._handle_space_comment_create,
             "desk.space.comment.list": self._handle_space_comment_list,
-            # 协作空间 - 工作流
+            # Collaboration spaces - Workflows
             "desk.space.workflow.list": self._handle_space_workflow_list,
             "desk.space.workflow.create": self._handle_space_workflow_create,
             "desk.space.workflow.run": self._handle_space_workflow_run,
-            # 协作空间 - 发现
+            # Collaboration spaces - Discovery
             "desk.space.discovery.scan": self._handle_space_discovery_scan,
-            # 协作空间 - 桌面共享
+            # Collaboration spaces - Desktop sharing
             "desk.space.desktop.share": self._handle_space_desktop_share,
             "desk.space.desktop.control": self._handle_space_desktop_control,
-            # 会话快照
+            # Session snapshots
             "desk.session.snapshot_list": self._handle_session_snapshot_list,
             "desk.session.snapshot_create": self._handle_session_snapshot_create,
             "desk.session.snapshot_restore": self._handle_session_snapshot_restore,
             "desk.session.snapshot_fork": self._handle_session_snapshot_fork,
             "desk.session.snapshot_delete": self._handle_session_snapshot_delete,
-            # 跨产品集成 — fusion-projects
+            # Cross-product integration — fusion-projects
             "desk.project.syncKnowledge": self._handle_project_sync_knowledge,
             "desk.project.importSnapshot": self._handle_project_import_snapshot,
             "desk.project.exportToProject": self._handle_project_export_to_project,
-            # 跨产品集成 — fusion-projects 中转 (ST→project-svc→cowork)
+            # Cross-product integration — fusion-projects relay (ST→project-svc→cowork)
             "cowork.trigger": self._handle_cowork_trigger,
             "cowork.status": self._handle_cowork_status,
-            # 协作空间 - Artifact 权限
+            # Collaboration spaces - Artifact permissions
             "desk.space.artifact.create": self._handle_space_artifact_create,
             "desk.space.artifact.get": self._handle_space_artifact_get,
             "desk.space.artifact.update": self._handle_space_artifact_update,
@@ -280,23 +280,23 @@ class DeskRPCServer:
             "desk.space.artifact.transfer": self._handle_space_artifact_transfer,
             "desk.space.artifact.list": self._handle_space_artifact_list,
             "desk.space.artifact.delete": self._handle_space_artifact_delete,
-            # 侧边栏模块
+            # Sidebar modules
             "desk.module.register": self._handle_module_register,
             "desk.module.list": self._handle_module_list,
             "desk.module.enable": self._handle_module_enable,
             "desk.module.disable": self._handle_module_disable,
-            # 通知推送
+            # Notification push
             "desk.notification.push": self._handle_notification_push,
             "desk.notification.list": self._handle_notification_list,
             "desk.notification.markRead": self._handle_notification_mark_read,
-            # 通知推送 — 兼容 Studio space.notification 命名空间
+            # Notification push — compatible with the Studio space.notification namespace
             "desk.space.notification.list": self._handle_notification_list,
             "desk.space.notification.mark_read": self._handle_notification_mark_read,
         }
-        logger.info(f"Desk RPC 注册 {len(self._handlers)} 个方法")
+        logger.info(f"Desk RPC registered {len(self._handlers)} methods")
 
     async def start(self) -> None:
-        """启动 RPC 服务端。"""
+        """Start the RPC server."""
         from ..config_center import ConfigCenter
         from ..nodes import import_all_nodes
 
@@ -306,26 +306,26 @@ class DeskRPCServer:
             try:
                 await self._space_store.initialize()
             except Exception as e:
-                logger.warning(f"SpaceStore 初始化失败 (desk.space.* 不可用): {e}")
+                logger.warning(f"SpaceStore initialization failed (desk.space.* unavailable): {e}")
         self._auth_token = ConfigCenter.get_instance().get(_AUTH_TOKEN_KEY) or None
         if self._auth_token:
-            logger.info("Desk RPC 认证已启用: desk.auth_token 握手校验")
-        # Stage 2: JWT verifier (env FUSION_JWT_SECRET/FUSION_JWKS_URL 启用, _authenticate 优先用)
+            logger.info("Desk RPC auth enabled: desk.auth_token handshake verification")
+        # Stage 2: JWT verifier (enabled via env FUSION_JWT_SECRET/FUSION_JWKS_URL, preferred by _authenticate)
         try:
             from fusion_cowork.auth import get_default_verifier
 
             self._jwt_verifier = get_default_verifier()
             if self._jwt_verifier.active:
-                logger.info("Desk RPC JWT 认证已启用 (env FUSION_JWT_SECRET/FUSION_JWKS_URL)")
+                logger.info("Desk RPC JWT auth enabled (env FUSION_JWT_SECRET/FUSION_JWKS_URL)")
         except Exception as e:
-            logger.warning(f"JWT verifier 构造失败 (JWT 认证降级): {e}")
+            logger.warning(f"JWT verifier construction failed (JWT auth degraded): {e}")
             self._jwt_verifier = None
         if os.environ.get("FUSION_REQUIRE_JWT", "") == "1":
-            logger.info("Desk RPC 生产模式: FUSION_REQUIRE_JWT=1 (强制 JWT, 禁静默降级)")
+            logger.info("Desk RPC production mode: FUSION_REQUIRE_JWT=1 (JWT enforced, silent fallback disabled)")
         if os.path.exists(self._sock_path):
             if not self._is_owned_socket(self._sock_path):
-                logger.error(f"UDS {self._sock_path} 已存在但非当前用户所有, 拒绝覆盖 (可能被恶意占用)")
-                raise RuntimeError(f"UDS {self._sock_path} 被非当前用户占用")
+                logger.error(f"UDS {self._sock_path} exists but is not owned by the current user, refusing to overwrite (possibly maliciously occupied)")
+                raise RuntimeError(f"UDS {self._sock_path} is occupied by another user")
             os.unlink(self._sock_path)
 
         self._running = True
@@ -339,12 +339,12 @@ class DeskRPCServer:
         try:
             os.chmod(self._sock_path, 0o600)
         except OSError as e:
-            logger.warning(f"UDS 权限设置 0o600 失败 (仅 owner 可连接): {e}")
-        logger.info(f"Desk RPC 服务启动: {self._sock_path} (perms 0o600, owner-only)")
+            logger.warning(f"Failed to set UDS permissions to 0o600 (owner-only connections): {e}")
+        logger.info(f"Desk RPC server started: {self._sock_path} (perms 0o600, owner-only)")
 
     @staticmethod
     def _is_owned_socket(path: str) -> bool:
-        """校验 UDS 文件属当前用户所有, 防恶意占用后窃听 (darwin 无 SO_PEERCRED)。"""
+        """Verify the UDS file is owned by the current user to prevent eavesdropping via malicious occupation (darwin has no SO_PEERCRED)."""
         try:
             st = os.stat(path)
             return st.st_uid == os.getuid()
@@ -352,7 +352,7 @@ class DeskRPCServer:
             return True
 
     async def stop(self) -> None:
-        """停止 RPC 服务端。"""
+        """Stop the RPC server."""
         self._running = False
         if self._server:
             self._server.close()
@@ -361,45 +361,45 @@ class DeskRPCServer:
             try:
                 await self._space_store.close()
             except Exception as e:
-                logger.debug(f"SpaceStore 关闭失败: {e}")
-        # A-10: 关闭共享 MLX/KB 客户端 (旧版各 handler new 后不 close, 连接池泄漏)
+                logger.debug(f"SpaceStore close failed: {e}")
+        # A-10: close the shared MLX/KB clients (previously handlers new-ed them without close, leaking connection pools)
         if self._mlx_client is not None:
             try:
                 await self._mlx_client.close()
             except Exception as e:
-                logger.debug(f"FusionMLXClient 关闭失败: {e}")
+                logger.debug(f"FusionMLXClient close failed: {e}")
             self._mlx_client = None
         if self._kb_client is not None:
             try:
                 await self._kb_client.close()
             except Exception as e:
-                logger.debug(f"KBClient 关闭失败: {e}")
+                logger.debug(f"KBClient close failed: {e}")
             self._kb_client = None
         if os.path.exists(self._sock_path):
             os.unlink(self._sock_path)
-        logger.info("Desk RPC 服务停止")
+        logger.info("Desk RPC server stopped")
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        """处理单个客户端连接。"""
+        """Handle a single client connection."""
         addr = writer.get_extra_info("peername")
-        logger.info(f"Desk RPC 客户端连接: {addr}")
+        logger.info(f"Desk RPC client connected: {addr}")
 
         try:
             while self._running:
-                # MD-1: 有界读 — readuntil(\n) 限 _MAX_RPC_LINE, 超长拒 -32700, 超 5s 断
+                # MD-1: bounded read — readuntil(\n) capped at _MAX_RPC_LINE, overlong rejected with -32700, disconnect after 5s
                 try:
                     raw = await asyncio.wait_for(reader.readuntil(b"\n"), timeout=_RPC_READ_TIMEOUT)
                 except asyncio.IncompleteReadError:
                     break
                 except asyncio.LimitOverrunError:
-                    logger.warning("Desk RPC 行超 %d 字节上限, 拒绝并断开", _MAX_RPC_LINE)
+                    logger.warning("Desk RPC line exceeds the %d byte limit, rejecting and disconnecting", _MAX_RPC_LINE)
                     await self._write_response(
                         writer,
                         {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Request too large"}},
                     )
                     break
                 except TimeoutError:
-                    logger.warning("Desk RPC 读超时 %ss, 断开", _RPC_READ_TIMEOUT)
+                    logger.warning("Desk RPC read timeout %ss, disconnecting", _RPC_READ_TIMEOUT)
                     break
                 if not raw:
                     break
@@ -410,7 +410,7 @@ class DeskRPCServer:
                 try:
                     request = json.loads(line)
                 except json.JSONDecodeError as e:
-                    logger.warning(f"无效 JSON: {e}")
+                    logger.warning(f"Invalid JSON: {e}")
                     await self._write_response(
                         writer,
                         {
@@ -421,9 +421,9 @@ class DeskRPCServer:
                     )
                     continue
 
-                # MD-1: JSON-RPC batch (数组) 显式拒 -32600, 不当 dict 分发
+                # MD-1: JSON-RPC batch (array) explicitly rejected with -32600, not dispatched as dict
                 if isinstance(request, list):
-                    logger.warning("Desk RPC 拒绝 batch 请求 (数组, %d 元素)", len(request))
+                    logger.warning("Desk RPC rejected batch request (array, %d elements)", len(request))
                     await self._write_response(
                         writer,
                         {
@@ -435,19 +435,19 @@ class DeskRPCServer:
                     continue
 
                 response = await self._dispatch(request)
-                # MD-1: 通知 (无 id) 不回响应 — JSON-RPC 2.0 规范
+                # MD-1: notifications (no id) get no response — JSON-RPC 2.0 spec
                 if response.get("id") is None and "id" not in request:
                     continue
                 await self._write_response(writer, response)
         except Exception as e:
-            logger.error(f"客户端处理异常: {e}")
+            logger.error(f"Client handling error: {e}")
         finally:
             writer.close()
             await writer.wait_closed()
-            logger.info(f"Desk RPC 客户端断开: {addr}")
+            logger.info(f"Desk RPC client disconnected: {addr}")
 
     async def _dispatch(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """分发 JSON-RPC 请求。"""
+        """Dispatch a JSON-RPC request."""
         method = request.get("method", "")
         req_id = request.get("id")
         params = request.get("params", {})
@@ -465,13 +465,13 @@ class DeskRPCServer:
             err = authed["__auth_error__"]
             return {"jsonrpc": "2.0", "id": req_id, "error": err}
 
-        # Stage 1: 注入 tenant_id 到 contextvar, 下游 store.resolve_tenant_id(None) 自动取。
+        # Stage 1: inject tenant_id into the contextvar; downstream store.resolve_tenant_id(None) picks it up automatically.
         tid = authed.get("__tenant_id__") or DEFAULT_TENANT
         t_tok = set_current_tenant(tid)
         try:
-            # Stage 6: per-tenant 限流 — 超限返 -32002 (rate limit exceeded)。
+            # Stage 6: per-tenant rate limiting — return -32002 when exceeded (rate limit exceeded).
             if not self._rate_limiter.allow(tid):
-                logger.warning(f"Desk RPC 限流命中 method={method} tenant={tid}")
+                logger.warning(f"Desk RPC rate limit hit method={method} tenant={tid}")
                 return {
                     "jsonrpc": "2.0",
                     "id": req_id,
@@ -490,12 +490,12 @@ class DeskRPCServer:
                     return {"jsonrpc": "2.0", "id": req_id, "result": result}
                 return {"jsonrpc": "2.0", "result": result}
             except Exception as e:
-                # HI-5: 对外仅 trace_id + 通用消息, 不泄内部栈/绝对路径/SQL 错误;
-                # 服务端详记 trace_id ↔ (method, params 摘要, 完整 traceback) 供排查
+                # HI-5: expose only trace_id + a generic message externally; never leak internal stacks/absolute paths/SQL errors;
+                # the server logs trace_id ↔ (method, params summary, full traceback) in detail for troubleshooting
                 trace_id = get_trace_id()
                 param_keys = list(authed.keys()) if isinstance(authed, dict) else []
                 logger.error(
-                    "Desk RPC 处理异常 trace_id=%s method=%s param_keys=%s err=%s\n%s",
+                    "Desk RPC handler exception trace_id=%s method=%s param_keys=%s err=%s\n%s",
                     trace_id,
                     method,
                     param_keys,
@@ -515,20 +515,20 @@ class DeskRPCServer:
             reset_current_tenant(t_tok)
 
     def _authenticate(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """认证调用方, 返回带可信身份的 params (CR-5 反 IDOR)。
+        """Authenticate the caller, returning params with a trusted identity (CR-5 anti-IDOR).
 
-        优先级 (Stage 2 + issue #88):
+        Priority (Stage 2 + issue #88):
         0. fusion-identity: FUSION_IDENTITY_ENABLED=1 → IdentityClient.verify(token),
-           tid 从 verify 响应取, uid 从 params x-user-id (sanitized) 取 (identity 不返 uid)。
-           revoked/不可达/非活跃 → fail-closed 拒 (生产模式不静默降级)。
-        1. JWT: env FUSION_JWT_SECRET/FUSION_JWKS_URL 配了 → 校验 params._auth_token Bearer JWT,
-           提取 tenant_id/user_id claim。生产 (FUSION_REQUIRE_JWT=1) 强制走此路径, 无 JWT → 拒。
-        2. principal_resolver: 外部注入 (如 OIDC header 解析), 返 TenantPrincipal。
-        3. 静态 token: desk.auth_token 配了 → 等值校验 (本地/桌面保留), 通过走默认身份。
-        4. 本地无认证: 以上都无 → local_user / default tenant (单用户向后兼容)。
+           tid comes from the verify response, uid from params x-user-id (sanitized) (identity does not return uid).
+           revoked/unreachable/inactive → fail-closed rejection (no silent fallback in production mode).
+        1. JWT: when env FUSION_JWT_SECRET/FUSION_JWKS_URL is set → verify params._auth_token Bearer JWT,
+           extract tenant_id/user_id claims. Production (FUSION_REQUIRE_JWT=1) forces this path; no JWT → reject.
+        2. principal_resolver: externally injected (e.g. OIDC header parsing), returns a TenantPrincipal.
+        3. Static token: when desk.auth_token is set → equality check (kept for local/desktop), default identity on success.
+        4. No local auth: none of the above → local_user / default tenant (single-user backward compat).
 
-        身份字段 (operator_id/user_id/inviter_id/author_id/owner_id/from_user_id) 不信 params,
-        一律改用连接级 principal。注入 __tenant_id__, 下游 store 据此隔离。
+        Identity fields (operator_id/user_id/inviter_id/author_id/owner_id/from_user_id) are not trusted from params;
+        always use the connection-level principal instead. __tenant_id__ is injected; downstream stores isolate on it.
         """
         sanitized = {k: v for k, v in params.items() if k not in _IDENTITY_FIELDS and k != "_auth_token"}
         principal_id = _DEFAULT_PRINCIPAL
@@ -538,7 +538,7 @@ class DeskRPCServer:
             token = ""
         resolved_principal: Optional[TenantPrincipal] = None
 
-        # 0. fusion-identity (issue #88) — 唯一签发者, 优先且 fail-closed
+        # 0. fusion-identity (issue #88) — sole issuer, preferred and fail-closed
         try:
             from fusion_cowork.auth.identity import is_identity_enabled
 
@@ -554,22 +554,25 @@ class DeskRPCServer:
                         )
                         resolved_principal = TenantPrincipal(tenant_id=result.tid, user_id=uid)
                     else:
-                        logger.warning("Desk RPC 认证失败: identity verify 未通过 (fail-closed)")
+                        logger.warning("Desk RPC auth failed: identity verify did not pass (fail-closed)")
+                        # i18n: user-facing
                         return {"__auth_error__": {"code": -32001, "message": "认证失败: token 无效或已吊销"}}
         except Exception as e:
-            logger.warning(f"Desk RPC identity 校验异常: {e}")
+            logger.warning(f"Desk RPC identity verification error: {e}")
+            # i18n: user-facing
             return {"__auth_error__": {"code": -32001, "message": "认证失败: identity 不可用"}}
 
-        # 1. JWT (env 配了 active)
+        # 1. JWT (active when env is set)
         if resolved_principal is None and self._jwt_verifier is not None and self._jwt_verifier.active:
             jwt_principal = self._jwt_verifier.verify_token(token)
             if jwt_principal is not None:
                 resolved_principal = jwt_principal
             elif self._require_jwt_mode():
-                logger.warning("Desk RPC 认证失败: 生产模式 JWT 校验未通过")
+                logger.warning("Desk RPC auth failed: production-mode JWT verification did not pass")
+                # i18n: user-facing
                 return {"__auth_error__": {"code": -32001, "message": "认证失败: JWT 无效或过期"}}
 
-        # 2. principal_resolver (外部注入, 覆盖 JWT)
+        # 2. principal_resolver (externally injected, overrides JWT)
         if resolved_principal is None and self._principal_resolver is not None:
             try:
                 resolved = self._principal_resolver(params)
@@ -578,21 +581,23 @@ class DeskRPCServer:
                 elif isinstance(resolved, str):
                     resolved_principal = TenantPrincipal(user_id=resolved or _DEFAULT_PRINCIPAL)
             except Exception as e:
-                logger.warning("principal_resolver 解析失败, 回退本地身份: %s", e)
+                logger.warning("principal_resolver failed, falling back to the local identity: %s", e)
 
-        # 3. 静态 token fallback (本地/桌面)
+        # 3. Static token fallback (local/desktop)
         if resolved_principal is None and self._auth_token:
             from fusion_cowork.auth import verify_static_token
 
             static_principal = verify_static_token(token, self._auth_token)
             if static_principal is None:
-                logger.warning("Desk RPC 认证失败: 静态 token 不匹配")
+                logger.warning("Desk RPC auth failed: static token mismatch")
+                # i18n: user-facing
                 return {"__auth_error__": {"code": -32001, "message": "认证失败: token 无效"}}
             resolved_principal = static_principal
 
-        # 4. 生产模式 + 无任何认证通过 → 拒 (防静默降级到 local_user)
+        # 4. Production mode + no auth passed → reject (prevents silent fallback to local_user)
         if resolved_principal is None and self._require_jwt_mode():
-            logger.warning("Desk RPC 认证失败: 生产模式无 JWT/静态 token")
+            logger.warning("Desk RPC auth failed: no JWT/static token in production mode")
+            # i18n: user-facing
             return {"__auth_error__": {"code": -32001, "message": "认证失败: 需有效凭证"}}
 
         if resolved_principal is not None:
@@ -609,18 +614,19 @@ class DeskRPCServer:
 
     @staticmethod
     def _require_jwt_mode() -> bool:
-        """生产模式: env FUSION_REQUIRE_JWT=1 → 强制 JWT, 禁静默降级。"""
+        """Production mode: env FUSION_REQUIRE_JWT=1 → enforce JWT, no silent fallback."""
         return os.environ.get("FUSION_REQUIRE_JWT", "") == "1"
 
     async def _require_space_access(
         self, space_id: str, principal: str, action: str, tenant_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
-        """校验 principal 对 space 的访问权 (CR-5 IDOR 守卫)。返回 error_dict 或 None。"""
+        """Verify the principal access to a space (CR-5 IDOR guard). Returns error_dict or None."""
         if not self._space_store or not space_id:
             return None
         tid = resolve_tenant_id(tenant_id)
         space = await self._space_store.get_space(space_id, tenant_id=tid)
         if not space:
+            # i18n: user-facing
             return {"error": f"空间不存在: {space_id}"}
         if principal == space.owner_id:
             return None
@@ -629,9 +635,11 @@ class DeskRPCServer:
         perm = SpacePermission(self._space_store)
         member = await self._space_store.get_member(space_id, principal, tenant_id=tid)
         if member is None:
-            logger.warning(f"IDOR 拒绝: principal={principal} 非空间 {space_id} 成员 tenant={tid}")
+            logger.warning(f"IDOR rejected: principal={principal} is not a member of space {space_id} tenant={tid}")
+            # i18n: user-facing
             return {"error": f"无权访问空间 {space_id}"}
         if action and not await perm.check(space_id, principal, action):
+            # i18n: user-facing
             return {"error": f"权限不足: 缺 {action}"}
         return None
 
@@ -698,9 +706,9 @@ class DeskRPCServer:
     }
 
     async def _check_space_access(self, method: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """dispatch 层 IDOR 守卫: desk.space.* + desk.project.* 按 method→action 校验。
+        """Dispatch-layer IDOR guard: desk.space.* + desk.project.* verified via the method→action mapping.
 
-        desk.space.member.join (invite_code 自助加入) / desk.space.create / desk.space.list 不校验。
+        desk.space.member.join (self-service join via invite_code) / desk.space.create / desk.space.list are not checked.
         """
         action = self._SPACE_ACCESS_ACTIONS.get(method)
         if action is None:
@@ -713,26 +721,27 @@ class DeskRPCServer:
         return await self._require_space_access(space_id, principal, action, tenant_id=tenant_id)
 
     def _internal_error(self, e: Exception, method: str = "") -> Dict[str, Any]:
-        """HI-5: handler 业务异常统一对外返回通用消息 + trace_id, 不泄 str(e) 内部细节
-        (绝对路径/SQL 列名/httpx URL); 服务端详记 trace_id↔(method, err, traceback)。"""
+        """HI-5: handler business exceptions uniformly return a generic message + trace_id externally, never leaking str(e) internals
+        (absolute paths/SQL column names/httpx URLs); the server logs trace_id↔(method, err, traceback) in detail."""
         trace_id = get_trace_id()
         logger.error(
-            "Desk RPC handler 异常 trace_id=%s method=%s err=%s\n%s",
+            "Desk RPC handler exception trace_id=%s method=%s err=%s\n%s",
             trace_id,
             method,
             e,
             traceback.format_exc(),
         )
+        # i18n: user-facing
         return {"error": "内部错误, 请联系管理员并提供 trace_id", "trace_id": trace_id}
 
     async def _write_response(self, writer: asyncio.StreamWriter, response: Dict[str, Any]) -> None:
-        """写入 JSON-RPC 响应 — 序列化失败时降级为错误帧，避免静默断连 (0 bytes)。"""
+        """Write a JSON-RPC response — degrade to an error frame on serialization failure to avoid a silent disconnect (0 bytes)."""
         try:
             data = json.dumps(response, ensure_ascii=False) + "\n"
         except (TypeError, ValueError) as e:
-            # HI-5: 序列化失败只记顶层键名, 不记 response!r (含节点 data/文件内容/shell 输出)
+            # HI-5: on serialization failure log only top-level key names, not response!r (contains node data/file contents/shell output)
             resp_keys = list(response.keys()) if isinstance(response, dict) else type(response).__name__
-            logger.error("Desk RPC 响应序列化失败, 降级错误帧: %s | resp_keys=%s", e, resp_keys)
+            logger.error("Desk RPC response serialization failed, degrading to an error frame: %s | resp_keys=%s", e, resp_keys)
             req_id = response.get("id") if isinstance(response, dict) else None
             fallback = {
                 "jsonrpc": "2.0",
@@ -743,7 +752,7 @@ class DeskRPCServer:
         writer.write(data.encode("utf-8"))
         await writer.drain()
 
-    # ── 方法实现 ──
+    # ── Method implementations ──
 
     async def _handle_health(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from .. import __version__
@@ -772,6 +781,7 @@ class DeskRPCServer:
         name = params.get("name", "")
         cls = NodeRegistry._registry.get(name)
         if not cls:
+            # i18n: user-facing
             return {"error": f"节点未注册: {name}"}
         doc = getattr(cls, "__doc__", "") or ""
         cat = getattr(cls, "category", None)
@@ -791,10 +801,12 @@ class DeskRPCServer:
         if self._permission_manager:
             allowed = await self._permission_manager.check(name, "execute", node_params)
             if not allowed:
-                logger.warning(f"节点执行被权限拒绝: {name}")
+                logger.warning(f"Node execution denied by permission: {name}")
+                # i18n: user-facing
                 return {"error": f"权限拒绝: {name}"}
         node = NodeRegistry.create(name, config=NodeConfig(params=node_params))
         if not node:
+            # i18n: user-facing
             return {"error": f"节点创建失败: {name}"}
         result = await node.execute(node_params)
         return {
@@ -826,10 +838,11 @@ class DeskRPCServer:
 
         prompt = params.get("prompt", "")
         if not prompt:
+            # i18n: user-facing
             return {"error": "prompt 不能为空"}
         gen = NLWorkflowGenerator(self._get_mlx_client())
         workflow = await gen.generate(prompt)
-        # generate() 返回 dict (workflow_def), 非 Workflow 对象, 无需 to_dict (#85)
+        # generate() returns a dict (workflow_def), not a Workflow object; no to_dict needed (#85)
         return {"workflow": workflow if workflow else None}
 
     async def _handle_workflow_run(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -844,14 +857,17 @@ class DeskRPCServer:
             if tmpl:
                 workflow_def = tmpl
             else:
+                # i18n: user-facing
                 return {"error": f"模板不存在: {template_id}"}
         if not workflow_def:
+            # i18n: user-facing
             return {"error": "workflow 或 template_id 必填"}
         wf = Workflow.from_dict(workflow_def)
         engine = self._get_engine()
-        # issue #157: run 级记忆集成 — 启动召回注入 / 结束写回 (params.memory 默认开, 桥失败零冲击)
+        # issue #157: run-level memory integration — recall injection at start / write-back at end (params.memory defaults on, bridge failure has zero impact)
         memory_enabled = params.get("memory", True)
         if not isinstance(memory_enabled, bool):
+            # i18n: user-facing
             return {"error": "memory 须为 boolean"}
         bridge = None
         initial_input: Optional[Dict[str, Any]] = None
@@ -872,7 +888,7 @@ class DeskRPCServer:
             "steps": [s.to_dict() if hasattr(s, "to_dict") else str(s) for s in result.steps],
             "error": result.error,
         }
-        # issue #157: 成功 run 结束写回
+        # issue #157: write back at the end of a successful run
         if bridge is not None and out["status"] == "success":
             from ..memory_bridge import MemoryBridge
 
@@ -898,6 +914,7 @@ class DeskRPCServer:
 
         execution_id = params.get("execution_id", "")
         if not execution_id:
+            # i18n: user-facing
             return {"error": "execution_id 不能为空"}
         engine = self._get_engine()
         engine.cancel(execution_id)
@@ -920,6 +937,7 @@ class DeskRPCServer:
         mgr = TemplateManager()
         template = mgr.get_template(template_id)
         if not template:
+            # i18n: user-facing
             return {"error": f"模板不存在: {template_id}"}
         return template
 
@@ -932,6 +950,7 @@ class DeskRPCServer:
         mgr = TemplateManager()
         template = mgr.get_template(template_id)
         if not template:
+            # i18n: user-facing
             return {"error": f"模板不存在: {template_id}"}
         wf_data = template.get("workflow", template)
         wf = Workflow.from_dict(wf_data)
@@ -947,18 +966,18 @@ class DeskRPCServer:
         from ..orchestrator import AgentOrchestrator
 
         if self._orchestrator is None:
-            # HI-9: 注入父引擎运行时, 子工作流执行器受同一权限/ Hook 约束
+            # HI-9: inject the parent engine runtime so sub-workflow executors are bound by the same permissions/hooks
             self._orchestrator = AgentOrchestrator(
                 permission_manager=self._permission_manager,
                 hook_manager=self._hook_manager,
                 session_store=self._session_store,
             )
             self._orchestrator.register_default_agents()
-            logger.info("DeskRPC 共享 AgentOrchestrator 已构建并注册默认 Agent")
+            logger.info("DeskRPC shared AgentOrchestrator built and default agents registered")
         return self._orchestrator
 
     def _get_engine(self):
-        # E-7: 旧版每请求新建 WorkflowEngine → 重复构造开销。缓存单例 (其依赖均共享级)。
+        # E-7: previously a WorkflowEngine was constructed per request → repeated construction cost. Cache a singleton (all dependencies are shared-level).
         if self._engine is not None:
             return self._engine
         from ..engine import WorkflowEngine
@@ -969,7 +988,7 @@ class DeskRPCServer:
             session_store=self._session_store,
             event_emitter=self._event_emitter,
         )
-        logger.debug("DeskRPC 复用单例 WorkflowEngine")
+        logger.debug("DeskRPC reusing the singleton WorkflowEngine")
         return self._engine
 
     async def _handle_agent_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -980,6 +999,7 @@ class DeskRPCServer:
     async def _handle_agent_submit(self, params: Dict[str, Any]) -> Dict[str, Any]:
         task = params.get("task", "")
         if not task:
+            # i18n: user-facing
             return {"error": "task 不能为空"}
         orch = self._get_orchestrator()
         task_id = await orch.submit_task(task)
@@ -1001,6 +1021,7 @@ class DeskRPCServer:
     async def _handle_agent_cancel(self, params: Dict[str, Any]) -> Dict[str, Any]:
         task_id = params.get("task_id", "")
         if not task_id:
+            # i18n: user-facing
             return {"error": "task_id 不能为空"}
         orch = self._get_orchestrator()
         ok = orch.cancel_task(task_id)
@@ -1009,6 +1030,7 @@ class DeskRPCServer:
     async def _handle_agent_request_acceptance(self, params: Dict[str, Any]) -> Dict[str, Any]:
         task_id = params.get("task_id", "")
         if not task_id:
+            # i18n: user-facing
             return {"error": "task_id 不能为空"}
         orch = self._get_orchestrator()
         return orch.request_acceptance(task_id, acceptor=params.get("acceptor", ""))
@@ -1017,6 +1039,7 @@ class DeskRPCServer:
         task_id = params.get("task_id", "")
         verdict = params.get("verdict", "")
         if not task_id or not verdict:
+            # i18n: user-facing
             return {"error": "task_id 与 verdict 不能为空"}
         orch = self._get_orchestrator()
         result = orch.accept_task(
@@ -1033,6 +1056,7 @@ class DeskRPCServer:
     async def _handle_agent_reopen(self, params: Dict[str, Any]) -> Dict[str, Any]:
         task_id = params.get("task_id", "")
         if not task_id:
+            # i18n: user-facing
             return {"error": "task_id 不能为空"}
         orch = self._get_orchestrator()
         ok = orch.reopen_task(task_id)
@@ -1107,7 +1131,7 @@ class DeskRPCServer:
                 }
             )
 
-        # 方案一 (audit v3) + P3-4 (audit v4): stale detection — a running
+        # Option 1 (audit v3) + P3-4 (audit v4): stale detection — a running
         # agent whose heartbeat stopped refreshing is likely hung. Threshold
         # configurable: FUSION_STALE_AFTER_SECONDS (default 90; heartbeat is
         # 30s, so 90s = 3 missed beats).
@@ -1152,7 +1176,7 @@ class DeskRPCServer:
         }
 
     async def _handle_retrospective_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """方案二③ GUI surface: recent plan retrospectives from the
+        """Option 2 (3) GUI surface: recent plan retrospectives from the
         trajectory jsonl pool (newest first) for the dashboard history view."""
         from ..orchestrator.trajectory_writer import list_plan_retrospectives
 
@@ -1202,25 +1226,26 @@ class DeskRPCServer:
         }
 
     async def _handle_set_scoped_folder(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """GUI 选定授权工作文件夹后下发 — P1-1 配套 (fusion-studio issue #202)。
+        """Pushed after the GUI selects authorized working folders — P1-1 companion (fusion-studio issue #202).
 
         params: {"folders": ["/abs/path", ...], "enforce": true}
-        设置 ScopedFolderManager 单例, enforce=True 时文件节点/ShellExec 强制校验越界。
+        Sets the ScopedFolderManager singleton; with enforce=True, file nodes/ShellExec enforce boundary checks.
         """
         from ..security import ScopedFolderManager, get_scoped_folder_manager, reset_scoped_folder_manager
 
         folders = params.get("folders", [])
         enforce = bool(params.get("enforce", True))
         if not isinstance(folders, list) or not folders:
+            # i18n: user-facing
             return {"error": "folders 必须为非空绝对路径列表"}
         reset_scoped_folder_manager()
-        # 用指定 folders 重建单例 (from_config 走配置默认, 这里覆盖)
+        # rebuild the singleton with the given folders (from_config uses config defaults; overridden here)
         mgr = ScopedFolderManager(scoped_folders=[str(f) for f in folders], enforce=enforce)
         import fusion_cowork.security.scoped_folder as _sf
 
         _sf._default_manager = mgr
         cur = get_scoped_folder_manager()
-        logger.info(f"set_scoped_folder: {len(cur.scopes)} 文件夹, enforce={cur.enforce}")
+        logger.info(f"set_scoped_folder: {len(cur.scopes)} folders, enforce={cur.enforce}")
         return {"set": True, "folders": [str(s) for s in cur.scopes], "enforce": cur.enforce}
 
     async def _handle_get_scoped_folder(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -1231,12 +1256,15 @@ class DeskRPCServer:
 
     async def _handle_events_subscribe(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._event_emitter:
+            # i18n: user-facing
             return {"error": "EventEmitter 未配置"}
         sub_id, queue = self._event_emitter.subscribe()
+        # i18n: user-facing
         return {"sub_id": sub_id, "message": "已订阅事件流，通过 desk.events.poll 获取"}
 
     async def _handle_events_recent(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._event_emitter:
+            # i18n: user-facing
             return {"error": "EventEmitter 未配置"}
         since = params.get("since", 0.0)
         events = self._event_emitter.get_buffered(since=since)
@@ -1247,6 +1275,7 @@ class DeskRPCServer:
 
     async def _handle_events_poll(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._event_emitter:
+            # i18n: user-facing
             return {"error": "EventEmitter 未配置"}
         sub_id = params.get("sub_id", "")
         events = []
@@ -1258,6 +1287,7 @@ class DeskRPCServer:
 
     async def _handle_session_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._session_store:
+            # i18n: user-facing
             return {"error": "SessionStore 未配置"}
         status = params.get("status")
         limit = params.get("limit", 20)
@@ -1269,25 +1299,30 @@ class DeskRPCServer:
 
     async def _handle_session_get(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._session_store:
+            # i18n: user-facing
             return {"error": "SessionStore 未配置"}
         session_id = params.get("session_id", "")
         s = self._session_store.get(session_id)
         if not s:
+            # i18n: user-facing
             return {"error": f"会话不存在: {session_id}"}
         return self._session_store.to_dict(s)
 
     async def _handle_session_fork(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._session_store:
+            # i18n: user-facing
             return {"error": "SessionStore 未配置"}
         session_id = params.get("session_id", "")
         from_step = params.get("from_step", 0)
         forked = self._session_store.fork(session_id, from_step=from_step)
         if not forked:
+            # i18n: user-facing
             return {"error": f"分叉失败: {session_id}"}
         return self._session_store.to_dict(forked)
 
     async def _handle_session_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._session_store:
+            # i18n: user-facing
             return {"error": "SessionStore 未配置"}
         from fusion_cowork.engine.session import Session
 
@@ -1314,10 +1349,12 @@ class DeskRPCServer:
 
     async def _handle_session_update(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._session_store:
+            # i18n: user-facing
             return {"error": "SessionStore 未配置"}
         session_id = params.get("session_id", "")
         session = self._session_store.get(session_id)
         if not session:
+            # i18n: user-facing
             return {"error": f"会话不存在: {session_id}"}
         updates = params.get("updates", {})
         if "name" in updates or "workflow_name" in updates:
@@ -1329,12 +1366,14 @@ class DeskRPCServer:
         if "metadata" in updates:
             new_meta = updates["metadata"]
             if not isinstance(new_meta, dict):
+                # i18n: user-facing
                 return {"error": "metadata 必须为对象"}
-            # HI-14: bound metadata 大小, 防客户端灌超大 dict 撑爆 session 记录
+            # HI-14: bound the metadata size to prevent clients from stuffing oversized dicts and bloating session records
             _MAX_META_BYTES = 64 * 1024
             merged = dict(session.metadata)
             merged.update(new_meta)
             if len(json.dumps(merged, ensure_ascii=False)) > _MAX_META_BYTES:
+                # i18n: user-facing
                 return {"error": f"metadata 超 {_MAX_META_BYTES} 字节上限"}
             session.metadata = merged
             self._session_store.save(session)
@@ -1343,6 +1382,7 @@ class DeskRPCServer:
 
     async def _handle_session_delete(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._session_store:
+            # i18n: user-facing
             return {"error": "SessionStore 未配置"}
         session_id = params.get("session_id", "")
         deleted = self._session_store.delete(session_id)
@@ -1350,6 +1390,7 @@ class DeskRPCServer:
 
     async def _handle_permission_check(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._permission_manager:
+            # i18n: user-facing
             return {"error": "PermissionManager 未配置"}
         tool_name = params.get("tool_name", "")
         tool_params = params.get("params", {})
@@ -1358,6 +1399,7 @@ class DeskRPCServer:
 
     async def _handle_permission_approve(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._permission_manager:
+            # i18n: user-facing
             return {"error": "PermissionManager 未配置"}
         tool_name = params.get("tool_name", "")
         scope = params.get("scope", "*")
@@ -1366,6 +1408,7 @@ class DeskRPCServer:
 
     async def _handle_permission_deny(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._permission_manager:
+            # i18n: user-facing
             return {"error": "PermissionManager 未配置"}
         tool_name = params.get("tool_name", "")
         scope = params.get("scope", "*")
@@ -1374,21 +1417,25 @@ class DeskRPCServer:
 
     async def _handle_permission_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._permission_manager:
+            # i18n: user-facing
             return {"error": "PermissionManager 未配置"}
         return self._permission_manager.to_dict()
 
     async def _handle_permission_reset(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._permission_manager:
+            # i18n: user-facing
             return {"error": "PermissionManager 未配置"}
         self._permission_manager.reset()
         return {"status": "reset"}
 
     async def _handle_permission_confirm_guard(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        # issue #73: guard L3 verdict confirm — approved 则加本地 approve 规则, 否则 deny
+        # issue #73: guard L3 verdict confirm — add a local approve rule if approved, otherwise deny
         if not self._permission_manager:
+            # i18n: user-facing
             return {"error": "PermissionManager 未配置"}
         action_id = params.get("action_id", "")
         if not action_id:
+            # i18n: user-facing
             return {"error": "action_id 必填"}
         approved = bool(params.get("approved", False))
         approved_by = params.get("approved_by", "unknown")
@@ -1396,10 +1443,11 @@ class DeskRPCServer:
         ok = await self._permission_manager.confirm_guard(action_id, approved, approved_by, tenant_id)
         return {"action_id": action_id, "confirmed": ok}
 
-    # ── 协作空间 ──
+    # ── Collaboration spaces ──
 
     async def _handle_space_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceService
 
@@ -1412,11 +1460,12 @@ class DeskRPCServer:
             sp = await svc.create(name=name, owner_id=owner_id, description=description, collab_mode=collab_mode)
             return sp.to_dict()
         except Exception as e:
-            logger.error(f"space.create 失败: {e}")
+            logger.error(f"space.create failed: {e}")
             return self._internal_error(e)
 
     async def _handle_space_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceService
 
@@ -1429,6 +1478,7 @@ class DeskRPCServer:
 
     async def _handle_space_get(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceService
 
@@ -1436,52 +1486,59 @@ class DeskRPCServer:
         space_id = params.get("space_id", "")
         sp = await svc.get(space_id)
         if not sp:
+            # i18n: user-facing
             return {"error": f"空间不存在: {space_id}"}
         return sp.to_dict()
 
     async def _handle_space_update(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceService
 
         svc = SpaceService(self._space_store)
         space_id = params.get("space_id", "")
         updates = params.get("updates", {})
-        # HI-14: handler 层显式字段白名单, 拒 owner_id/status/kb_*/collab_mode/config
-        # (客户端经 **updates 可夺权或反归档)。store 层 CR-4 白名单含这些高危列,
-        # 此处再收紧到用户可改的业务字段。
+        # HI-14: explicit field whitelist at the handler layer; reject owner_id/status/kb_*/collab_mode/config
+        # (clients could seize ownership or unarchive via **updates). The store-layer CR-4 whitelist covers these high-risk columns,
+        # tightened further here to user-editable business fields.
         _USER_EDITABLE = {"name", "description"}
         cleaned = {}
         for k, v in updates.items():
             if k not in _USER_EDITABLE:
-                logger.warning("desk.space.update 拒非用户可编辑字段: %s", k)
+                logger.warning("desk.space.update rejected a non-user-editable field: %s", k)
                 continue
             cleaned[k] = v
         if not cleaned:
+            # i18n: user-facing
             return {"error": "无可更新字段 (仅允许 name/description)"}
         sp = await svc.update(space_id, **cleaned)
         if not sp:
+            # i18n: user-facing
             return {"error": f"空间不存在: {space_id}"}
         return sp.to_dict()
 
     async def _handle_space_archive(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceService
 
         svc = SpaceService(self._space_store)
         space_id = params.get("space_id", "")
         if not space_id:
+            # i18n: user-facing
             return {"error": "space_id 必填"}
         try:
             result = await svc.archive(space_id)
             return {"space_id": space_id, "archived": bool(result)}
         except Exception as e:
-            logger.error(f"space.archive 失败: {e}")
+            logger.error(f"space.archive failed: {e}")
             return self._internal_error(e)
 
     async def _handle_space_delete(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceService
 
@@ -1492,6 +1549,7 @@ class DeskRPCServer:
 
     async def _handle_space_member_invite(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceMemberService, SpacePermission
 
@@ -1513,6 +1571,7 @@ class DeskRPCServer:
 
     async def _handle_space_member_join(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceMemberService, SpacePermission
 
@@ -1529,6 +1588,7 @@ class DeskRPCServer:
 
     async def _handle_space_member_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         space_id = params.get("space_id", "")
         members = await self._space_store.list_members(space_id)
@@ -1536,6 +1596,7 @@ class DeskRPCServer:
 
     async def _handle_space_member_remove(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceMemberService, SpacePermission
 
@@ -1555,6 +1616,7 @@ class DeskRPCServer:
 
     async def _handle_space_member_update_role(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceMemberService, SpacePermission
 
@@ -1626,12 +1688,12 @@ class DeskRPCServer:
                 try:
                     await queue.put_nowait(payload)
                 except asyncio.QueueFull:
-                    logger.warning(f"collab 会话 {session_id} 队列已满, 丢弃")
+                    logger.warning(f"collab session {session_id} queue full, dropping")
 
         return _MockWS(), queue
 
     def _touch_collab_session(self, session_id: str) -> None:
-        # Stage 7: 更新心跳 + evict idle/expired, 防长跑泄漏 (ResourceWarning)
+        # Stage 7: refresh the heartbeat + evict idle/expired to prevent long-run leaks (ResourceWarning)
         sess = self._collab_sessions.get(session_id)
         if sess is not None:
             sess["last_seen"] = time.monotonic()
@@ -1642,20 +1704,20 @@ class DeskRPCServer:
         for sid in expired:
             self._collab_sessions.pop(sid, None)
             self._collab_queues.pop(sid, None)
-            logger.info(f"collab 会话 {sid} idle 超时 evict (泄漏防护)")
-        # 上限保护: 超 max 则 evict 最旧
+            logger.info(f"collab session {sid} evicted on idle timeout (leak protection)")
+        # cap guard: evict the oldest when over max
         if len(self._collab_sessions) > _COLLAB_MAX_SESSIONS:
             oldest = sorted(self._collab_sessions.items(), key=lambda kv: kv[1].get("last_seen", 0))
             for sid, _ in oldest[: len(self._collab_sessions) - _COLLAB_MAX_SESSIONS]:
                 self._collab_sessions.pop(sid, None)
                 self._collab_queues.pop(sid, None)
-                logger.warning(f"collab 会话 {sid} 超 _COLLAB_MAX_SESSIONS evict")
+                logger.warning(f"collab session {sid} evicted for exceeding _COLLAB_MAX_SESSIONS")
 
     async def _handle_space_collab_join(self, params: Dict[str, Any]) -> Dict[str, Any]:
         import secrets as _secrets
 
         hub = self._get_collab_hub()
-        # HI-13: principal 取认证身份, 不信 params.user_id (CR-5 同源); 128-bit 会话 id
+        # HI-13: the principal comes from the authenticated identity; do not trust params.user_id (CR-5 same origin); 128-bit session id
         authed = self._authenticate(params)
         if "__auth_error__" in authed:
             return authed["__auth_error__"]
@@ -1664,7 +1726,7 @@ class DeskRPCServer:
         user_id = principal
         display_name = authed.get("display_name", "")
         session_id = authed.get("session_id") or f"sess_{_secrets.token_hex(16)}"
-        self._touch_collab_session(session_id)  # join 时先 evict idle
+        self._touch_collab_session(session_id)  # evict idle sessions first on join
         ws, _ = self._mock_ws_for(session_id)
         result = await hub.join(ws, space_id, user_id, display_name=display_name)
         self._collab_sessions[session_id] = {
@@ -1682,13 +1744,16 @@ class DeskRPCServer:
         session_id = params.get("session_id", "")
         sess = self._collab_sessions.get(session_id)
         if not sess:
+            # i18n: user-facing
             return {"error": "会话不存在, 请先 collab.join"}
         self._touch_collab_session(session_id)
-        # HI-13: content 限长 + 剥控制字符, 防 LLM 存储型 prompt 注入 / 撑爆记录
+        # HI-13: content length cap + control char stripping to prevent LLM stored prompt injection / bloated records
         content = params.get("content", "")
         if not isinstance(content, str):
+            # i18n: user-facing
             return {"error": "content 必须为字符串"}
         if len(content) > _MAX_COLLAB_CONTENT:
+            # i18n: user-facing
             return {"error": f"消息超 {_MAX_COLLAB_CONTENT} 字符上限"}
         content = _strip_control_chars(content)
         raw = json.dumps(
@@ -1702,6 +1767,7 @@ class DeskRPCServer:
         session_id = params.get("session_id", "")
         sess = self._collab_sessions.get(session_id)
         if not sess:
+            # i18n: user-facing
             return {"error": "会话不存在, 请先 collab.join"}
         self._touch_collab_session(session_id)
         raw = json.dumps(
@@ -1741,6 +1807,7 @@ class DeskRPCServer:
 
     async def _handle_space_chat_send(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceChatService, SpacePermission
 
@@ -1762,6 +1829,7 @@ class DeskRPCServer:
 
     async def _handle_space_chat_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceChatService, SpacePermission
 
@@ -1779,6 +1847,7 @@ class DeskRPCServer:
 
     async def _handle_space_chat_context(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceChatService, SpacePermission
 
@@ -1795,6 +1864,7 @@ class DeskRPCServer:
 
     async def _handle_space_kb_bind(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceKBService, SpacePermission
 
@@ -1814,6 +1884,7 @@ class DeskRPCServer:
 
     async def _handle_space_kb_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceKBService, SpacePermission
 
@@ -1827,6 +1898,7 @@ class DeskRPCServer:
 
     async def _handle_space_kb_upload(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceKBService, SpacePermission
 
@@ -1847,6 +1919,7 @@ class DeskRPCServer:
 
     async def _handle_space_kb_search(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceKBService, SpacePermission
 
@@ -1864,6 +1937,7 @@ class DeskRPCServer:
 
     async def _handle_space_kb_query(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceKBService, SpacePermission
 
@@ -1881,6 +1955,7 @@ class DeskRPCServer:
 
     async def _handle_space_kb_unbind(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceKBService, SpacePermission
 
@@ -1899,6 +1974,7 @@ class DeskRPCServer:
 
     async def _handle_space_agent_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceAgentRuntime, SpacePermission
 
@@ -1914,6 +1990,7 @@ class DeskRPCServer:
 
     async def _handle_space_agent_add(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceAgentRuntime, SpacePermission
 
@@ -1946,6 +2023,7 @@ class DeskRPCServer:
 
     async def _handle_space_agent_remove(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceAgentRuntime, SpacePermission
 
@@ -1966,6 +2044,7 @@ class DeskRPCServer:
 
     async def _handle_space_agent_call(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceAgentRuntime, SpacePermission
 
@@ -1988,6 +2067,7 @@ class DeskRPCServer:
 
     async def _handle_space_agent_relay(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceChatService, SpacePermission
 
@@ -2014,17 +2094,18 @@ class DeskRPCServer:
         except (PermissionError, ValueError) as e:
             return {"error": str(e)}
 
-    # ── 跨产品集成：fusion-projects ──
+    # ── Cross-product integration: fusion-projects ──
 
     async def _handle_project_sync_knowledge(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """接收外部项目知识库文件同步到协同空间。
+        """Receive external project knowledge base files synced into a space.
 
         params:
-            space_id: 目标空间 ID
-            files: [{"name": "x.pdf", "content": "<base64>", "folder": "需求文档"}, ...]
-            operator_id: 操作者 (default: "project_sync")
+            space_id: target space ID
+            files: [{"name": "x.pdf", "content": "<base64>", "folder": "requirements"}, ...]
+            operator_id: operator (default: "project_sync")
         """
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceKBService, SpacePermission
 
@@ -2032,10 +2113,13 @@ class DeskRPCServer:
         files = params.get("files", [])
         operator_id = params.get("operator_id", "project_sync")
         if not space_id:
+            # i18n: user-facing
             return {"error": "space_id 必填"}
         if not files:
+            # i18n: user-facing
             return {"error": "files 不能为空"}
         if not isinstance(files, list) or len(files) > _MAX_SYNC_FILES:
+            # i18n: user-facing
             return {"error": f"files 须为列表且不超 {_MAX_SYNC_FILES} 个"}
         perm = SpacePermission(self._space_store)
         kb_client = self._get_kb_client()
@@ -2046,29 +2130,34 @@ class DeskRPCServer:
             name = f.get("name", "")
             content_b64 = f.get("content", "")
             folder = f.get("folder", "")
-            # HI-15: 文件名净化 (拒路径穿越 ../../etc/cron.d/x)
+            # HI-15: filename sanitization (rejects path traversal ../../etc/cron.d/x)
             safe_name = _secure_filename(name)
             if not safe_name:
+                # i18n: user-facing
                 errors.append({"name": name, "error": "文件名非法或缺失"})
                 continue
             if not content_b64 or not isinstance(content_b64, str):
+                # i18n: user-facing
                 errors.append({"name": safe_name, "error": "content 缺失"})
                 continue
-            # HI-15: base64 体积上限 (防 10GB base64 解 7.5GB)
+            # HI-15: base64 size cap (prevents 10GB of base64 decoding into 7.5GB)
             if len(content_b64) > _MAX_B64_BYTES:
+                # i18n: user-facing
                 errors.append({"name": safe_name, "error": f"base64 超 {_MAX_B64_BYTES} 字节上限"})
                 continue
-            # HI-15: 扩展名白名单 (KB 消费文本; 非文本扩展名拒)
+            # HI-15: extension whitelist (KB consumes text; non-text extensions rejected)
             ext = os.path.splitext(safe_name)[1].lower()
             if ext and ext not in _TEXT_EXT_WHITELIST:
+                # i18n: user-facing
                 errors.append({"name": safe_name, "error": f"非文本扩展名 {ext} 不受支持"})
                 continue
             try:
                 import base64
 
                 content_bytes = base64.b64decode(content_b64, validate=True)
-                # HI-15: 解码后体积上限
+                # HI-15: decoded size cap
                 if len(content_bytes) > _MAX_DECODED_BYTES:
+                    # i18n: user-facing
                     errors.append({"name": safe_name, "error": f"解码后超 {_MAX_DECODED_BYTES} 字节上限"})
                     continue
                 result = await kb_svc.upload_document(
@@ -2081,19 +2170,21 @@ class DeskRPCServer:
                 synced.append({"name": safe_name, "result": result})
             except Exception as e:
                 logger.error("syncKnowledge: %s failed: %s", safe_name, e)
+                # i18n: user-facing
                 errors.append({"name": safe_name, "error": "上传失败", "trace_id": get_trace_id()})
         logger.info("desk.project.syncKnowledge space=%s synced=%d errors=%d", space_id, len(synced), len(errors))
         return {"synced": synced, "errors": errors}
 
     async def _handle_project_import_snapshot(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """接收会话快照导入到协同空间。
+        """Receive a session snapshot imported into a space.
 
         params:
-            space_id: 目标空间 ID
+            space_id: target space ID
             snapshot: {"title": "...", "messages": [...], "instructionSnapshot": "...", "agentId": "..."}
-            operator_id: 操作者 (default: "project_import")
+            operator_id: operator (default: "project_import")
         """
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         import uuid
 
@@ -2103,11 +2194,14 @@ class DeskRPCServer:
         snapshot = params.get("snapshot", {})
         operator_id = params.get("operator_id", "project_import")
         if not space_id:
+            # i18n: user-facing
             return {"error": "space_id 必填"}
         if not snapshot:
+            # i18n: user-facing
             return {"error": "snapshot 不能为空"}
         space = await self._space_store.get_space(space_id)
         if not space:
+            # i18n: user-facing
             return {"error": f"空间 {space_id} 不存在"}
         messages_data = snapshot.get("messages", [])
         imported = 0
@@ -2133,22 +2227,25 @@ class DeskRPCServer:
         return {"imported": imported, "errors": errors}
 
     async def _handle_project_export_to_project(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """导出协同空间内容到 fusion-projects。
+        """Export space content to fusion-projects.
 
         params:
-            space_id: 源空间 ID
+            space_id: source space ID
             items: {"files": true, "chatHistory": true, "artifacts": false}
-            target_project_id: 目标项目 ID (记录用)
+            target_project_id: target project ID (for record-keeping)
         """
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         space_id = params.get("space_id", "")
         items = params.get("items", {})
         target_project_id = params.get("target_project_id", "")
         if not space_id:
+            # i18n: user-facing
             return {"error": "space_id 必填"}
         space = await self._space_store.get_space(space_id)
         if not space:
+            # i18n: user-facing
             return {"error": f"空间 {space_id} 不存在"}
         export_data: Dict[str, Any] = {"space_id": space_id, "space_name": space.name}
         if items.get("chatHistory", True):
@@ -2172,19 +2269,21 @@ class DeskRPCServer:
         return {"export_data": export_data}
 
     async def _handle_cowork_trigger(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """ST→project-svc→cowork 中转: 触发协同任务。
+        """ST→project-svc→cowork relay: trigger a collaboration task.
 
         params:
-            project_id: 关联项目 ID
-            action: 触发动作 (sync_knowledge / import_snapshot / export_to_project)
-            payload: 动作参数 (可选)
+            project_id: associated project ID
+            action: action to trigger (sync_knowledge / import_snapshot / export_to_project)
+            payload: action parameters (optional)
         """
         project_id = params.get("project_id", "")
         action = params.get("action", "")
         payload = params.get("payload") or params.get("params") or {}
         if not project_id:
+            # i18n: user-facing
             return {"error": "project_id 必填"}
         if not action:
+            # i18n: user-facing
             return {"error": "action 必填"}
         import uuid
 
@@ -2200,21 +2299,23 @@ class DeskRPCServer:
             try:
                 handler = self._handlers.get(target_method)
                 if handler:
-                    # A-5: 经 _dispatch 的认证+IDOR 守卫 — 原 _handle_cowork_trigger 直调
-                    # handler 绕过 _authenticate (无 __principal__) + _check_space_access,
-                    # 且 call_params 无 __principal__ → 目标 handler 取 params 身份字段被冒充。
+                    # A-5: route through the _dispatch auth+IDOR guards — the original _handle_cowork_trigger direct call
+                    # bypassed _authenticate (no __principal__) + _check_space_access,
+                    # and call_params had no __principal__ → target handlers could be impersonated via params identity fields.
                     call_params = {**payload, "project_id": project_id}
                     authed = self._authenticate(call_params)
                     if isinstance(authed, dict) and "__auth_error__" in authed:
                         result["status"] = "auth_failed"
+                        # i18n: user-facing
                         result["error"] = authed["__auth_error__"].get("message", "认证失败")
                         logger.warning(f"cowork.trigger auth failed project={project_id}")
                         return result
                     space_err = await self._check_space_access(target_method, authed)
                     if space_err is not None:
                         result["status"] = "forbidden"
+                        # i18n: user-facing
                         result["error"] = space_err.get("error", "空间访问被拒")
-                        logger.warning(f"cowork.trigger IDOR 拒 project={project_id} method={target_method}")
+                        logger.warning(f"cowork.trigger IDOR rejected project={project_id} method={target_method}")
                         return result
                     action_result = await handler(authed)
                     result["action_result"] = action_result
@@ -2232,29 +2333,32 @@ class DeskRPCServer:
                 result["error"] = f"action {action} not in {list(action_map.keys())}"
             elif not self._space_store:
                 result["status"] = "no_space_store"
+                # i18n: user-facing
                 result["error"] = "SpaceStore 未配置"
         logger.info(f"cowork.trigger project={project_id} action={action} task={task_id} status={result['status']}")
         return result
 
     async def _handle_cowork_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """ST→project-svc→cowork 中转: 查询协同任务状态。
+        """ST→project-svc→cowork relay: query collaboration task status.
 
         params:
-            task_id: 任务 ID
+            task_id: task ID
         """
         task_id = params.get("task_id", "")
         if not task_id:
+            # i18n: user-facing
             return {"error": "task_id 必填"}
         logger.info(f"cowork.status task={task_id}")
         return {"task_id": task_id, "status": "completed"}
 
-    # ── Artifact 权限 Handlers ──
+    # ── Artifact permission handlers ──
 
     def _get_artifact_svc(self):
         from ..space.artifact import SpaceArtifactService
         from ..space.permission import SpacePermission
 
         if not self._space_store:
+            # i18n: user-facing
             return None, "space_store 未初始化"
         perm = SpacePermission(self._space_store)
         return SpaceArtifactService(self._space_store, perm), None
@@ -2266,6 +2370,7 @@ class DeskRPCServer:
         space_id = params.get("space_id", "")
         user_id = params.get("user_id", "") or params.get("owner_id", "")
         if not space_id:
+            # i18n: user-facing
             return {"error": "space_id 必填"}
         if not user_id:
             sp = await self._space_store.get_space(space_id) if self._space_store else None
@@ -2291,6 +2396,7 @@ class DeskRPCServer:
         artifact_id = params.get("artifact_id", "")
         user_id = params.get("user_id", "")
         if not all([space_id, artifact_id]):
+            # i18n: user-facing
             return {"error": "space_id, artifact_id 必填"}
         if not user_id:
             sp = await self._space_store.get_space(space_id) if self._space_store else None
@@ -2298,6 +2404,7 @@ class DeskRPCServer:
         try:
             art = await svc.get_artifact(space_id, artifact_id, user_id)
             if not art:
+                # i18n: user-facing
                 return {"error": f"Artifact {artifact_id} 不存在"}
             return {"artifact": art}
         except PermissionError as e:
@@ -2311,6 +2418,7 @@ class DeskRPCServer:
         artifact_id = params.get("artifact_id", "")
         user_id = params.get("user_id", "")
         if not all([space_id, artifact_id]):
+            # i18n: user-facing
             return {"error": "space_id, artifact_id 必填"}
         if not user_id:
             sp = await self._space_store.get_space(space_id) if self._space_store else None
@@ -2336,6 +2444,7 @@ class DeskRPCServer:
         artifact_id = params.get("artifact_id", "")
         user_id = params.get("user_id", "")
         if not all([space_id, artifact_id]):
+            # i18n: user-facing
             return {"error": "space_id, artifact_id 必填"}
         if not user_id:
             sp = await self._space_store.get_space(space_id) if self._space_store else None
@@ -2355,6 +2464,7 @@ class DeskRPCServer:
         from_user = params.get("__principal__", "local_user")
         to_user = params.get("to_user_id", "")
         if not all([space_id, artifact_id, from_user, to_user]):
+            # i18n: user-facing
             return {"error": "space_id, artifact_id, to_user_id 必填"}
         try:
             result = await svc.transfer_ownership(space_id, artifact_id, from_user, to_user)
@@ -2369,6 +2479,7 @@ class DeskRPCServer:
         space_id = params.get("space_id", "")
         user_id = params.get("user_id", "")
         if not space_id:
+            # i18n: user-facing
             return {"error": "space_id 必填"}
         if not user_id:
             sp = await self._space_store.get_space(space_id) if self._space_store else None
@@ -2391,6 +2502,7 @@ class DeskRPCServer:
         artifact_id = params.get("artifact_id", "")
         user_id = params.get("user_id", "")
         if not all([space_id, artifact_id]):
+            # i18n: user-facing
             return {"error": "space_id, artifact_id 必填"}
         if not user_id:
             sp = await self._space_store.get_space(space_id) if self._space_store else None
@@ -2398,12 +2510,13 @@ class DeskRPCServer:
         removed = await svc.delete_artifact(space_id, artifact_id, user_id)
         return {"deleted": removed}
 
-    # ── 侧边栏模块 Handlers ──
+    # ── Sidebar module handlers ──
 
     def _get_module_registry(self):
         from ..space.fsb import ModuleRegistry
 
         if not self._space_store:
+            # i18n: user-facing
             return None, "space_store 未初始化"
         return ModuleRegistry(self._space_store), None
 
@@ -2414,6 +2527,7 @@ class DeskRPCServer:
         module_id = params.get("id", "")
         name = params.get("name", "")
         if not module_id or not name:
+            # i18n: user-facing
             return {"error": "id 和 name 必填"}
         result = await reg.register_module(
             module_id=module_id,
@@ -2438,6 +2552,7 @@ class DeskRPCServer:
             return {"error": err}
         module_id = params.get("id", "")
         if not module_id:
+            # i18n: user-facing
             return {"error": "id 必填"}
         await reg.enable_module(module_id)
         return {"enabled": True}
@@ -2448,16 +2563,18 @@ class DeskRPCServer:
             return {"error": err}
         module_id = params.get("id", "")
         if not module_id:
+            # i18n: user-facing
             return {"error": "id 必填"}
         await reg.disable_module(module_id)
         return {"disabled": True}
 
-    # ── 通知推送 Handlers ──
+    # ── Notification push handlers ──
 
     def _get_notification_svc(self):
         from ..space.fsb import NotificationService
 
         if not self._space_store:
+            # i18n: user-facing
             return None, "space_store 未初始化"
         return NotificationService(self._space_store), None
 
@@ -2469,6 +2586,7 @@ class DeskRPCServer:
         user_id = params.get("user_id", "") or "local_user"
         title = params.get("title", "")
         if not title:
+            # i18n: user-facing
             return {"error": "title 必填"}
         result = await svc.push_notification(
             space_id=space_id,
@@ -2497,6 +2615,7 @@ class DeskRPCServer:
             return {"error": err}
         notif_id = params.get("id", "") or params.get("notification_id", "")
         if not notif_id:
+            # i18n: user-facing
             return {"error": "id 或 notification_id 必填"}
         await svc.mark_read(notif_id)
         return {"read": True}
@@ -2505,10 +2624,12 @@ class DeskRPCServer:
 
     async def _handle_space_agent_update(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         space_id = params.get("space_id", "")
         agent_id = params.get("agent_id", "")
         if not space_id or not agent_id:
+            # i18n: user-facing
             return {"error": "space_id 和 agent_id 必填"}
         update_fields = {}
         for key in ("name", "system_prompt", "enable_rag", "config", "agent_type"):
@@ -2551,6 +2672,7 @@ class DeskRPCServer:
             config["capabilities"] = capabilities
             update_fields["config"] = config
         if not update_fields:
+            # i18n: user-facing
             return {"error": "无更新字段"}
         try:
             ok = await self._space_store.update_agent(space_id, agent_id, **update_fields)
@@ -2563,6 +2685,7 @@ class DeskRPCServer:
 
     async def _handle_space_snapshot_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         space_id = params.get("space_id", "")
         try:
@@ -2573,6 +2696,7 @@ class DeskRPCServer:
 
     async def _handle_space_snapshot_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space.models import SpaceSnapshot
 
@@ -2604,6 +2728,7 @@ class DeskRPCServer:
 
     async def _handle_space_snapshot_clone(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         space_id = params.get("space_id", "")
         snapshot_id = params.get("snapshot_id", "")
@@ -2612,6 +2737,7 @@ class DeskRPCServer:
         try:
             src = await self._space_store.get_snapshot(space_id, snapshot_id)
             if not src:
+                # i18n: user-facing
                 return {"error": f"快照 {snapshot_id} 不存在"}
             if not operator_id:
                 sp = await self._space_store.get_space(space_id)
@@ -2619,13 +2745,15 @@ class DeskRPCServer:
             from fusion_cowork.space.models import Space, SpaceMessage
 
             clone_space = Space(
+                # i18n: user-facing
                 name=new_name or f"{src.name} - 克隆空间",
+                # i18n: user-facing
                 description=f"由快照 {snapshot_id} 克隆",
                 owner_id=operator_id,
             )
             clone_space = await self._space_store.create_space(clone_space)
             new_space_id = clone_space.id
-            logger.info(f"snapshot.clone 新建空间: {new_space_id} (源快照={snapshot_id})")
+            logger.info(f"snapshot.clone created space: {new_space_id} (source snapshot={snapshot_id})")
 
             restored_msgs = 0
             for msg_data in src.snapshot_data.get("messages", []):
@@ -2658,12 +2786,14 @@ class DeskRPCServer:
 
     async def _handle_space_snapshot_restore(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         space_id = params.get("space_id", "")
         snapshot_id = params.get("snapshot_id", "")
         try:
             snap = await self._space_store.get_snapshot(space_id, snapshot_id)
             if not snap:
+                # i18n: user-facing
                 return {"error": f"快照 {snapshot_id} 不存在"}
             restored = 0
             for msg_data in snap.snapshot_data.get("messages", []):
@@ -2682,6 +2812,7 @@ class DeskRPCServer:
 
     async def _handle_space_snapshot_delete(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         space_id = params.get("space_id", "")
         snapshot_id = params.get("snapshot_id", "")
@@ -2695,6 +2826,7 @@ class DeskRPCServer:
 
     async def _handle_space_chat_stream(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space import SpaceChatService, SpacePermission
 
@@ -2728,6 +2860,7 @@ class DeskRPCServer:
 
     async def _handle_space_comment_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         message_id = params.get("message_id", "")
         author_id = params.get("author_id", "") or "local_user"
@@ -2736,6 +2869,7 @@ class DeskRPCServer:
         space_id = params.get("space_id", "")
         thread_id = params.get("thread_id", "")
         if not message_id or not content:
+            # i18n: user-facing
             return {"error": "message_id 和 content 必填"}
         try:
             comment_id = await self._space_store.add_comment(
@@ -2752,6 +2886,7 @@ class DeskRPCServer:
 
     async def _handle_space_comment_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         message_id = params.get("message_id", "")
         try:
@@ -2769,6 +2904,7 @@ class DeskRPCServer:
         space_id = params.get("space_id", "")
         user_id = params.get("operator_id", "") or params.get("user_id", "")
         if not space_id:
+            # i18n: user-facing
             return {"error": "space_id 必填"}
         if not user_id:
             sp = await self._space_store.get_space(space_id) if self._space_store else None
@@ -2792,6 +2928,7 @@ class DeskRPCServer:
         edges = params.get("edges", [])
         operator_id = params.get("operator_id", "")
         if not space_id:
+            # i18n: user-facing
             return {"error": "space_id 必填"}
         if not operator_id:
             sp = await self._space_store.get_space(space_id) if self._space_store else None
@@ -2820,6 +2957,7 @@ class DeskRPCServer:
         operator_id = params.get("operator_id", "") or params.get("user_id", "")
         inputs = params.get("inputs", {})
         if not all([space_id, artifact_id]):
+            # i18n: user-facing
             return {"error": "space_id, artifact_id 必填"}
         if not operator_id:
             sp = await self._space_store.get_space(space_id) if self._space_store else None
@@ -2827,6 +2965,7 @@ class DeskRPCServer:
         try:
             artifact = await svc.get_artifact(space_id, artifact_id, operator_id)
             if not artifact:
+                # i18n: user-facing
                 return {"error": f"工作流 {artifact_id} 不存在"}
             wf_data = json.loads(artifact.get("content", "{}"))
             wf_data.setdefault("name", artifact.get("name", "workflow"))
@@ -2875,6 +3014,7 @@ class DeskRPCServer:
 
     async def _handle_session_snapshot_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         space_id = params.get("space_id", "")
         session_id = params.get("session_id", "")
@@ -2887,6 +3027,7 @@ class DeskRPCServer:
 
     async def _handle_session_snapshot_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         from fusion_cowork.space.models import SpaceSnapshot
 
@@ -2912,6 +3053,7 @@ class DeskRPCServer:
 
     async def _handle_session_snapshot_restore(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         space_id = params.get("space_id", "")
         session_id = params.get("session_id", "")
@@ -2919,6 +3061,7 @@ class DeskRPCServer:
         try:
             snap = await self._space_store.get_snapshot(space_id, snapshot_id)
             if not snap:
+                # i18n: user-facing
                 return {"error": f"快照 {snapshot_id} 不存在"}
             return {"restored": True, "snapshot_id": snapshot_id, "session_id": session_id}
         except Exception as e:
@@ -2926,12 +3069,14 @@ class DeskRPCServer:
 
     async def _handle_session_snapshot_fork(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         space_id = params.get("space_id", "")
         snapshot_id = params.get("snapshot_id", "")
         try:
             src = await self._space_store.get_snapshot(space_id, snapshot_id)
             if not src:
+                # i18n: user-facing
                 return {"error": f"快照 {snapshot_id} 不存在"}
             from fusion_cowork.space.models import SpaceSnapshot
 
@@ -2949,6 +3094,7 @@ class DeskRPCServer:
 
     async def _handle_session_snapshot_delete(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._space_store:
+            # i18n: user-facing
             return {"error": "SpaceStore 未配置"}
         space_id = params.get("space_id", "")
         snapshot_id = params.get("snapshot_id", "")

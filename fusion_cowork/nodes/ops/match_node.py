@@ -1,14 +1,15 @@
-"""issue #422: historical_match — 历史项目比对节点 (extend vs new 判定)。
+"""issue #422: historical_match — historical project match node (extend vs new verdict).
 
-需求结构化后、脚手架前自动运行。对候选项目 (customer 自己的 + 其他客户的)
-做确定性能力重叠打分, 三值判定:
-- extend: 命中客户自己的项目 (score >= threshold) — 复用已有仓, 增量扩展
-- base: 命中其他客户的项目 — 提炼公共能力进 base 产品后新仓继承 (绝不写他客户仓,
-  绝不向他客户泄露项目名)
-- new: 无命中 — 现行为, 全新脚手架
+Runs automatically after requirement structuring and before scaffolding. Scores deterministic
+capability overlap against candidate projects (the customer's own + other customers'), with a
+three-valued verdict:
+- extend: hit the customer's own project (score >= threshold) — reuse the existing repo, extend incrementally
+- base: hit another customer's project — distill shared capabilities into the base product for the new repo to inherit (never writes to the other customer's repo,
+  never leaks the project name to the other customer)
+- new: no hit — current behavior, fresh scaffold
 
-打分 v1 是确定性词面重叠 (零 LLM 零成本, 合成 E2E 可复现); gaps = 要求能力
-减去候选已具备能力。候选来自 params.candidates (inline) 或 candidates_file (JSON)。
+Scoring v1 is deterministic lexical overlap (zero LLM, zero cost, reproducible in synthetic E2E); gaps = required capabilities
+minus capabilities the candidate already has. Candidates come from params.candidates (inline) or candidates_file (JSON).
 """
 
 from __future__ import annotations
@@ -30,7 +31,9 @@ from ...engine.node import (
 
 logger = logging.getLogger(__name__)
 
+# i18n: user-facing
 _WORD_RE = re.compile(r"[a-z0-9]+|[一-鿿]+")
+# i18n: user-facing
 _CJK_RE = re.compile(r"[一-鿿]+")
 _STOPWORDS = frozenset(
     {
@@ -53,12 +56,19 @@ _STOPWORDS = frozenset(
         "project",
         "support",
         "managed",
+        # i18n: user-facing
         "需要",
+        # i18n: user-facing
         "支持",
+        # i18n: user-facing
         "一个",
+        # i18n: user-facing
         "系统",
+        # i18n: user-facing
         "平台",
+        # i18n: user-facing
         "项目",
+        # i18n: user-facing
         "管理",
     }
 )
@@ -107,24 +117,34 @@ def _load_candidates(params: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 @register_node
 class HistoricalMatchNode(BaseNode):
-    """历史项目比对 — 需求 vs 候选项目能力重叠, 三值判定 extend/base/new。"""
+    """Historical project match — requirement vs candidate capability overlap, three-valued verdict extend/base/new."""
 
     name = "historical_match"
+    # i18n: user-facing
     display_name = "历史项目比对"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "需求与历史项目能力重叠比对 — extend (客户自己的项目) / base (提炼公共能力) / new (全新)"
     icon = "🧭"
+    # i18n: user-facing
     default_label = "历史项目比对"
 
     inputs = [
+        # i18n: user-facing
         {"key": "requirement", "label": "需求文本", "type": "string"},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "verdict", "label": "判定", "type": "string"},
+        # i18n: user-facing
         {"key": "score", "label": "匹配分", "type": "number"},
+        # i18n: user-facing
         {"key": "matched", "label": "命中项目", "type": "object"},
+        # i18n: user-facing
         {"key": "gaps", "label": "能力缺口", "type": "list"},
+        # i18n: user-facing
         {"key": "extension_label", "label": "扩展标签 (extend 判定为 extension, 其余空)", "type": "string"},
+        # i18n: user-facing
         {"key": "extension_contract", "label": "扩展交付契约段落 (extend 判定非空, 其余空)", "type": "string"},
     ]
 
@@ -132,27 +152,35 @@ class HistoricalMatchNode(BaseNode):
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "requirement": {"type": "string", "description": "需求文本 (缺省取上游输入 requirement)"},
                 "candidates": {
                     "type": "array",
+                    # i18n: user-facing
                     "description": (
+                        # i18n: user-facing
                         "候选项目列表: {slug, repo, capabilities: [], stack: '', customer: '', health: ''} — "
+                        # i18n: user-facing
                         "customer 为空串表示本客户自有项目"
                     ),
                 },
+                # i18n: user-facing
                 "candidates_file": {"type": "string", "description": "候选 JSON 文件路径 (与 candidates 合并)"},
                 "required_capabilities": {
                     "type": "array",
                     "items": {"type": "string"},
+                    # i18n: user-facing
                     "description": "需求要求的能力清单 — gaps = 要求 - 候选已具备",
                 },
                 "own_customer": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "本客户标识 (candidate.customer 与之相等才算 extend; 缺省空 = 全部自有)",
                 },
                 "threshold": {
                     "type": "number",
                     "default": 0.6,
+                    # i18n: user-facing
                     "description": "extend/base 判定分数阈值 (缺省 0.6)",
                 },
             },
@@ -162,7 +190,7 @@ class HistoricalMatchNode(BaseNode):
         params = coerce_params(self.config.params, self.get_params_schema())
         requirement = str(inputs.get("requirement") or params.get("requirement") or "")
         if not requirement.strip():
-            return NodeResult(status=NodeStatus.FAILED, error="缺少需求文本 (requirement)")
+            return NodeResult(status=NodeStatus.FAILED, error="Missing requirement text (requirement)")
         threshold = float(params.get("threshold") or 0.6)
         own_customer = str(params.get("own_customer", "") or "")
         required = [str(x) for x in (params.get("required_capabilities") or [])]
@@ -193,8 +221,8 @@ class HistoricalMatchNode(BaseNode):
                 "customer": str(best.get("customer", "") or ""),
             }
             gaps = [cap for cap in required if cap not in matched["capabilities"]]
-            # issue #422: 命中本客户项目 = extend; 命中他客户项目 = base (提炼公共能力,
-            # 绝不写他客户仓, 绝不向他客户泄露项目名)
+            # issue #422: hit on the customer's own project = extend; hit on another customer's project = base (distill shared capabilities,
+            # never write to the other customer's repo, never leak the project name to the other customer)
             verdict = "extend" if matched["customer"] == own_customer else "base"
             logger.info(
                 f"historical_match verdict={verdict} matched={matched['slug']} score={best_score:.3f} gaps={gaps}"
@@ -206,21 +234,21 @@ class HistoricalMatchNode(BaseNode):
                 "verdict": verdict,
                 "score": round(max(best_score, 0.0), 4),
                 "threshold": threshold,
-                # issue #444: base 判定原始 matched 也置空 — step output_data 经
-                # GET /api/runs/{id} 逐字暴露, 原始字段带他客户 slug/repo 违反 #422 红线;
-                # 与 matched_visible 同策略。模板插值安全: matched_repo 对 base 恒 ""
+                # issue #444: on a base verdict the raw matched is also emptied — step output_data is
+                # exposed verbatim via GET /api/runs/{id}; raw fields carrying another customer's slug/repo violate the #422 red line;
+                # same policy as matched_visible. Template-interpolation safe: matched_repo is always "" for base
                 "matched": {} if verdict == "base" else matched,
                 "gaps": gaps,
                 "candidates_scanned": len(candidates),
-                # issue #422: 扁平键供模板 ${step.<id>.result.matched_repo} 插值 —
-                # 仅 extend 有值 (new/base 缺路径插值会按 #343 报错)
+                # issue #422: flat key for template interpolation ${step.<id>.result.matched_repo} —
+                # only extend has a value (missing-path interpolation on new/base errors per #343)
                 "matched_repo": matched.get("repo", "") if verdict == "extend" else "",
-                # base 判定的隐私红线: 新客户可见面绝不携带他客户项目名
+                # privacy red line on base verdicts: anything visible to the new customer never carries another customer's project name
                 "matched_visible": {} if verdict == "base" else matched,
-                # issue #427: 扩展可追溯 — extend 判定下发 extension 标签 (github_api 过滤空串)
+                # issue #427: extension traceability — an extend verdict emits the extension label (github_api filters empty strings)
                 "extension_label": "extension" if verdict == "extend" else "",
-                # issue #427: extend 运行的交付契约 — PR 必须带 Extension Log (CHANGELOG)
-                # 并标注本运行是既有仓扩展; 非 extend 运行为空串 (prompt 逐字节不变)
+                # issue #427: delivery contract for extend runs — the PR must carry an Extension Log (CHANGELOG)
+                # and state that this run extends the existing repo; empty string on non-extend runs (prompt stays byte-identical)
                 "extension_contract": (
                     "\n\n## Extension contract (match verdict: extend)"
                     "\nThis run extends the existing repo (see scaffold source). Deliverables must include:"
@@ -231,5 +259,5 @@ class HistoricalMatchNode(BaseNode):
                 if verdict == "extend"
                 else "",
             },
-            summary=f"判定 {verdict} (score={max(best_score, 0.0):.2f}, {len(candidates)} 候选)",
+            summary=f"Verdict {verdict} (score={max(best_score, 0.0):.2f}, {len(candidates)} candidates)",
         )

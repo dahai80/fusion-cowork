@@ -1,4 +1,4 @@
-"""Fusion-Cowork 内嵌浏览器节点 + Chrome CDP 节点。"""
+"""Fusion-Cowork embedded-browser nodes + Chrome CDP nodes."""
 
 from .browser_nodes import BrowserAutomateNode, BrowserClient, BrowserExtractNode, BrowserManager, BrowserOpenNode
 from .cdp_client import CDPClient

@@ -21,10 +21,12 @@ export function MobilePage() {
         try {
             const res = await api.deliver(runId);
             if (res.delivered) {
+                // i18n: user-facing
                 sdk.toast.show({ level: 'success', message: t('已投递到桌面', 'Delivered to desktop') });
             } else {
                 sdk.toast.show({
                     level: 'warning',
+                    // i18n: user-facing
                     message: t('桌面设备不在线, 未送达', 'Desktop device offline, not delivered'),
                 });
             }
@@ -32,6 +34,7 @@ export function MobilePage() {
             console.error('[cowork-web] deliver failed', e);
             sdk.toast.show({
                 level: 'error',
+                // i18n: user-facing
                 message: t('投递失败 (同步未启用)', 'Deliver failed (sync not enabled)'),
             });
         }
@@ -43,6 +46,7 @@ export function MobilePage() {
             else if (action === 'resume') await api.resumeRun(runId);
             else await api.cancelRun(runId);
             const label = t(
+                // i18n: user-facing
                 action === 'pause' ? '已暂停' : action === 'resume' ? '已恢复' : '已取消',
                 action === 'pause' ? 'Paused' : action === 'resume' ? 'Resumed' : 'Cancelled'
             );
@@ -50,6 +54,7 @@ export function MobilePage() {
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] takeover failed', action, e);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('接管操作失败', 'Takeover action failed') });
         }
     }
@@ -59,19 +64,23 @@ export function MobilePage() {
             await api.confirmApproval(actionId, approved);
             sdk.toast.show({
                 level: 'success',
+                // i18n: user-facing
                 message: approved ? t('已允许', 'Approved') : t('已拒绝', 'Denied'),
             });
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] approval decision failed', e);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('审批提交失败', 'Approval failed') });
         }
     }
 
     return (
         <div className="mx-auto max-w-md space-y-3">
+            {/* i18n: user-facing */}
             <div className="text-sm font-medium text-text-primary">{t('运行概览', 'Runs overview')}</div>
             {ov.runs.length === 0 ? (
+                // i18n: user-facing
                 <EmptyState title={t('暂无运行', 'No runs')} />
             ) : (
                 ov.runs.map((r) => (
@@ -86,6 +95,7 @@ export function MobilePage() {
                             className="w-full rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-bg-muted"
                             onClick={() => void deliver(r.run_id)}
                         >
+                            {/* i18n: user-facing */}
                             {t('投递到桌面', 'Deliver to desktop')}
                         </button>
                         {(r.status === 'running' || r.status === 'paused') && (
@@ -96,6 +106,7 @@ export function MobilePage() {
                                         className="flex-1 rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-bg-muted"
                                         onClick={() => void takeover(r.run_id, 'pause')}
                                     >
+                                        {/* i18n: user-facing */}
                                         {t('暂停', 'Pause')}
                                     </button>
                                 )}
@@ -105,6 +116,7 @@ export function MobilePage() {
                                         className="flex-1 rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-bg-muted"
                                         onClick={() => void takeover(r.run_id, 'resume')}
                                     >
+                                        {/* i18n: user-facing */}
                                         {t('恢复', 'Resume')}
                                     </button>
                                 )}
@@ -113,6 +125,7 @@ export function MobilePage() {
                                     className="flex-1 rounded-md border border-border px-2 py-1 text-xs text-error hover:bg-bg-muted"
                                     onClick={() => void takeover(r.run_id, 'cancel')}
                                 >
+                                    {/* i18n: user-facing */}
                                     {t('取消', 'Cancel')}
                                 </button>
                             </div>
@@ -121,9 +134,11 @@ export function MobilePage() {
                 ))
             )}
             <div className="pt-1 text-sm font-medium text-text-primary">
+                {/* i18n: user-facing */}
                 {t('待审批', 'Pending approvals')} ({ov.pending_approvals.length})
             </div>
             {ov.pending_approvals.length === 0 ? (
+                // i18n: user-facing
                 <div className="text-xs text-text-muted">{t('无待审批项', 'Nothing pending')}</div>
             ) : (
                 ov.pending_approvals.map((a) => (
@@ -138,6 +153,7 @@ export function MobilePage() {
                                 className="flex-1 rounded-md border border-border px-2 py-1 text-xs text-error hover:bg-bg-muted"
                                 onClick={() => void decide(a.action_id, false)}
                             >
+                                {/* i18n: user-facing */}
                                 {t('拒绝', 'Deny')}
                             </button>
                             <button
@@ -145,6 +161,7 @@ export function MobilePage() {
                                 className="flex-1 rounded-md border border-border px-2 py-1 text-xs text-success hover:bg-bg-muted"
                                 onClick={() => void decide(a.action_id, true)}
                             >
+                                {/* i18n: user-facing */}
                                 {t('允许', 'Allow')}
                             </button>
                         </div>

@@ -85,7 +85,7 @@ def _skill_items(skills_dir: Optional[Path]) -> List[Dict[str, Any]]:
                 "detail": {"category": skill.category, "aliases": list(skill.aliases)},
             }
     except Exception as e:
-        logger.warning(f"能力目录: 内置技能枚举失败 (跳过): {e}")
+        logger.warning(f"capability catalog: builtin skill enumeration failed (skipped): {e}")
     try:
         from ..skills.persistence import list_skill_packs
 
@@ -108,7 +108,7 @@ def _skill_items(skills_dir: Optional[Path]) -> List[Dict[str, Any]]:
                 },
             }
     except Exception as e:
-        logger.warning(f"能力目录: JSON skill 包枚举失败 (跳过): {e}")
+        logger.warning(f"capability catalog: JSON skill pack enumeration failed (skipped): {e}")
     try:
         from ..skills import get_package_registry
 
@@ -131,7 +131,7 @@ def _skill_items(skills_dir: Optional[Path]) -> List[Dict[str, Any]]:
                 },
             )
     except Exception as e:
-        logger.warning(f"能力目录: markdown skill 包枚举失败 (跳过): {e}")
+        logger.warning(f"capability catalog: markdown skill pack enumeration failed (skipped): {e}")
     return sorted(items.values(), key=lambda i: i["id"])
 
 
@@ -144,10 +144,10 @@ def _load_connector_configs(connector_dir: Optional[Path]) -> List[Dict[str, Any
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"连接器配置解析失败 {path}: {e}")
+            logger.warning(f"connector config parse failed {path}: {e}")
             continue
         if not isinstance(data, dict) or not data.get("id"):
-            logger.warning(f"连接器配置缺 id, 跳过 {path}")
+            logger.warning(f"connector config missing id, skipping {path}")
             continue
         out.append(data)
     return out
@@ -160,7 +160,7 @@ def _rag_wired(rag_wired_path: Optional[Path]) -> List[str]:
     except FileNotFoundError:
         return []
     except (json.JSONDecodeError, OSError) as e:
-        logger.warning(f"能力目录: rag wired 状态读取失败 {path}: {e}")
+        logger.warning(f"capability catalog: failed to read rag wired state {path}: {e}")
         return []
     wired = data.get("wired") if isinstance(data, dict) else None
     return [str(k) for k in wired] if isinstance(wired, list) else []
@@ -170,11 +170,12 @@ def _mcp_registry_items() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     try:
         from fusion_core.mcp_registry import load_registry
     except ImportError:
+        # i18n: user-facing
         return [], {"name": "mcp_registry", "available": False, "detail": "fusion-core 未安装"}
     try:
         records = load_registry()
     except Exception as e:
-        logger.warning(f"能力目录: MCP 注册表加载失败: {e}")
+        logger.warning(f"capability catalog: MCP registry load failed: {e}")
         return [], {"name": "mcp_registry", "available": False, "detail": str(e)}
     items = []
     for record in records:
@@ -203,6 +204,7 @@ def _mcp_registry_items() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
                 },
             }
         )
+    # i18n: user-facing
     return items, {"name": "mcp_registry", "available": True, "detail": f"{len(items)} 个服务器"}
 
 
@@ -216,8 +218,10 @@ def _connector_items(
             "id": cap_id,
             "type": "connector",
             "name": f"knowledge.{wired}",
+            # i18n: user-facing
             "title": f"知识库 {wired}",
             "title_en": f"Knowledge base {wired}",
+            # i18n: user-facing
             "description": "fusion-rag 知识库检索 (本机, 已绑定)",
             "source": "knowledge",
             "detail_route": "/extensions",
@@ -228,7 +232,7 @@ def _connector_items(
     for cfg in _load_connector_configs(connector_dir):
         raw_id = str(cfg.get("id", "")).strip()
         if not raw_id or any(c in raw_id for c in "/\\ "):
-            logger.warning(f"连接器 id 非法, 跳过: {raw_id!r}")
+            logger.warning(f"invalid connector id, skipping: {raw_id!r}")
             continue
         scopes = []
         for s in cfg.get("scopes") or []:
@@ -243,7 +247,7 @@ def _connector_items(
             missing = [key for key in ("authorize_url", "token_url", "client_id_env") if not oauth.get(key)]
             if missing:
                 configured = False
-                logger.warning(f"连接器 {raw_id} OAuth 元数据缺字段: {missing}")
+                logger.warning(f"connector {raw_id} OAuth metadata missing fields: {missing}")
             else:
                 configured = bool(os.environ.get(str(oauth["client_id_env"]), "").strip())
         items[_id_of("connector", raw_id)] = {
@@ -283,7 +287,7 @@ def _template_items() -> List[Dict[str, Any]]:
 
         templates = TemplateManager().list_templates()
     except Exception as e:
-        logger.warning(f"能力目录: 模板枚举失败 (跳过): {e}")
+        logger.warning(f"capability catalog: template enumeration failed (skipped): {e}")
         return []
     items = []
     for tpl in templates:
@@ -339,7 +343,7 @@ async def _studio_items(
                 graphs = graphs if isinstance(graphs, list) else []
             except Exception as e:
                 errors.append(f"graphs: {e}")
-                logger.warning(f"能力目录: agent-studio graphs 列表失败: {e}")
+                logger.warning(f"capability catalog: agent-studio graphs list failed: {e}")
             try:
                 resp = await client.get("/v1/agents", params={"page": 1, "limit": 50})
                 resp.raise_for_status()
@@ -348,9 +352,9 @@ async def _studio_items(
                 agents = agents if isinstance(agents, list) else []
             except Exception as e:
                 errors.append(f"agents: {e}")
-                logger.warning(f"能力目录: agent-studio agents 列表失败: {e}")
+                logger.warning(f"capability catalog: agent-studio agents list failed: {e}")
     except Exception as e:
-        logger.warning(f"能力目录: agent-studio 不可达 {base}: {e}")
+        logger.warning(f"capability catalog: agent-studio unreachable {base}: {e}")
         return [], {"name": "agent_studio", "available": False, "detail": str(e)}
     for g in graphs:
         if not isinstance(g, dict) or not g.get("graph_id"):
@@ -424,6 +428,7 @@ async def build_catalog(
     if "connector" in wanted:
         connectors, connector_sources = _connector_items(connector_dir, rag_wired_path)
     subagents: List[Dict[str, Any]] = []
+    # i18n: user-facing
     studio_source: Dict[str, Any] = {"name": "agent_studio", "available": False, "detail": "未查询"}
     if "subagent" in wanted:
         subagents = _template_items()
@@ -436,7 +441,7 @@ async def build_catalog(
             _finish(item, store, workspace_id)
             item.setdefault("detail_route", _ROUTE_BY_TYPE.get(cap_type, "/capabilities"))
     logger.info(
-        f"能力目录: ws={workspace_id} skills={len(skills)} connectors={len(connectors)} subagents={len(subagents)}"
+        f"capability catalog: ws={workspace_id} skills={len(skills)} connectors={len(connectors)} subagents={len(subagents)}"
     )
     return {
         "workspace_id": workspace_id,

@@ -1,11 +1,11 @@
-"""Fusion-Cowork 日志工具 (v0.4.0 Stage 4 升级)。
+"""Fusion-Cowork logging utilities (v0.4.0 Stage 4 upgrade).
 
-支持:
-- 控制台 (默认) / JSON 结构化 (json=True, structlog) — 生产可观测
-- RotatingFileHandler (log_file 设了, maxBytes 100MB backupCount 5)
-- trace_id processor — 从 contextvar 注入 (observability.trace)
+Supports:
+- Console (default) / JSON structured (json=True, structlog) - production observability
+- RotatingFileHandler (when log_file is set, maxBytes 100MB backupCount 5)
+- trace_id processor - injected from contextvar (observability.trace)
 
-向后兼容: 无 json=True 保旧格式; 现有调用零改动。
+Backward compatible: without json=True the old format is kept; existing calls unchanged.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ _FILE_BACKUP = 5
 
 
 class _TraceIdFilter(logging.Filter):
-    """注入 trace_id 到 log record (从 contextvar, 无则空)。"""
+    """Inject trace_id into the log record (from contextvar, empty when absent)."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         tid = ""
@@ -42,14 +42,14 @@ def setup_logger(
     verbose: bool = False,
     json: bool = False,
 ) -> logging.Logger:
-    """配置 Fusion-Cowork 日志系统。
+    """Configure the Fusion-Cowork logging system.
 
     Args:
-        name: 日志器名称
-        level: 日志级别
-        log_file: 日志文件路径（留空则只输出到控制台）
-        verbose: 是否显示详细格式
-        json: True → structlog JSON 结构化输出 (生产); False → 旧文本格式 (兼容)
+        name: logger name
+        level: log level
+        log_file: log file path (empty means console output only)
+        verbose: whether to show the verbose format
+        json: True -> structlog JSON structured output (production); False -> legacy text format (compat)
     """
     if verbose:
         level = logging.DEBUG
@@ -103,7 +103,7 @@ def _setup_json_handler(logger: logging.Logger, level: int, trace_filter: loggin
             logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
             cache_logger_on_first_use=True,
         )
-        # 标准 logging 也桥到 structlog JSON
+        # Standard logging is also bridged to structlog JSON
         from structlog.stdlib import ProcessorFormatter
 
         handler = logging.StreamHandler(sys.stdout)
@@ -121,7 +121,7 @@ def _setup_json_handler(logger: logging.Logger, level: int, trace_filter: loggin
         handler.addFilter(trace_filter)
         logger.addHandler(handler)
     except ImportError:
-        logger.warning("structlog 未装 — 回退文本日志; pip install 'fusion-cowork[cloud]'")
+        logger.warning("structlog not installed - falling back to text logging; pip install 'fusion-cowork[cloud]'")
         fmt = _LOG_FORMAT_PLAIN
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(logging.Formatter(fmt, datefmt="%H:%M:%S"))

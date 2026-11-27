@@ -1,4 +1,4 @@
-"""ReportRenderer — 将 CapabilityMatrix + BenchmarkResult 渲染为 Markdown/HTML。"""
+"""ReportRenderer — renders CapabilityMatrix + BenchmarkResult into Markdown/HTML."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ _LEVEL_ICON = {
 
 
 class ReportRenderer:
-    """对比报告渲染器。"""
+    """Comparison report renderer."""
 
     def __init__(self, matrix: Optional[CapabilityMatrix] = None, runner: Optional[BenchmarkRunner] = None):
         self._matrix = matrix or CapabilityMatrix()
@@ -29,25 +29,25 @@ class ReportRenderer:
     def render_markdown(self) -> str:
         lines: List[str] = []
         s = self._matrix.summary()
-        lines.append("# Claude Cowork vs Fusion-Cowork 功能对比报告")
-        lines.append(f"\n> 生成时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        lines.append("# Claude Cowork vs Fusion-Cowork Capability Comparison Report")
+        lines.append(f"\n> Generated at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
 
-        lines.append("## 📊 总览\n")
-        lines.append("| 指标 | 值 |")
+        lines.append("## 📊 Overview\n")
+        lines.append("| Metric | Value |")
         lines.append("|------|-----|")
-        lines.append(f"| 能力总数 | {s['total_capabilities']} |")
+        lines.append(f"| Total capabilities | {s['total_capabilities']} |")
         lines.append(f"| Desk FULL+ | {s['desk_full_or_above']} |")
         lines.append(f"| Desk ADVANCED | {s['desk_advanced']} |")
         lines.append(f"| Cowork FULL+ | {s['cowork_full_or_above']} |")
-        lines.append(f"| Desk 独有能力 | {s['desk_unique']} |")
-        lines.append(f"| Cowork 独有能力 | {s['cowork_unique']} |")
-        lines.append(f"| 对等率 | {s['parity_score']} |")
+        lines.append(f"| Desk unique capabilities | {s['desk_unique']} |")
+        lines.append(f"| Cowork unique capabilities | {s['cowork_unique']} |")
+        lines.append(f"| Parity rate | {s['parity_score']} |")
         lines.append("")
 
         for cat in s["categories"]:
             caps = self._matrix.by_category(cat)
             lines.append(f"## {cat}\n")
-            lines.append("| 能力 | Cowork | Desk | 对等率 |")
+            lines.append("| Capability | Cowork | Desk | Parity |")
             lines.append("|------|--------|------|--------|")
             for c in caps:
                 cw = _LEVEL_ICON.get(c.cowork_level, "?") + " " + c.cowork_level.name
@@ -57,15 +57,15 @@ class ReportRenderer:
 
         desk_only = [c for c in self._matrix.list_all() if c.desk_level.value > 0 and c.cowork_level.value == 0]
         if desk_only:
-            lines.append("## 🏆 Fusion-Cowork 独有优势\n")
+            lines.append("## 🏆 Fusion-Cowork Unique Strengths\n")
             for c in desk_only:
                 lines.append(f"- **{c.name}** — {c.desk_detail}")
             lines.append("")
 
         if self._runner and self._runner.results():
-            lines.append("## ⏱️ 性能基准\n")
+            lines.append("## ⏱️ Performance Benchmarks\n")
             bsum = self._runner.summary()
-            lines.append("| 节点 | 平均(ms) | 最小(ms) | 最大(ms) | 运行次数 |")
+            lines.append("| Node | Avg(ms) | Min(ms) | Max(ms) | Runs |")
             lines.append("|------|----------|----------|----------|----------|")
             for name, st in bsum.get("nodes", {}).items():
                 lines.append(f"| {name} | {st['avg_ms']} | {st['min_ms']} | {st['max_ms']} | {st['runs']} |")
@@ -80,7 +80,7 @@ class ReportRenderer:
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>Cowork vs Fusion-Cowork 对比报告</title>
+<title>Cowork vs Fusion-Cowork Comparison Report</title>
 <style>
 body{{font-family:-apple-system,sans-serif;max-width:960px;margin:2em auto;padding:0 1em;color:#333}}
 table{{border-collapse:collapse;width:100%;margin:1em 0}}
@@ -103,7 +103,7 @@ blockquote{{border-left:4px solid #ddd;margin:1em 0;padding:0.5em 1em;color:#666
             content = self.render_markdown()
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
-        logger.info(f"对比报告已保存: {path}")
+        logger.info(f"Comparison report saved: {path}")
         return path
 
 

@@ -8,8 +8,9 @@ import { sdk } from '../sdk';
 // blocks for command/file artifacts, three actions (allow once = precise
 // scope / always allow tool = scope * / deny). Rules persist via backend
 // save() on confirm (survive serve restart).
-// #142: 编辑型 params 以 diff 分块呈现, 每块可独立接受/拒绝;
-// 部分接受时 "仅本次允许" 携带 accepted_blocks, 后端重建窄化后的编辑参数。
+// #142: edit-style params rendered as diff blocks, each block independently
+// accepted/rejected; on partial accept "allow once" carries accepted_blocks,
+// backend rebuilds the narrowed edit params.
 export function ApprovalsPage() {
     const t = useT();
     const [busyId, setBusyId] = useState('');
@@ -31,20 +32,27 @@ export function ApprovalsPage() {
         if (busyId) return;
         setBusyId(actionId);
         try {
-            // #337: once 语义随按钮传递 — 仅本次允许/拒绝都是一次性决定 (不落持久规则),
-            // 只有 "始终允许" 落规则; 否则一次拒绝会永久拉黑工具, 后续 HITL 闸门全被预拒
+            // #337: once semantics ride the button — allow/deny once are one-shot
+            // decisions (no persistent rule), only "always allow" persists a rule;
+            // otherwise a single deny would permanently block the tool and all
+            // later HITL gates would be pre-rejected
             const res = await api.confirmApproval(actionId, approved, scope, acceptedBlocks, once, undefined, comment);
             if (res.confirmed) {
                 sdk.toast.show({
                     level: 'success',
                     message: approved
                         ? acceptedBlocks
+                            // i18n: user-facing
                             ? t('已批准 (按所选变更块)', 'Approved (selected blocks)')
                             : once
+                              // i18n: user-facing
                               ? t('已批准 (仅本次, 未落规则)', 'Approved (once, no rule persisted)')
+                              // i18n: user-facing
                               : t('已批准 (始终, 规则已持久化)', 'Approved (always, rule persisted)')
                         : once
+                          // i18n: user-facing
                           ? t('已拒绝 (仅本次, 未落规则)', 'Rejected (once, no rule persisted)')
+                          // i18n: user-facing
                           : t('已拒绝 (规则已持久化)', 'Rejected (rule persisted)'),
                 });
             } else {
@@ -53,6 +61,7 @@ export function ApprovalsPage() {
                     message:
                         res.reason ||
                         t(
+                            // i18n: user-facing
                             'confirm 未生效 (guard 未启用或队列已变)',
                             'Confirm not applied (guard disabled or queue changed)'
                         ),
@@ -61,6 +70,7 @@ export function ApprovalsPage() {
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] approval confirm failed', e);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('操作失败', 'Operation failed') });
         } finally {
             setBusyId('');
@@ -70,12 +80,15 @@ export function ApprovalsPage() {
     return (
         <div className="mx-auto max-w-3xl">
             <div className="flex items-end justify-between pb-2">
+                {/* i18n: user-facing */}
                 <div className="text-sm font-medium text-text-primary">{t('审批队列', 'Approval queue')}</div>
                 <div className="text-xs text-text-muted">{approvals.length}</div>
             </div>
             {approvals.length === 0 ? (
                 <EmptyState
+                    // i18n: user-facing
                     title={t('暂无待审批', 'Nothing pending')}
+                    // i18n: user-facing
                     description={t('高风险操作 (guard L3) 出现时显示在此', 'High-risk actions (guard L3) appear here')}
                 />
             ) : (
@@ -105,13 +118,14 @@ function paramScope(a: GuardApproval): string {
     return '*';
 }
 
-// #326: 上游产物证据 — 评审者不用离开审批卡去找产出资材
+// #326: upstream artifact evidence — reviewer stays on the approval card
 function EvidenceBlocks({ approval }: { approval: GuardApproval }) {
     const t = useT();
     const artifacts = approval.artifacts ?? [];
     if (artifacts.length === 0) return null;
     return (
         <div className="mt-2 space-y-1.5">
+            {/* i18n: user-facing */}
             <div className="text-[10px] text-text-muted">{t('上游产出', 'Upstream output')}</div>
             {artifacts.map((ev) => (
                 <div key={ev.node_id} className="rounded-md border border-border bg-bg px-2 py-1.5">
@@ -131,6 +145,7 @@ function EvidenceBlocks({ approval }: { approval: GuardApproval }) {
                     className="inline-block text-[11px] text-brand hover:underline"
                     href={`#/runs/${approval.execution_id}`}
                 >
+                    {/* i18n: user-facing */}
                     {t('查看完整运行', 'View full run')}
                 </a>
             ) : null}
@@ -156,6 +171,7 @@ function ParamBlocks({
         <div className="mt-2 space-y-1.5">
             {cmd ? (
                 <div className="rounded-md border border-border bg-bg px-2 py-1.5">
+                    {/* i18n: user-facing */}
                     <div className="text-[10px] text-text-muted">{t('命令', 'Command')}</div>
                     <pre className="mt-0.5 overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-text-primary">
                         {cmd}
@@ -165,6 +181,7 @@ function ParamBlocks({
             {changeBlocks.length > 0 ? (
                 <div className="rounded-md border border-border bg-bg px-2 py-1.5">
                     <div className="text-[10px] text-text-muted">
+                        {/* i18n: user-facing */}
                         {t(`变更 diff (${changeBlocks.length} 块)`, `Change diff (${changeBlocks.length} blocks)`)}
                     </div>
                     <div className="mt-1 space-y-1.5">
@@ -175,6 +192,7 @@ function ParamBlocks({
                 </div>
             ) : oldStr || newStr ? (
                 <div className="rounded-md border border-border bg-bg px-2 py-1.5">
+                    {/* i18n: user-facing */}
                     <div className="text-[10px] text-text-muted">{t('变更内容', 'Change')}</div>
                     {oldStr ? (
                         <pre className="mt-0.5 overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-error">{`- ${oldStr}`}</pre>
@@ -212,9 +230,12 @@ function DiffBlockView({
     const isAccepted = accepted ? accepted.has(block.index) : true;
     const tagLabel =
         block.tag === 'insert'
+            // i18n: user-facing
             ? t('新增', 'insert')
             : block.tag === 'delete'
+              // i18n: user-facing
               ? t('删除', 'delete')
+              // i18n: user-facing
               : t('替换', 'replace');
     return (
         <div
@@ -226,6 +247,7 @@ function DiffBlockView({
                 </span>
                 {!isAccepted ? (
                     <span className="rounded border border-warning px-1 text-[10px] text-warning">
+                        {/* i18n: user-facing */}
                         {t('已拒绝', 'rejected')}
                     </span>
                 ) : null}
@@ -237,6 +259,7 @@ function DiffBlockView({
                             disabled={isAccepted}
                             onClick={() => onToggle(block.index)}
                         >
+                            {/* i18n: user-facing */}
                             {t('接受此块', 'Accept')}
                         </button>
                         <button
@@ -245,6 +268,7 @@ function DiffBlockView({
                             disabled={!isAccepted}
                             onClick={() => onToggle(block.index)}
                         >
+                            {/* i18n: user-facing */}
                             {t('拒绝此块', 'Reject')}
                         </button>
                     </span>
@@ -279,11 +303,13 @@ function ApprovalCard({
     const t = useT();
     const scope = paramScope(approval);
     const ctx = [approval.workflow, approval.node_id].filter(Boolean).join(' / ');
-    // #142: 分块选择状态 — 默认全接受, 拒绝块回退原文; 部分接受时 confirm 携带 accepted_blocks
+    // #142: block selection state — all accepted by default, rejected blocks fall
+    // back to original text; partial accept sends accepted_blocks on confirm
     const nonEqual = (approval.diff_blocks ?? []).filter((b) => b.tag !== 'equal').map((b) => b.index);
     const [accepted, setAccepted] = useState<Set<number>>(() => new Set(nonEqual));
     const partial = nonEqual.length > 0 && accepted.size < nonEqual.length;
-    // issue #328: 拒绝附评审意见 — 修订回路重跑时并入产出节点输入
+    // issue #328: deny carries review comments — merged into the producing node's
+    // input when the revision loop re-runs
     const [rejecting, setRejecting] = useState(false);
     const [rejectNote, setRejectNote] = useState('');
     function toggle(idx: number) {
@@ -307,6 +333,7 @@ function ApprovalCard({
             {partial ? (
                 <div className="mt-1 text-[11px] text-warning">
                     {t(
+                        // i18n: user-facing
                         `已拒绝 ${nonEqual.length - accepted.size} 个变更块, 仅本次允许将按剩余块窄化编辑`,
                         `${nonEqual.length - accepted.size} block(s) rejected — allow once applies remaining blocks only`
                     )}
@@ -318,6 +345,7 @@ function ApprovalCard({
                         className="min-h-12 w-full resize-y rounded-md border border-border bg-bg p-2 font-mono text-[11px] text-text-primary"
                         value={rejectNote}
                         placeholder={t(
+                            // i18n: user-facing
                             '评审意见 (修订重跑时带给产出节点)',
                             'Review comments (passed to the producing node on revision)'
                         )}
@@ -338,6 +366,7 @@ function ApprovalCard({
                                 )
                             }
                         >
+                            {/* i18n: user-facing */}
                             {t('确认拒绝', 'Confirm reject')}
                         </button>
                         <button
@@ -345,6 +374,7 @@ function ApprovalCard({
                             className="rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-bg-muted"
                             onClick={() => setRejecting(false)}
                         >
+                            {/* i18n: user-facing */}
                             {t('取消', 'Cancel')}
                         </button>
                     </div>
@@ -357,6 +387,7 @@ function ApprovalCard({
                     disabled={busy}
                     onClick={() => setRejecting(true)}
                 >
+                    {/* i18n: user-facing */}
                     {t('拒绝', 'Deny')}
                 </button>
                 <button
@@ -367,6 +398,7 @@ function ApprovalCard({
                         onConfirm(approval.action_id, true, scope, partial ? [...accepted] : undefined, true)
                     }
                 >
+                    {/* i18n: user-facing */}
                     {t('仅本次允许', 'Allow once')}
                 </button>
                 <button
@@ -375,6 +407,7 @@ function ApprovalCard({
                     disabled={busy}
                     onClick={() => onConfirm(approval.action_id, true)}
                 >
+                    {/* i18n: user-facing */}
                     {t('始终允许', 'Always allow')}
                 </button>
             </div>
@@ -384,5 +417,6 @@ function ApprovalCard({
 
 function ErrorView({ message, onRetry }: { message: string; onRetry: () => void }) {
     const t = useT();
+    // i18n: user-facing
     return <ErrorState message={message || t('加载失败', 'Load failed')} onRetry={onRetry} />;
 }

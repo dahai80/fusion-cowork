@@ -22,7 +22,7 @@ _RESULT_MARKER = "__SANDBOX_RESULT__"
 
 
 def _version_lt(a: str, b: str) -> bool:
-    """a < b 语义版本比较 (忽略非数字段)。"""
+    """a < b semantic version comparison (non-numeric segments ignored)."""
 
     def _t(v: str) -> tuple:
         parts = []
@@ -37,20 +37,24 @@ def _version_lt(a: str, b: str) -> bool:
 
 
 class SandboxedNode(BaseNode):
-    """沙箱节点包装器 — P1-6。
+    """Sandboxed node wrapper — P1-6.
 
-    包装第三方插件节点: 节点元数据 (name/display_name/category/schema) 在主进程注册,
-    但 execute() 委托给 PluginSandbox 子进程执行, 插件代码不进主进程。
+    Wraps a third-party plugin node: node metadata (name/display_name/category/schema) registers in the
+    main process, but execute() is delegated to a PluginSandbox subprocess, so plugin code never enters
+    the main process.
 
-    每个插件节点通过 make_sandboxed_node_class() 生成独立子类,
-    使类级 name/display_name 等元数据固定, 满足 NodeRegistry 按 name 注册的要求。
+    Each plugin node gets its own subclass generated via make_sandboxed_node_class(),
+    fixing class-level name/display_name metadata to satisfy NodeRegistry by-name registration.
     """
 
     name = "sandboxed_node"
+    # i18n: user-facing
     display_name = "沙箱插件节点"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "沙箱内执行的第三方插件节点"
     icon = "📦"
+    # i18n: user-facing
     default_label = "插件节点"
 
     def __init__(
@@ -80,8 +84,8 @@ class SandboxedNode(BaseNode):
         if not self._entry_file or not self._class_name:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="沙箱节点缺少 entry_file/class_name",
-                summary="沙箱节点配置不完整",
+                error="sandboxed node missing entry_file/class_name",
+                summary="sandboxed node configuration incomplete",
             )
 
         runner_path = str(Path(__file__).parent / "sandbox_runner.py")
@@ -101,7 +105,7 @@ class SandboxedNode(BaseNode):
 
             sandbox = PluginSandbox()
 
-        # LO-7: 从节点 meta 读 manifest.timeout_seconds 覆盖沙箱默认超时 (>0 才覆盖)
+        # LO-7: read manifest.timeout_seconds from node meta to override the sandbox default timeout (>0 overrides)
         call_limits = None
         meta = getattr(type(self), "_sandbox_meta", {}) or {}
         meta_timeout = float(meta.get("timeout_seconds", 0.0) or 0.0)
@@ -119,7 +123,7 @@ class SandboxedNode(BaseNode):
                 heartbeat_interval=base.heartbeat_interval,
                 max_heartbeat_misses=base.max_heartbeat_misses,
             )
-            logger.info(f"沙箱节点 {self._class_name} 超时覆盖: {meta_timeout}s (manifest 声明)")
+            logger.info(f"sandboxed node {self._class_name} timeout override: {meta_timeout}s (declared in manifest)")
 
         try:
             res = await sandbox.execute(
@@ -130,26 +134,26 @@ class SandboxedNode(BaseNode):
                 limits=call_limits,
             )
         except Exception as e:
-            logger.error(f"沙箱节点执行异常 {self._class_name}: {e}")
+            logger.error(f"sandboxed node execution exception {self._class_name}: {e}")
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"沙箱执行异常: {e}",
-                summary="沙箱子进程启动失败",
+                error=f"sandbox execution exception: {e}",
+                summary="sandbox subprocess failed to start",
             )
 
         out = res.stdout or ""
         idx = out.find(_RESULT_MARKER)
         if idx < 0:
-            # LO-5: 无结果帧标记 → 子进程未输出约定结果, 不把整 stdout 当 payload
+            # LO-5: no result-frame marker -> subprocess emitted no agreed result; do not treat the whole stdout as payload
             stdout_tail = out[-256:]
             logger.error(
-                f"沙箱节点 {self._class_name} 未输出结果帧 (marker 缺失); "
-                f"stdout尾={stdout_tail!r} stderr={(res.stderr or '')[-256:]!r}"
+                f"sandboxed node {self._class_name} produced no result frame (marker missing); "
+                f"stdout tail={stdout_tail!r} stderr={(res.stderr or '')[-256:]!r}"
             )
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="子进程未输出结果帧 (缺少 RESULT_MARKER)",
-                summary=f"沙箱返回无标记输出 rc={res.exit_code}",
+                error="child process produced no result frame (RESULT_MARKER missing)",
+                summary=f"sandbox returned output without marker rc={res.exit_code}",
             )
         payload_str = out[idx + len(_RESULT_MARKER) :].strip()
         try:
@@ -158,15 +162,15 @@ class SandboxedNode(BaseNode):
             err_tail = (res.stderr or "")[-512:]
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"沙箱结果解析失败: {e}; stderr尾: {err_tail}",
-                summary="沙箱返回非 JSON",
+                error=f"sandbox result parse failed: {e}; stderr tail: {err_tail}",
+                summary="sandbox returned non-JSON",
             )
 
         if not payload.get("ok"):
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=str(payload.get("error", "未知沙箱错误")),
-                summary="沙箱内执行失败",
+                error=str(payload.get("error", "unknown sandbox error")),
+                summary="execution failed inside sandbox",
             )
 
         data = payload.get("data", {}) or {}
@@ -181,15 +185,15 @@ class SandboxedNode(BaseNode):
             error=data.get("error"),
             execution_time=float(data.get("execution_time", res.cpu_time or 0.0)),
             output_files=data.get("output_files", []),
-            summary=data.get("summary", "") or f"沙箱执行完成 rc={res.exit_code}",
+            summary=data.get("summary", "") or f"sandbox execution finished rc={res.exit_code}",
         )
 
 
 def make_sandboxed_node_class(meta: Dict[str, Any], sandbox: Any) -> type[BaseNode]:
-    """为单个插件节点生成沙箱包装子类 — P1-6。
+    """Generate a sandboxed wrapper subclass for a single plugin node — P1-6.
 
-    子类固定类级 name/display_name/category 等元数据, 满足 NodeRegistry 注册需求。
-    LO-6: 未知 meta 键记 warning (不静默吞), 便于插件清单字段错拼写暴露。
+    The subclass fixes class-level name/display_name/category metadata to satisfy NodeRegistry registration.
+    LO-6: unknown meta keys are logged as warnings (never silently swallowed) so manifest field typos surface.
     """
     _EXPECTED_META = {
         "class_name",
@@ -205,7 +209,7 @@ def make_sandboxed_node_class(meta: Dict[str, Any], sandbox: Any) -> type[BaseNo
     }
     unknown = set(meta.keys()) - _EXPECTED_META
     if unknown:
-        logger.warning(f"沙箱插件节点 meta 含未知键: {sorted(unknown)} (将被忽略)")
+        logger.warning(f"sandboxed plugin node meta has unknown keys: {sorted(unknown)} (will be ignored)")
 
     cat_raw = meta.get("category", "tool")
     try:
@@ -218,10 +222,13 @@ def make_sandboxed_node_class(meta: Dict[str, Any], sandbox: Any) -> type[BaseNo
         (SandboxedNode,),
         {
             "name": meta.get("name", "sandboxed_node"),
+            # i18n: user-facing
             "display_name": meta.get("display_name", "沙箱插件节点"),
             "category": category,
+            # i18n: user-facing
             "description": meta.get("description", "沙箱内执行的第三方插件节点"),
             "icon": meta.get("icon", "📦"),
+            # i18n: user-facing
             "default_label": meta.get("default_label", "插件节点"),
         },
     )
@@ -231,7 +238,7 @@ def make_sandboxed_node_class(meta: Dict[str, Any], sandbox: Any) -> type[BaseNo
 
 
 def _sandboxed_factory(cls: type[BaseNode]):
-    """覆盖 __init__ 以注入 entry_file/class_name/sandbox/schema。"""
+    """Override __init__ to inject entry_file/class_name/sandbox/schema."""
     meta = getattr(cls, "_sandbox_meta", {})
     sandbox = getattr(cls, "_sandbox_instance", None)
 
@@ -269,28 +276,28 @@ class PluginLoader:
                 continue
             manifest_path = plugin_dir / "manifest.json"
             if not manifest_path.exists():
-                logger.debug(f"跳过无清单目录: {plugin_dir.name}")
+                logger.debug(f"skipping directory without manifest: {plugin_dir.name}")
                 continue
             manifest = PluginManifest.from_json(manifest_path)
             if not manifest:
                 continue
-            # Stage 7: 签名校验 — require_signing=true 时拒未签名/验签失败
+            # Stage 7: signature check — refuse unsigned/failed verification when require_signing=true
             if require_signing and not self._verify_signing(manifest):
-                logger.warning(f"插件 {manifest.name} 未签名或验签失败, require_signing 拒绝")
+                logger.warning(f"plugin {manifest.name} unsigned or verification failed, refused by require_signing")
                 continue
-            # Stage 7: 版本降级校验 — registry 已装更高版本则跳过 (不静默降级)
+            # Stage 7: version downgrade check — skip if registry already has a higher version (no silent downgrade)
             reg_v = registry.get_version(manifest.name)
             if reg_v and _version_lt(manifest.version, reg_v):
                 logger.warning(
-                    f"插件 {manifest.name} 磁盘版本 {manifest.version} < registry 已装 {reg_v}, 跳过 (防降级)"
+                    f"plugin {manifest.name} on-disk version {manifest.version} < registry installed {reg_v}, skipping (downgrade protection)"
                 )
                 continue
             manifests.append(manifest)
-        logger.info(f"发现 {len(manifests)} 个插件")
+        logger.info(f"discovered {len(manifests)} plugins")
         return manifests
 
     def _require_signing(self) -> bool:
-        """读 config plugins.require_signing (默认 false, opt-in)。"""
+        """Read config plugins.require_signing (default false, opt-in)."""
         try:
             from ..config_center import ConfigCenter
 
@@ -300,49 +307,49 @@ class PluginLoader:
             return False
 
     def _verify_signing(self, manifest: PluginManifest) -> bool:
-        """Stage 7: 用 config 配置的公钥列表验签 manifest.signature。"""
+        """Stage 7: verify manifest.signature against the public key list configured in config."""
         from .signing import get_configured_public_keys, verify_any_key
 
         if not manifest.signature:
             return False
-        # 读原始 manifest dict (含 signature) 验签
+        # read the raw manifest dict (including signature) for verification
         manifest_path = self._plugins_dir / manifest.name / "manifest.json"
         try:
             import json
 
             raw = json.loads(manifest_path.read_text(encoding="utf-8"))
         except Exception as e:
-            logger.error(f"插件 {manifest.name} manifest 读取失败, 无法验签: {e}")
+            logger.error(f"failed to read manifest for plugin {manifest.name}, cannot verify: {e}")
             return False
         return verify_any_key(raw, get_configured_public_keys())
 
     def load(self, name: str) -> List[BaseNode]:
         plugin_dir = self._plugins_dir / name
         if not plugin_dir.is_dir():
-            logger.error(f"插件目录不存在: {name}")
+            logger.error(f"plugin directory does not exist: {name}")
             return []
 
         manifest_path = plugin_dir / "manifest.json"
         manifest = PluginManifest.from_json(manifest_path)
         if not manifest:
-            logger.error(f"插件清单加载失败: {name}")
+            logger.error(f"failed to load plugin manifest: {name}")
             return []
 
         entry_file = plugin_dir / f"{manifest.entry_point}.py"
         if not entry_file.exists():
-            logger.error(f"插件入口文件不存在: {entry_file}")
+            logger.error(f"plugin entry file does not exist: {entry_file}")
             return []
 
         if manifest.sandbox:
             return self._load_sandboxed(name, manifest, entry_file)
 
-        # CR-21: sandbox=false 插件走主进程 exec_module = 潜在 RCE,
-        # 须在 config plugins.trusted 白名单, 否则拒绝加载。
+        # CR-21: sandbox=false plugins run exec_module in the main process = potential RCE,
+        # they must be in the config plugins.trusted allowlist, otherwise loading is refused.
         trusted = self._get_trusted_plugins()
         if name not in trusted:
             logger.error(
-                f"插件 {name} sandbox=false 且未在 plugins.trusted 白名单, 拒绝加载"
-                f" (需显式信任: config set plugins.trusted '[...{name}...]' 或启动参数 --trust-plugin {name})"
+                f"plugin {name} has sandbox=false and is not in the plugins.trusted allowlist, refusing to load"
+                f" (explicit trust required: config set plugins.trusted '[...{name}...]' or launch arg --trust-plugin {name})"
             )
             return []
 
@@ -350,12 +357,12 @@ class PluginLoader:
         try:
             spec = importlib.util.spec_from_file_location(module_name, str(entry_file))
             if spec is None or spec.loader is None:
-                logger.error(f"无法加载插件模块: {entry_file}")
+                logger.error(f"cannot load plugin module: {entry_file}")
                 return []
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
         except Exception as e:
-            logger.error(f"插件模块执行失败 {name}: {e}")
+            logger.error(f"plugin module execution failed {name}: {e}")
             return []
 
         registered = []
@@ -367,21 +374,21 @@ class PluginLoader:
                 if isinstance(attr, type) and issubclass(attr, BaseNode) and attr is not BaseNode:
                     NodeRegistry.register(attr)
                     registered.append(attr)
-                    logger.info(f"注册插件节点: {attr.name} ({attr.__name__})")
+                    logger.info(f"registered plugin node: {attr.name} ({attr.__name__})")
             except TypeError:
                 continue
 
         self._loaded[name] = manifest
         self._node_map[name] = [n.name for n in registered]
-        logger.info(f"插件 {name} 加载完成: {len(registered)} 个节点")
+        logger.info(f"plugin {name} loaded: {len(registered)} nodes")
         return registered
 
     def _load_sandboxed(self, name: str, manifest: PluginManifest, entry_file: Path) -> List[BaseNode]:
-        """沙箱加载路径 — P1-6: 插件代码不进主进程。
+        """Sandboxed load path — P1-6: plugin code never enters the main process.
 
-        通过 sandbox_runner 子进程 introspect 发现节点元数据,
-        为每个节点生成 SandboxedNode 包装子类注册到主进程,
-        execute() 时再回子进程运行。主进程永不 exec_module 插件代码。
+        Uses the sandbox_runner subprocess introspect to discover node metadata,
+        generates a SandboxedNode wrapper subclass per node registered into the main process,
+        and runs back in the subprocess on execute(). The main process never exec_modules plugin code.
         """
         from .sandbox import PluginSandbox, SandboxStatus
 
@@ -391,7 +398,7 @@ class PluginLoader:
             {"action": "introspect", "entry_file": str(entry_file)},
             ensure_ascii=False,
         )
-        logger.info(f"插件 {name} sandbox=true, 子进程 introspect 节点元数据 (rlimit 隔离)")
+        logger.info(f"plugin {name} sandbox=true, introspecting node metadata in subprocess (rlimit isolation)")
         try:
             loop = asyncio.new_event_loop()
             pre = loop.run_until_complete(
@@ -404,10 +411,10 @@ class PluginLoader:
             )
             loop.close()
         except Exception as pe:
-            logger.error(f"插件 {name} 沙箱 introspect 异常: {pe}")
+            logger.error(f"plugin {name} sandbox introspect exception: {pe}")
             return []
         if pre.status != SandboxStatus.STOPPED:
-            logger.error(f"插件 {name} 沙箱 introspect 失败: status={pre.status} err={pre.error}")
+            logger.error(f"plugin {name} sandbox introspect failed: status={pre.status} err={pre.error}")
             return []
 
         out = pre.stdout or ""
@@ -416,36 +423,36 @@ class PluginLoader:
         try:
             payload = json.loads(payload_str)
         except json.JSONDecodeError as e:
-            logger.error(f"插件 {name} introspect 结果解析失败: {e}; stderr={pre.stderr[-256:]}")
+            logger.error(f"plugin {name} introspect result parse failed: {e}; stderr={pre.stderr[-256:]}")
             return []
         if not payload.get("ok"):
-            logger.error(f"插件 {name} introspect 报错: {payload.get('error')}")
+            logger.error(f"plugin {name} introspect error: {payload.get('error')}")
             return []
 
         node_metas = payload.get("data", {}).get("nodes", [])
         if not node_metas:
-            logger.warning(f"插件 {name} sandbox 加载未发现节点")
+            logger.warning(f"plugin {name} sandbox load found no nodes")
             return []
 
         registered = []
         for meta in node_metas:
             meta["entry_file"] = str(entry_file)
-            # LO-7: 透传 manifest.timeout_seconds 到节点 meta, execute 时覆盖沙箱默认超时
+            # LO-7: pass manifest.timeout_seconds through to node meta, overriding the sandbox default timeout at execute time
             meta["timeout_seconds"] = manifest.timeout_seconds
             wrapper_cls = make_sandboxed_node_class(meta, sandbox)
             _sandboxed_factory(wrapper_cls)
             NodeRegistry.register(wrapper_cls)
             registered.append(wrapper_cls)
-            logger.info(f"注册沙箱插件节点: {wrapper_cls.name} ({wrapper_cls.__name__})")
+            logger.info(f"registered sandboxed plugin node: {wrapper_cls.name} ({wrapper_cls.__name__})")
 
         self._loaded[name] = manifest
         self._node_map[name] = [c.name for c in registered]
         self._sandboxes[name] = sandbox
-        logger.info(f"插件 {name} 沙箱加载完成: {len(registered)} 个节点 (全程子进程隔离)")
+        logger.info(f"plugin {name} sandbox load complete: {len(registered)} nodes (fully subprocess isolated)")
         return registered
 
     def _get_trusted_plugins(self) -> List[str]:
-        """CR-21: 读 config plugins.trusted 白名单 (sandbox=false 插件须显式信任)。"""
+        """CR-21: read the config plugins.trusted allowlist (sandbox=false plugins require explicit trust)."""
         try:
             from ..config_center import ConfigCenter
 
@@ -456,13 +463,13 @@ class PluginLoader:
             if isinstance(trusted, str):
                 return [t.strip() for t in trusted.split(",") if t.strip()]
         except Exception as e:
-            logger.debug(f"读取 plugins.trusted 失败, 视为空白名单: {e}")
+            logger.debug(f"failed to read plugins.trusted, treating as empty allowlist: {e}")
         return []
 
     def _register_installed(self, name: str, manifest: Optional[PluginManifest] = None) -> None:
-        """Stage 7: 安装后登记到 registry (版本 + 签名状态 + checksum)。
+        """Stage 7: register into the registry after install (version + signing status + checksum).
 
-        manifest 缺则从 plugins_dir 重读 (zip 安装路径无 manifest 对象)。
+        If manifest is missing, re-read from plugins_dir (the zip install path has no manifest object).
         """
         registry = get_plugin_registry()
         if manifest is None:
@@ -479,7 +486,7 @@ class PluginLoader:
             if mp.exists():
                 checksum = hashlib.sha256(mp.read_bytes()).hexdigest()
         if not registry.register(name, version, sig_valid, checksum):
-            logger.warning(f"插件 {name} registry 登记失败 (可能降版)")
+            logger.warning(f"plugin {name} registry registration failed (possibly a downgrade)")
 
     def load_all(self) -> Dict[str, List[BaseNode]]:
         results = {}
@@ -490,15 +497,15 @@ class PluginLoader:
 
     def unload(self, name: str) -> bool:
         if name not in self._loaded:
-            logger.warning(f"插件未加载: {name}")
+            logger.warning(f"plugin not loaded: {name}")
             return False
         node_names = self._node_map.pop(name, [])
         for node_name in node_names:
             NodeRegistry.unregister(node_name)
-            logger.info(f"注销插件节点: {node_name}")
+            logger.info(f"unregistered plugin node: {node_name}")
         del self._loaded[name]
         self._sandboxes.pop(name, None)
-        logger.info(f"插件 {name} 已卸载")
+        logger.info(f"plugin {name} unloaded")
         return True
 
     def install(self, path: str) -> bool:
@@ -506,7 +513,7 @@ class PluginLoader:
             return self._install_url(path)
         src = Path(path).expanduser().resolve()
         if not src.exists():
-            logger.error(f"安装源不存在: {path}")
+            logger.error(f"install source does not exist: {path}")
             return False
 
         if src.suffix == ".zip":
@@ -514,7 +521,7 @@ class PluginLoader:
         elif src.is_dir():
             return self._install_dir(src)
         else:
-            logger.error(f"不支持的安装源类型: {path}")
+            logger.error(f"unsupported install source type: {path}")
             return False
 
     def _install_url(self, url: str) -> bool:
@@ -523,33 +530,33 @@ class PluginLoader:
         try:
             import httpx
         except ImportError:
-            logger.error("安装 URL 插件需要 httpx (pip install httpx)")
+            logger.error("installing URL plugins requires httpx (pip install httpx)")
             return False
-        # MD-16: 仅允许 https, 拒 http (防中间人篡改插件包)
+        # MD-16: only https allowed, http refused (prevents MITM tampering of plugin packages)
         if not url.lower().startswith("https://"):
-            logger.error(f"URL 插件仅允许 https://: {url} (拒 http 防篡改)")
+            logger.error(f"URL plugins allow https:// only: {url} (http refused against tampering)")
             return False
         if not url.lower().endswith(".zip"):
-            logger.error(f"URL 插件仅支持 .zip: {url}")
+            logger.error(f"URL plugins support .zip only: {url}")
             return False
-        _MAX_DOWNLOAD = 50 * 1024 * 1024  # 50 MiB 上限, 防超大包耗尽内存
+        _MAX_DOWNLOAD = 50 * 1024 * 1024  # 50 MiB cap, prevents oversized packages exhausting memory
         try:
-            logger.info(f"从 URL 下载插件: {url}")
+            logger.info(f"downloading plugin from URL: {url}")
             tmp_path = Path(tempfile.mktemp(suffix=".zip"))
             downloaded = 0
             sha = hashlib.sha256()
             with httpx.Client(timeout=60.0, follow_redirects=False) as client:
                 resp = client.get(url)
-                # MD-16: 显式拒重定向 (防开放重定向到内网/恶意源); 客户端须用直链
+                # MD-16: explicitly refuse redirects (prevents open redirect to intranet/malicious sources); clients must use direct links
                 if resp.is_redirect:
-                    logger.error(f"URL 插件拒重定向: {url} -> {resp.headers.get('location', '?')}")
+                    logger.error(f"URL plugin refused redirect: {url} -> {resp.headers.get('location', '?')}")
                     return False
                 resp.raise_for_status()
                 with open(tmp_path, "wb") as f:
                     for chunk in resp.iter_bytes(chunk_size=65536):
                         downloaded += len(chunk)
                         if downloaded > _MAX_DOWNLOAD:
-                            logger.error(f"URL 插件超大小上限 {_MAX_DOWNLOAD} 字节, 中止下载: {url}")
+                            logger.error(f"URL plugin exceeds size cap {_MAX_DOWNLOAD} bytes, aborting download: {url}")
                             f.close()
                             try:
                                 tmp_path.unlink()
@@ -558,7 +565,7 @@ class PluginLoader:
                             return False
                         sha.update(chunk)
                         f.write(chunk)
-            logger.info(f"URL 插件下载完成: {downloaded} 字节, sha256={sha.hexdigest()[:16]}")
+            logger.info(f"URL plugin download complete: {downloaded} bytes, sha256={sha.hexdigest()[:16]}")
             try:
                 return self._install_zip(tmp_path)
             finally:
@@ -567,46 +574,46 @@ class PluginLoader:
                 except OSError:
                     pass
         except Exception as e:
-            logger.error(f"URL 插件安装失败: {e}")
+            logger.error(f"URL plugin install failed: {e}")
             return False
 
     def _install_zip(self, zip_path: Path) -> bool:
         base = self._plugins_dir.resolve()
-        # E-13: zip 炸弹防护 — 限文件数/解压总大小/压缩比
+        # E-13: zip bomb protection — cap entry count/total uncompressed size/compression ratio
         _MAX_ZIP_ENTRIES = 10000
         _MAX_UNCOMPRESSED = 512 * 1024 * 1024  # 512MB
-        _MAX_RATIO = 200  # 解压/压缩 比, 超过即炸弹嫌疑
+        _MAX_RATIO = 200  # uncompressed/compressed ratio; above this is bomb suspicion
         try:
             with zipfile.ZipFile(zip_path, "r") as zf:
                 names = zf.namelist()
-                # E-13: 文件数上限
+                # E-13: entry count cap
                 if len(names) > _MAX_ZIP_ENTRIES:
-                    logger.error(f"zip 炸弹拒绝: 条目数 {len(names)} > {_MAX_ZIP_ENTRIES}")
+                    logger.error(f"zip bomb refused: entry count {len(names)} > {_MAX_ZIP_ENTRIES}")
                     return False
-                # CR-22: 逐条校验防 zip-slip — 每个解压目标必须落在 plugins_dir 内
+                # CR-22: per-entry zip-slip check — every extraction target must land inside plugins_dir
                 total_uncompressed = 0
                 total_compressed = 0
                 for member in zf.infolist():
                     total_uncompressed += member.file_size
                     total_compressed += member.compress_size
                     if total_uncompressed > _MAX_UNCOMPRESSED:
-                        logger.error(f"zip 炸弹拒绝: 解压总大小 {total_uncompressed} > {_MAX_UNCOMPRESSED}")
+                        logger.error(f"zip bomb refused: total uncompressed {total_uncompressed} > {_MAX_UNCOMPRESSED}")
                         return False
                     if member.is_dir():
                         continue
-                    # 拒绝对路径 / 驱动符 / ../ 遍历
+                    # refuse absolute paths / drive letters / ../ traversal
                     if member.filename.startswith(("/", "\\")) or ":" in member.filename.split("/")[0]:
-                        logger.error(f"zip-slip 拒绝: 非法路径 {member.filename!r}")
+                        logger.error(f"zip-slip refused: illegal path {member.filename!r}")
                         return False
                     dest = (base / member.filename).resolve()
                     try:
                         dest.relative_to(base)
                     except ValueError:
-                        logger.error(f"zip-slip 拒绝: {member.filename!r} 越界 {base}")
+                        logger.error(f"zip-slip refused: {member.filename!r} escapes {base}")
                         return False
-                # E-13: 压缩比上限 (跳过压缩大小为 0 的存档)
+                # E-13: compression ratio cap (skip archives with compressed size 0)
                 if total_compressed > 0 and total_uncompressed / total_compressed > _MAX_RATIO:
-                    logger.error(f"zip 炸弹拒绝: 压缩比 {total_uncompressed / total_compressed:.1f} > {_MAX_RATIO}")
+                    logger.error(f"zip bomb refused: compression ratio {total_uncompressed / total_compressed:.1f} > {_MAX_RATIO}")
                     return False
 
                 top_dirs = set()
@@ -615,46 +622,46 @@ class PluginLoader:
                     if len(parts) > 1:
                         top_dirs.add(parts[0])
                 if not top_dirs:
-                    logger.error("zip 文件结构无效: 无顶层目录")
+                    logger.error("invalid zip structure: no top-level directory")
                     return False
                 plugin_name = top_dirs.pop()
                 target = (base / plugin_name).resolve()
-                # CR-22: rmtree 前校验 target 在 plugins_dir 内, 防越界删除
+                # CR-22: verify target is inside plugins_dir before rmtree, preventing out-of-scope deletion
                 try:
                     target.relative_to(base)
                 except ValueError:
-                    logger.error(f"插件目录越界, 拒绝删除: {target}")
+                    logger.error(f"plugin directory escapes plugins_dir, refusing deletion: {target}")
                     return False
                 if target.exists():
                     shutil.rmtree(target)
-                # CR-22: 安全解压 — 逐条校验后再写 (extractall 已被上述校验替代)
+                # CR-22: safe extraction — write only after per-entry checks (extractall replaced by the checks above)
                 for member in zf.infolist():
                     zf.extract(member, str(base))
-                logger.info(f"zip 插件已安装: {plugin_name}")
+                logger.info(f"zip plugin installed: {plugin_name}")
                 self._register_installed(plugin_name)
                 return True
         except zipfile.BadZipFile as e:
-            logger.error(f"zip 文件无效: {e}")
+            logger.error(f"invalid zip file: {e}")
             return False
         except Exception as e:
-            logger.error(f"zip 安装失败: {e}")
+            logger.error(f"zip install failed: {e}")
             return False
 
     def _safe_rmtree(self, name: str) -> bool:
-        """CR-22: 仅允许删除 plugins_dir 内的目录, 拒越界 (防 ../ 遍历)。
+        """CR-22: only allow deleting directories inside plugins_dir, refuse escapes (prevents ../ traversal).
 
-        E-13: target==base (name="" 或 ".") 拒绝 — relative_to(base) 对 base 本身不抛,
-        旧版会 rmtree(plugins_dir) 删插件根目录。
+        E-13: target==base (name="" or ".") is refused — relative_to(base) does not raise for base itself,
+        and the old version would rmtree(plugins_dir), deleting the plugin root.
         """
         base = self._plugins_dir.resolve()
         target = (base / name).resolve()
         if target == base:
-            logger.error(f"拒删除插件根目录: name={name!r} (E-13 防 target==base)")
+            logger.error(f"refusing to delete plugin root directory: name={name!r} (E-13 prevents target==base)")
             return False
         try:
             target.relative_to(base)
         except ValueError:
-            logger.error(f"插件目录越界, 拒绝删除: {target}")
+            logger.error(f"plugin directory escapes plugins_dir, refusing deletion: {target}")
             return False
         if target.exists() and target.is_dir():
             shutil.rmtree(target)
@@ -663,7 +670,7 @@ class PluginLoader:
     def _install_dir(self, src_dir: Path) -> bool:
         manifest_path = src_dir / "manifest.json"
         if not manifest_path.exists():
-            logger.error(f"插件目录缺少 manifest.json: {src_dir}")
+            logger.error(f"plugin directory missing manifest.json: {src_dir}")
             return False
         manifest = PluginManifest.from_json(manifest_path)
         if not manifest:
@@ -673,7 +680,7 @@ class PluginLoader:
             if not self._safe_rmtree(manifest.name):
                 return False
         shutil.copytree(str(src_dir), str(target))
-        logger.info(f"插件已安装: {manifest.name} -> {target}")
+        logger.info(f"plugin installed: {manifest.name} -> {target}")
         self._register_installed(manifest.name, manifest)
         return True
 
@@ -681,12 +688,12 @@ class PluginLoader:
         self.unload(name)
         plugin_dir = self._plugins_dir / name
         if not plugin_dir.exists():
-            logger.warning(f"插件目录不存在: {name}")
+            logger.warning(f"plugin directory does not exist: {name}")
             return False
         if not self._safe_rmtree(name):
             return False
         get_plugin_registry().unregister(name)
-        logger.info(f"插件已卸载删除: {name}")
+        logger.info(f"plugin uninstalled and deleted: {name}")
         return True
 
     def list_plugins(self) -> List[PluginManifest]:
@@ -696,11 +703,11 @@ class PluginLoader:
         return name in self._loaded
 
     def import_from_claude_desktop(self, config_path: str = "") -> List[str]:
-        """从 Claude Desktop 配置导入 MCP server — P2-8。
+        """Import MCP servers from the Claude Desktop config — P2-8.
 
-        读取 claude_desktop_config.json 的 mcpServers, 每个 server 写为 cowork 插件
-        manifest (external MCP server, 不加载节点, 记录 command/args/env 供 MCP client 调用)。
-        返回导入的插件名列表。
+        Reads mcpServers from claude_desktop_config.json and writes each server as a cowork plugin
+        manifest (external MCP server, no nodes loaded; records command/args/env for MCP client calls).
+        Returns the list of imported plugin names.
         """
         import json
         import os
@@ -709,29 +716,29 @@ class PluginLoader:
             config_path = os.path.expanduser("~/Library/Application Support/Claude/claude_desktop_config.json")
         cfg = Path(config_path)
         if not cfg.exists():
-            logger.warning(f"Claude Desktop 配置不存在: {cfg}")
+            logger.warning(f"Claude Desktop config not found: {cfg}")
             return []
         try:
             data = json.loads(cfg.read_text(encoding="utf-8"))
         except json.JSONDecodeError as e:
-            logger.error(f"Claude Desktop 配置解析失败: {e}")
+            logger.error(f"failed to parse Claude Desktop config: {e}")
             return []
         servers = data.get("mcpServers", {})
         if not servers:
-            logger.info("Claude Desktop 配置无 mcpServers")
+            logger.info("no mcpServers in Claude Desktop config")
             return []
         imported = []
         for name, spec in servers.items():
             spec = spec or {}
-            # MD-17: 校验 command — 非空 + 绝对路径或白名单可执行名, 拒盲信外部 spec
+            # MD-17: validate command — non-empty + absolute path or allowlisted executable name; refuse blind trust of external spec
             command = str(spec.get("command", "")).strip()
             args = spec.get("args", [])
             env = spec.get("env", {})
             if not command:
-                logger.warning(f"跳过 Claude Desktop MCP server (command 为空): {name}")
+                logger.warning(f"skipping Claude Desktop MCP server (empty command): {name}")
                 continue
             if not self._is_safe_mcp_command(command, args, env):
-                logger.warning(f"跳过 Claude Desktop MCP server (command 校验失败): {name} command={command!r}")
+                logger.warning(f"skipping Claude Desktop MCP server (command validation failed): {name} command={command!r}")
                 continue
             manifest = PluginManifest(
                 name=f"mcp_{name}",
@@ -748,7 +755,7 @@ class PluginLoader:
             (target / "manifest.json").write_text(
                 json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
             )
-            # MD-17: 记录 source hash (command+args) 供运行时校验未被篡改
+            # MD-17: record source hash (command+args) to verify no tampering at runtime
             source_hash = hashlib.sha256(
                 json.dumps({"command": command, "args": args}, sort_keys=True).encode()
             ).hexdigest()
@@ -767,19 +774,19 @@ class PluginLoader:
             )
             imported.append(manifest.name)
             logger.info(
-                f"已从 Claude Desktop 导入 MCP server: {name} -> {manifest.name} source_hash={source_hash[:16]}"
+                f"imported MCP server from Claude Desktop: {name} -> {manifest.name} source_hash={source_hash[:16]}"
             )
         return imported
 
     @staticmethod
     def _is_safe_mcp_command(command: str, args: Any, env: Any) -> bool:
-        # MD-17: command 须非空且不含 shell 元字符; args 须为 list; 拒明显危险调用
+        # MD-17: command must be non-empty and free of shell metacharacters; args must be a list; refuse obviously dangerous invocations
         if not isinstance(args, list):
             return False
         shell_meta = {";", "|", "&", "`", "$", "(", ")", ">", "<", "\n", "\r"}
         if any(ch in command for ch in shell_meta):
             return False
-        # 拒危险命令名 (防拉起任意进程)
+        # refuse dangerous command names (prevents spawning arbitrary processes)
         dangerous = {"rm", "rmdir", "mkfs", "dd", "shred", "curl", "wget", "nc", "bash", "sh"}
         base = Path(command).name
         if base in dangerous:
@@ -793,7 +800,7 @@ class PluginLoader:
 
     @staticmethod
     def _sanitize_mcp_env(env: Any) -> Dict[str, str]:
-        # MD-17: env 仅保留字符串值, 拒非字符串/空键 (防注入畸形 env)
+        # MD-17: env keeps only string values, rejects non-string/empty keys (prevents malformed env injection)
         if not isinstance(env, dict):
             return {}
         safe: Dict[str, str] = {}
@@ -803,15 +810,16 @@ class PluginLoader:
         return safe
 
 
-# E-13: 模块级单例 — 旧版各 CLI 命令各 new PluginLoader() 致 _loaded/_node_map 状态分散,
-# 已加载插件在不同实例间不可见 (卸载/列表命令看到空)。统一单例保证状态一致。
+# E-13: module-level singleton — the old version new'd a PluginLoader() per CLI command, scattering
+# _loaded/_node_map state (loaded plugins invisible across instances: unload/list commands saw empty).
+# One singleton keeps state consistent.
 _DEFAULT_PLUGIN_LOADER: Optional[PluginLoader] = None
 
 
 def get_plugin_loader(plugins_dir: str = "") -> PluginLoader:
-    """E-13: 返回进程级 PluginLoader 单例 (首次调用惰性构造)。"""
+    """E-13: return the process-level PluginLoader singleton (lazily constructed on first call)."""
     global _DEFAULT_PLUGIN_LOADER
     if _DEFAULT_PLUGIN_LOADER is None:
         _DEFAULT_PLUGIN_LOADER = PluginLoader(plugins_dir=plugins_dir)
-        logger.debug("PluginLoader 单例已构造")
+        logger.debug("PluginLoader singleton constructed")
     return _DEFAULT_PLUGIN_LOADER

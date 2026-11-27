@@ -16,7 +16,8 @@ export function TemplatesPage() {
     const retry = useAutoRetry(() => api.templates(category), [category]);
     const [importing, setImporting] = useState(false);
 
-    // issue #294: 一键启动 — params 表单按模板 schema 生成, 服务端替换 ${param.X} 后起 run
+    // issue #294: one-click launch — params form generated from the template
+    // schema, server replaces ${param.X} then starts the run
     const [launchTpl, setLaunchTpl] = useState<TemplateInfo | null>(null);
     const [launchProps, setLaunchProps] = useState<
         Record<string, { type: string; description?: string; default?: unknown }>
@@ -24,12 +25,13 @@ export function TemplatesPage() {
     const [launchRequired, setLaunchRequired] = useState<string[]>([]);
     const [launchValues, setLaunchValues] = useState<Record<string, string>>({});
     const [launching, setLaunching] = useState(false);
-    // issue #400: intake 模式 — 默认只填 requirement, slug/私有仓/登记全自动派生;
-    // 显式参数表单收进"高级"通道
+    // issue #400: intake mode — only requirement filled by default; slug/private
+    // repo/registration fully auto-derived; explicit params form moved into the
+    // "advanced" channel
     const [intakeMode, setIntakeMode] = useState(true);
     const [intakeRequirement, setIntakeRequirement] = useState('');
     const [intakeSlugHint, setIntakeSlugHint] = useState('');
-    // issue #413: gate B (架构评审) intake 二选一 — 缺省不评审 (自动通过)
+    // issue #413: gate B (architecture review) intake either-or — default is no review (auto-pass)
     const [intakeReviewArch, setIntakeReviewArch] = useState(false);
     const [intakePreview, setIntakePreview] = useState<{
         slug: string;
@@ -75,6 +77,7 @@ export function TemplatesPage() {
         } catch (e) {
             console.error('[cowork-web] template detail failed', e);
             setLaunchTpl(null);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('模板详情获取失败', 'Failed to load template') });
         }
     }
@@ -116,10 +119,12 @@ export function TemplatesPage() {
                 throw new Error(res.status);
             }
             const conflict = res.plan.suggested_from
+                // i18n: user-facing
                 ? t(`slug 冲突, 已改用 ${res.plan.slug}`, `slug conflict — using ${res.plan.slug}`)
                 : '';
             sdk.toast.show({
                 level: 'success',
+                // i18n: user-facing
                 message: t(`已启动: ${res.run_id}`, `Launched: ${res.run_id}`) + (conflict ? ` (${conflict})` : ''),
             });
             setLaunchTpl(null);
@@ -129,6 +134,7 @@ export function TemplatesPage() {
             sdk.toast.show({
                 level: 'error',
                 message: t(
+                    // i18n: user-facing
                     '启动失败 — 需求文本/GitHub token/registry 检查服务端日志',
                     'Launch failed — see server logs'
                 ),
@@ -162,6 +168,7 @@ export function TemplatesPage() {
             const res = await api.launchTemplate(launchTpl.id, params);
             sdk.toast.show({
                 level: 'success',
+                // i18n: user-facing
                 message: t(`已启动: ${res.run_id}`, `Launched: ${res.run_id}`),
             });
             setLaunchTpl(null);
@@ -170,6 +177,7 @@ export function TemplatesPage() {
             console.error('[cowork-web] template launch failed', e);
             sdk.toast.show({
                 level: 'error',
+                // i18n: user-facing
                 message: t('启动失败 — 检查必填参数', 'Launch failed — check required params'),
             });
         } finally {
@@ -177,7 +185,7 @@ export function TemplatesPage() {
         }
     }
 
-    // issue #261: 导入模板 JSON 文件 → POST /api/templates/import → 刷新列表
+    // issue #261: import template JSON file → POST /api/templates/import → refresh list
     async function onImportFile(file: File) {
         if (importing) return;
         setImporting(true);
@@ -186,6 +194,7 @@ export function TemplatesPage() {
             const res = await api.importTemplate(body);
             sdk.toast.show({
                 level: 'success',
+                // i18n: user-facing
                 message: t(`已导入模板: ${res.name}`, `Template imported: ${res.name}`),
             });
             retry.manualRetry();
@@ -194,6 +203,7 @@ export function TemplatesPage() {
             sdk.toast.show({
                 level: 'error',
                 message: t(
+                    // i18n: user-facing
                     '导入失败 — 须为含 workflow.nodes 的 JSON',
                     'Import failed — JSON with workflow.nodes required'
                 ),
@@ -203,7 +213,7 @@ export function TemplatesPage() {
         }
     }
 
-    // issue #261: 导出模板 JSON (浏览器下载)
+    // issue #261: export template JSON (browser download)
     async function exportTemplate(tpl: TemplateInfo) {
         try {
             const url = await api.templateExport(tpl.id);
@@ -214,6 +224,7 @@ export function TemplatesPage() {
             URL.revokeObjectURL(url);
         } catch (e) {
             console.error('[cowork-web] template export failed', e);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('导出失败', 'Export failed') });
         }
     }
@@ -221,12 +232,14 @@ export function TemplatesPage() {
     async function removeTemplate(tpl: TemplateInfo) {
         try {
             await api.deleteTemplate(tpl.id);
+            // i18n: user-facing
             sdk.toast.show({ level: 'success', message: t('已删除', 'Deleted') });
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] template delete failed', e);
             sdk.toast.show({
                 level: 'error',
+                // i18n: user-facing
                 message: t('删除失败 — 仅自定义模板可删除', 'Delete failed — custom templates only'),
             });
         }
@@ -243,12 +256,14 @@ export function TemplatesPage() {
             .then((created) => {
                 sdk.toast.show({
                     level: 'success',
+                    // i18n: user-facing
                     message: t('已创建副本，请在画布中完善', 'Copy created — refine in canvas'),
                 });
                 window.location.hash = `#/canvas/${created.id}`;
             })
             .catch((e: Error) => {
                 console.error('[cowork-web] template copy failed', e);
+                // i18n: user-facing
                 sdk.toast.show({ level: 'error', message: t('创建副本失败', 'Failed to create copy') });
             })
             .finally(() => setCreating(''));
@@ -262,6 +277,7 @@ export function TemplatesPage() {
                     value={category}
                     onChange={(e) => setCategory(e.target.value)}
                 >
+                    {/* i18n: user-facing */}
                     <option value="">{t('全部分类', 'All categories')}</option>
                     {categories.map((c) => (
                         <option key={c} value={c}>
@@ -271,6 +287,7 @@ export function TemplatesPage() {
                 </select>
                 <div className="text-xs text-text-muted">{templates.length}</div>
                 <label className="ml-auto cursor-pointer rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted">
+                    {/* i18n: user-facing */}
                     {importing ? t('导入中…', 'Importing…') : t('导入模板', 'Import JSON')}
                     <input
                         type="file"
@@ -286,6 +303,7 @@ export function TemplatesPage() {
                 </label>
             </div>
             {templates.length === 0 ? (
+                // i18n: user-facing
                 <EmptyState title={t('该分类暂无模板', 'No templates in this category')} />
             ) : (
                 <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
@@ -326,6 +344,7 @@ export function TemplatesPage() {
                                             }`}
                                             onClick={() => setIntakeMode(true)}
                                         >
+                                            {/* i18n: user-facing */}
                                             {t('需求录入', 'Requirement intake')}
                                         </button>
                                         <button
@@ -337,6 +356,7 @@ export function TemplatesPage() {
                                             }`}
                                             onClick={() => setIntakeMode(false)}
                                         >
+                                            {/* i18n: user-facing */}
                                             {t('高级 (显式参数)', 'Advanced (explicit params)')}
                                         </button>
                                     </div>
@@ -345,6 +365,7 @@ export function TemplatesPage() {
                                             <label className="block text-xs text-text-secondary">
                                                 <span>
                                                     {t(
+                                                        // i18n: user-facing
                                                         '需求描述 (粘贴一段需求文本或文档内容)',
                                                         'Requirement (paste requirement text or document content)'
                                                     )}
@@ -354,6 +375,7 @@ export function TemplatesPage() {
                                                     className="mt-0.5 min-h-24 w-full rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
                                                     value={intakeRequirement}
                                                     placeholder={t(
+                                                        // i18n: user-facing
                                                         '例: 做一个宠物寄养预约小程序, 支持门店浏览、日期选择和微信通知…',
                                                         'e.g. Build a pet-boarding booking app with store browsing, date pick and notifications…'
                                                     )}
@@ -366,11 +388,13 @@ export function TemplatesPage() {
                                             </label>
                                             <label className="block text-xs text-text-secondary">
                                                 <span>
+                                                    {/* i18n: user-facing */}
                                                     {t('slug 提示 (可空, 高级)', 'Slug hint (optional, advanced)')}
                                                 </span>
                                                 <input
                                                     className="mt-0.5 w-full rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
                                                     value={intakeSlugHint}
+                                                    // i18n: user-facing
                                                     placeholder={t('留空 = 自动派生', 'empty = auto-derived')}
                                                     onChange={(e) => {
                                                         setIntakeSlugHint(e.target.value);
@@ -379,6 +403,7 @@ export function TemplatesPage() {
                                                 />
                                             </label>
                                             <div className="text-xs text-text-secondary">
+                                                {/* i18n: user-facing */}
                                                 <span>{t('架构评审 (闸门 B)', 'Architecture review (gate B)')}</span>
                                                 <div className="mt-0.5 flex gap-3">
                                                     <label className="flex items-center gap-1">
@@ -388,6 +413,7 @@ export function TemplatesPage() {
                                                             checked={!intakeReviewArch}
                                                             onChange={() => setIntakeReviewArch(false)}
                                                         />
+                                                        {/* i18n: user-facing */}
                                                         {t('不评审 (默认, 自动通过)', 'No review (default, auto-pass)')}
                                                     </label>
                                                     <label className="flex items-center gap-1">
@@ -397,6 +423,7 @@ export function TemplatesPage() {
                                                             checked={intakeReviewArch}
                                                             onChange={() => setIntakeReviewArch(true)}
                                                         />
+                                                        {/* i18n: user-facing */}
                                                         {t('需要评审', 'Review required')}
                                                     </label>
                                                 </div>
@@ -405,9 +432,11 @@ export function TemplatesPage() {
                                                 <div className="rounded-md bg-bg-muted px-2 py-1 text-xs text-text-secondary">
                                                     {intakePreview.suggested_from
                                                         ? t(
+                                                              // i18n: user-facing
                                                               `slug 冲突 — 建议使用 ${intakePreview.slug}`,
                                                               `slug conflict — suggesting ${intakePreview.slug}`
                                                           )
+                                                        // i18n: user-facing
                                                         : t('slug 预览', 'slug preview')}
                                                     :{' '}
                                                     <span className="font-medium text-text-primary">
@@ -423,6 +452,7 @@ export function TemplatesPage() {
                                                     className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
                                                     onClick={() => setLaunchTpl(null)}
                                                 >
+                                                    {/* i18n: user-facing */}
                                                     {t('取消', 'Cancel')}
                                                 </button>
                                                 <button
@@ -432,7 +462,9 @@ export function TemplatesPage() {
                                                     onClick={() => void submitLaunchIntake()}
                                                 >
                                                     {launching
+                                                        // i18n: user-facing
                                                         ? t('启动中…', 'Launching…')
+                                                        // i18n: user-facing
                                                         : t('启动运行', 'Launch run')}
                                                 </button>
                                             </div>
@@ -451,6 +483,7 @@ export function TemplatesPage() {
                                                         value={launchValues[key] ?? ''}
                                                         placeholder={
                                                             spec.type === 'array'
+                                                                // i18n: user-facing
                                                                 ? t('逗号分隔', 'comma-separated')
                                                                 : String(spec.type)
                                                         }
@@ -466,6 +499,7 @@ export function TemplatesPage() {
                                                     className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
                                                     onClick={() => setLaunchTpl(null)}
                                                 >
+                                                    {/* i18n: user-facing */}
                                                     {t('取消', 'Cancel')}
                                                 </button>
                                                 <button
@@ -475,7 +509,9 @@ export function TemplatesPage() {
                                                     onClick={() => void submitLaunch()}
                                                 >
                                                     {launching
+                                                        // i18n: user-facing
                                                         ? t('启动中…', 'Launching…')
+                                                        // i18n: user-facing
                                                         : t('启动运行', 'Launch run')}
                                                 </button>
                                             </div>
@@ -489,6 +525,7 @@ export function TemplatesPage() {
                                     className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
                                     onClick={() => void openLaunch(tpl)}
                                 >
+                                    {/* i18n: user-facing */}
                                     {t('启动', 'Launch')}
                                 </button>
                                 <button
@@ -496,6 +533,7 @@ export function TemplatesPage() {
                                     className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
                                     onClick={() => void exportTemplate(tpl)}
                                 >
+                                    {/* i18n: user-facing */}
                                     {t('导出', 'Export')}
                                 </button>
                                 <button
@@ -503,6 +541,7 @@ export function TemplatesPage() {
                                     className="rounded-md border border-border px-2 py-1 text-xs text-error hover:bg-error/10"
                                     onClick={() => void removeTemplate(tpl)}
                                 >
+                                    {/* i18n: user-facing */}
                                     {t('删除', 'Delete')}
                                 </button>
                                 <button
@@ -512,7 +551,9 @@ export function TemplatesPage() {
                                     onClick={() => openInCanvas(tpl)}
                                 >
                                     {creating === tpl.id
+                                        // i18n: user-facing
                                         ? t('创建中…', 'Creating…')
+                                        // i18n: user-facing
                                         : t('用画布打开', 'Open in canvas')}
                                 </button>
                             </div>

@@ -1,7 +1,8 @@
-"""issue #185: MCP client 节点 — DAG 内调用外部 MCP 工具服务器 (Streamable HTTP)。
+"""issue #185: MCP client node — invoke external MCP tool servers (Streamable HTTP) inside a DAG.
 
-一节点一次工具调用: initialize 握手 → 复用 Mcp-Session-Id → tools/call。
-高危节点 (远程工具执行), 权限规则支持 url: 前缀 scope 精确授权单个服务。
+One tool call per node: initialize handshake -> reuse Mcp-Session-Id -> tools/call.
+High-risk node (remote tool execution); permission rules support url:-prefixed
+scopes to authorize a single server precisely.
 """
 
 import json
@@ -24,26 +25,34 @@ logger = logging.getLogger(__name__)
 _JSONRPC_VERSION = "2025-03-26"
 _PROPOSED_MCP_VERSION = "2025-03-26"
 
-# issue #214: fusion-core 缺席时降级警告每进程只发一次
+# issue #214: degraded-mode warning when fusion-core is absent is emitted once per process
 _registry_skip_warned = False
 
 
 @register_node
 class MCPClientNode(BaseNode):
     name = "mcp_client"
+    # i18n: user-facing
     display_name = "MCP 客户端"
     category = NodeCategory.FUSION_ECOSYSTEM
+    # i18n: user-facing
     description = "调用外部 MCP 服务器的工具 (Streamable HTTP): initialize 握手 + tools/call"
     icon = "🔌"
+    # i18n: user-facing
     default_label = "MCP 工具调用"
 
     inputs = [
+        # i18n: user-facing
         {"key": "url", "label": "MCP 服务器 URL (transport=http)", "type": "string"},
+        # i18n: user-facing
         {"key": "tool", "label": "工具名", "type": "string"},
+        # i18n: user-facing
         {"key": "arguments", "label": "工具参数 (JSON 对象)", "type": "object"},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "result", "label": "工具返回文本", "type": "string"},
+        # i18n: user-facing
         {"key": "raw", "label": "原始 content 数组", "type": "array"},
     ]
 
@@ -51,42 +60,52 @@ class MCPClientNode(BaseNode):
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "url": {"type": "string", "description": "MCP 服务器 URL (http/https; transport=http 时必填)"},
+                # i18n: user-facing
                 "tool": {"type": "string", "description": "要调用的工具名"},
+                # i18n: user-facing
                 "arguments": {"type": "object", "description": "工具参数", "default": {}},
                 "transport": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "传输方式: http (缺省, Streamable HTTP) | stdio (子进程 JSON-RPC, 需 FUSION_COWORK_MCP_STDIO_ALLOW 白名单)",
                     "enum": ["http", "stdio"],
                     "default": "http",
                 },
                 "command": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "stdio 模式: 可执行文件 (basename 须在 FUSION_COWORK_MCP_STDIO_ALLOW 白名单)",
                     "default": "",
                 },
+                # i18n: user-facing
                 "args": {"type": "array", "description": "stdio 模式: 命令行参数", "default": []},
+                # i18n: user-facing
                 "headers": {"type": "object", "description": "附加请求头 (如鉴权, http 模式)", "default": {}},
+                # i18n: user-facing
                 "timeout": {"type": "number", "description": "单请求超时 (秒)", "default": 30},
             },
             "required": ["url", "tool"],
         }
 
     def _client(self, timeout: float) -> httpx.AsyncClient:
-        # 测试接缝: 子类/monkeypatch 可注入 MockTransport
+        # test seam: subclasses/monkeypatch can inject a MockTransport
         return httpx.AsyncClient(timeout=timeout)
 
     def _registry_check(self, url: str, tool: str) -> None:
-        # issue #210: 对照 architecture/mcp-server-registry.json 审计外部 MCP 调用。
-        # warn 级不阻断 (local-first 自家服务优先可用), verdict + correlation_id 落审计日志;
-        # issue #214: fusion-core 缺席 (CI 裸装) 时 WARNING 提示审计降级 (每进程一次, 防 CI 循环刷屏)。
+        # issue #210: audit external MCP calls against architecture/mcp-server-registry.json.
+        # warn level, never blocking (local-first: our own services take priority), verdict +
+        # correlation_id land in the audit log;
+        # issue #214: when fusion-core is absent (bare CI install) emit a WARNING about audit
+        # degradation (once per process, to avoid CI log flooding).
         global _registry_skip_warned
         try:
             from fusion_core import check_approval
         except ImportError:
             if not _registry_skip_warned:
                 _registry_skip_warned = True
-                logger.warning(f"mcp_client: fusion_core.mcp_registry 不可用, 注册表审计降级跳过 url={url} tool={tool}")
+                logger.warning(f"mcp_client: fusion_core.mcp_registry unavailable, registry audit degraded/skipped url={url} tool={tool}")
             return
         correlation_id = ""
         try:
@@ -98,7 +117,7 @@ class MCPClientNode(BaseNode):
         try:
             verdict = check_approval(url, tool_scope=tool)
         except Exception as e:
-            logger.warning(f"mcp_client: 注册表检查失败 {url} tool={tool} correlation_id={correlation_id}: {e}")
+            logger.warning(f"mcp_client: registry check failed {url} tool={tool} correlation_id={correlation_id}: {e}")
             return
         if verdict.action == "approved":
             logger.info(
@@ -112,7 +131,7 @@ class MCPClientNode(BaseNode):
 
     @staticmethod
     def _parse_reply(resp: httpx.Response) -> Dict[str, Any]:
-        # Streamable HTTP 服务器可能以 SSE 帧回 JSON-RPC 响应 — 两种 content-type 都解析
+        # Streamable HTTP servers may wrap the JSON-RPC response in SSE frames — parse both content-types
         ctype = (resp.headers.get("content-type") or "").lower()
         if "text/event-stream" in ctype:
             payload: Dict[str, Any] = {}
@@ -132,10 +151,11 @@ class MCPClientNode(BaseNode):
     async def _execute_stdio(
         self, command: str, args: list, tool: str, arguments: Dict[str, Any], timeout: float
     ) -> NodeResult:
-        # issue #431: stdio 传输 — 子进程 JSON-RPC; 命令必须在 FUSION_COWORK_MCP_STDIO_ALLOW
-        # 白名单内 (basename 精确匹配, 缺省空 = 一律拒绝, fail-closed)
+        # issue #431: stdio transport — subprocess JSON-RPC; the command must be inside the
+        # FUSION_COWORK_MCP_STDIO_ALLOW allowlist (exact basename match, empty default =
+        # reject all, fail-closed)
         if not command or not tool:
-            return NodeResult(status=NodeStatus.FAILED, error="stdio 模式缺少 command 或 tool 参数", summary="参数缺失")
+            return NodeResult(status=NodeStatus.FAILED, error="stdio mode missing command or tool param", summary="missing params")
         from fusion_cowork.nodes.ecosystem.mcp_stdio import (
             STDIO_ALLOW_ENV,
             stdio_allowed,
@@ -144,23 +164,23 @@ class MCPClientNode(BaseNode):
         )
 
         if not stdio_allowed(command):
-            allowed = ", ".join(stdio_allowlist()) or "(空 — 一律拒绝)"
+            allowed = ", ".join(stdio_allowlist()) or "(empty — reject all)"
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"命令 {command} 不在 {STDIO_ALLOW_ENV} 白名单内 (当前: {allowed})",
-                summary="stdio 命令未授权",
+                error=f"command {command} is not in the {STDIO_ALLOW_ENV} allowlist (current: {allowed})",
+                summary="stdio command not authorized",
             )
-        logger.info(f"mcp_client: stdio 调用 command={command} tool={tool}")
+        logger.info(f"mcp_client: stdio call command={command} tool={tool}")
         try:
             results = await stdio_tool_calls(command, args, [{"tool": tool, "arguments": arguments}], timeout=timeout)
         except Exception as e:
-            logger.warning(f"mcp_client: stdio 调用失败 command={command} tool={tool}: {e}")
-            return NodeResult(status=NodeStatus.FAILED, error=f"stdio MCP 调用失败: {e}", summary="调用失败")
+            logger.warning(f"mcp_client: stdio call failed command={command} tool={tool}: {e}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"stdio MCP call failed: {e}", summary="call failed")
         first = results[0] if results else {"text": "", "content": []}
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"result": first["text"], "raw": first["content"]},
-            summary=f"MCP stdio 工具 {tool} 调用成功",
+            summary=f"MCP stdio tool {tool} call succeeded",
         )
 
     async def execute(self, inputs: Dict[str, Any]) -> NodeResult:
@@ -181,39 +201,40 @@ class MCPClientNode(BaseNode):
                 except json.JSONDecodeError as e:
                     return NodeResult(
                         status=NodeStatus.FAILED,
-                        error=f"arguments 须为 JSON 对象 (JSON 字符串解析失败: {e})",
-                        summary="参数非法",
+                        error=f"arguments must be a JSON object (JSON string parse failed: {e})",
+                        summary="invalid params",
                     )
             if not isinstance(arguments, dict):
-                return NodeResult(status=NodeStatus.FAILED, error="arguments 须为 JSON 对象", summary="参数非法")
+                return NodeResult(status=NodeStatus.FAILED, error="arguments must be a JSON object", summary="invalid params")
             return await self._execute_stdio(stdio_command, stdio_args, tool, arguments, timeout)
 
         if not url or not tool:
-            return NodeResult(status=NodeStatus.FAILED, error="缺少 url 或 tool 参数", summary="参数缺失")
+            return NodeResult(status=NodeStatus.FAILED, error="missing url or tool param", summary="missing params")
         if not url.startswith(("http://", "https://")):
-            return NodeResult(status=NodeStatus.FAILED, error=f"非法 URL: {url}", summary="参数非法")
+            return NodeResult(status=NodeStatus.FAILED, error=f"invalid URL: {url}", summary="invalid params")
         if isinstance(arguments, str):
-            # issue #211: 上游 mcp_client 输出是文本, 连边后本节点收到 JSON 字符串 — 解析后继续
+            # issue #211: upstream mcp_client output is text, so this node receives a JSON string
+            # across the edge — parse it and continue
             raw_arguments = arguments
             try:
                 arguments = json.loads(raw_arguments.strip())
             except json.JSONDecodeError as e:
                 return NodeResult(
                     status=NodeStatus.FAILED,
-                    error=f"arguments 须为 JSON 对象 (JSON 字符串解析失败: {e})",
-                    summary="参数非法",
+                    error=f"arguments must be a JSON object (JSON string parse failed: {e})",
+                    summary="invalid params",
                 )
-            logger.info(f"mcp_client: arguments 由 JSON 字符串解析 tool={tool} chars={len(raw_arguments)}")
+            logger.info(f"mcp_client: arguments parsed from JSON string tool={tool} chars={len(raw_arguments)}")
         if not isinstance(arguments, dict):
-            return NodeResult(status=NodeStatus.FAILED, error="arguments 须为 JSON 对象", summary="参数非法")
+            return NodeResult(status=NodeStatus.FAILED, error="arguments must be a JSON object", summary="invalid params")
 
         base_headers = {"Accept": "application/json, text/event-stream", **extra_headers}
-        # issue #210: 握手前先做注册表审计 (warn 级, 不阻断)
+        # issue #210: run the registry audit before the handshake (warn level, never blocking)
         self._registry_check(url, tool)
-        logger.info(f"mcp_client: 调用 {url} tool={tool}")
+        logger.info(f"mcp_client: calling {url} tool={tool}")
         try:
             async with self._client(timeout) as client:
-                # 1) initialize 握手 → 服务端下发 Mcp-Session-Id
+                # 1) initialize handshake -> server issues Mcp-Session-Id
                 init_resp = await client.post(
                     url,
                     headers=base_headers,
@@ -231,19 +252,19 @@ class MCPClientNode(BaseNode):
                 if init_resp.status_code != 200:
                     return NodeResult(
                         status=NodeStatus.FAILED,
-                        error=f"initialize 失败: HTTP {init_resp.status_code} {init_resp.text[:200]}",
-                        summary="握手失败",
+                        error=f"initialize failed: HTTP {init_resp.status_code} {init_resp.text[:200]}",
+                        summary="handshake failed",
                     )
                 init_body = self._parse_reply(init_resp)
                 if "error" in init_body:
                     return NodeResult(
                         status=NodeStatus.FAILED,
-                        error=f"initialize 失败: {init_body['error']}",
-                        summary="握手失败",
+                        error=f"initialize failed: {init_body['error']}",
+                        summary="handshake failed",
                     )
                 session_id = init_resp.headers.get("mcp-session-id", "")
 
-                # 2) notifications/initialized (服务端 202 即成功, 忽略响应体)
+                # 2) notifications/initialized (server 202 counts as success, body ignored)
                 req_headers = dict(base_headers)
                 if session_id:
                     req_headers["Mcp-Session-Id"] = session_id
@@ -267,15 +288,15 @@ class MCPClientNode(BaseNode):
                 if call_resp.status_code != 200:
                     return NodeResult(
                         status=NodeStatus.FAILED,
-                        error=f"tools/call 失败: HTTP {call_resp.status_code} {call_resp.text[:200]}",
-                        summary="调用失败",
+                        error=f"tools/call failed: HTTP {call_resp.status_code} {call_resp.text[:200]}",
+                        summary="call failed",
                     )
                 body = self._parse_reply(call_resp)
                 if body.get("error"):
                     return NodeResult(
                         status=NodeStatus.FAILED,
-                        error=f"tools/call 错误: {body['error']}",
-                        summary="调用失败",
+                        error=f"tools/call error: {body['error']}",
+                        summary="call failed",
                     )
                 result = body.get("result") or {}
                 content = result.get("content") or []
@@ -283,19 +304,19 @@ class MCPClientNode(BaseNode):
                 if result.get("isError"):
                     return NodeResult(
                         status=NodeStatus.FAILED,
-                        error="; ".join(t for t in text_parts if t) or "工具执行报错",
+                        error="; ".join(t for t in text_parts if t) or "tool execution reported an error",
                         data={"raw": content},
-                        summary="工具报错",
+                        summary="tool error",
                     )
-                logger.info(f"mcp_client: {tool} 调用成功 ({len(text_parts)} 段文本)")
+                logger.info(f"mcp_client: {tool} call succeeded ({len(text_parts)} text segments)")
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
                     data={"result": "\n".join(text_parts), "raw": content},
-                    summary=f"MCP 工具 {tool} 调用成功",
+                    summary=f"MCP tool {tool} call succeeded",
                 )
         except httpx.TimeoutException as e:
-            logger.warning(f"mcp_client: 超时 {url}: {e}")
-            return NodeResult(status=NodeStatus.FAILED, error=f"MCP 调用超时: {e}", summary="调用超时")
+            logger.warning(f"mcp_client: timed out {url}: {e}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"MCP call timed out: {e}", summary="call timed out")
         except httpx.HTTPError as e:
-            logger.warning(f"mcp_client: 连接失败 {url}: {e}")
-            return NodeResult(status=NodeStatus.FAILED, error=f"MCP 连接失败: {e}", summary="连接失败")
+            logger.warning(f"mcp_client: connection failed {url}: {e}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"MCP connection failed: {e}", summary="connection failed")

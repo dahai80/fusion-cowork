@@ -1,8 +1,11 @@
 import type { CapabilityCatalog, CapabilityItem, CapabilityType } from './api';
 
 export const CAPABILITY_TABS: Array<{ key: CapabilityType; zh: string; en: string; icon: string }> = [
+    // i18n: user-facing
     { key: 'skill', zh: '技能', en: 'Skills', icon: '⚙' },
+    // i18n: user-facing
     { key: 'connector', zh: '连接器', en: 'Connectors', icon: '🔌' },
+    // i18n: user-facing
     { key: 'subagent', zh: '子代理', en: 'Subagents', icon: '🤖' },
 ];
 
@@ -45,7 +48,7 @@ export function poolExtraCapabilities(catalog: CapabilityCatalog | null): Capabi
     return [...(catalog?.connectors ?? []), ...(catalog?.subagents ?? [])].filter(usableCapability);
 }
 
-// issue #244 R1: 首访 pitch 卡 — 三类能力一句话定位, 安装任意能力后永久消失。
+// issue #244 R1: first-visit pitch card — one-line positioning per capability type, permanently dismissed once any capability is installed.
 export const PITCH_DISMISS_KEY = 'cowork.capabilities.pitchDismissed';
 
 export interface CapabilityPitch {
@@ -60,19 +63,25 @@ export function capabilityPitches(): CapabilityPitch[] {
         {
             key: 'skill',
             icon: '⚙',
+            // i18n: user-facing
             title: { zh: '技能', en: 'Skills' },
+            // i18n: user-facing
             desc: { zh: '领域知识与最佳实践', en: 'Domain knowledge and best practices' },
         },
         {
             key: 'connector',
             icon: '🔌',
+            // i18n: user-facing
             title: { zh: '连接器', en: 'Connectors' },
+            // i18n: user-facing
             desc: { zh: '接入你已在用的工具', en: 'Bring the tools you already use' },
         },
         {
             key: 'subagent',
             icon: '🤖',
+            // i18n: user-facing
             title: { zh: '子代理', en: 'Subagents' },
+            // i18n: user-facing
             desc: { zh: '端到端处理专项任务', en: 'Handle specialized tasks end to end' },
         },
     ];
@@ -90,7 +99,7 @@ export function dismissPitches(): void {
     try {
         localStorage.setItem(PITCH_DISMISS_KEY, '1');
     } catch {
-        // 无 localStorage (隐私模式) — 会话内 state 兜底
+        // No localStorage (privacy mode) — in-session state fallback
     }
 }
 

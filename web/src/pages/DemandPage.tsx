@@ -68,13 +68,17 @@ function InboxPane({ t }: { t: (zh: string, en: string) => string }) {
         <div className="space-y-3">
             {metrics.data ? (
                 <div className="flex flex-wrap gap-2 text-xs text-text-secondary">
+                    {/* i18n: user-facing */}
                     <Chip label={`${t('审批', 'Approvals')}: ${metrics.data.total_picks}`} />
                     <Chip
+                        // i18n: user-facing
                         label={`${t('本地稿胜率', 'Local pick')}: ${(metrics.data.pick_rate_local * 100).toFixed(0)}%`}
                     />
                     <Chip
+                        // i18n: user-facing
                         label={`${t('云稿胜率', 'Cloud pick')}: ${(metrics.data.pick_rate_cloud * 100).toFixed(0)}%`}
                     />
+                    {/* i18n: user-facing */}
                     <Chip label={`${t('平均编辑距离', 'Avg edit distance')}: ${metrics.data.avg_edit_distance}`} />
                 </div>
             ) : null}
@@ -84,6 +88,7 @@ function InboxPane({ t }: { t: (zh: string, en: string) => string }) {
                     className={`rounded-md px-2 py-1 text-xs ${filter === '' ? 'bg-bg-muted text-text-primary' : 'text-text-secondary hover:bg-bg-muted'}`}
                     onClick={() => setFilter('')}
                 >
+                    {/* i18n: user-facing */}
                     {t('全部', 'All')}
                 </button>
                 {LEAD_STATUSES.map((s) => (
@@ -100,6 +105,7 @@ function InboxPane({ t }: { t: (zh: string, en: string) => string }) {
             <div className="grid gap-3 lg:grid-cols-[280px_1fr]">
                 <div className="max-h-[28rem] space-y-1 overflow-y-auto rounded-xl border border-border p-2">
                     {leads.length === 0 ? (
+                        {/* i18n: user-facing */}
                         <EmptyState title={t('暂无线索', 'No leads')} />
                     ) : (
                         leads.map((ld) => (
@@ -125,6 +131,7 @@ function InboxPane({ t }: { t: (zh: string, en: string) => string }) {
                                 <div className="mt-0.5 flex gap-2 text-text-muted">
                                     <span>{ld.source}</span>
                                     <span>
+                                        {/* i18n: user-facing */}
                                         {t('分', 'score')} {ld.match_score ?? '—'}
                                     </span>
                                 </div>
@@ -134,6 +141,7 @@ function InboxPane({ t }: { t: (zh: string, en: string) => string }) {
                 </div>
                 <div className="rounded-xl border border-border p-3">
                     {!selected ? (
+                        {/* i18n: user-facing */}
                         <EmptyState title={t('选择左侧线索查看双稿', 'Select a lead to review drafts')} />
                     ) : (
                         <div className="space-y-3 text-xs">
@@ -144,7 +152,9 @@ function InboxPane({ t }: { t: (zh: string, en: string) => string }) {
                                 <Chip label={selected.status} className={STATUS_CHIP[selected.status]} />
                             </div>
                             <div className="text-text-secondary">
+                                {/* i18n: user-facing */}
                                 {t('能力', 'Capabilities')}: {(selected.matched_capabilities ?? []).join(', ') || '—'} ·{' '}
+                                {/* i18n: user-facing */}
                                 {t('目录', 'Catalog')} v{selected.catalog_version || '—'} · {t('预算', 'Budget')}:{' '}
                                 {selected.budget_hint || '—'}
                             </div>
@@ -169,7 +179,9 @@ function InboxPane({ t }: { t: (zh: string, en: string) => string }) {
                                                 <div className="flex items-center justify-between">
                                                     <span className="font-medium text-text-primary">
                                                         {slot === 'a'
+                                                            // i18n: user-facing
                                                             ? t('草稿 A (本地)', 'Draft A (local)')
+                                                            // i18n: user-facing
                                                             : t('草稿 B (云端)', 'Draft B (cloud)')}
                                                     </span>
                                                     <span className="text-text-muted">
@@ -192,12 +204,14 @@ function InboxPane({ t }: { t: (zh: string, en: string) => string }) {
                                                         act(
                                                             () => api.approveDemandLead(selected.id, slot),
                                                             t(
+                                                                // i18n: user-facing
                                                                 '已批准 — 请在原渠道人工发送',
                                                                 'Approved — send manually on the original channel'
                                                             )
                                                         )
                                                     }
                                                 >
+                                                    {/* i18n: user-facing */}
                                                     {t('批准此稿', 'Approve')}
                                                 </button>
                                             </div>
@@ -206,6 +220,7 @@ function InboxPane({ t }: { t: (zh: string, en: string) => string }) {
                                     {editingOn ? (
                                         <div className="space-y-1">
                                             <textarea
+                                                // i18n: user-facing
                                                 aria-label={t('编辑后的最终稿', 'Edited final draft')}
                                                 className="h-32 w-full rounded-lg border border-border bg-bg-elevated p-2 text-text-primary"
                                                 value={editing}
@@ -220,12 +235,14 @@ function InboxPane({ t }: { t: (zh: string, en: string) => string }) {
                                                         act(
                                                             () => api.approveDemandLead(selected.id, 'a', editing),
                                                             t(
+                                                                // i18n: user-facing
                                                                 '已批准编辑稿 — 请在原渠道人工发送',
                                                                 'Approved edited draft — send manually on the original channel'
                                                             )
                                                         )
                                                     }
                                                 >
+                                                    {/* i18n: user-facing */}
                                                     {t('保存并批准', 'Save and approve')}
                                                 </button>
                                                 <button
@@ -233,6 +250,7 @@ function InboxPane({ t }: { t: (zh: string, en: string) => string }) {
                                                     className="rounded-md px-2 py-1 text-text-secondary hover:underline"
                                                     onClick={() => setEditingOn(false)}
                                                 >
+                                                    {/* i18n: user-facing */}
                                                     {t('取消', 'Cancel')}
                                                 </button>
                                             </div>
@@ -247,6 +265,7 @@ function InboxPane({ t }: { t: (zh: string, en: string) => string }) {
                                                     setEditingOn(true);
                                                 }}
                                             >
+                                                {/* i18n: user-facing */}
                                                 {t('编辑后批准', 'Edit then approve')}
                                             </button>
                                             <button
@@ -256,10 +275,12 @@ function InboxPane({ t }: { t: (zh: string, en: string) => string }) {
                                                 onClick={() =>
                                                     act(
                                                         () => api.discardDemandLead(selected.id, 'operator discarded'),
+                                                        // i18n: user-facing
                                                         t('已丢弃', 'Discarded')
                                                     )
                                                 }
                                             >
+                                                {/* i18n: user-facing */}
                                                 {t('丢弃', 'Discard')}
                                             </button>
                                         </div>
@@ -268,12 +289,14 @@ function InboxPane({ t }: { t: (zh: string, en: string) => string }) {
                             ) : selected.status === 'approved' ? (
                                 <div className="rounded-lg bg-bg-muted px-2 py-1.5 text-text-secondary">
                                     {t(
+                                        // i18n: user-facing
                                         '已批准 — 系统不会自动发送, 请在原渠道人工提交',
                                         'Approved — the system never sends; submit manually on the original channel'
                                     )}
                                 </div>
                             ) : (
                                 <div className="text-text-muted">
+                                    {/* i18n: user-facing */}
                                     {t('该线索当前无可审批草稿', 'No draft to review at this status')}
                                 </div>
                             )}
@@ -305,6 +328,7 @@ function CatalogPane({ t }: { t: (zh: string, en: string) => string }) {
             const r = await api.saveDemandCatalog({ ...catalog, capabilities });
             setResult(
                 t(
+                    // i18n: user-facing
                     `已保存 v${r.version} (原 v${r.previous_version}), ${r.parked_re_scored} 条 parked 线索已重新评估`,
                     `Saved v${r.version} (was v${r.previous_version}), ${r.parked_re_scored} parked leads re-scored`
                 )
@@ -322,6 +346,7 @@ function CatalogPane({ t }: { t: (zh: string, en: string) => string }) {
         <div className="space-y-3 text-xs">
             <div className="flex items-center justify-between">
                 <span className="text-sm font-medium text-text-primary">
+                    {/* i18n: user-facing */}
                     {t('能力目录', 'Capability catalog')} v{catalog.version}
                 </span>
                 <button
@@ -330,6 +355,7 @@ function CatalogPane({ t }: { t: (zh: string, en: string) => string }) {
                     className="rounded-md bg-indigo-600 px-3 py-1 font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
                     onClick={save}
                 >
+                    {/* i18n: user-facing */}
                     {t('保存 (版本号自动递增)', 'Save (version auto-bump)')}
                 </button>
             </div>
@@ -346,10 +372,15 @@ function CatalogPane({ t }: { t: (zh: string, en: string) => string }) {
                     <thead className="bg-bg-muted text-text-secondary">
                         <tr>
                             <th className="px-2 py-1.5">ID</th>
+                            {/* i18n: user-facing */}
                             <th className="px-2 py-1.5">{t('名称', 'Name')}</th>
+                            {/* i18n: user-facing */}
                             <th className="px-2 py-1.5">{t('报价 (CNY)', 'Price (CNY)')}</th>
+                            {/* i18n: user-facing */}
                             <th className="px-2 py-1.5">{t('预算区间', 'Budget range')}</th>
+                            {/* i18n: user-facing */}
                             <th className="px-2 py-1.5">{t('关键词', 'Keywords')}</th>
+                            {/* i18n: user-facing */}
                             <th className="px-2 py-1.5">{t('启用', 'Enabled')}</th>
                         </tr>
                     </thead>
@@ -427,6 +458,7 @@ function SettingsPane({ t }: { t: (zh: string, en: string) => string }) {
                 folder: f.folder,
                 ...(f.password ? { password: f.password } : {}),
             });
+            // i18n: user-facing
             setSaved(t('已保存 (授权码写后不回显)', 'Saved (auth code is write-only)'));
             setForm(null);
             retry.manualRetry();
@@ -445,9 +477,11 @@ function SettingsPane({ t }: { t: (zh: string, en: string) => string }) {
             setTestResult(
                 r.ok
                     ? t(
+                          // i18n: user-facing
                           `连接成功 (${r.latency_ms}ms, cursor ${r.cursor})`,
                           `OK (${r.latency_ms}ms, cursor ${r.cursor})`
                       )
+                    // i18n: user-facing
                     : t(`连接失败: ${r.error ?? 'unknown'}`, `Failed: ${r.error ?? 'unknown'}`)
             );
             retry.manualRetry();
@@ -463,6 +497,7 @@ function SettingsPane({ t }: { t: (zh: string, en: string) => string }) {
     return (
         <div className="grid gap-3 lg:grid-cols-2">
             <div className="space-y-2 rounded-xl border border-border p-3 text-xs">
+                {/* i18n: user-facing */}
                 <div className="text-sm font-medium text-text-primary">{t('QQ IMAP 收件', 'QQ IMAP inbox')}</div>
                 {(['host', 'port', 'user', 'folder'] as const).map((k) => (
                     <label key={k} className="block space-y-0.5">
@@ -477,7 +512,9 @@ function SettingsPane({ t }: { t: (zh: string, en: string) => string }) {
                 ))}
                 <label className="block space-y-0.5">
                     <span className="text-text-secondary">
+                        {/* i18n: user-facing */}
                         {t('授权码', 'Auth code')}
+                        {/* i18n: user-facing */}
                         {s.password_present ? t(' (已设置)', ' (set)') : ''}
                     </span>
                     <input
@@ -496,6 +533,7 @@ function SettingsPane({ t }: { t: (zh: string, en: string) => string }) {
                         className="rounded-md bg-indigo-600 px-3 py-1 font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
                         onClick={save}
                     >
+                        {/* i18n: user-facing */}
                         {t('保存', 'Save')}
                     </button>
                     <button
@@ -504,6 +542,7 @@ function SettingsPane({ t }: { t: (zh: string, en: string) => string }) {
                         className="rounded-md border border-border px-3 py-1 text-text-secondary hover:bg-bg-muted disabled:opacity-50"
                         onClick={test}
                     >
+                        {/* i18n: user-facing */}
                         {t('测试连接', 'Test connection')}
                     </button>
                 </div>
@@ -511,26 +550,32 @@ function SettingsPane({ t }: { t: (zh: string, en: string) => string }) {
                 {error ? <div className="text-red-600 dark:text-red-400">{error}</div> : null}
                 {testResult ? <div className="text-text-secondary">{testResult}</div> : null}
                 <div className="text-text-muted">
+                    {/* i18n: user-facing */}
                     {t('环境文件', 'Env file')}: {s.env_path} · UID cursor {s.cursor ?? 0}
                 </div>
             </div>
             <div className="space-y-2 rounded-xl border border-border p-3 text-xs">
                 <div className="text-sm font-medium text-text-primary">
+                    {/* i18n: user-facing */}
                     {t('模型路由 (只读)', 'Model routing (read-only)')}
                 </div>
                 <div className="text-text-secondary">
+                    {/* i18n: user-facing */}
                     {t('草稿 A: 本地模型 @ fusion-gateway :11432', 'Draft A: local model @ fusion-gateway :11432')}
                 </div>
                 <div className="text-text-secondary">
+                    {/* i18n: user-facing */}
                     {t('草稿 B: 云端 glm-5 @ fusion-gateway :11432', 'Draft B: cloud glm-5 @ fusion-gateway :11432')}
                 </div>
                 <div className="text-text-muted">
                     {t(
+                        // i18n: user-facing
                         '密钥通过 FUSION_CLIENT_KEY 注入 (已脱敏), 网关配置见管理后台',
                         'Keys injected via FUSION_CLIENT_KEY (masked); configure at the gateway admin console'
                     )}
                 </div>
                 <div className="text-text-muted">
+                    {/* i18n: user-facing */}
                     {t('通知', 'Notify')}: ntfy (FUSION_NTFY_URL, {t('可选', 'optional')})
                 </div>
             </div>
@@ -571,6 +616,7 @@ function PipelinePane({ t }: { t: (zh: string, en: string) => string }) {
         <div className="space-y-3 text-xs">
             <div className="rounded-xl border border-border p-3">
                 <div className="mb-2 text-sm font-medium text-text-primary">
+                    {/* i18n: user-facing */}
                     {t('需求邮件管线 (调度)', 'Demand mail rail (scheduled)')}
                 </div>
                 {tasks.loading && !tasks.data ? (
@@ -578,6 +624,7 @@ function PipelinePane({ t }: { t: (zh: string, en: string) => string }) {
                 ) : demandTasks.length === 0 ? (
                     <EmptyState
                         title={t(
+                            // i18n: user-facing
                             '未注册 demand 调度任务 — 重启 serve 自动播种',
                             'No demand scheduler task — seeded automatically on serve restart'
                         )}
@@ -603,12 +650,15 @@ function PipelinePane({ t }: { t: (zh: string, en: string) => string }) {
                                 </div>
                                 <div className="mt-1 flex flex-wrap items-center gap-3 text-text-muted">
                                     <span>
+                                        {/* i18n: user-facing */}
                                         {t('下次运行', 'Next run')}: {fmtTime(task.next_run)}
                                     </span>
                                     <span>
+                                        {/* i18n: user-facing */}
                                         {t('上次运行', 'Last run')}: {fmtTime(task.last_run)}
                                     </span>
                                     <span>
+                                        {/* i18n: user-facing */}
                                         {t('次数', 'runs')} {task.run_count} · {t('失败', 'fail')} {task.fail_count}
                                     </span>
                                 </div>
@@ -620,10 +670,12 @@ function PipelinePane({ t }: { t: (zh: string, en: string) => string }) {
                                         onClick={() =>
                                             void act(
                                                 () => api.runNowSchedulerTask(task.id),
+                                                // i18n: user-facing
                                                 t('已触发运行', 'Run triggered')
                                             )
                                         }
                                     >
+                                        {/* i18n: user-facing */}
                                         {t('立即运行', 'Run now')}
                                     </button>
                                     {task.status === 'paused' || task.status === 'failed' ? (
@@ -632,9 +684,11 @@ function PipelinePane({ t }: { t: (zh: string, en: string) => string }) {
                                             disabled={busy}
                                             className="rounded-lg border border-border px-2 py-1 text-text-secondary hover:bg-bg-muted disabled:opacity-50"
                                             onClick={() =>
+                                                // i18n: user-facing
                                                 void act(() => api.resumeSchedulerTask(task.id), t('已恢复', 'Resumed'))
                                             }
                                         >
+                                            {/* i18n: user-facing */}
                                             {t('恢复', 'Resume')}
                                         </button>
                                     ) : (
@@ -643,9 +697,11 @@ function PipelinePane({ t }: { t: (zh: string, en: string) => string }) {
                                             disabled={busy}
                                             className="rounded-lg border border-border px-2 py-1 text-text-secondary hover:bg-bg-muted disabled:opacity-50"
                                             onClick={() =>
+                                                // i18n: user-facing
                                                 void act(() => api.pauseSchedulerTask(task.id), t('已暂停', 'Paused'))
                                             }
                                         >
+                                            {/* i18n: user-facing */}
                                             {t('暂停', 'Pause')}
                                         </button>
                                     )}
@@ -658,10 +714,12 @@ function PipelinePane({ t }: { t: (zh: string, en: string) => string }) {
                 {error ? <div className="mt-2 text-red-600 dark:text-red-400">{error}</div> : null}
             </div>
             <div className="rounded-xl border border-border p-3">
+                {/* i18n: user-facing */}
                 <div className="mb-2 text-sm font-medium text-text-primary">{t('最近运行', 'Recent runs')}</div>
                 {runs.loading && !runs.data ? (
                     <SkeletonLines rows={2} />
                 ) : demandRuns.length === 0 ? (
+                    {/* i18n: user-facing */}
                     <EmptyState title={t('暂无 demand 运行记录', 'No demand runs yet')} />
                 ) : (
                     <div className="space-y-1">
@@ -695,9 +753,13 @@ export function DemandPage() {
     const t = useT();
     const [tab, setTab] = useState<Tab>('inbox');
     const tabs: { key: Tab; label: string }[] = [
+        // i18n: user-facing
         { key: 'inbox', label: t('线索收件箱', 'Inbox') },
+        // i18n: user-facing
         { key: 'catalog', label: t('能力目录', 'Catalog') },
+        // i18n: user-facing
         { key: 'settings', label: t('设置', 'Settings') },
+        // i18n: user-facing
         { key: 'pipeline', label: t('管线', 'Pipeline') },
     ];
     return (

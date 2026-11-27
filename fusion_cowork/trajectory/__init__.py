@@ -1,10 +1,10 @@
-"""D1 轨迹飞轮 — 结构化执行轨迹持久化。
+"""D1 trajectory flywheel - structured execution trajectory persistence.
 
-将 cowork DAG 工作流的 Hook 事件落库为结构化记录（非仅文本日志），
-填充 sessions.steps_snapshot，并写入统一汇聚目录 ~/.fusion/trajectories/cowork/。
+Persists cowork DAG workflow Hook events as structured records (not just text logs),
+fills sessions.steps_snapshot, and writes to the unified aggregation directory ~/.fusion/trajectories/cowork/.
 
-接入方式：通过 TrajectoryRecorder.attach(hook_manager) 注册 Hook 处理器，
-随 HookManager.fire() 自动持久化。
+Integration: register hook handlers via TrajectoryRecorder.attach(hook_manager);
+persistence happens automatically on HookManager.fire().
 """
 
 from .recorder import TrajectoryRecorder, TrajectoryWriter

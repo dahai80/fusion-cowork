@@ -1,4 +1,4 @@
-"""IO 节点 — 文件输入/输出操作。"""
+"""IO nodes — file input/output operations."""
 
 from __future__ import annotations
 
@@ -21,21 +21,28 @@ logger = logging.getLogger(__name__)
 
 @register_node
 class FileInputNode(BaseNode):
-    """文件输入节点 — 读取文件列表或目录内容作为工作流输入。"""
+    """File input node — reads a file list or directory contents as workflow input."""
 
     name = "file_input"
+    # i18n: user-facing
     display_name = "文件输入"
     category = NodeCategory.IO
+    # i18n: user-facing
     description = "读取文件列表或目录内容作为工作流数据源"
     icon = "📂"
+    # i18n: user-facing
     default_label = "文件输入"
 
     inputs = [
+        # i18n: user-facing
         {"key": "path", "label": "路径", "type": "string", "optional": True},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "files", "label": "文件列表", "type": "list[file]"},
+        # i18n: user-facing
         {"key": "total_count", "label": "文件总数", "type": "integer"},
+        # i18n: user-facing
         {"key": "total_size", "label": "总大小", "type": "string"},
     ]
 
@@ -43,15 +50,20 @@ class FileInputNode(BaseNode):
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "path": {"type": "string", "default": "~", "description": "输入路径（文件或目录）"},
+                # i18n: user-facing
                 "recursive": {"type": "boolean", "default": True, "description": "递归子目录"},
+                # i18n: user-facing
                 "file_patterns": {"type": "string", "default": "*", "description": "文件过滤模式，逗号分隔"},
+                # i18n: user-facing
                 "max_files": {"type": "integer", "default": 5000, "description": "最大文件数"},
                 "include_hidden": {"type": "boolean", "default": False},
                 "sort_by": {
                     "type": "string",
                     "enum": ["name", "date", "size", "type", ""],
                     "default": "name",
+                    # i18n: user-facing
                     "description": "排序方式",
                 },
                 "sort_order": {"type": "string", "enum": ["asc", "desc"], "default": "asc"},
@@ -64,11 +76,11 @@ class FileInputNode(BaseNode):
         input_path = inputs.get("path", params.get("path", ""))
 
         if not input_path:
-            return NodeResult(status=NodeStatus.FAILED, error="未指定输入路径")
+            return NodeResult(status=NodeStatus.FAILED, error="no input path specified")
 
         path = Path(input_path).expanduser()
         if not path.exists():
-            return NodeResult(status=NodeStatus.FAILED, error=f"路径不存在: {input_path}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"path does not exist: {input_path}")
 
         from ...security import get_scoped_folder_manager
 
@@ -76,8 +88,8 @@ class FileInputNode(BaseNode):
         if not scope.ensure_allowed(path):
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"沙箱拒绝越界读取: {path}",
-                summary="授权文件夹外路径被拦截",
+                error=f"sandbox blocked out-of-scope read: {path}",
+                summary="path outside authorized folders was blocked",
             )
 
         recursive = params.get("recursive", True)
@@ -110,8 +122,8 @@ class FileInputNode(BaseNode):
                 if len(files) >= max_files:
                     break
 
-        # 排序
-        # 排序
+        # sorting
+        # sorting
         reverse = sort_order == "desc"
         if sort_by == "name":
             files.sort(key=lambda f: Path(f).name.lower(), reverse=reverse)
@@ -133,7 +145,7 @@ class FileInputNode(BaseNode):
                 "total_size_bytes": total_size,
                 "source_path": str(path),
             },
-            summary=f"读取 {len(files)} 个文件 ({self._format_size(total_size)})",
+            summary=f"read {len(files)} files ({self._format_size(total_size)})",
         )
 
     def _format_size(self, size_bytes: int) -> str:
@@ -146,20 +158,26 @@ class FileInputNode(BaseNode):
 
 @register_node
 class FileOutputNode(BaseNode):
-    """文件输出节点 — 将工作流结果写入文件。"""
+    """File output node — writes workflow results to a file."""
 
     name = "file_output"
+    # i18n: user-facing
     display_name = "文件输出"
     category = NodeCategory.IO
+    # i18n: user-facing
     description = "将工作流处理结果写入文件"
     icon = "💾"
+    # i18n: user-facing
     default_label = "文件输出"
 
     inputs = [
+        # i18n: user-facing
         {"key": "data", "label": "输出数据", "type": "any"},
+        # i18n: user-facing
         {"key": "output_path", "label": "输出路径", "type": "string", "optional": True},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "file_path", "label": "输出文件路径", "type": "string"},
     ]
 
@@ -167,7 +185,9 @@ class FileOutputNode(BaseNode):
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "output_path": {"type": "string", "default": "~/Desktop/Output", "description": "输出目录"},
+                # i18n: user-facing
                 "file_name": {"type": "string", "default": "report_{date}", "description": "输出文件名（不含扩展名）"},
                 "format": {"type": "string", "enum": ["json", "text", "markdown", "csv"], "default": "json"},
                 "overwrite": {"type": "boolean", "default": False},
@@ -191,8 +211,8 @@ class FileOutputNode(BaseNode):
         if not scope.ensure_allowed(out_dir):
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"沙箱拒绝越界写入: {out_dir}",
-                summary="授权文件夹外路径被拦截",
+                error=f"sandbox blocked out-of-scope write: {out_dir}",
+                summary="path outside authorized folders was blocked",
             )
 
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -212,8 +232,8 @@ class FileOutputNode(BaseNode):
         if not scope.ensure_allowed(out_path):
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"沙箱拒绝越界写入: {out_path}",
-                summary="授权文件夹外路径被拦截",
+                error=f"sandbox blocked out-of-scope write: {out_path}",
+                summary="path outside authorized folders was blocked",
             )
 
         try:
@@ -233,17 +253,18 @@ class FileOutputNode(BaseNode):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"file_path": str(out_path), "format": fmt, "size": out_path.stat().st_size},
-                summary=f"已输出到 {out_path.name}",
+                summary=f"written to {out_path.name}",
             )
         except Exception as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"写入失败: {e}",
-                summary="写入失败",
+                error=f"write failed: {e}",
+                summary="write failed",
             )
 
     def _to_markdown(self, data: Any) -> str:
         if isinstance(data, dict):
+            # i18n: user-facing
             lines = ["# 处理报告\n"]
             for k, v in data.items():
                 lines.append(f"## {k}")
@@ -254,8 +275,10 @@ class FileOutputNode(BaseNode):
                 lines.append("")
             return "\n".join(lines)
         if isinstance(data, list):
+            # i18n: user-facing
             lines = ["# 处理报告\n"]
             for i, item in enumerate(data):
+                # i18n: user-facing
                 lines.append(f"## 条目 {i + 1}")
                 lines.append(f"```json\n{json.dumps(item, ensure_ascii=False, indent=2)}\n```")
                 lines.append("")

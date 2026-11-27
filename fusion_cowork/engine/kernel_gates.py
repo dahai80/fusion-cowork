@@ -1,11 +1,13 @@
-"""issue #554: harness v0.20-0.22 机制接线 (destructive_gate / artifact_scan / json_repair)。
+"""issue #554: harness v0.20-0.22 mechanism wiring (destructive_gate / artifact_scan / json_repair).
 
-三个机制此前在 harness 内核可用但 cowork 零接线 (adoption-audit-2026-11-19):
-- destructive_gate: ApprovalGate 分类 + 单次兑换 token; SANDBOX 层无 runner = fail-closed
-- artifact_scan: 记忆/skill 产物进 run 前注入扫描 (prompt-injection/凭据泄漏规则)
-- json_repair: LLM 输出 JSON 修复梯 (deterministic ladder), 修复计数进 run 遥测
+All three mechanisms were available in the harness kernel but had zero cowork wiring
+(adoption-audit-2026-11-19):
+- destructive_gate: ApprovalGate classification + single-redeem token; SANDBOX tier with no runner = fail-closed
+- artifact_scan: pre-run injection scan for memory/skill artifacts (prompt-injection / credential-leak rules)
+- json_repair: deterministic JSON repair ladder for LLM output; repair counts feed run telemetry
 
-本模块只做薄适配 — 决策语义全在内核, consumer wiring (审批卡/HITL park/遥测) 留 cowork。
+This module is a thin adapter only — decision semantics live entirely in the kernel;
+consumer wiring (approval cards / HITL park / telemetry) stays in cowork.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from ._harness_guard import harness_import_error
 
 logger = logging.getLogger(__name__)
 
-try:  # issue #554: 内核三机制 — harness 是强制安装 ([plugins] extra)
+try:  # issue #554: kernel mechanisms — harness is a mandatory install ([plugins] extra)
     from fusion_harness import (
         ApprovalGate,
         ArtifactQuarantine,
@@ -36,16 +38,17 @@ try:  # issue #554: 内核三机制 — harness 是强制安装 ([plugins] extra
 except ImportError as exc:
     raise harness_import_error(exc) from exc
 
-# 修复计数 — engine 在节点执行前 reset, 节点内的 parse_llm_json 递增;
-# 计数随 node_finished 遥测上报 (issue #554: repairs in run telemetry)。
-# ContextVar 持可变 list (asyncio.wait_for 建 task 复制 context — int set 不回传,
-# 共享 list 原地 += 父协程可见); 未 set = 节点上下文外, 递增为 no-op
+# Repair counter — engine resets before each node executes; parse_llm_json inside the node
+# increments it. The count is reported with node_finished telemetry (issue #554: repairs in run telemetry).
+# ContextVar holds a mutable list (asyncio.wait_for copies the context when it builds the task —
+# an int set there would not propagate back; in-place += on the shared list is visible to the parent
+# coroutine). Unset = outside node context, increment is a no-op.
 json_repairs_in_step: ContextVar = ContextVar("json_repairs_in_step")
 
 
 class KernelPermissionBridge:
-    # ApprovalGate.permission_engine 协议: evaluate(tool, args) → 有 .decision 的对象;
-    # cowork 语义: 显式 deny 规则命中 = deny, 其余交还人工闸门 (非 deny = 不拦)
+    # ApprovalGate.permission_engine protocol: evaluate(tool, args) returns an object with .decision;
+    # cowork semantics: an explicit deny-rule hit = deny, everything else goes back to the human gate (non-deny = do not block)
     def __init__(self, permission_manager: Any = None):
         self._pm = permission_manager
 
@@ -64,19 +67,19 @@ class KernelPermissionBridge:
 
 
 def build_approval_gate(human_gate: Any, permission_manager: Any = None) -> ApprovalGate:
-    # issue #554: host 侧审批闸门 — 问题落共享 HumanGate 队列 (#527 桥), deny 规则前置
+    # issue #554: host-side approval gate — questions land in the shared HumanGate queue (#527 bridge), deny rules checked first
     return ApprovalGate(human_gate=human_gate, permission_engine=KernelPermissionBridge(permission_manager))
 
 
 def classify_destructive(tool_name: str, args: Any = None) -> Tuple[bool, str]:
-    # 内核分类表 + 名称 token (delete/drop/purge/...) — cowork 节点名直接适用
+    # Kernel classification table + name tokens (delete/drop/purge/...) — applies directly to cowork node names
     return ApprovalGate.classify(tool_name, args)
 
 
 def build_sandbox_policy() -> SandboxPolicy:
-    # SANDBOX 层映射: FUSION_COWORK_SANDBOX_TOOLS (逗号分隔节点名) → SANDBOX tier;
-    # FUSION_COWORK_SANDBOX_RUNNER=1 时接参考 runner (macOS sandbox-exec)。
-    # 无 runner + SANDBOX tier → SandboxPolicy.decide 返回 BLOCKED (fail-closed)
+    # SANDBOX tier mapping: FUSION_COWORK_SANDBOX_TOOLS (comma-separated node names) -> SANDBOX tier;
+    # FUSION_COWORK_SANDBOX_RUNNER=1 wires the reference runner (macOS sandbox-exec).
+    # No runner + SANDBOX tier -> SandboxPolicy.decide returns BLOCKED (fail-closed)
     raw = os.environ.get("FUSION_COWORK_SANDBOX_TOOLS", "").strip()
     tiers: Dict[str, ExecutionTier] = {}
     if raw:
@@ -87,18 +90,18 @@ def build_sandbox_policy() -> SandboxPolicy:
     runner, _backend = get_sandbox_runner()
     if tiers:
         logger.info(f"sandbox policy wired: tiers={sorted(tiers)} runner={'yes' if runner else 'none (fail-closed)'}")
-    # risk_threshold=inf — 权限闸门只认显式 tier 映射 (opt-in); 内核按风险分自动
-    # 升 SANDBOX 的默认语义会让未配置的高风险工具 (shell_exec rm -rf 等) 在
-    # guard 委托之前被 fail-closed 拦掉, 破坏 #73 既有行为
-    # issue #570: 经 kernel_sandbox_policy 构建 (helper 的唯一生产调用点, 不再并行造 policy)
+    # risk_threshold=inf — the permission gate honors only explicit tier mappings (opt-in); the kernel
+    # default of auto-escalating to SANDBOX by risk score would fail-closed block unconfigured high-risk
+    # tools (shell_exec rm -rf etc.) before guard delegation, breaking existing #73 behavior
+    # issue #570: built via kernel_sandbox_policy (the only production call site of the helper, no parallel policy construction)
     return kernel_sandbox_policy(runner, tool_tiers=tiers, risk_threshold=float("inf"))
 
 
-# issue #570: harness select_sandbox_runner 接线 — FUSION_SANDBOX_BACKEND=
-# fusion_executor 时 impl 节点经 FusionExecutorBackend (原生沙箱 + Git 快照
-# 回滚); 未设置/不可用 → 现行 runner 原样返回 (default 路径零行为变化)。
-# 按 cwd 缓存单例 — 权限闸门每次 check 都会 build policy, 不缓存的话每个
-# tool call 都新建 backend, 快照状态 (last_snapshot_id) 会互相覆盖。
+# issue #570: harness select_sandbox_runner wiring — with FUSION_SANDBOX_BACKEND=fusion_executor,
+# impl nodes go through FusionExecutorBackend (native sandbox + Git snapshot rollback);
+# unset/unavailable returns the current runner as-is (zero behavior change on the default path).
+# Per-cwd singleton cache — the permission gate builds a policy on every check; without caching
+# each tool call would create a new backend and snapshot state (last_snapshot_id) would clobber each other.
 _sandbox_runner_cache: Dict[str, Tuple[Any, str]] = {}
 
 
@@ -120,14 +123,14 @@ def get_sandbox_runner(cwd: str = "") -> Tuple[Any, str]:
 
 
 def reset_sandbox_runner_cache() -> None:
-    # 测试/配置变更后清缓存 (env 变了缓存里的 runner 不再匹配)
+    # Clear the cache after tests/config changes (stale cached runner no longer matches the new env)
     _sandbox_runner_cache.clear()
 
 
-# ── issue #571: MAST failure attribution 接线 (fusion_harness.failure_attribution) ──
-# 节点失败时对当前 run 轨迹做归因, verdict (mode/cluster/confidence/evidence) 落
-# 节点结果 + run 摘要; spec-class (specification_system_design) 失败不再烧重试
-# 预算 (升级语义 — 归因随 run 摘要交 QA/rework 路由)。env 默认关 = 行为零变化。
+# -- issue #571: MAST failure attribution wiring (fusion_harness.failure_attribution) --
+# When a node fails, the current run trajectory is attributed; the verdict (mode/cluster/confidence/evidence)
+# lands in the node result + run summary; spec-class (specification_system_design) failures no longer burn
+# retry budget (upgrade semantics — attribution rides the run summary to QA/rework routing). Env off by default = zero behavior change.
 ATTRIBUTION_ENV = "FUSION_COWORK_FAILURE_ATTRIBUTION"
 SPEC_CLUSTER = "specification_system_design"
 
@@ -142,8 +145,8 @@ def attribute_node_failure(
     failing_node_id: str,
     error: str,
 ) -> Optional[Dict[str, Any]]:
-    # MAST 归因 — 轨迹 = 已完成步 (tool_result) + 失败节点 error 记录;
-    # 分析/分类语义全在内核 FailureAnalyzer, 这里只做记录形状适配
+    # MAST attribution — trajectory = completed steps (tool_result) + the failing node error record;
+    # analysis/classification semantics live entirely in the kernel FailureAnalyzer, this only adapts the record shape
     try:
         from fusion_harness.failure_attribution import FailureAnalyzer
 
@@ -189,10 +192,10 @@ def is_spec_failure(verdict: Optional[Dict[str, Any]]) -> bool:
 
 
 def sandbox_block_reason(policy: SandboxPolicy, tool_name: str, params: Dict[str, Any]) -> str:
-    # SANDBOX tier + 无 runner = BLOCKED (fail-closed, 审批也救不回); 其余放行 ""
-    # 风险分/band 不参与 — 权限闸门只认显式 tier 映射 (opt-in); 内核按风险自动
-    # 升 SANDBOX 的默认语义会把未配置的高风险工具 (shell_exec rm -rf 等) 在
-    # #73 guard 委托之前 fail-closed 拦掉, 破坏既有行为
+    # SANDBOX tier + no runner = BLOCKED (fail-closed, approval cannot rescue it); everything else passes with ""
+    # Risk score/band does not participate — the permission gate honors only explicit tier mappings (opt-in); the kernel
+    # default of auto-escalating to SANDBOX by risk would fail-closed block unconfigured high-risk tools
+    # (shell_exec rm -rf etc.) before #73 guard delegation, breaking existing behavior
     decision = policy.decide(tool_name, params, (0.0, ""))
     if decision.tier is ExecutionTier.BLOCKED:
         return decision.reason or "sandbox tier required but no runner wired"
@@ -203,7 +206,7 @@ _artifact_quarantine: Optional[ArtifactQuarantine] = None
 
 
 def get_quarantine() -> ArtifactQuarantine:
-    # 进程级隔离区单例 — 载入扫描命中的产物记录在此 (持久 JSON, 人工复核入口)
+    # Process-level quarantine singleton — artifacts hit by the load scan are recorded here (persistent JSON, human review entry point)
     global _artifact_quarantine
     if _artifact_quarantine is None:
         path = os.environ.get("FUSION_COWORK_ARTIFACT_QUARANTINE", "").strip()
@@ -219,7 +222,7 @@ def scan_or_quarantine(
     kind: str,
     quarantine: Optional[ArtifactQuarantine] = None,
 ) -> Tuple[bool, Any]:
-    # issue #554: 载入前扫描 — 返回 (clean, ScanReport); unclean 且给了隔离区则入隔离
+    # issue #554: pre-load scan — returns (clean, ScanReport); unclean results are quarantined when a quarantine is provided
     report = scan_artifact(text, source=source, kind=kind)
     if not report.clean and quarantine is not None:
         try:
@@ -231,8 +234,8 @@ def scan_or_quarantine(
 
 
 def parse_llm_json(text: str, context: str = "") -> Any:
-    # issue #554: LLM 输出 JSON 修复梯 — 严格解析失败走内核 ladder (围栏/尾逗号/
-    # 截断闭合), 全败抛 JSONRepairError (typed error, 绝不静默返错数据)
+    # issue #554: LLM output JSON repair ladder — strict parse failure goes through the kernel ladder
+    # (fences/trailing commas/truncated closure); total failure raises JSONRepairError (typed error, never silently returns bad data)
     if isinstance(text, str):
         try:
             return json.loads(text)

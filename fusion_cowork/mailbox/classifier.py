@@ -39,6 +39,7 @@ ROUTE_TABLE = {
 
 # deterministic pre-filter signals -> class without LLM
 _NO_REPLY_PATTERNS = ("no-reply", "noreply", "no_reply", "donotreply", "mailer-daemon", "postmaster")
+# i18n: user-facing
 _BOUNCE_SUBJECT_PATTERNS = ("undeliver", "delivery status", "delivery failure", "returned mail", "退信")
 _HUMAN_QUEUE_CLASSES = ("business", "data_rights")
 _ANGRY_SENTIMENT = "negative"

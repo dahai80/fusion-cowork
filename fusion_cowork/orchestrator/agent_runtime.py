@@ -1,10 +1,10 @@
-"""Agent 运行时 — 单个 Agent 的独立执行环境。
+"""Agent runtime — an isolated execution environment for a single agent.
 
-每个 AgentRuntime 封装一个 Agent，提供:
-- 消息循环: 从 inbox 接收消息并处理
-- 执行器调用: 将任务交给注册的 executor
-- 生命周期管理: start/stop
-- 错误恢复: 执行失败时通知 message bus
+Each AgentRuntime wraps one agent and provides:
+- Message loop: receives and handles messages from the inbox
+- Executor invocation: hands tasks to the registered executor
+- Lifecycle management: start/stop
+- Error recovery: notifies the message bus on execution failure
 """
 
 from __future__ import annotations
@@ -21,10 +21,10 @@ logger = logging.getLogger(__name__)
 
 
 class AgentRuntime:
-    """Agent 运行时 — 独立执行环境。"""
+    """Agent runtime — isolated execution environment."""
 
     _MAX_RESULTS = 256
-    # R-2: 单任务执行超时上限 (秒), 防 executor 卡死永不终态
+    # R-2: per-task execution timeout cap (seconds), prevents a stuck executor from never reaching a terminal state
     _EXEC_TIMEOUT = 120.0
 
     def __init__(
@@ -41,18 +41,18 @@ class AgentRuntime:
         self._task: Optional[asyncio.Task] = None
         self._current_task_id: str = ""
         self._results: Dict[str, Dict[str, Any]] = {}
-        # R-2: 在途 executor 协程 handle, 供 cancel/stop 真取消 (旧版仅翻 flag, executor 继续跑)
+        # R-2: handle of the in-flight executor coroutine, so cancel/stop truly cancels (old version only flipped a flag, executor kept running)
         self._exec_handle: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
         self._running = True
         self.agent.status = "idle"
         self._task = asyncio.create_task(self._message_loop())
-        logger.info(f"AgentRuntime 启动: {self.agent.name} ({self.agent.agent_id})")
+        logger.info(f"AgentRuntime started: {self.agent.name} ({self.agent.agent_id})")
 
     async def stop(self) -> None:
         self._running = False
-        # R-2: 停机先杀在途 executor, 否则 _task 取消后 executor 仍悬挂
+        # R-2: on shutdown kill the in-flight executor first, otherwise the executor stays hung after _task cancel
         if self._exec_handle and not self._exec_handle.done():
             self._exec_handle.cancel()
             try:
@@ -67,7 +67,7 @@ class AgentRuntime:
             except asyncio.CancelledError:
                 pass
         self.agent.status = "idle"
-        logger.info(f"AgentRuntime 停止: {self.agent.name}")
+        logger.info(f"AgentRuntime stopped: {self.agent.name}")
 
     async def _message_loop(self) -> None:
         while self._running:
@@ -82,7 +82,7 @@ class AgentRuntime:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"AgentRuntime {self.agent.agent_id} 消息循环异常: {e}")
+                logger.error(f"AgentRuntime {self.agent.agent_id} message loop error: {e}")
 
     async def _handle_message(self, msg: AgentMessage) -> None:
         payload = msg.payload
@@ -91,14 +91,14 @@ class AgentRuntime:
         if action == "execute":
             await self._execute_task(msg)
         elif action == "cancel":
-            # R-2: 取消在途 executor 协程, 非仅翻 flag (旧版 executor 继续跑成僵尸)
+            # R-2: cancel the in-flight executor coroutine, not just flip a flag (old version left the executor running as a zombie)
             if self._exec_handle and not self._exec_handle.done():
                 self._exec_handle.cancel()
-                logger.info(f"Agent {self.agent.agent_id} 在途任务协程已取消: {self._current_task_id}")
+                logger.info(f"Agent {self.agent.agent_id} in-flight task coroutine cancelled: {self._current_task_id}")
             self._exec_handle = None
             self._current_task_id = ""
             self.agent.status = "idle"
-            logger.info(f"Agent {self.agent.agent_id} 任务已取消")
+            logger.info(f"Agent {self.agent.agent_id} task cancelled")
         elif action == "ping":
             await self.message_bus.publish(
                 topic=f"pong:{self.agent.agent_id}",
@@ -106,7 +106,7 @@ class AgentRuntime:
                 payload={"status": self.agent.status},
             )
         else:
-            logger.debug(f"Agent {self.agent.agent_id} 收到未知 action: {action}")
+            logger.debug(f"Agent {self.agent.agent_id} received unknown action: {action}")
 
     async def _execute_task(self, msg: AgentMessage) -> None:
         task_input = msg.payload.get("input_data", {})
@@ -118,7 +118,7 @@ class AgentRuntime:
 
         try:
             if asyncio.iscoroutinefunction(self.executor):
-                # R-2: wait_for 强制超时 + 存 handle 供 cancel 真取消 (旧 await executor 无超时无取消)
+                # R-2: wait_for enforces timeout + store handle for true cancel (old plain await executor had no timeout and no cancel)
                 self._exec_handle = asyncio.ensure_future(self.executor(task_input))
                 result = await asyncio.wait_for(asyncio.shield(self._exec_handle), timeout=self._EXEC_TIMEOUT)
             else:
@@ -140,12 +140,12 @@ class AgentRuntime:
                     "elapsed": time.time() - start_time,
                 },
             )
-            logger.info(f"Agent {self.agent.agent_id} 完成: {task_id}")
+            logger.info(f"Agent {self.agent.agent_id} completed: {task_id}")
         except TimeoutError:
-            # R-2: wait_for 超时, executor 协程仍在跑 → 显式取消
+            # R-2: wait_for timed out, executor coroutine still running → cancel it explicitly
             if self._exec_handle and not self._exec_handle.done():
                 self._exec_handle.cancel()
-            self._results[task_id] = {"error": f"执行超时 ({self._EXEC_TIMEOUT}s)"}
+            self._results[task_id] = {"error": f"execution timed out ({self._EXEC_TIMEOUT}s)"}
             try:
                 await self.message_bus.publish(
                     topic=f"task_result:{task_id}",
@@ -153,17 +153,17 @@ class AgentRuntime:
                     payload={
                         "task_id": task_id,
                         "status": "failed",
-                        "error": f"执行超时 ({self._EXEC_TIMEOUT}s)",
+                        "error": f"execution timed out ({self._EXEC_TIMEOUT}s)",
                         "elapsed": time.time() - start_time,
                     },
                 )
             except Exception as pub_err:
-                logger.error(f"Agent {self.agent.agent_id} 发布超时消息异常: {pub_err}")
-            logger.warning(f"Agent {self.agent.agent_id} 执行超时: {task_id} ({self._EXEC_TIMEOUT}s)")
+                logger.error(f"Agent {self.agent.agent_id} failed to publish timeout message: {pub_err}")
+            logger.warning(f"Agent {self.agent.agent_id} execution timed out: {task_id} ({self._EXEC_TIMEOUT}s)")
         except asyncio.CancelledError:
-            # R-2: 外部 cancel (stop/cancel action) → 走终态, 不当 failed
-            self._results[task_id] = {"error": "已取消"}
-            logger.info(f"Agent {self.agent.agent_id} 任务被取消: {task_id}")
+            # R-2: external cancel (stop/cancel action) → go to terminal state, not failed
+            self._results[task_id] = {"error": "cancelled"}
+            logger.info(f"Agent {self.agent.agent_id} task cancelled: {task_id}")
             raise
         except Exception as e:
             self._results[task_id] = {"error": str(e)}
@@ -180,9 +180,9 @@ class AgentRuntime:
                     },
                 )
             except Exception as pub_err:
-                logger.error(f"Agent {self.agent.agent_id} 发布失败消息异常: {pub_err}")
+                logger.error(f"Agent {self.agent.agent_id} failed to publish failure message: {pub_err}")
 
-            logger.error(f"Agent {self.agent.agent_id} 执行失败: {task_id} → {e}")
+            logger.error(f"Agent {self.agent.agent_id} execution failed: {task_id} → {e}")
         finally:
             self.agent.status = "idle"
             self.agent.current_task = ""

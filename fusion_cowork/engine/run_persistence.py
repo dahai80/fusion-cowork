@@ -1,6 +1,8 @@
-# issue #191: 运行控制状态持久化 — paused/resumed/directives/步骤快照落 SQLite。
-# daemon 重启 (含 kill -9) 后 RunRegistry.recover_persisted() 走唯一恢复路径:
-# 步骤进度 (resume_steps) 与控制状态 (paused/directives) 一并还原, 终不静默丢失。
+# issue #191: run control-state persistence — paused/resumed/directives/step
+# snapshots persisted to SQLite.
+# After a daemon restart (including kill -9), RunRegistry.recover_persisted() is the
+# single recovery path: step progress (resume_steps) and control state
+# (paused/directives) are restored together, so nothing is silently lost.
 from __future__ import annotations
 
 import json
@@ -14,10 +16,13 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("fusion_cowork.run_persistence")
 
-# 前向兼容闸门: 读到高于本版本的库直接报错 (loud), 绝不带着不认识的格式静默跑
-# v2 (issue #223): +space_id 列 — run 归属工作区 (Space), 首页按目录过滤
-# v3 (issue #388): +source/labels 列 (归因持久化) + run_summaries 终态摘要表
-#   (daemon 重启后 GET /api/runs/{id} 仍可查; 带 90 天保留期)
+# Forward-compatibility gate: reading a DB with a version higher than this one fails
+# loudly; never run silently with an unrecognized format
+# v2 (issue #223): +space_id column — run belongs to a workspace (Space), home page
+# filters by directory
+# v3 (issue #388): +source/labels columns (attribution persistence) + run_summaries
+#   terminal-summary table (still queryable via GET /api/runs/{id} after daemon
+#   restart; 90-day retention)
 SCHEMA_VERSION = 4
 
 _SCHEMA_SQL = """
@@ -54,12 +59,14 @@ CREATE TABLE IF NOT EXISTS run_summaries (
 CREATE INDEX IF NOT EXISTS idx_run_summaries_finished ON run_summaries(finished_at);
 """
 
-# 只恢复这两态 — 终态行由 registry 在 run 结束时删除, 残留终态行视为脏数据一并清掉
+# Only these two statuses are recovered — terminal rows are deleted by the registry
+# when the run ends; leftover terminal rows are treated as dirty data and cleaned up
 _ACTIVE_STATUSES = ("running", "paused")
 
 
 class RunStateStore:
-    # SQLite 运行状态存储 — 建库/迁移/CRUD; 调用方在 asyncio 单线程内同步调用
+    # SQLite run-state store — schema creation/migration/CRUD; callers invoke
+    # synchronously within the asyncio single thread
     def __init__(self, path: Optional[Path] = None):
         # Default path honors FUSION_COWORK_WEB_DIR (same override as
         # ApprovalJournal) so tests never read a real machine's recovered-run
@@ -80,25 +87,27 @@ class RunStateStore:
         version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
         if version > SCHEMA_VERSION:
             raise RuntimeError(
-                f"运行状态库 {self._path} schema v{version} 高于本版本支持的 v{SCHEMA_VERSION} — "
-                f"请升级 fusion-cowork 后再启动 (拒绝静默降级读取)"
+                f"Run-state DB {self._path} schema v{version} is newer than the v{SCHEMA_VERSION} "
+                f"supported by this version — upgrade fusion-cowork before starting "
+                f"(refusing to silently degrade reads)"
             )
         self._conn.executescript(_SCHEMA_SQL)
         if version < 2:
-            # issue #223: v1 库补列 — 幂等 ALTER (列存在时忽略 OperationalError)
+            # issue #223: add column to v1 DB — idempotent ALTER (ignore OperationalError
+            # when the column already exists)
             try:
                 self._conn.execute("ALTER TABLE run_states ADD COLUMN space_id TEXT NOT NULL DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
         if version < 3:
-            # issue #388: v2 库补 source/labels 列 — 幂等 ALTER
+            # issue #388: add source/labels columns to v2 DB — idempotent ALTER
             for col in ("source TEXT NOT NULL DEFAULT ''", "labels TEXT NOT NULL DEFAULT '{}'"):
                 try:
                     self._conn.execute(f"ALTER TABLE run_states ADD COLUMN {col}")
                 except sqlite3.OperationalError:
                     pass
         if version < 4:
-            # issue #399: v3 库 run_summaries 补 space_id 列 — 幂等 ALTER
+            # issue #399: add space_id column to run_summaries in v3 DB — idempotent ALTER
             try:
                 self._conn.execute("ALTER TABLE run_summaries ADD COLUMN space_id TEXT NOT NULL DEFAULT ''")
             except sqlite3.OperationalError:
@@ -106,14 +115,15 @@ class RunStateStore:
         if version < SCHEMA_VERSION:
             self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self._conn.commit()
-        logger.info(f"运行状态存储就绪: {self._path} (schema v{SCHEMA_VERSION})")
+        logger.info(f"Run-state store ready: {self._path} (schema v{SCHEMA_VERSION})")
 
     def save(
         self,
         record: Dict[str, Any],
         paused_reason: str = "",
     ) -> None:
-        # upsert 全量行 — record 由 RunRegistry 持有 (含 workflow_def/steps/directives)
+        # Upsert the full row — record is owned by RunRegistry (includes
+        # workflow_def/steps/directives)
         run_id = str(record.get("run_id", ""))
         if not run_id:
             return
@@ -150,7 +160,8 @@ class RunStateStore:
             self._conn.commit()
 
     def load_active(self) -> List[Dict[str, Any]]:
-        # 返回 running/paused 行 (dict); 终态残留行清掉并 WARN (loud, 不静默)
+        # Return running/paused rows (dicts); leftover terminal rows are cleaned up
+        # with a WARN (loud, never silent)
         rows: List[Dict[str, Any]] = []
         with self._lock:
             cur = self._conn.execute(
@@ -161,7 +172,7 @@ class RunStateStore:
             cur = self._conn.execute("SELECT run_id, status FROM run_states")
             stale = [r["run_id"] for r in cur.fetchall() if r["status"] not in _ACTIVE_STATUSES]
             if stale:
-                logger.warning(f"运行状态库含 {len(stale)} 条终态残留行, 已清理: {stale}")
+                logger.warning(f"Run-state DB contains {len(stale)} leftover terminal rows, cleaned: {stale}")
                 self._conn.executemany("DELETE FROM run_states WHERE run_id = ?", [(r,) for r in stale])
                 self._conn.commit()
         return rows
@@ -174,7 +185,8 @@ class RunStateStore:
 
     @staticmethod
     def _summary_steps(steps: Any) -> List[Dict[str, Any]]:
-        # per-step 摘要: 归因/计费只需要节点标识 + 状态 + 耗时; 丢 input/output 大对象
+        # Per-step summary: attribution/billing only needs node identity + status +
+        # timing; large input/output objects are dropped
         out: List[Dict[str, Any]] = []
         for s in steps or []:
             if not isinstance(s, dict):
@@ -191,8 +203,9 @@ class RunStateStore:
         return out
 
     def save_summary(self, record: Dict[str, Any]) -> None:
-        # 终态摘要 upsert — run 结束时由 RunRegistry 调用 (替代直接 delete);
-        # 保留 source/labels + 每步耗时, 供下游 (fusion-commerce) 对账/崩溃恢复
+        # Terminal-summary upsert — called by RunRegistry when the run ends
+        # (replacing direct delete); keeps source/labels + per-step timing for
+        # downstream (fusion-commerce) reconciliation/crash recovery
         run_id = str(record.get("run_id", ""))
         if not run_id:
             return
@@ -238,7 +251,8 @@ class RunStateStore:
         return d
 
     def load_summaries(self, limit: int = 100) -> List[Dict[str, Any]]:
-        # 最近终态摘要 (finished_at 倒序); 同 load_summary 做 labels/steps 反序列化
+        # Most recent terminal summaries (finished_at descending); same labels/steps
+        # deserialization as load_summary
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM run_summaries ORDER BY finished_at DESC LIMIT ?", (int(limit),)
@@ -258,13 +272,14 @@ class RunStateStore:
         return out
 
     def prune_summaries(self, retention_days: int = 90) -> int:
-        # 保留期清理 — 默认 90 天前的终态摘要删除; 返回删除行数
+        # Retention pruning — delete terminal summaries older than the default 90
+        # days; returns the number of deleted rows
         cutoff = time.time() - max(0, int(retention_days)) * 86400
         with self._lock:
             cur = self._conn.execute("DELETE FROM run_summaries WHERE finished_at < ?", (cutoff,))
             self._conn.commit()
         if cur.rowcount:
-            logger.info(f"终态摘要保留期清理: 删除 {cur.rowcount} 条 (retention={retention_days}d)")
+            logger.info(f"Terminal-summary retention pruning: deleted {cur.rowcount} rows (retention={retention_days}d)")
         return int(cur.rowcount)
 
     def close(self) -> None:

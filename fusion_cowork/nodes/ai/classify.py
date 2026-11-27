@@ -1,7 +1,7 @@
-"""AI 能力节点 — 调用 fusion-mlx 本地推理引擎实现文件智能处理。
+"""AI capability nodes — file intelligence via the fusion-mlx local inference engine.
 
-所有 AI 节点通过 HTTP 调用 fusion-mlx 的 /v1/chat/completions 端点，
-不直接导入任何 MLX 代码。
+All AI nodes call fusion-mlx's /v1/chat/completions endpoint over HTTP;
+no MLX code is imported directly.
 """
 
 from __future__ import annotations
@@ -27,24 +27,30 @@ logger = logging.getLogger(__name__)
 
 @register_node
 class AIClassifyNode(BaseNode):
-    """AI 文件分类节点 — 根据文件内容语义进行智能分类。
+    """AI file classification node — classifies files by content semantics.
 
-    调用 fusion-mlx 的 chat 接口，分析文件内容后返回分类标签。
-    支持按文件类型、主题、项目等多维度分类。
+    Calls fusion-mlx's chat endpoint and returns classification labels after analyzing file content.
+    Supports multi-dimension classification: file type, topic, project, and more.
     """
 
     name = "ai_classify"
+    # i18n: user-facing
     display_name = "AI 文件分类"
     category = NodeCategory.AI_PROCESSING
+    # i18n: user-facing
     description = "根据文件内容语义进行智能分类"
     icon = "🏷️"
+    # i18n: user-facing
     default_label = "AI 分类"
 
     inputs = [
+        # i18n: user-facing
         {"key": "files", "label": "文件列表", "type": "list[file]"},
+        # i18n: user-facing
         {"key": "categories", "label": "分类体系", "type": "list[str]", "optional": True},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "classified_files", "label": "分类结果", "type": "list[dict]"},
     ]
 
@@ -64,21 +70,25 @@ class AIClassifyNode(BaseNode):
             "properties": {
                 "model": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "fusion-mlx 模型名称",
                     "default": "qwen3.5-9b",
                 },
                 "classify_by_content": {
                     "type": "boolean",
+                    # i18n: user-facing
                     "description": "是否基于内容而不是文件名分类",
                     "default": True,
                 },
                 "custom_categories": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "自定义分类列表（逗号分隔，留空则 AI 自动判断）",
                     "default": "",
                 },
                 "max_files_per_batch": {
                     "type": "integer",
+                    # i18n: user-facing
                     "description": "每批处理文件数",
                     "default": 10,
                 },
@@ -94,8 +104,8 @@ class AIClassifyNode(BaseNode):
         if not files:
             return NodeResult(
                 status=NodeStatus.SUCCESS,
-                data={"classified_files": [], "message": "没有文件需要分类"},
-                summary="没有文件需要分类",
+                data={"classified_files": [], "message": "No files to classify"},
+                summary="No files to classify",
             )
 
         model = params.get("model", "qwen3.5-9b")
@@ -103,21 +113,21 @@ class AIClassifyNode(BaseNode):
         custom_categories = params.get("custom_categories", "")
         max_per_batch = params.get("max_files_per_batch", 10)
 
-        # 构建分类体系
+        # Build the category taxonomy
         category_list = []
         if custom_categories:
             category_list = [c.strip() for c in custom_categories.split(",") if c.strip()]
         elif categories:
             category_list = categories
 
-        # 分批处理文件
+        # Process files in batches
         classified_files = []
-        # issue #143: 跨批次聚合 token 用量, 落入输出 usage 供 run 瀑布展示
+        # issue #143: aggregate token usage across batches, surfaced in output usage for the run waterfall
         usage_totals = {"prompt_tokens": 0, "completion_tokens": 0}
         batches = [files[i : i + max_per_batch] for i in range(0, len(files), max_per_batch)]
 
         for batch_idx, batch in enumerate(batches):
-            # 构建文件信息
+            # Build file info
             file_info = []
             for f in batch:
                 path = Path(f) if isinstance(f, str) else Path(f.get("path", ""))
@@ -129,21 +139,21 @@ class AIClassifyNode(BaseNode):
                         info["content_preview"] = ""
                 file_info.append(info)
 
-            # 构建分类提示
+            # Build the classification hint
             categories_hint = ""
             if category_list:
-                categories_hint = f"\n分类选项: {', '.join(category_list)}"
+                categories_hint = f"\nCategory options: {', '.join(category_list)}"
 
             system_prompt = (
-                "你是一个智能文件分类助手。根据文件名和内容，为每个文件分配合适的分类标签。"
-                f"返回 JSON 数组，每项包含 file_name, category, confidence(0-1), reason。{categories_hint}"
+                "You are an intelligent file classification assistant. Based on file names and content, assign each file an appropriate category label."
+                f"Return a JSON array where each item contains file_name, category, confidence(0-1), reason. {categories_hint}"
             )
 
             messages = [
                 {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
-                    "content": f"请为以下文件分类:\n{json.dumps(file_info, ensure_ascii=False, indent=2)}",
+                    "content": f"Please classify the following files:\n{json.dumps(file_info, ensure_ascii=False, indent=2)}",
                 },
             ]
 
@@ -155,7 +165,7 @@ class AIClassifyNode(BaseNode):
                     max_tokens=2048,
                 )
 
-                # issue #143: 累加本批次 LLM token 用量
+                # issue #143: accumulate this batch's LLM token usage
                 usage = getattr(response, "usage", None) or {}
                 usage_totals["prompt_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
                 usage_totals["completion_tokens"] += int(usage.get("completion_tokens", 0) or 0)
@@ -164,8 +174,8 @@ class AIClassifyNode(BaseNode):
                 classified_files.extend(result)
 
             except Exception as e:
-                logger.error(f"AI 分类批次 {batch_idx} 失败: {e}")
-                # 失败时使用文件名扩展名作为兜底分类
+                logger.error(f"AI classification batch {batch_idx} failed: {e}")
+                # On failure, fall back to the filename extension as the category
                 for f in batch:
                     path = Path(f) if isinstance(f, str) else Path(f.get("path", ""))
                     ext = path.suffix.lower().lstrip(".") or "unknown"
@@ -175,6 +185,7 @@ class AIClassifyNode(BaseNode):
                             "file_path": str(path),
                             "category": f"{ext}_files",
                             "confidence": 0.3,
+                            # i18n: user-facing
                             "reason": "AI 分类失败，使用扩展名兜底",
                         }
                     )
@@ -186,26 +197,26 @@ class AIClassifyNode(BaseNode):
                 "total": len(classified_files),
                 "categories": list(set(f["category"] for f in classified_files)),
                 "usage": dict(usage_totals),
-                # issue #150: 结构化引用 — 分类结果可溯源到源文件
+                # issue #150: structured references — classification results traceable to source files
                 "citations": [
                     {"type": "file", "path": f.get("file_path", ""), "name": f.get("file_name", "")}
                     for f in classified_files
                     if f.get("file_path")
                 ],
             },
-            summary=f"已分类 {len(classified_files)} 个文件",
+            summary=f"Classified {len(classified_files)} file(s)",
         )
 
     def _parse_classification_result(self, content: str, batch: list) -> list:
-        """解析 LLM 返回的分类结果。"""
-        # 提取 JSON
+        """Parse the classification result returned by the LLM."""
+        # Extract the JSON
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0].strip()
         elif "```" in content:
             content = content.split("```")[1].split("```")[0].strip()
 
         try:
-            # issue #554: LLM 输出 JSON 修复梯 (内核 json_repair) 替换裸 json.loads
+            # issue #554: LLM output JSON repair ladder (kernel json_repair) replaces bare json.loads
             results = parse_llm_json(content, context="file_classify")
             if isinstance(results, dict):
                 results = results.get("results", results.get("files", [results]))
@@ -213,13 +224,14 @@ class AIClassifyNode(BaseNode):
                 results = [results]
             return results
         except JSONRepairError:
-            logger.warning(f"分类结果解析失败，使用文件名兜底: {content[:200]}")
+            logger.warning(f"Classification result parse failed, falling back to the filename: {content[:200]}")
             return [
                 {
                     "file_name": Path(f).name if isinstance(f, str) else Path(f.get("path", "")).name,
                     "file_path": f if isinstance(f, str) else f.get("path", ""),
                     "category": "uncategorized",
                     "confidence": 0.3,
+                    # i18n: user-facing
                     "reason": "AI 分类结果解析失败",
                 }
                 for f in batch
@@ -228,24 +240,31 @@ class AIClassifyNode(BaseNode):
 
 @register_node
 class AISummarizeNode(BaseNode):
-    """AI 文档摘要节点 — 批量总结文档内容并生成汇总报告。
+    """AI document summarization node — batch-summarizes document content and generates a consolidated report.
 
-    调用 fusion-mlx 的 chat 接口进行文档理解与摘要生成。
+    Calls fusion-mlx's chat endpoint for document understanding and summary generation.
     """
 
     name = "ai_summarize"
+    # i18n: user-facing
     display_name = "AI 文档摘要"
     category = NodeCategory.AI_PROCESSING
+    # i18n: user-facing
     description = "批量总结文档内容并生成汇总报告"
     icon = "📝"
+    # i18n: user-facing
     default_label = "AI 摘要"
 
     inputs = [
+        # i18n: user-facing
         {"key": "files", "label": "文档列表", "type": "list[file]"},
+        # i18n: user-facing
         {"key": "instruction", "label": "摘要指令", "type": "string", "optional": True},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "summaries", "label": "摘要结果", "type": "list[dict]"},
+        # i18n: user-facing
         {"key": "report", "label": "汇总报告", "type": "string"},
     ]
 
@@ -286,7 +305,7 @@ class AISummarizeNode(BaseNode):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"summaries": [], "report": ""},
-                summary="没有文档需要摘要",
+                summary="No documents to summarize",
             )
 
         model = params.get("model", "qwen3.5-9b")
@@ -295,18 +314,18 @@ class AISummarizeNode(BaseNode):
         extract_conclusions = params.get("extract_conclusions", True)
 
         summaries = []
-        # issue #143: 跨文件聚合 token 用量, 落入输出 usage 供 run 瀑布展示
+        # issue #143: aggregate token usage across files, surfaced in output usage for the run waterfall
         usage_totals = {"prompt_tokens": 0, "completion_tokens": 0}
         for f in files:
             path = Path(f) if isinstance(f, str) else Path(f.get("path", ""))
             if not path.is_file():
                 continue
 
-            # 读取文件内容
+            # Read the file content
             try:
                 content = path.read_text(encoding="utf-8", errors="ignore")[:max_chars]
             except Exception as e:
-                logger.warning(f"读取文件失败 {path}: {e}")
+                logger.warning(f"Failed to read file {path}: {e}")
                 summaries.append(
                     {
                         "file_name": path.name,
@@ -316,16 +335,16 @@ class AISummarizeNode(BaseNode):
                 )
                 continue
 
-            # 构建摘要提示
-            _instruction_text = f"\n额外要求: {instruction}" if instruction else ""
+            # Build the summarization prompt
+            _instruction_text = f"\nAdditional requirements: {instruction}" if instruction else ""
             system_prompt = (
-                "你是一个文档摘要助手。分析文档内容并生成结构化摘要。"
-                f"返回 JSON 格式: title, summary, keywords(数组), conclusions(数组){'。' if extract_conclusions else '。'}"
+                "You are a document summarization assistant. Analyze the document content and generate a structured summary."
+                f"Return JSON format: title, summary, keywords(array), conclusions(array){'.' if extract_conclusions else '.'}"
             )
 
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"请为文档 '{path.name}' 生成摘要:\n\n{content[:4000]}"},
+                {"role": "user", "content": f"Please summarize the document '{path.name}':\n\n{content[:4000]}"},
             ]
 
             try:
@@ -336,7 +355,7 @@ class AISummarizeNode(BaseNode):
                     max_tokens=2048,
                 )
 
-                # issue #143: 累加本文件 LLM token 用量
+                # issue #143: accumulate this file's LLM token usage
                 usage = getattr(response, "usage", None) or {}
                 usage_totals["prompt_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
                 usage_totals["completion_tokens"] += int(usage.get("completion_tokens", 0) or 0)
@@ -345,27 +364,32 @@ class AISummarizeNode(BaseNode):
                 summaries.append(parsed)
 
             except Exception as e:
-                logger.error(f"摘要生成失败 {path.name}: {e}")
+                logger.error(f"Summary generation failed for {path.name}: {e}")
                 summaries.append(
                     {
                         "file_name": path.name,
                         "file_path": str(path),
+                        # i18n: user-facing
                         "summary": f"[摘要生成失败: {e}]",
                         "keywords": [],
                         "conclusions": [],
                     }
                 )
 
-        # 生成汇总报告
+        # Generate the consolidated report
         report = ""
         if params.get("generate_report", True) and summaries:
+            # i18n: user-facing
             report_lines = ["# AI 文档摘要汇总报告\n"]
             for s in summaries:
                 report_lines.append(f"## 📄 {s.get('file_name', 'unknown')}")
+                # i18n: user-facing
                 report_lines.append(f"📝 {s.get('summary', '无摘要')[:500]}")
                 if s.get("keywords"):
+                    # i18n: user-facing
                     report_lines.append(f"🏷️ 关键词: {', '.join(s['keywords'][:10])}")
                 if s.get("conclusions"):
+                    # i18n: user-facing
                     report_lines.append(f"💡 结论: {'; '.join(s['conclusions'][:5])}")
                 report_lines.append("")
             report = "\n".join(report_lines)
@@ -376,24 +400,24 @@ class AISummarizeNode(BaseNode):
                 "summaries": summaries,
                 "report": report,
                 "usage": dict(usage_totals),
-                # issue #150: 结构化引用 — 摘要报告可溯源到源文件
+                # issue #150: structured references — summary report traceable to source files
                 "citations": [
                     {"type": "file", "path": s.get("file_path", ""), "name": s.get("file_name", "")}
                     for s in summaries
                     if s.get("file_path")
                 ],
             },
-            summary=f"已完成 {len(summaries)} 个文档摘要",
+            summary=f"Summarized {len(summaries)} document(s)",
         )
 
     def _parse_summary(self, content: str, path: Path) -> dict:
-        """解析 LLM 返回的摘要结果。"""
+        """Parse the summary result returned by the LLM."""
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0].strip()
         elif "```" in content:
             content = content.split("```")[1].split("```")[0].strip()
         try:
-            # issue #554: LLM 输出 JSON 修复梯 (内核 json_repair) 替换裸 json.loads
+            # issue #554: LLM output JSON repair ladder (kernel json_repair) replaces bare json.loads
             result = parse_llm_json(content, context="file_summarize")
             result.setdefault("file_name", path.name)
             result.setdefault("file_path", str(path))
@@ -410,23 +434,29 @@ class AISummarizeNode(BaseNode):
 
 @register_node
 class AIGenerateNameNode(BaseNode):
-    """AI 批量重命名节点 — 根据文件内容或文件名智能生成规范名称。
+    """AI batch rename node — intelligently generates standardized names from file content or file names.
 
-    调用 fusion-mlx 的 chat 接口理解文件内容后生成有意义的文件名。
+    Calls fusion-mlx's chat endpoint to understand file content, then generates meaningful file names.
     """
 
     name = "ai_generate_name"
+    # i18n: user-facing
     display_name = "AI 智能重命名"
     category = NodeCategory.AI_PROCESSING
+    # i18n: user-facing
     description = "根据文件内容智能生成规范名称"
     icon = "✏️"
+    # i18n: user-facing
     default_label = "AI 重命名"
 
     inputs = [
+        # i18n: user-facing
         {"key": "files", "label": "文件列表", "type": "list[file]"},
+        # i18n: user-facing
         {"key": "naming_pattern", "label": "命名规则", "type": "string", "optional": True},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "renamed_files", "label": "重命名结果", "type": "list[dict]"},
     ]
 
@@ -447,6 +477,7 @@ class AIGenerateNameNode(BaseNode):
                 "model": {"type": "string", "default": "qwen3.5-9b"},
                 "pattern": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "命名模式，如: {date}_{category}_{index}",
                     "default": "{category}_{index}",
                 },
@@ -465,7 +496,7 @@ class AIGenerateNameNode(BaseNode):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"renamed_files": []},
-                summary="没有文件需要重命名",
+                summary="No files to rename",
             )
 
         model = params.get("model", "qwen3.5-9b")
@@ -473,9 +504,9 @@ class AIGenerateNameNode(BaseNode):
         lowercase = params.get("lowercase", False)
         replace_spaces = params.get("replace_spaces", True)
 
-        # 构建文件信息
+        # Build file info
         file_info = []
-        # issue #143: token 用量聚合 (单次 LLM 调用)
+        # issue #143: token usage aggregation (single LLM call)
         usage_totals = {"prompt_tokens": 0, "completion_tokens": 0}
         for f in files:
             path = Path(f) if isinstance(f, str) else Path(f.get("path", ""))
@@ -488,16 +519,16 @@ class AIGenerateNameNode(BaseNode):
             file_info.append(info)
 
         system_prompt = (
-            "你是一个文件命名助手。根据文件名和内容，为每个文件生成更有意义的新文件名。"
-            "返回 JSON 数组，每项包含: file_name(原文件名), new_name(新文件名,不含扩展名), reason\n"
-            "新文件名应简洁、规范、有意义，使用小写字母和短横线连接。"
+            "You are a file naming assistant. Based on file names and content, generate a more meaningful new file name for each file."
+            "Return a JSON array where each item contains: file_name (original name), new_name (new name, without extension), reason\n"
+            "New file names should be concise, standardized and meaningful, using lowercase letters joined with hyphens."
         )
 
         messages = [
             {"role": "system", "content": system_prompt},
             {
                 "role": "user",
-                "content": f"请为以下文件生成新名称:\n{json.dumps(file_info, ensure_ascii=False, indent=2)}",
+                "content": f"Please generate new names for the following files:\n{json.dumps(file_info, ensure_ascii=False, indent=2)}",
             },
         ]
 
@@ -509,24 +540,24 @@ class AIGenerateNameNode(BaseNode):
                 max_tokens=2048,
             )
 
-            # issue #143: 累加 LLM token 用量
+            # issue #143: accumulate LLM token usage
             usage = getattr(response, "usage", None) or {}
             usage_totals["prompt_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
             usage_totals["completion_tokens"] += int(usage.get("completion_tokens", 0) or 0)
 
             renamed = self._parse_rename_result(response.content, files)
         except Exception as e:
-            logger.error(f"AI 重命名失败: {e}")
+            logger.error(f"AI rename failed: {e}")
             renamed = self._fallback_rename(files)
 
-        # 应用规则
+        # Apply the rules
         for r in renamed:
             new_name = r.get("new_name", "")
             if lowercase:
                 new_name = new_name.lower()
             if replace_spaces:
                 new_name = new_name.replace(" ", "_").replace("  ", "_")
-            # 保留原始扩展名
+            # Preserve the original extension
             orig_path = Path(r.get("file_path", r.get("file_name", "")))
             r["new_name_with_ext"] = f"{new_name}{orig_path.suffix}"
             r["new_name"] = new_name
@@ -534,17 +565,17 @@ class AIGenerateNameNode(BaseNode):
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"renamed_files": renamed, "usage": dict(usage_totals)},
-            summary=f"已为 {len(renamed)} 个文件生成新名称",
+            summary=f"Generated new names for {len(renamed)} file(s)",
         )
 
     def _parse_rename_result(self, content: str, files: list) -> list:
-        """解析 LLM 返回的重命名结果。"""
+        """Parse the rename result returned by the LLM."""
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0].strip()
         elif "```" in content:
             content = content.split("```")[1].split("```")[0].strip()
         try:
-            # issue #554: LLM 输出 JSON 修复梯 (内核 json_repair) 替换裸 json.loads
+            # issue #554: LLM output JSON repair ladder (kernel json_repair) replaces bare json.loads
             results = parse_llm_json(content, context="file_rename")
             if isinstance(results, dict):
                 results = results.get("results", results.get("files", [results]))
@@ -555,7 +586,7 @@ class AIGenerateNameNode(BaseNode):
             return self._fallback_rename(files)
 
     def _fallback_rename(self, files: list) -> list:
-        """兜底重命名方案。"""
+        """Fallback rename strategy."""
         results = []
         for i, f in enumerate(files):
             path = Path(f) if isinstance(f, str) else Path(f.get("path", ""))
@@ -565,6 +596,7 @@ class AIGenerateNameNode(BaseNode):
                     "file_name": path.name,
                     "file_path": str(path),
                     "new_name": f"file_{i + 1:03d}",
+                    # i18n: user-facing
                     "reason": "AI 重命名解析失败，使用序号兜底",
                 }
             )

@@ -1,28 +1,30 @@
-"""权限模型 — 工具调用审批与分级权限。
+"""Permission model — tool call approval and tiered permissions.
 
-支持:
-- 5 级权限: CONFIRM(默认, 规则/高风险驱动) / MANUAL / AUTO / PLAN / BYPASS(全放行)
-- 规则匹配: tool_name + scope (如 file:~/Desktop/**) — 匹配语义委托 kernel
-  fusion_harness.scoped_permissions (issue #493, K1 迁移)
-- 高风险节点无显式批准 → 拒绝 (CR-16/17/18)
-- 权限规则持久化到 JSON 配置文件
+Supports:
+- 5 permission levels: CONFIRM (default, rule/high-risk driven) / MANUAL / AUTO / PLAN / BYPASS (allow all)
+- Rule matching: tool_name + scope (e.g. file:~/Desktop/**) — matching semantics delegated to kernel
+  fusion_harness.scoped_permissions (issue #493, K1 migration)
+- High-risk node without explicit approval → deny (CR-16/17/18)
+- Permission rules persisted to a JSON config file
 
-CR-16: check() 顺序 — approve 规则命中→allow (任意 level); deny→deny;
-       高风险→deny (需显式 approve 或 Hook 放行); 否则→allow。
-       approve() 全 level 生效 (移除旧 MANUAL no-op)。
+CR-16: check() ordering — approve rule hit → allow (any level); deny → deny;
+       high-risk → deny (needs explicit approve or Hook pass-through); otherwise → allow.
+       approve() takes effect at all levels (removed the old MANUAL no-op).
 
-#493 kernel 迁移边界 (kernel scoped_permissions docstring 明示的 consumer wiring
-留本侧, 每处附 parity 注释):
-- 规则模型/前缀 scope 匹配 (file:/command:/url:) → kernel ScopedPermission 语义;
-  engine.check() 不直接委托 — 它把 bypass/allow-rule/default-allow 折叠成同一
-  "allow" 返回值, 而 check() 流程需三态区分 (trusted-sync 与高风险闸门夹在
-  allow 规则与默认放行之间), 强行委托会改变 CR-16 顺序
-- Hook 审计/HITL 闸门豁免 (issue #340)/trusted-sync (#301)/能力闸门 (#228)/
-  guard IPC 委托 (#73) = consumer wiring, 留本侧 (kernel: guard clients 与
+#493 kernel migration boundary (consumer wiring explicitly documented in the kernel
+scoped_permissions docstring stays on this side, each with a parity note):
+- Rule model / prefix scope matching (file:/command:/url:) → kernel ScopedPermission semantics;
+  engine.check() does not delegate directly — it folds bypass/allow-rule/default-allow into a
+  single "allow" return value, while the check() flow needs three-state distinction
+  (trusted-sync and the high-risk gate sit between allow rules and default allow);
+  forced delegation would change the CR-16 ordering
+- Hook audit / HITL gate exemption (issue #340) / trusted-sync (#301) / capability gate (#228) /
+  guard IPC delegation (#73) = consumer wiring, stays on this side (kernel: guard clients and
   capability gates stay consumer-side)
-- 待审批队列保本地富上下文实现 (审批卡 diff 分块/execution_id 唤醒/崩溃恢复);
-  kernel PendingApproval(id/action/resource/reason) 无卡片上下文且 resolve()
-  自动落规则, 与 #340 闸门不落规则语义冲突 — parity 差异, 刻意不迁
+- Pending approval queue keeps the local rich-context implementation (approval card diff
+  blocks / execution_id wakeup / crash recovery); kernel PendingApproval(id/action/resource/reason)
+  has no card context and resolve() auto-persists rules, conflicting with the #340 gate's
+  no-rule semantics — parity difference, deliberately not migrated
 
 #521 drop-fallback ruling (2026-11-18): this is the documented deliberate
 divergence (K1 keep), NOT an in-tree fallback copy. fusion-harness is a
@@ -48,15 +50,16 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# issue #340: HITL 闸门工具 — 闸门决定是工作流决策 (喂 on_reject=revise 修订回路),
-# 不是工具级权限授予/拒绝。deny 规则不得预拒闸门 (否则一次拒绝永久杀死后续所有
-# 闸门的 HITL 卡), confirm 对闸门也只出队唤醒 run, 不落任何持久规则。
+# issue #340: HITL gate tools — the gate decision is a workflow decision (feeding the
+# on_reject=revise revision loop), not a tool-level permission grant/deny. Deny rules must
+# not pre-deny gates (otherwise one denial permanently kills the HITL cards of all later
+# gates), and confirm on a gate only dequeues/wakes the run without persisting any rule.
 HITL_GATE_TOOLS = {"approval_gate"}
 
 _PERMISSIONS_DIR = os.path.expanduser("~/.fusion-cowork")
 
-# issue #138: 引擎侧审批上下文 (workflow/node) — WorkflowEngine 在 check 前写入,
-# 高风险拒绝落待审批队列时附带卡片展示所需上下文。
+# issue #138: engine-side approval context (workflow/node) — written by WorkflowEngine
+# before check(), attached when a high-risk denial lands in the pending queue for card display.
 _approval_context: ContextVar = ContextVar("fc_approval_context")
 
 
@@ -68,8 +71,9 @@ def reset_approval_context(token) -> None:
     _approval_context.reset(token)
 
 
-# issue #326: 上游产物证据 (产出节点输出快照) — WorkflowEngine 在 check 前写入,
-# 待审批卡附 artifacts 块, 评审者不用离开审批界面去找产出资材。
+# issue #326: upstream artifact evidence (snapshot of producing node outputs) — written by
+# WorkflowEngine before check(), the pending approval card carries an artifacts block so
+# reviewers don't have to leave the approval UI to find produced materials.
 _approval_evidence: ContextVar = ContextVar("fc_approval_evidence")
 
 
@@ -82,7 +86,7 @@ def reset_approval_evidence(token) -> None:
 
 
 def _sanitize_approval_params(params: Dict[str, Any] = None) -> Dict[str, Any]:
-    # 审批卡参数快照: 仅标量, 字符串 200 字上限, 秘钥类键名脱敏, 20 键上限
+    # Approval card params snapshot: scalars only, 200-char string cap, secret-like key names masked, 20-key cap
     if not isinstance(params, dict):
         return {}
     snapshot: Dict[str, Any] = {}
@@ -99,12 +103,12 @@ def _sanitize_approval_params(params: Dict[str, Any] = None) -> Dict[str, Any]:
     return snapshot
 
 
-# issue #142: 编辑型 params (old_text/new_text) 的审批 diff 分块 — 原文截断上限
+# issue #142: approval diff blocks for edit-type params (old_text/new_text) — original text truncation cap
 _DIFF_MAX_CHARS = 20000
 
 
 def _build_diff_blocks(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-    # issue #142: apply_edit 类待审批 → SequenceMatcher 分块, 卡片内逐块接受/拒绝
+    # issue #142: apply_edit-like pending approvals → SequenceMatcher blocks, per-block accept/reject in the card
     if not isinstance(params, dict):
         return []
     from .ast_diff import text_diff_blocks
@@ -116,13 +120,13 @@ def _build_diff_blocks(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
             try:
                 return text_diff_blocks(old_val[:_DIFF_MAX_CHARS], new_val[:_DIFF_MAX_CHARS])
             except Exception as e:
-                logger.warning(f"审批 diff 分块失败: {e}")
+                logger.warning(f"Approval diff block build failed: {e}")
                 return []
     return []
 
 
 def _build_raw_edit(params: Dict[str, Any] = None) -> Dict[str, Any]:
-    # issue #142: 逐块审阅重建需要未截断的 old/new 原文 (区别于脱敏展示快照)
+    # issue #142: block-by-block review rebuild needs the untruncated old/new originals (distinct from the masked display snapshot)
     if not isinstance(params, dict):
         return {}
     for old_key, new_key in (("old_text", "new_text"), ("old_string", "new_string")):
@@ -152,30 +156,30 @@ def _guard_cached_epoch() -> int:
 
 HIGH_RISK_NODES = frozenset(
     {
-        # 代码执行
+        # Code execution
         "shell_exec",
         "python_repl",
         "apply_edit",
-        "worktree",  # issue #580: worktree exec 任意命令 + remove 破坏性, 同 shell_exec 高危
-        # 文件破坏性操作
+        "worktree",  # issue #580: worktree exec runs arbitrary commands + remove is destructive, same high risk as shell_exec
+        # Destructive file operations
         "file_delete",
         "file_copy",
         "file_move",
         "disk_cleaner",
         "desktop_clean",
         "download_organizer",
-        # 系统交互
+        # System interaction
         "app_lifecycle",
         "screen_capture",
         "clipboard",
         "notification",
-        # 输入注入
+        # Input injection
         "mouse_click",
         "mouse_move",
         "keyboard_type",
         "keyboard_shortcut",
         "computer_use_loop",
-        # 浏览器自动化 / 任意 JS
+        # Browser automation / arbitrary JS
         "browser_automate",
         "cdp_evaluate",
         "cdp_navigate",
@@ -185,41 +189,41 @@ HIGH_RISK_NODES = frozenset(
         "cdp_fill_form",
         "cdp_emulate",
         "cdp_network",
-        "cdp_wait_for",  # E-10: wait_for_function 任意 JS 注入, 同 cdp_evaluate 高危
-        "managed_browser",  # issue #153: 拉起本机浏览器 + 导入登录 cookie, 须显式放行
-        "fusion_browser",  # issue #162: 托管 fusion-browser 引擎 + 读取本机浏览器登录态
-        "fetch_url",  # E-11: SSRF 面, 默认拒, 须显式放行
-        # 外部运行时触发 (issue #133): studio_run 提交 agent-studio graph/agent
-        # 执行, 触发远端多步 agent 行为, 同 fetch_url 须显式放行
+        "cdp_wait_for",  # E-10: wait_for_function injects arbitrary JS, same high risk as cdp_evaluate
+        "managed_browser",  # issue #153: launches the local browser + imports login cookies, needs explicit approval
+        "fusion_browser",  # issue #162: managed fusion-browser engine + reads local browser login state
+        "fetch_url",  # E-11: SSRF surface, deny by default, needs explicit approval
+        # External runtime trigger (issue #133): studio_run submits an agent-studio graph/agent
+        # execution, triggering remote multi-step agent behavior — needs explicit approval like fetch_url
         "studio_run",
-        # issue #185: mcp_client 调用外部 MCP 服务器的任意工具 (远程执行面),
-        # 须显式放行; 支持 url: 前缀 scope 精确授权单个服务
+        # issue #185: mcp_client calls arbitrary tools on external MCP servers (remote execution surface),
+        # needs explicit approval; url: prefix scope supports precise authorization of a single server
         "mcp_client",
-        # issue #206: http_request 任意目标请求面 (可带鉴权头/模板注入请求体),
-        # 须显式放行; 同 mcp_client 支持 url: 前缀 scope
+        # issue #206: http_request arbitrary target request surface (can carry auth headers / template-injected request body),
+        # needs explicit approval; url: prefix scope supported like mcp_client
         "http_request",
-        # issue #262: approval_gate 人工决策闸门 — 天生必须审批 (暂停等人工决定),
-        # 与 http_webhook 签名回调配合实现 "外部系统审批 → 回调续跑"
+        # issue #262: approval_gate human decision gate — inherently requires approval (pauses for a human decision),
+        # pairs with the http_webhook signed callback for "external system approval → callback resume"
         "approval_gate",
-        # issue #262: agent_exec 外部 agent/CLI 进程执行面 (任意命令), 须显式放行
+        # issue #262: agent_exec external agent/CLI process execution surface (arbitrary commands), needs explicit approval
         "agent_exec",
-        # issue #262: command_evidence 白名单命令执行 + 证据归档, 须显式放行
+        # issue #262: command_evidence whitelisted command execution + evidence archiving, needs explicit approval
         "command_evidence",
-        # issue #308: claude_dispatch 派发短命 coder 会话 (本地进程 + 仓库写权),
-        # 高危执行面 — 预算上限 + 崩溃/超时回退由节点自管, 放行须显式审批
+        # issue #308: claude_dispatch dispatches short-lived coder sessions (local process + repo write access),
+        # high-risk execution surface — budget cap + crash/timeout fallback owned by the node; approval must be explicit
         "claude_dispatch",
-        # issue #467: coordinator_fanout 扇出子代理执行 (多步 agent 行为面),
-        # session_fork 派生并行子会话分支执行任意已注册节点 — 均须显式放行
+        # issue #467: coordinator_fanout fans out sub-agent execution (multi-step agent behavior surface),
+        # session_fork derives parallel sub-session branches executing arbitrary registered nodes — both need explicit approval
         "coordinator_fanout",
         "session_fork",
-        # issue #470: workflow_ladder 阶梯编排 — 多阶段子代理执行任意 worker_node,
-        # 同 coordinator_fanout 的多步 agent 行为面, 须显式放行
+        # issue #470: workflow_ladder ladder orchestration — multi-stage sub-agents execute arbitrary worker_node,
+        # same multi-step agent behavior surface as coordinator_fanout, needs explicit approval
         "workflow_ladder",
-        # issue #488: team_call 驱动 agent-studio 团队成员执行任务 — 远端多步
-        # agent 行为面 (同 studio_run 类), 须显式放行
+        # issue #488: team_call drives agent-studio team members to execute tasks — remote multi-step
+        # agent behavior surface (same class as studio_run), needs explicit approval
         "team_call",
-        # issue #489: deploy_service 执行 docker/launchd/安装脚本部署并拉起服务 —
-        # 本机命令执行 + 服务生命周期操作 (shell 执行类), 须显式放行
+        # issue #489: deploy_service executes docker/launchd/install-script deployment and starts services —
+        # local command execution + service lifecycle operations (shell-exec class), needs explicit approval
         "deploy_service",
     }
 )
@@ -260,30 +264,30 @@ class Permission:
     scope: str = "*"
 
     def matches(self, tool_name: str, params: Dict[str, Any] = None) -> bool:
-        # issue #493: 匹配语义委托 kernel scoped_permissions._scope_match
-        # (deny-first 规则模型 K1 的匹配层)。
-        # parity 覆盖 (kernel 差异表记录的 intentionally-different 项):
-        # 1. 无 params → 匹配任意 scope (上游与 kernel 空 resource 语义一致)
-        # 2. params 存在但无对应键 (command/url) → 不匹配 (kernel 空 resource 视为匹配, 不复制)
-        # 3. file: scope 两侧 expanduser (E-3: kernel 不展开 ~, 上游展开 — 保留)
-        # 4. 未知前缀 scope → True (kernel 改为 resource 前缀匹配 — 上游 fallback 保留)
-        # kernel 修复项按 kernel 侧执行: file:/url: 路径边界检查 (上游 raw startswith
-        # 使 file:/a 误中 file:/ab — kernel parity 表记录的 quirk, 不复制)
+        # issue #493: matching semantics delegated to kernel scoped_permissions._scope_match
+        # (the matching layer of the K1 deny-first rule model).
+        # Parity coverage (intentionally-different items recorded in the kernel diff table):
+        # 1. No params → match any scope (upstream consistent with kernel empty-resource semantics)
+        # 2. params present but missing the key (command/url) → no match (kernel treats empty resource as match, not copied)
+        # 3. file: scope expanduser on both sides (E-3: kernel doesn't expand ~, upstream does — keep)
+        # 4. Unknown prefix scope → True (kernel switched to resource prefix matching — upstream fallback kept)
+        # Kernel fixes applied kernel-side: file:/url: path boundary checks (upstream raw startswith
+        # makes file:/a wrongly match file:/ab — quirk recorded in the kernel parity table, not copied)
         if self.tool_name != "*" and self.tool_name != tool_name:
             return False
         scope = self.scope
         if scope == "*":
             return True
         if not params:
-            # parity: 上游无参调用匹配任意 scope; kernel 空 resource 亦匹配 — 语义一致
+            # parity: upstream matches any scope when called without params; kernel also matches on empty resource — semantically consistent
             return True
         if not scope.startswith(("file:", "command:", "url:")):
-            # parity: 上游未知前缀 fallback = True (kernel 改 resource 前缀匹配, 不复制)
+            # parity: upstream unknown-prefix fallback = True (kernel switched to resource prefix matching, not copied)
             return True
         from fusion_harness.scoped_permissions import _scope_match
 
         if scope.startswith("file:"):
-            # E-3: scope 前缀含 ~/ 须 expanduser — params 值两侧都对齐绝对路径
+            # E-3: scope prefix containing ~/ needs expanduser — param values aligned to absolute paths on both sides
             expanded_scope = "file:" + os.path.expanduser(scope[5:])
             for key in ("path", "output_path", "save_path", "source_path"):
                 val = params.get(key, "")
@@ -292,35 +296,35 @@ class Permission:
                         return True
             return False
         if scope.startswith("command:"):
-            # parity: params 存在但无 command 键 → 不匹配 (kernel 空 resource 视为匹配, 不复制)
+            # parity: params present but no command key → no match (kernel treats empty resource as match, not copied)
             cmd = params.get("command", "")
             return isinstance(cmd, str) and bool(cmd) and _scope_match(scope, cmd)
-        # url: — issue #185 前缀 scope (mcp_client 等远程调用节点)
-        # parity: params 存在但无 url 键 → 不匹配 (同上)
+        # url: — issue #185 prefix scope (mcp_client and other remote-call nodes)
+        # parity: params present but no url key → no match (same as above)
         target = params.get("url", "")
         return isinstance(target, str) and bool(target) and _scope_match(scope, target)
 
 
 class PermissionManager:
-    """权限管理器 — 检查工具调用是否被允许。"""
+    """Permission manager — checks whether a tool call is allowed."""
 
     def __init__(self, level: PermissionLevel = PermissionLevel.CONFIRM, hook_manager=None):
         self.level = level
         self.rules: List[Permission] = []
         self._pending_approvals: Dict[str, Permission] = {}
         self._hook_manager = hook_manager
-        # R-3: rules/_pending_approvals 并发保护 — check() 遍历与 approve/deny/reset 改写竞态。
+        # R-3: concurrency protection for rules/_pending_approvals — race between check() iteration and approve/deny/reset rewrites.
         self._lock = threading.Lock()
-        # issue #73: guard 委托待确认 — action_id → tool_name, confirm 成功后加本地 approve 规则
+        # issue #73: guard delegation pending confirmation — action_id → tool_name; on confirm success a local approve rule is added
         self._pending_guard_approvals: Dict[str, str] = {}
-        # issue #124: 本地 CONFIRM 拒绝待审批 — guard OFF 时高风险节点拒绝也要进 GUI 审批队列
+        # issue #124: local CONFIRM denials pending approval — with guard OFF, high-risk node denials also enter the GUI approval queue
         self._pending_local_approvals: Dict[str, str] = {}
-        # issue #138: 待审批卡片上下文 — action_id → {tool_name/params/ts/workflow/node_id}
+        # issue #138: pending approval card context — action_id → {tool_name/params/ts/workflow/node_id}
         self._pending_local_details: Dict[str, Dict[str, Any]] = {}
-        # issue #154: 待审批入队回调 — 审批请求外发 (webhook push) 挂点
+        # issue #154: pending-enqueue callback — hook point for pushing approval requests out (webhook push)
         self.on_pending_created = None
-        # issue #228: 工作区能力闸门 — async (tool, params, workspace_id) -> (verdict, reason);
-        # 未注入 = 零行为变化。verdict: allow / deny / approval (approval 走既有 HITL 待审批)
+        # issue #228: workspace capability gate — async (tool, params, workspace_id) -> (verdict, reason);
+        # not injected = zero behavior change. verdict: allow / deny / approval (approval goes through the existing HITL pending queue)
         self.capability_gate = None
 
     def _is_trusted_sync_target(self, tool_name: str, params: Dict[str, Any] = None) -> bool:
@@ -336,10 +340,10 @@ class PermissionManager:
         return any(target.startswith(prefix) for prefix in trusted_sync_urls())
 
     async def check(self, tool_name: str, action: str = "", params: Dict[str, Any] = None) -> bool:
-        # A-6: deny 规则须先于 Hook 批准判定 — 否则 Hook approve 可覆盖显式 deny (绕过)。
-        # 先扫 deny: 命中 deny → 即拒, Hook 批准也不再翻盘。
-        # issue #340: 闸门工具不受 deny 规则预拒 — 闸门决定是工作流决策,
-        # 每次评估都要产生新鲜的 HITL 待审批卡 (历史毒化规则不再拦截)
+        # A-6: deny rules must precede the Hook approval decision — otherwise a Hook approve could override an explicit deny (bypass).
+        # Scan deny first: a deny hit → immediate denial, Hook approval can no longer overturn it.
+        # issue #340: gate tools are not pre-denied by deny rules — the gate decision is a workflow decision,
+        # each evaluation must produce a fresh HITL pending approval card (poisoned historical rules no longer block)
         denied = False
         ctx = None
         with self._lock:
@@ -347,12 +351,12 @@ class PermissionManager:
         if tool_name not in HITL_GATE_TOOLS:
             for rule in rules_snapshot:
                 if rule.matches(tool_name, params) and not rule.allowed:
-                    logger.warning(f"权限拒绝 (deny 规则优先): {tool_name} (scope={rule.scope})")
+                    logger.warning(f"Permission denied (deny rule takes precedence): {tool_name} (scope={rule.scope})")
                     denied = True
                     break
 
-        # Hook: PERMISSION_REQUEST — 带外确认入口 (CR-2/3)。A-6: BYPASS 亦不跳过审计 Hook
-        # (仍 fire 以记录), 仅最终判定照旧全放行。
+        # Hook: PERMISSION_REQUEST — out-of-band confirmation entry (CR-2/3). A-6: BYPASS does not skip the audit Hook
+        # (still fired for the record), only the final verdict keeps allowing everything as before.
         if self._hook_manager:
             from .hooks import HookEvent
 
@@ -367,21 +371,21 @@ class PermissionManager:
                 },
             )
             if ctx and ctx.cancelled:
-                logger.info(f"权限被 Hook 拒绝: {tool_name}")
+                logger.info(f"Permission denied by Hook: {tool_name}")
                 return False
 
         if self.level == PermissionLevel.BYPASS:
             return True
 
-        # A-6: deny 规则命中 → 即拒, Hook approve 不可翻盘
+        # A-6: deny rule hit → immediate denial, Hook approve cannot overturn
         if denied:
             return False
         if ctx and ctx.modified_data.get("approved"):
-            logger.info(f"权限被 Hook 批准: {tool_name}")
+            logger.info(f"Permission approved by Hook: {tool_name}")
             return True
 
-        # issue #554: SANDBOX 层无 runner = fail-closed, 审批 (规则/Hook) 也救不回 —
-        # 隔离是执行前提, 放在一切放行路径之前 (未配置 SANDBOX_TOOLS 时零行为变化)
+        # issue #554: SANDBOX layer without a runner = fail-closed, approval (rule/Hook) cannot save it —
+        # isolation is an execution prerequisite, placed before every allow path (zero behavior change when SANDBOX_TOOLS is unset)
         from .kernel_gates import build_sandbox_policy, sandbox_block_reason
 
         _sb_reason = sandbox_block_reason(build_sandbox_policy(), tool_name, params or {})
@@ -389,37 +393,37 @@ class PermissionManager:
             logger.warning(f"kernel sandbox fail-closed: {tool_name} — {_sb_reason}")
             return False
 
-        # CR-16: approve 规则命中→allow (任意 level); deny 已在上一步处理
-        # issue #340: 闸门工具同样不吃 approve 规则 — 持久放行 = 永久跳过人工闸门
+        # CR-16: approve rule hit → allow (any level); deny already handled in the previous step
+        # issue #340: gate tools likewise don't consume approve rules — persistent approval = permanently skipping the human gate
         if tool_name not in HITL_GATE_TOOLS:
             for rule in rules_snapshot:
                 if rule.matches(tool_name, params) and rule.allowed:
                     return True
 
-        # issue #301: 可信同步目标 (模板确定性同步) — 规则之后、高风险闸门之前放行
+        # issue #301: trusted sync targets (deterministic template sync) — allowed after rules, before the high-risk gate
         if self._is_trusted_sync_target(tool_name, params):
             logger.info(f"trusted sync target allowed: {tool_name} url={params.get('url', '')}")
             return True
 
-        # issue #228: 工作区能力池闸门 — 未安装/已停用 → 拒绝; 敏感 scope 未授权 → 走审批
+        # issue #228: workspace capability pool gate — not installed/disabled → deny; sensitive scope unauthorized → approval path
         if self.capability_gate is not None:
             workspace_id = str(_approval_context.get({}).get("workspace_id", ""))
             verdict, reason = await self.capability_gate(tool_name, params or {}, workspace_id)
             if verdict == "deny":
-                logger.warning(f"能力闸门拒绝: {tool_name} — {reason}")
+                logger.warning(f"Capability gate denied: {tool_name} — {reason}")
                 return False
             if verdict == "approval":
-                logger.info(f"能力闸门待审批: {tool_name} — {reason}")
+                logger.info(f"Capability gate pending approval: {tool_name} — {reason}")
                 return await self._check_high_risk_guard(tool_name, action, params)
 
-        # 高风险节点无显式批准 → 委托 guard (issue #73) 或拒绝 (需 approve 规则或 Hook 放行)
+        # High-risk node without explicit approval → delegate to guard (issue #73) or deny (needs an approve rule or Hook pass-through)
         if tool_name in HIGH_RISK_NODES:
             return await self._check_high_risk_guard(tool_name, action, params)
 
-        # 非高风险且无匹配规则 → 内核闸门复核 (issue #554) 后放行:
-        # - SANDBOX fail-closed 已在放行路径之前统一拦截 (此处不再重复)
-        # - 内核 destructive 分类命中 (分类表/名称 token) → 走同一高风险审批路径
-        #   (pending 入队 → HITL park), 审批后由引擎签发单次兑换 approval token
+        # Non-high-risk with no matching rule → kernel gate re-check (issue #554) then allow:
+        # - SANDBOX fail-closed already blocks uniformly before the allow path (not repeated here)
+        # - kernel destructive classification hit (classification table / name token) → same high-risk approval path
+        #   (pending enqueue → HITL park); after approval the engine issues a single-use redemption approval token
         from .kernel_gates import classify_destructive
 
         destructive, why = classify_destructive(tool_name, params)
@@ -429,12 +433,12 @@ class PermissionManager:
         return True
 
     async def _check_high_risk_guard(self, tool_name: str, action: str, params: Dict[str, Any] = None) -> bool:
-        # issue #73: guard 未启用 → 退回原有逻辑 (高风险无批准 → deny), 零行为变化
+        # issue #73: guard not enabled → fall back to the original logic (high-risk without approval → deny), zero behavior change
         from ..security.guard import get_guard_client, node_to_guard_content
 
         client = get_guard_client()
         if client is None:
-            # issue #124: 本地拒绝入待审批队列 — Web GUI 可 confirm, 不再永久拒绝
+            # issue #124: local denial enters the pending approval queue — Web GUI can confirm, no longer permanently denied
             self._register_local_pending(tool_name, params)
             return False
 
@@ -465,8 +469,8 @@ class PermissionManager:
         return await self._apply_verdict(tool_name, verdict)
 
     def _register_local_pending(self, tool_name: str, params: Dict[str, Any] = None) -> str:
-        # issue #124/#257: 高风险拒绝统一入本地待审批队列 — Web GUI 可 confirm,
-        # HITL confirm 路由凭 execution_id 唤醒暂停中的 run
+        # issue #124/#257: high-risk denials uniformly enter the local pending approval queue — Web GUI can confirm,
+        # the HITL confirm route uses execution_id to wake the paused run
         import uuid
 
         action_id = f"local_{uuid.uuid4().hex[:8]}"
@@ -480,15 +484,15 @@ class PermissionManager:
             "ts": time.time(),
             "workflow": str(ctx.get("workflow", "")),
             "node_id": str(ctx.get("node_id", "")),
-            # issue #181: HITL — confirm 路由凭 execution_id 唤醒暂停中的 run
+            # issue #181: HITL — the confirm route uses execution_id to wake the paused run
             "execution_id": str(ctx.get("execution_id", "")),
-            # issue #142: 编辑型待审批附 diff 分块 + 重建用原文
+            # issue #142: edit-type pending approvals carry diff blocks + originals for rebuild
             "diff_blocks": _build_diff_blocks(params),
             "raw_edit": _build_raw_edit(params),
-            # issue #326: 上游产物证据 — 评审卡直接展示产出节点输出
+            # issue #326: upstream artifact evidence — the review card directly shows producing node outputs
             "artifacts": list(_approval_evidence.get([])),
         }
-        logger.info(f"高风险节点拒绝入待审批队列: {tool_name} (action_id={action_id})")
+        logger.info(f"High-risk node denial entered pending approval queue: {tool_name} (action_id={action_id})")
         self._notify_pending(tool_name, action_id, source="local", params=params)
         return action_id
 
@@ -503,29 +507,29 @@ class PermissionManager:
                 rules, epoch = dumped
                 save_cached_rules(rules, epoch)
         except Exception as e:
-            logger.debug(f"guard 规则缓存刷新失败: {e}")
+            logger.debug(f"Guard rule cache refresh failed: {e}")
 
         action = getattr(verdict, "action", "block")
         risk = getattr(verdict, "risk_level", "l4")
         action_id = getattr(verdict, "action_id", None)
 
         if action == "block" or risk == "l4":
-            logger.info(f"guard 拒绝 (block/l4): {tool_name} risk={risk} reason={verdict.reason}")
-            # issue #257: guard 拒绝同样入待审批队列 — 审批收件箱可见, 人工批准可恢复
+            logger.info(f"Guard denied (block/l4): {tool_name} risk={risk} reason={verdict.reason}")
+            # issue #257: guard denials also enter the pending approval queue — visible in the approval inbox, manual approval can recover
             self._register_local_pending(tool_name, None)
             return False
         if action == "allow" or risk in ("l1", "l2"):
-            logger.info(f"guard 放行: {tool_name} action={action} risk={risk}")
+            logger.info(f"Guard allowed: {tool_name} action={action} risk={risk}")
             return True
         if getattr(verdict, "requires_approval", False):
             if action_id:
                 with self._lock:
                     self._pending_guard_approvals[action_id] = tool_name
-            logger.info(f"guard 需确认 (l3): {tool_name} action_id={action_id}")
+            logger.info(f"Guard requires confirmation (l3): {tool_name} action_id={action_id}")
             self._notify_pending(tool_name, action_id, source="guard", params=None)
             return False
-        # preview / redact → 保守拒绝 (seatbelt 超出本期)
-        logger.info(f"guard 保守拒绝 (preview/redact): {tool_name} action={action}")
+        # preview / redact → conservative denial (seatbelt out of scope for this phase)
+        logger.info(f"Guard conservative denial (preview/redact): {tool_name} action={action}")
         self._register_local_pending(tool_name, None)
         return False
 
@@ -542,20 +546,20 @@ class PermissionManager:
                 if rule_tool != tool_name:
                     continue
                 if rule_action == "block" or rule_allowed is False:
-                    logger.info(f"guard 不可达, 缓存规则拒绝: {tool_name}")
+                    logger.info(f"Guard unreachable, cached rule denies: {tool_name}")
                     return False
                 if rule_action == "allow" or rule_allowed is True:
-                    logger.info(f"guard 不可达, 缓存规则放行: {tool_name}")
+                    logger.info(f"Guard unreachable, cached rule allows: {tool_name}")
                     return True
-        logger.warning(f"guard 不可达且无匹配缓存, 高风险 fail-closed 拒绝: {tool_name}")
+        logger.warning(f"Guard unreachable with no matching cache, high-risk fail-closed denial: {tool_name}")
         self._register_local_pending(tool_name, None)
         return False
 
     def _notify_pending(self, tool_name: str, action_id: str, source: str, params: Any = None) -> None:
-        """issue #154: 待审批入队即通知 (webhook push 挂点) — best-effort, 不抛不阻塞。
+        """issue #154: notify on pending-enqueue (webhook push hook point) — best-effort, never raises or blocks.
 
-        info: {action_id, tool_name, source, params, ts} — params 走 _sanitize_approval_params
-        与 GUI 卡片一致的脱敏。
+        info: {action_id, tool_name, source, params, ts} — params go through _sanitize_approval_params,
+        masked consistently with the GUI card.
         """
         cb = self.on_pending_created
         if not callable(cb):
@@ -569,40 +573,40 @@ class PermissionManager:
                 "params": _sanitize_approval_params(params),
                 "workflow": str(ctx.get("workflow", "")),
                 "node_id": str(ctx.get("node_id", "")),
-                # issue #207: 审批事件附 run 归因 — push 接收方按来源路由
+                # issue #207: approval event carries run attribution — push receivers route by source
                 "execution_id": str(ctx.get("execution_id", "")),
                 "ts": time.time(),
             }
             cb(info)
         except Exception as e:
-            logger.warning(f"on_pending_created 回调失败 (忽略): {e}")
+            logger.warning(f"on_pending_created callback failed (ignored): {e}")
 
     async def confirm_guard(
         self, action_id: str, approved: bool, approved_by: str = "unknown", tenant_id: str = "default", scope: str = "*"
     ) -> bool:
-        # issue #124: 本地 CONFIRM 拒绝的 confirm — 无需 guard 在线, 直接落本地规则
+        # issue #124: confirm for local CONFIRM denials — no need for guard online, directly writes a local rule
         with self._lock:
             local_tool = self._pending_local_approvals.pop(action_id, None)
         if local_tool:
             self._pending_local_details.pop(action_id, None)
-            # issue #340: 闸门决定不落持久规则 — approve/deny 都只出队,
-            # 每次闸门评估产生新鲜 HITL 卡 (approve 规则同样会盲放后续所有闸门)
+            # issue #340: gate decisions never persist rules — approve/deny both only dequeue,
+            # each gate evaluation produces a fresh HITL card (an approve rule would blindly allow all later gates too)
             if local_tool in HITL_GATE_TOOLS:
-                logger.info(f"闸门一次性决定 (不落规则): {local_tool} approved={approved} (action_id={action_id})")
+                logger.info(f"Gate one-shot decision (no rule persisted): {local_tool} approved={approved} (action_id={action_id})")
                 return True
             if approved:
                 self.approve(local_tool, scope=scope)
-                logger.info(f"本地 confirm 批准, 加 approve 规则: {local_tool} (scope={scope}, by={approved_by})")
+                logger.info(f"Local confirm approved, approve rule added: {local_tool} (scope={scope}, by={approved_by})")
             else:
                 self.deny(local_tool)
-                logger.info(f"本地 confirm 拒绝, 加 deny 规则: {local_tool} (by={approved_by})")
+                logger.info(f"Local confirm denied, deny rule added: {local_tool} (by={approved_by})")
             return True
 
         from ..security.guard import get_guard_client
 
         client = get_guard_client()
         if client is None:
-            logger.warning("guard 未启用, confirm 无效")
+            logger.warning("Guard not enabled, confirm is a no-op")
             return False
         ok = await client.confirm(action_id=action_id, approved=approved, approved_by=approved_by, tenant_id=tenant_id)
         if not ok:
@@ -611,14 +615,14 @@ class PermissionManager:
             tool_name = self._pending_guard_approvals.pop(action_id, None)
         if approved and tool_name:
             self.approve(tool_name)
-            logger.info(f"guard confirm 批准, 加本地 approve 规则: {tool_name}")
+            logger.info(f"Guard confirm approved, local approve rule added: {tool_name}")
         elif not approved and tool_name:
             self.deny(tool_name)
-            logger.info(f"guard confirm 拒绝, 加本地 deny 规则: {tool_name}")
+            logger.info(f"Guard confirm denied, local deny rule added: {tool_name}")
         return True
 
     def list_pending_guard(self) -> List[Dict[str, str]]:
-        # W19: guard L3 待审批队列 — action_id → tool_name 快照 (confirm 后移除)
+        # W19: guard L3 pending approval queue — action_id → tool_name snapshot (removed after confirm)
         with self._lock:
             return [
                 {"action_id": action_id, "tool_name": tool_name}
@@ -626,8 +630,8 @@ class PermissionManager:
             ]
 
     def list_pending(self) -> List[Dict[str, Any]]:
-        # issue #124: guard + 本地 CONFIRM 拒绝合并待审批队列 (source 字段区分来源)
-        # issue #138: 本地条目附带审批卡上下文 (params/ts/workflow/node_id)
+        # issue #124: merged pending approval queue of guard + local CONFIRM denials (source field distinguishes origin)
+        # issue #138: local entries carry approval card context (params/ts/workflow/node_id)
         with self._lock:
             entries: List[Dict[str, Any]] = [
                 {"action_id": action_id, "tool_name": tool_name, "source": "guard"}
@@ -644,12 +648,12 @@ class PermissionManager:
         return entries
 
     def get_pending_details(self, action_id: str) -> Optional[Dict[str, Any]]:
-        # issue #181: confirm 路由读取待审批详情 (含 execution_id) 用于唤醒 HITL 暂停的 run
+        # issue #181: the confirm route reads pending approval details (incl. execution_id) to wake the HITL-paused run
         with self._lock:
             return dict(self._pending_local_details.get(action_id) or {})
 
     def find_pending_by_execution(self, execution_id: str) -> Optional[Dict[str, Any]]:
-        # issue #181: HITL — 按 execution_id 找本地待审批项 (引擎判断是否进入暂停等待)
+        # issue #181: HITL — find a local pending approval item by execution_id (engine decides whether to enter paused wait)
         with self._lock:
             for action_id, details in self._pending_local_details.items():
                 if details.get("execution_id") == execution_id:
@@ -657,8 +661,8 @@ class PermissionManager:
         return None
 
     def restore_pending_details(self, entries: List[Dict[str, Any]]) -> int:
-        # issue #463: 崩溃恢复 — 审批日志里的 pending 行重建进本地待审批队列
-        # (details 形状与 #138 审批卡上下文一致, restored=True 标记来源)
+        # issue #463: crash recovery — rebuild pending lines from the approval log into the local pending queue
+        # (details shape matches the #138 approval card context, restored=True marks the origin)
         restored = 0
         with self._lock:
             for entry in entries or []:
@@ -678,11 +682,11 @@ class PermissionManager:
                 self._pending_local_approvals[action_id] = details["tool_name"]
                 restored += 1
         if restored:
-            logger.info(f"审批日志 pending 重建: {restored} 条恢复进待审批队列")
+            logger.info(f"Approval log pending rebuild: {restored} entries restored into the pending queue")
         return restored
 
     def discard_pending_by_execution(self, execution_id: str) -> List[str]:
-        # issue #187: HITL 超时 — 清掉该 run 的全部滞留本地待审批项 (不落规则), 返回被清 action_id 列表
+        # issue #187: HITL timeout — clear all stalled local pending items of this run (no rules persisted), returns the cleared action_id list
         removed: List[str] = []
         with self._lock:
             for action_id in list(self._pending_local_details.keys()):
@@ -691,29 +695,29 @@ class PermissionManager:
                     self._pending_local_approvals.pop(action_id, None)
                     removed.append(action_id)
         if removed:
-            logger.info(f"HITL 超时清理待审批项: exec={execution_id} removed={removed}")
+            logger.info(f"HITL timeout pending cleanup: exec={execution_id} removed={removed}")
         return removed
 
     def release_pending_once(self, action_id: str) -> bool:
-        # issue #187: 批准一次 — 只出队该待审批项, 不落任何持久规则 (对应审批卡 "Approve once")
+        # issue #187: approve once — only dequeues this pending item, no persistent rule (matches the approval card "Approve once")
         with self._lock:
             existed = self._pending_local_approvals.pop(action_id, None) is not None
             self._pending_local_details.pop(action_id, None)
         if existed:
-            logger.info(f"一次性批准 (不落规则): action_id={action_id}")
+            logger.info(f"One-shot approval (no rule persisted): action_id={action_id}")
         return existed
 
     def approve(self, tool_name: str, scope: str = "*") -> None:
         rule = Permission(tool_name=tool_name, allowed=True, scope=scope)
         with self._lock:
             self.rules.append(rule)
-        logger.info(f"权限批准: {tool_name} (scope={scope})")
+        logger.info(f"Permission approved: {tool_name} (scope={scope})")
 
     def deny(self, tool_name: str, scope: str = "*") -> None:
         rule = Permission(tool_name=tool_name, allowed=False, scope=scope)
         with self._lock:
             self.rules.append(rule)
-        logger.info(f"权限拒绝: {tool_name} (scope={scope})")
+        logger.info(f"Permission denied: {tool_name} (scope={scope})")
 
     def request_approval(self, tool_name: str, params: Dict[str, Any] = None) -> str:
         import uuid
@@ -721,7 +725,7 @@ class PermissionManager:
         req_id = f"perm_{uuid.uuid4().hex[:8]}"
         with self._lock:
             self._pending_approvals[req_id] = Permission(tool_name=tool_name, allowed=False, scope="*")
-        logger.info(f"权限请求: {req_id} → {tool_name}")
+        logger.info(f"Permission request: {req_id} → {tool_name}")
         return req_id
 
     def grant_approval(self, req_id: str, scope: str = "*") -> bool:
@@ -741,7 +745,7 @@ class PermissionManager:
             "level": self.level.value,
             "rules": [{"tool_name": r.tool_name, "allowed": r.allowed, "scope": r.scope} for r in rules_snapshot],
         }
-        # E-4: 原子写 — 写 tmp 再 os.replace, 杜绝半写/并发读到残缺 JSON 崩溃
+        # E-4: atomic write — write tmp then os.replace, eliminates partial writes / concurrent reads of truncated JSON crashes
         tmp_path = f"{target}.tmp.{os.getpid()}"
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -752,25 +756,25 @@ class PermissionManager:
         except OSError:
             pass
         os.replace(tmp_path, target)
-        logger.info(f"权限规则已保存: {target}")
+        logger.info(f"Permission rules saved: {target}")
 
     def load(self, path: str = "") -> None:
         target = path or _PERMISSIONS_FILE
         if not os.path.exists(target):
             return
-        # E-4: load 容错 — 损坏 JSON 不崩, 退化默认空规则 + 日志
+        # E-4: load tolerance — corrupted JSON doesn't crash, degrades to default empty rules + log
         try:
             with open(target, encoding="utf-8") as f:
                 data = json.load(f)
         except (json.JSONDecodeError, OSError) as e:
-            logger.error(f"权限规则文件损坏, 丢弃旧规则: {target} ({e})")
+            logger.error(f"Permission rules file corrupted, discarding old rules: {target} ({e})")
             with self._lock:
                 self.rules = []
             return
         try:
             self.level = PermissionLevel(data.get("level", "confirm"))
         except ValueError:
-            logger.warning(f"权限 level 值非法, 退化 CONFIRM: {data.get('level')}")
+            logger.warning(f"Invalid permission level value, falling back to CONFIRM: {data.get('level')}")
             self.level = PermissionLevel.CONFIRM
         new_rules = [
             Permission(tool_name=r["tool_name"], allowed=r["allowed"], scope=r.get("scope", "*"))
@@ -778,7 +782,7 @@ class PermissionManager:
         ]
         with self._lock:
             self.rules = new_rules
-        logger.info(f"权限规则已加载: {len(new_rules)} 条 (level={self.level.value})")
+        logger.info(f"Permission rules loaded: {len(new_rules)} rules (level={self.level.value})")
 
     def reset(self, tool_name: str = "") -> int:
         with self._lock:

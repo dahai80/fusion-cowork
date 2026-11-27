@@ -41,7 +41,8 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
 
     const catalog = useAutoRetry(() => api.capabilities(workspaceId), [workspaceId]);
     const spaces = useAutoRetry(() => api.workspaces(), []);
-    // issue #244 R1: 首访 pitch 卡 — 安装任意能力后永久消失 (localStorage 持久)
+    // issue #244 R1: first-visit pitch cards — disappear permanently once any
+    // capability is installed (persisted in localStorage)
     const [pitchesGone, setPitchesGone] = useState(pitchesDismissed);
     const showPitches = !pitchesGone && !hasInstalledCapabilities(catalog.data);
     const pitches = capabilityPitches();
@@ -83,14 +84,17 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
         void run(
             `install:${item.id}`,
             () => api.installCapability(item.type, item.id, workspaceId),
+            // i18n: user-facing
             t('已安装', 'Installed')
         );
     }
 
     function uninstall(item: CapabilityItem) {
         setConfirm({
+            // i18n: user-facing
             title: t('卸载能力', 'Uninstall capability'),
             description: t(
+                // i18n: user-facing
                 `从当前工作区移除 ${item.title}? 运行中的任务不受影响。`,
                 `Remove ${item.title} from this workspace? Running tasks are unaffected.`
             ),
@@ -98,6 +102,7 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
                 void run(
                     `uninstall:${item.id}`,
                     () => api.uninstallCapability(item.type, item.id, workspaceId),
+                    // i18n: user-facing
                     t('已卸载', 'Uninstalled')
                 ),
         });
@@ -107,6 +112,7 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
         void run(
             `toggle:${item.id}`,
             () => api.setCapabilityEnabled(item.type, item.id, !item.enabled, workspaceId),
+            // i18n: user-facing
             item.enabled ? t('已停用', 'Disabled') : t('已启用', 'Enabled')
         );
     }
@@ -116,6 +122,7 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
             void run(
                 `scope:${item.id}:${scope}`,
                 () => api.grantCapabilityScopes(item.id, [scope], true, workspaceId),
+                // i18n: user-facing
                 t('已授权', 'Scope granted')
             );
         const sensitive = item.scopes.find((s) => s.id === scope)?.sensitive;
@@ -124,8 +131,10 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
             return;
         }
         setConfirm({
+            // i18n: user-facing
             title: t('授权敏感 scope', 'Approve sensitive scope'),
             description: t(
+                // i18n: user-facing
                 `授予 ${item.title} 敏感权限 ${scope}? 之后调用将需要审批。`,
                 `Grant sensitive scope ${scope} to ${item.title}? Calls will still require approval.`
             ),
@@ -178,9 +187,11 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
             const res = await api.spawnSubagent(item.id, spawnInput, workspaceId, approve);
             if (res.run_id && res.route) {
                 setMessage(
+                    // i18n: user-facing
                     t(`已派生运行 ${res.run_id} — 打开 ${res.route}`, `Spawned run ${res.run_id} — open ${res.route}`)
                 );
             } else {
+                // i18n: user-facing
                 setMessage(t('已提交到 agent-studio', 'Submitted to agent-studio'));
             }
             setSpawnTarget(null);
@@ -199,20 +210,24 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
         <div className="mx-auto flex max-w-5xl flex-col gap-4 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
+                    {/* i18n: user-facing */}
                     <div className="text-lg font-medium text-text-primary">{t('能力市场', 'Capabilities')}</div>
                     <div className="text-xs text-text-muted">
                         {t(
+                            // i18n: user-facing
                             '技能 / 连接器 / 子代理按工作区安装，运行前按已授权 scope 校验。',
                             'Skills, connectors and subagents install per workspace; runs are gated by granted scopes.'
                         )}
                     </div>
                 </div>
                 <select
+                    // i18n: user-facing
                     aria-label={t('工作区', 'Workspace')}
                     className="rounded-lg border border-border bg-bg-elevated px-3 py-1.5 text-sm text-text-primary"
                     value={workspaceId}
                     onChange={(e) => changeWorkspace(e.target.value)}
                 >
+                    {/* i18n: user-facing */}
                     <option value="">{t('默认工作区', 'Default workspace')}</option>
                     {(spaces.data?.workspaces ?? []).map((w) => (
                         <option key={w.id} value={w.id}>
@@ -269,6 +284,7 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
                 })}
                 <input
                     className="ml-auto w-56 rounded-lg border border-border bg-bg-elevated px-3 py-1.5 text-sm text-text-primary"
+                    // i18n: user-facing
                     placeholder={t('搜索能力 (⌘K 全局)', 'Search capabilities (⌘K global)')}
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
@@ -287,6 +303,7 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
                             }`}
                             title={s.error}
                         >
+                            {/* i18n: user-facing */}
                             {s.name}: {s.available ? t('可用', 'available') : t('不可用', 'unavailable')}
                         </span>
                     ))}
@@ -299,7 +316,9 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
                 <ErrorState message={catalog.error.message} onRetry={reload} />
             ) : items.length === 0 ? (
                 <EmptyState
+                    // i18n: user-facing
                     title={t('暂无能力', 'No capabilities')}
+                    // i18n: user-facing
                     description={t('换个工作区或关键词。', 'Try another workspace or keyword.')}
                 />
             ) : (
@@ -319,6 +338,7 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
                                 void run(
                                     `revoke:${item.id}`,
                                     () => api.revokeConnector(item.id, workspaceId),
+                                    // i18n: user-facing
                                     t('已撤销授权', 'Revoked')
                                 )
                             }
@@ -334,8 +354,10 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
                             onSpawnSubmit={() => {
                                 if (item.requires_approval) {
                                     setConfirm({
+                                        // i18n: user-facing
                                         title: t('批准派生子代理', 'Approve subagent spawn'),
                                         description: t(
+                                            // i18n: user-facing
                                             `派生 ${item.title} 将执行多步远程任务，确认继续?`,
                                             `Spawning ${item.title} runs a multi-step remote task. Continue?`
                                         ),
@@ -354,6 +376,7 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
                 <div className="rounded-xl border border-border bg-bg-elevated p-4">
                     <div className="flex items-center justify-between pb-2">
                         <div className="text-sm font-medium text-text-primary">
+                            {/* i18n: user-facing */}
                             {t('使用记录', 'Usage')} · {usage.id}
                         </div>
                         <button
@@ -361,16 +384,19 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
                             className="text-xs text-text-muted hover:text-text-primary"
                             onClick={() => setUsage(null)}
                         >
+                            {/* i18n: user-facing */}
                             {t('关闭', 'Close')}
                         </button>
                     </div>
                     <div className="pb-2 text-xs text-text-muted">
+                        {/* i18n: user-facing */}
                         {t(`调用 ${usage.usage.count} 次`, `${usage.usage.count} calls`)}
                         {usage.usage.last_used_at
                             ? ` · ${new Date(usage.usage.last_used_at * 1000).toLocaleString()}`
                             : ''}
                     </div>
                     {(usage.audit ?? []).length === 0 ? (
+                        {/* i18n: user-facing */}
                         <div className="text-xs text-text-muted">{t('暂无记录', 'No records yet')}</div>
                     ) : (
                         <ul className="divide-y divide-border text-xs">
@@ -391,6 +417,7 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
                 <div className="rounded-xl border border-border bg-bg-elevated p-4">
                     <div className="flex items-center justify-between pb-2">
                         <div className="text-sm font-medium text-text-primary">
+                            {/* i18n: user-facing */}
                             {t('定义', 'Definition')} · {definition.id}
                         </div>
                         <button
@@ -398,6 +425,7 @@ export function CapabilitiesPage({ arg = '' }: { arg?: string }) {
                             className="text-xs text-text-muted hover:text-text-primary"
                             onClick={() => setDefinition(null)}
                         >
+                            {/* i18n: user-facing */}
                             {t('关闭', 'Close')}
                         </button>
                     </div>
@@ -455,16 +483,19 @@ function CapabilityCard(props: {
                     <div className="text-sm font-medium text-text-primary">{item.title || item.name}</div>
                     <div className="text-[11px] text-text-muted">
                         {SOURCE_LABEL[item.source] ?? item.source}
+                        {/* i18n: user-facing */}
                         {item.usage.count > 0 ? ` · ${t(`${item.usage.count} 次`, `${item.usage.count} calls`)}` : ''}
                     </div>
                 </div>
                 <div className="flex flex-wrap justify-end gap-1">
                     {item.installed ? (
                         <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-text-muted">
+                            {/* i18n: user-facing */}
                             {item.enabled ? t('已启用', 'enabled') : t('已停用', 'disabled')}
                         </span>
                     ) : (
                         <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-text-muted">
+                            {/* i18n: user-facing */}
                             {t('未安装', 'not installed')}
                         </span>
                     )}
@@ -474,6 +505,7 @@ function CapabilityCard(props: {
                                 item.connected ? 'border-border text-text-muted' : 'border-warning/40 text-warning'
                             }`}
                         >
+                            {/* i18n: user-facing */}
                             {item.connected ? t('已授权', 'connected') : t('待授权', 'not connected')}
                         </span>
                     ) : null}
@@ -495,6 +527,7 @@ function CapabilityCard(props: {
                                       ? 'border-warning/40 text-warning'
                                       : 'border-border text-text-primary'
                             }`}
+                            // i18n: user-facing
                             title={granted.has(scope.id) ? t('已授权', 'granted') : t('点击授权', 'Click to grant')}
                             disabled={!usable || granted.has(scope.id) || props.busy !== ''}
                             onClick={() => props.onGrantScope(scope.id)}
@@ -508,6 +541,7 @@ function CapabilityCard(props: {
 
             {oauth && item.auth?.configured === false ? (
                 <div className="text-[11px] text-warning">
+                    {/* i18n: user-facing */}
                     {t('OAuth 未配置 (缺 client_id env)', 'OAuth not configured (missing client_id env)')}
                 </div>
             ) : null}
@@ -515,17 +549,21 @@ function CapabilityCard(props: {
             <div className="mt-auto flex flex-wrap gap-1.5 pt-1">
                 {!item.installed ? (
                     <button type="button" className={btn} disabled={props.busy !== ''} onClick={props.onInstall}>
+                        {/* i18n: user-facing */}
                         {t('安装', 'Install')}
                     </button>
                 ) : (
                     <>
                         <button type="button" className={btn} onClick={props.onToggle} disabled={props.busy !== ''}>
+                            {/* i18n: user-facing */}
                             {item.enabled ? t('停用', 'Disable') : t('启用', 'Enable')}
                         </button>
                         <button type="button" className={btn} onClick={props.onUninstall} disabled={props.busy !== ''}>
+                            {/* i18n: user-facing */}
                             {t('卸载', 'Uninstall')}
                         </button>
                         <button type="button" className={btn} onClick={props.onUsage} disabled={props.busy !== ''}>
+                            {/* i18n: user-facing */}
                             {t('使用记录', 'Usage')}
                         </button>
                     </>
@@ -540,6 +578,7 @@ function CapabilityCard(props: {
                                     onClick={props.onConnect}
                                     disabled={props.busy !== '' || item.auth?.configured === false}
                                 >
+                                    {/* i18n: user-facing */}
                                     {item.connected ? t('重新授权', 'Reconnect') : t('连接', 'Connect')}
                                 </button>
                                 <button
@@ -548,6 +587,7 @@ function CapabilityCard(props: {
                                     onClick={props.onRevoke}
                                     disabled={props.busy !== ''}
                                 >
+                                    {/* i18n: user-facing */}
                                     {t('撤销', 'Revoke')}
                                 </button>
                             </>
@@ -557,6 +597,7 @@ function CapabilityCard(props: {
                 {item.type === 'subagent' ? (
                     <>
                         <button type="button" className={btn} onClick={props.onDefinition} disabled={props.busy !== ''}>
+                            {/* i18n: user-facing */}
                             {t('定义', 'Definition')}
                         </button>
                         <button
@@ -565,6 +606,7 @@ function CapabilityCard(props: {
                             onClick={props.onSpawn}
                             disabled={!usable || props.busy !== ''}
                         >
+                            {/* i18n: user-facing */}
                             {t('派生', 'Spawn')}
                         </button>
                     </>
@@ -577,6 +619,7 @@ function CapabilityCard(props: {
                             window.location.hash = `#${item.detail_route}`;
                         }}
                     >
+                        {/* i18n: user-facing */}
                         {t('详情', 'Details')}
                     </button>
                 ) : null}
@@ -586,6 +629,7 @@ function CapabilityCard(props: {
                 <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-bg-muted p-2">
                     <input
                         className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text-primary"
+                        // i18n: user-facing
                         placeholder={t('给子代理的任务输入', 'Input for the subagent')}
                         value={props.spawnInput}
                         onChange={(e) => props.onSpawnInput(e.target.value)}
@@ -596,6 +640,7 @@ function CapabilityCard(props: {
                         onClick={props.onSpawnSubmit}
                         disabled={props.busy !== '' || props.spawnInput.trim() === ''}
                     >
+                        {/* i18n: user-facing */}
                         {t('提交派生', 'Spawn now')}
                     </button>
                 </div>

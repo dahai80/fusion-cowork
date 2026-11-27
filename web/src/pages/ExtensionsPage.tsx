@@ -3,9 +3,10 @@ import { useEffect, useState } from 'react';
 import { type ExtensionSkill, type RagDocument, type RagHit, type RagKbList, api } from '../api';
 import { useT } from '../i18n';
 
-// issue #170: Extensions 控制台 — f-ecommerce extensions.html E2 迁移 (Skills +
-// Knowledge 两个页签)。布局/交互对齐源页: 页签栏 + 表格 + 安装面板 + 诊断行 +
-// 测试面板; 数据源端点换成本模块 /api/extensions/*。
+// issue #170: Extensions console — migrated from f-ecommerce extensions.html E2
+// (Skills + Knowledge tabs). Layout/interactions mirror the source page: tab bar
+// + table + install panel + diagnostics line + test panel; data endpoints now
+// point at this module's /api/extensions/*.
 
 const SKILL_SAMPLE = JSON.stringify(
     {
@@ -34,7 +35,7 @@ export function ExtensionsPage() {
     const [testing, setTesting] = useState(false);
     const [pageMsg, setPageMsg] = useState('');
 
-    // Knowledge tab 状态
+    // Knowledge tab state
     const [kbHealth, setKbHealth] = useState('');
     const [kbName, setKbName] = useState('');
     const [kbDesc, setKbDesc] = useState('');
@@ -54,8 +55,10 @@ export function ExtensionsPage() {
         if (rag.data) {
             setKbHealth(
                 rag.data.ok
+                    // i18n: user-facing
                     ? t('知识库服务已连接', 'knowledge service connected') +
                           (rag.data.version ? ` (fusion-rag ${rag.data.version})` : '')
+                    // i18n: user-facing
                     : t('知识库服务未连接', 'knowledge service down') + (rag.data.error ? ` — ${rag.data.error}` : '')
             );
         }
@@ -74,7 +77,7 @@ export function ExtensionsPage() {
         }
     }
 
-    // biome-ignore lint/correctness/useExhaustiveDependencies: 切页签时一次性加载
+    // biome-ignore lint/correctness/useExhaustiveDependencies: load once when switching tabs
     useEffect(() => {
         if (tab === 'knowledge') {
             void rag.manualRetry();
@@ -82,7 +85,7 @@ export function ExtensionsPage() {
         }
     }, [tab]);
 
-    // biome-ignore lint/correctness/useExhaustiveDependencies: 过滤变化重置分页
+    // biome-ignore lint/correctness/useExhaustiveDependencies: reset pagination when the filter changes
     useEffect(() => {
         const timer = setTimeout(() => {
             if (tab === 'knowledge') void loadKbs(kbFilter.trim(), 1);
@@ -125,6 +128,7 @@ export function ExtensionsPage() {
     async function removeSkill(name: string) {
         if (
             !window.confirm(
+                // i18n: user-facing
                 t(`移除技能 "${name}"? 其能力同时注销。`, `Remove skill "${name}"? Its capability is removed too.`)
             )
         )
@@ -166,10 +170,12 @@ export function ExtensionsPage() {
             setPageMsg(
                 out.wired
                     ? t(
+                          // i18n: user-facing
                           `已接线 — ${out.capability} 现在是 agent 工具。`,
                           `Wired — ${out.capability} is now an agent tool.`
                       )
                     : t(
+                          // i18n: user-facing
                           `已断开 — ${out.capabilities_disabled.join(', ')} 停用。`,
                           `Unwired — ${out.capabilities_disabled.join(', ')} disabled.`
                       )
@@ -183,9 +189,11 @@ export function ExtensionsPage() {
     async function uploadDoc() {
         if (!kbOpen) return;
         if (!kbFile) {
+            // i18n: user-facing
             setUpDiag({ cls: 'err', msg: `✗ ${t('请先选择文件', 'pick a file first')}` });
             return;
         }
+        // i18n: user-facing
         setUpDiag({ cls: 'ok', msg: t('摄取中…', 'ingesting…') });
         try {
             const out = await api.uploadRagDocument(kbOpen, kbFile);
@@ -200,6 +208,7 @@ export function ExtensionsPage() {
     async function searchKb() {
         if (!kbOpen) return;
         setKbErr(false);
+        // i18n: user-facing
         setKbHits(t('检索中…', 'searching…'));
         try {
             const hits: RagHit[] = await api.searchRagKb(kbOpen, kbQuery.trim());
@@ -226,24 +235,29 @@ export function ExtensionsPage() {
 
     return (
         <div className="mx-auto max-w-4xl space-y-3">
+            {/* i18n: user-facing */}
             <div className="text-sm font-medium text-text-primary">{t('扩展', 'Extensions')}</div>
             <p className="text-xs text-text-muted">
                 {t(
+                    // i18n: user-facing
                     '安装一次技能与知识库 — 之后每个 agent 的工具清单自动可见。',
                     "Install skills and knowledge once — they surface in every agent's tool checklist automatically."
                 )}
             </p>
 
             <div className="rounded-lg border border-border bg-bg-elevated p-3 text-xs">
+                {/* i18n: user-facing */}
                 <b className="text-text-primary">{t('各部分如何连接', 'How things connect')}</b>
                 <div className="mt-1 font-mono text-[10px] text-text-secondary">
                     {t(
+                        // i18n: user-facing
                         'Skills 安装即注册 → SkillRegistry (MCP skill_run 可调) · Knowledge 接线 → knowledge.<kb>.search 能力',
                         'Skills install-registered → SkillRegistry (callable via MCP skill_run) · Knowledge wired → knowledge.<kb>.search capability'
                     )}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-4">
                     <span className="font-semibold">
+                        {/* i18n: user-facing */}
                         {skillRows.length} {t('技能', 'skills')}
                     </span>
                     <span>{kbList ? `${kbList.total} KB` : '—'}</span>
@@ -256,6 +270,7 @@ export function ExtensionsPage() {
                     className={`rounded px-4 py-1.5 text-xs ${tab === 'skills' ? 'bg-brand text-white' : 'border border-border text-text-secondary hover:bg-bg-muted'}`}
                     onClick={() => setTab('skills')}
                 >
+                    {/* i18n: user-facing */}
                     {t('技能', 'Skills')}
                 </button>
                 <button
@@ -263,6 +278,7 @@ export function ExtensionsPage() {
                     className={`rounded px-4 py-1.5 text-xs ${tab === 'knowledge' ? 'bg-brand text-white' : 'border border-border text-text-secondary hover:bg-bg-muted'}`}
                     onClick={() => setTab('knowledge')}
                 >
+                    {/* i18n: user-facing */}
                     {t('知识库', 'Knowledge')}
                 </button>
             </div>
@@ -272,10 +288,15 @@ export function ExtensionsPage() {
                     <table className="w-full text-left text-xs">
                         <thead>
                             <tr className="border-b border-border text-text-secondary">
+                                {/* i18n: user-facing */}
                                 <th className="py-1.5 pr-2 font-medium">{t('名称', 'Name')}</th>
+                                {/* i18n: user-facing */}
                                 <th className="py-1.5 pr-2 font-medium">{t('类型', 'Type')}</th>
+                                {/* i18n: user-facing */}
                                 <th className="py-1.5 pr-2 font-medium">{t('描述', 'Description')}</th>
+                                {/* i18n: user-facing */}
                                 <th className="py-1.5 pr-2 font-medium">{t('能力', 'Capability')}</th>
+                                {/* i18n: user-facing */}
                                 <th className="py-1.5 font-medium">{t('操作', 'Actions')}</th>
                             </tr>
                         </thead>
@@ -283,6 +304,7 @@ export function ExtensionsPage() {
                             {skillRows.length === 0 ? (
                                 <tr>
                                     <td colSpan={5} className="py-2 text-text-muted">
+                                        {/* i18n: user-facing */}
                                         {t('暂无 skill 包。', 'No skill packs installed.')}
                                     </td>
                                 </tr>
@@ -302,6 +324,7 @@ export function ExtensionsPage() {
                                             {s.capability}
                                             {s.cap_status === 'missing' && (
                                                 <span className="ml-1 rounded-full bg-bg-muted px-2 py-0.5 text-[10px] text-text-muted">
+                                                    {/* i18n: user-facing */}
                                                     {t('未注册', 'missing')}
                                                 </span>
                                             )}
@@ -317,6 +340,7 @@ export function ExtensionsPage() {
                                                     setTestErr(false);
                                                 }}
                                             >
+                                                {/* i18n: user-facing */}
                                                 {t('测试', 'Test')}
                                             </button>
                                             <button
@@ -324,6 +348,7 @@ export function ExtensionsPage() {
                                                 className="ml-2 text-text-secondary hover:underline"
                                                 onClick={() => void removeSkill(s.name)}
                                             >
+                                                {/* i18n: user-facing */}
                                                 {t('移除', 'Remove')}
                                             </button>
                                         </td>
@@ -334,9 +359,11 @@ export function ExtensionsPage() {
                     </table>
 
                     <div className="rounded-lg border border-border bg-bg-elevated p-3">
+                        {/* i18n: user-facing */}
                         <b className="text-xs text-text-primary">{t('安装 skill 包', 'Install a skill pack')}</b>
                         <p className="mt-1 text-[10px] text-text-muted">
                             {t(
+                                // i18n: user-facing
                                 'cowork 包格式: name / description / type (workflow|node|script) / template_id 或 node。脚本包仅管理员 (任意代码)。',
                                 'cowork pack format: name / description / type (workflow|node|script) / template_id or node. Script packs are admin-only (arbitrary code).'
                             )}
@@ -354,10 +381,12 @@ export function ExtensionsPage() {
                                 className="rounded-md bg-brand px-3 py-1.5 text-xs text-white hover:opacity-90"
                                 onClick={() => void installSkill()}
                             >
+                                {/* i18n: user-facing */}
                                 {t('校验并安装', 'Validate & install')}
                             </button>
                             <span className="text-[10px] text-text-muted">
                                 {t(
+                                    // i18n: user-facing
                                     '安装后能力自动列出 → 每个 agent 的工具清单',
                                     "installs → capability auto-listed → every agent's tool checklist"
                                 )}
@@ -375,6 +404,7 @@ export function ExtensionsPage() {
                     {testSkill && (
                         <div className="rounded-lg border border-border bg-bg-elevated p-3">
                             <b className="text-xs text-text-primary">
+                                {/* i18n: user-facing */}
                                 {t('测试: ', 'Test: ')}
                                 <span className="font-mono">{testSkill}</span>
                             </b>
@@ -383,6 +413,7 @@ export function ExtensionsPage() {
                                     aria-label="skill-test-args"
                                     className="flex-1 rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text-primary"
                                     placeholder={t(
+                                        // i18n: user-facing
                                         'args (JSON 或文本, handler 契约)',
                                         'args (JSON or text, handler contract)'
                                     )}
@@ -395,6 +426,7 @@ export function ExtensionsPage() {
                                     disabled={testing}
                                     onClick={() => void runSkillTest()}
                                 >
+                                    {/* i18n: user-facing */}
                                     {t('运行', 'Run')}
                                 </button>
                                 <button
@@ -402,6 +434,7 @@ export function ExtensionsPage() {
                                     className="text-xs text-text-secondary hover:underline"
                                     onClick={() => setTestSkill(null)}
                                 >
+                                    {/* i18n: user-facing */}
                                     {t('关闭', 'close')}
                                 </button>
                             </div>
@@ -420,6 +453,7 @@ export function ExtensionsPage() {
             {tab === 'knowledge' && (
                 <div className="space-y-3">
                     <div className="rounded-lg border border-border bg-bg-elevated p-3">
+                        {/* i18n: user-facing */}
                         <b className="text-xs text-text-primary">{t('知识库', 'Knowledge bases')}</b>
                         <p className={`mt-1 text-xs ${rag.data?.ok ? 'text-success' : 'text-error'}`}>
                             {rag.data?.ok ? '● ' : '● '}
@@ -427,6 +461,7 @@ export function ExtensionsPage() {
                         </p>
                         <p className="mt-1 text-[10px] text-text-muted">
                             {t(
+                                // i18n: user-facing
                                 '文档存这里, agent 运行时取回原文并引用来源 — 事实常新, 风格交给模型。检索经 SpaceKB 同款 fusion-rag 绑定 (:11436)。',
                                 'Feed documents here; agents retrieve the original text at run time and cite its source. Retrieval flows through the SpaceKB fusion-rag binding (:11436).'
                             )}
@@ -435,6 +470,7 @@ export function ExtensionsPage() {
                             <input
                                 aria-label="kb-name"
                                 className="flex-1 rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text-primary"
+                                // i18n: user-facing
                                 placeholder={t('新知识库名 (如 product-docs)', 'new KB name (e.g. product-docs)')}
                                 value={kbName}
                                 onChange={(e) => setKbName(e.target.value)}
@@ -442,6 +478,7 @@ export function ExtensionsPage() {
                             <input
                                 aria-label="kb-desc"
                                 className="flex-1 rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text-primary"
+                                // i18n: user-facing
                                 placeholder={t('描述 (可选)', 'description (optional)')}
                                 value={kbDesc}
                                 onChange={(e) => setKbDesc(e.target.value)}
@@ -451,6 +488,7 @@ export function ExtensionsPage() {
                                 className="rounded-md bg-brand px-3 py-1.5 text-xs text-white hover:opacity-90"
                                 onClick={() => void createKb()}
                             >
+                                {/* i18n: user-facing */}
                                 {t('创建并接线', 'Create & wire')}
                             </button>
                         </div>
@@ -464,6 +502,7 @@ export function ExtensionsPage() {
                         <input
                             aria-label="kb-filter"
                             className="mt-2 w-full rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text-primary"
+                            // i18n: user-facing
                             placeholder={t('按名称 / 描述过滤…', 'filter by name / description…')}
                             value={kbFilter}
                             onChange={(e) => setKbFilter(e.target.value)}
@@ -472,8 +511,11 @@ export function ExtensionsPage() {
                             <thead>
                                 <tr className="border-b border-border text-text-secondary">
                                     <th className="py-1.5 pr-2 font-medium">KB</th>
+                                    {/* i18n: user-facing */}
                                     <th className="py-1.5 pr-2 font-medium">{t('文档', 'Docs')}</th>
+                                    {/* i18n: user-facing */}
                                     <th className="py-1.5 pr-2 font-medium">{t('能力', 'Capability')}</th>
+                                    {/* i18n: user-facing */}
                                     <th className="py-1.5 font-medium">{t('操作', 'Actions')}</th>
                                 </tr>
                             </thead>
@@ -494,8 +536,10 @@ export function ExtensionsPage() {
                                     <tr>
                                         <td colSpan={4} className="py-2 text-text-muted">
                                             {kbFilter
+                                                // i18n: user-facing
                                                 ? t('无匹配知识库。', 'No knowledge bases match.')
                                                 : t(
+                                                      // i18n: user-facing
                                                       '尚无知识库 — 在上方创建。',
                                                       'No knowledge bases — create one above.'
                                                   )}
@@ -519,6 +563,7 @@ export function ExtensionsPage() {
                                                     </>
                                                 ) : (
                                                     <span className="rounded-full bg-bg-muted px-2 py-0.5 text-[10px] text-text-muted">
+                                                        {/* i18n: user-facing */}
                                                         {t('未接线', 'not wired')}
                                                     </span>
                                                 )}
@@ -529,6 +574,7 @@ export function ExtensionsPage() {
                                                     className="text-text-secondary hover:underline"
                                                     onClick={() => void openKb(b.kb_id)}
                                                 >
+                                                    {/* i18n: user-facing */}
                                                     {t('打开', 'Open')}
                                                 </button>
                                                 <button
@@ -536,6 +582,7 @@ export function ExtensionsPage() {
                                                     className="ml-2 text-text-secondary hover:underline"
                                                     onClick={() => void wireKb(b.kb_id, !b.capability)}
                                                 >
+                                                    {/* i18n: user-facing */}
                                                     {b.capability ? t('断开', 'Unwire') : t('接线', 'Wire')}
                                                 </button>
                                             </td>
@@ -546,6 +593,7 @@ export function ExtensionsPage() {
                         </table>
                         {kbList && (
                             <p className="mt-1 text-[10px] text-text-muted">
+                                {/* i18n: user-facing */}
                                 {kbList.total} KB — {t('页', 'page')} {kbList.page} / {kbPages}
                                 {kbList.page > 1 && (
                                     <button
@@ -557,6 +605,7 @@ export function ExtensionsPage() {
                                             void loadKbs(kbFilter.trim(), p);
                                         }}
                                     >
+                                        {/* i18n: user-facing */}
                                         ‹ {t('上一页', 'prev')}
                                     </button>
                                 )}
@@ -570,6 +619,7 @@ export function ExtensionsPage() {
                                             void loadKbs(kbFilter.trim(), p);
                                         }}
                                     >
+                                        {/* i18n: user-facing */}
                                         {t('下一页', 'next')} ›
                                     </button>
                                 )}
@@ -595,6 +645,7 @@ export function ExtensionsPage() {
                                     className="rounded-md bg-brand px-3 py-1.5 text-xs text-white hover:opacity-90"
                                     onClick={() => void uploadDoc()}
                                 >
+                                    {/* i18n: user-facing */}
                                     {t('上传并摄取', 'Upload & ingest')}
                                 </button>
                             </div>
@@ -608,8 +659,11 @@ export function ExtensionsPage() {
                             <table className="mt-2 w-full text-left text-xs">
                                 <thead>
                                     <tr className="border-b border-border text-text-secondary">
+                                        {/* i18n: user-facing */}
                                         <th className="py-1.5 pr-2 font-medium">{t('文档', 'Document')}</th>
+                                        {/* i18n: user-facing */}
                                         <th className="py-1.5 pr-2 font-medium">{t('分块', 'Chunks')}</th>
+                                        {/* i18n: user-facing */}
                                         <th className="py-1.5 font-medium">{t('大小', 'Size')}</th>
                                     </tr>
                                 </thead>
@@ -617,6 +671,7 @@ export function ExtensionsPage() {
                                     {kbDocs.length === 0 ? (
                                         <tr>
                                             <td colSpan={3} className="py-2 text-text-muted">
+                                                {/* i18n: user-facing */}
                                                 {t('暂无文档 — 在上方上传。', 'No documents — upload one above.')}
                                             </td>
                                         </tr>
@@ -635,11 +690,13 @@ export function ExtensionsPage() {
                                     )}
                                 </tbody>
                             </table>
+                            {/* i18n: user-facing */}
                             <b className="mt-2 block text-xs text-text-primary">{t('试一次检索', 'Try a search')}</b>
                             <div className="mt-1 flex gap-2">
                                 <input
                                     aria-label="kb-test-q"
                                     className="flex-1 rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text-primary"
+                                    // i18n: user-facing
                                     placeholder={t('如: 这份文档讲了什么?', 'e.g. What does this document cover?')}
                                     value={kbQuery}
                                     onChange={(e) => setKbQuery(e.target.value)}
@@ -649,6 +706,7 @@ export function ExtensionsPage() {
                                     className="rounded-md border border-border px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-muted"
                                     onClick={() => void searchKb()}
                                 >
+                                    {/* i18n: user-facing */}
                                     {t('检索', 'Search')}
                                 </button>
                             </div>
@@ -666,6 +724,7 @@ export function ExtensionsPage() {
 
             {pageMsg && <p className="text-xs text-text-muted">{pageMsg}</p>}
             {skillRows.length === 0 && tab === 'skills' && !skills.loading && (
+                {/* i18n: user-facing */}
                 <EmptyState title={t('暂无扩展', 'No extensions')} />
             )}
         </div>

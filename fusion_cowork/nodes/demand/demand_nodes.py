@@ -38,10 +38,12 @@ class PollQqImapNode(BaseNode):
     # issue #585: QQ mail IMAP poll — read-only, UID cursor for restart-safe
     # resume, Message-ID dedupe. One cycle per invocation (cron-driven).
     name = "poll_qq_imap"
+    # i18n: user-facing
     display_name = "QQ邮箱IMAP轮询"
     category = NodeCategory.IO
     description = "IMAP read-only poll: new mail -> raw_messages (UID cursor + Message-ID dedupe)"
     icon = "mail"
+    # i18n: user-facing
     default_label = "IMAP轮询"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -117,10 +119,12 @@ class NormalizeLeadNode(BaseNode):
     # merge into the existing lead and file a duplicate marker instead of
     # wedging the raw mail in a permanent error loop.
     name = "normalize_lead"
+    # i18n: user-facing
     display_name = "线索归一化"
     category = NodeCategory.IO
     description = "raw_messages -> unified Lead schema (model classify+extract, rule fallback)"
     icon = "inbox"
+    # i18n: user-facing
     default_label = "线索归一化"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -205,10 +209,12 @@ class MatchLeadNode(BaseNode):
     # never dropped; catalog version recorded per row. Re-runs skip leads
     # already scored against the current catalog version.
     name = "match"
+    # i18n: user-facing
     display_name = "能力目录匹配"
     category = NodeCategory.LOGIC
     description = "Lead x capability catalog deterministic scoring (no LLM, re-runnable)"
     icon = "target"
+    # i18n: user-facing
     default_label = "目录匹配"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -278,10 +284,12 @@ class DualDraftNode(BaseNode):
     # cannot alter the brief); price comes from the catalog quote; output is
     # stored drafts + optional ntfy ping. Never sends anything.
     name = "dual_draft"
+    # i18n: user-facing
     display_name = "双模型草稿"
     category = NodeCategory.AI_PROCESSING
     description = "matched Lead -> draft_a (local) + draft_b (cloud GLM-5), stored drafts only, never sends"
     icon = "pen"
+    # i18n: user-facing
     default_label = "双草稿"
 
     def get_params_schema(self) -> Dict[str, Any]:

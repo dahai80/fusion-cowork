@@ -1,13 +1,13 @@
-"""Postgres 行级安全策略 (v0.4.0 Stage 3).
+"""Postgres row-level security policies (v0.4.0 Stage 3).
 
-纵深防御: SQL 漏 WHERE tenant_id=? 守卫时, RLS 仍挡跨租户读写。
-仅 postgres backend; sqlite 无 RLS, 依赖查询守卫 (Stage 1 已全表加)。
+Defense in depth: when SQL misses the WHERE tenant_id=? guard, RLS still blocks cross-tenant reads/writes.
+Postgres backend only; sqlite has no RLS and relies on query guards (added to all tables in Stage 1).
 
-用法:
-- initialize() 建表后调 apply_rls(conn) 启用 14 表 RLS + 建 tenant_isolation 策略
-- 每事务前调 set_tenant_context(conn, tenant_id) 设 app.tenant_id 会话变量
-- 策略: USING (tenant_id = current_setting('app.tenant_id', true))
-        WITH CHECK (同) — 写时也校验
+Usage:
+- after initialize() creates tables, call apply_rls(conn) to enable RLS on 14 tables + create the tenant_isolation policy
+- before each transaction, call set_tenant_context(conn, tenant_id) to set the app.tenant_id session variable
+- policy: USING (tenant_id = current_setting('app.tenant_id', true))
+          WITH CHECK (same) — also validated on writes
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from typing import Any, List
 
 logger = logging.getLogger(__name__)
 
-# Stage 1 加了 tenant_id 的 14 表 (含 sidebar_modules + space_notifications)
+# 14 tables that gained tenant_id in Stage 1 (including sidebar_modules + space_notifications)
 RLS_TABLES: List[str] = [
     "spaces",
     "space_members",
@@ -39,7 +39,7 @@ def enable_rls_sql(table: str) -> str:
 
 
 def force_rls_sql(table: str) -> str:
-    # FORCE: 表主/超级用户也受 RLS 约束 (纵深防御 — 防 owner 绕过)
+    # FORCE: table owners/superusers are also bound by RLS (defense in depth — prevents owner bypass)
     return f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY"
 
 
@@ -53,23 +53,23 @@ def create_policy_sql(table: str) -> str:
 
 
 async def apply_rls(conn: Any) -> None:
-    """对 RLS_TABLES 全表启用 RLS + 建 tenant_isolation 策略。postgres only。
+    """Enable RLS on all RLS_TABLES + create the tenant_isolation policy. Postgres only.
 
-    纵深防御: SQL 漏 WHERE tenant_id=? 守卫时, RLS 挡跨租户读写。
-    幂等: DROP POLICY IF EXISTS + ENABLE 已启用是 no-op。
+    Defense in depth: when SQL misses the WHERE tenant_id=? guard, RLS blocks cross-tenant reads/writes.
+    Idempotent: DROP POLICY IF EXISTS + ENABLE on an already-enabled table is a no-op.
     """
     for table in RLS_TABLES:
         await conn.execute(enable_rls_sql(table))
         await conn.execute(force_rls_sql(table))
         await conn.execute(create_policy_sql(table))
-    logger.info(f"RLS 已启用 {len(RLS_TABLES)} 表 (ENABLE+FORCE, 防 owner 绕过) [纵深防御租户隔离]")
+    logger.info(f"RLS enabled on {len(RLS_TABLES)} tables (ENABLE+FORCE, prevents owner bypass) [defense-in-depth tenant isolation]")
 
 
 async def set_tenant_context(conn: Any, tenant_id: str) -> None:
-    """SET LOCAL app.tenant_id = <tenant>。每事务前调。
+    """SET LOCAL app.tenant_id = <tenant>. Call before each transaction.
 
-    RLS 策略读 current_setting('app.tenant_id')。必须事务内设 (SET LOCAL),
-    事务结束自动清除, 隔离连接复用。
+    The RLS policy reads current_setting('app.tenant_id'). Must be set inside the transaction (SET LOCAL);
+    automatically cleared when the transaction ends, isolating connection reuse.
     """
     safe = tenant_id.replace("'", "''")
     await conn.execute(f"SET LOCAL app.tenant_id = '{safe}'")

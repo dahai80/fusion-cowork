@@ -1,15 +1,17 @@
-"""会话持久化 — 工作流执行会话的存储、恢复、分叉。
+"""Session persistence — storage, recovery, and forking of workflow execution sessions.
 
-双后端 (v0.4.0):
-- SQLite (默认): sync sqlite3, 测试/本地路径
-- Postgres (dsn 或 env DATABASE_URL, 旧名 FUSION_PG_DSN): asyncpg via 后台 loop 线程桥, 保留 sync 接口 (DeskRPC sync dispatch 依赖)
+Dual backends (v0.4.0):
+- SQLite (default): sync sqlite3, for tests/local paths
+- Postgres (dsn or env DATABASE_URL, legacy name FUSION_PG_DSN): asyncpg via a
+  background loop-thread bridge, keeping the sync interface (DeskRPC sync dispatch
+  depends on it)
 
-支持：
-- 会话创建与恢复（resume）
-- 会话列表与查询
-- 会话分叉（fork）— 从某步骤重新执行
-- 自动清理过期会话
-- 多租户隔离 (tenant_id 列 + 查询守卫, v0.4.0)
+Supports:
+- Session creation and resume
+- Session listing and querying
+- Session fork — re-execute from a given step
+- Automatic cleanup of expired sessions
+- Multi-tenant isolation (tenant_id column + query guards, v0.4.0)
 """
 
 import asyncio
@@ -31,7 +33,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = str(Path.home() / ".fusion-cowork" / "sessions.db")
 SESSION_EXPIRE_DAYS = 30
-# issue #221 (规范 DB-3): DATABASE_URL 为唯一规范连接名; FUSION_PG_DSN 旧名仍接受
+# issue #221 (DB-3 standard): DATABASE_URL is the single canonical connection name;
+# the legacy FUSION_PG_DSN name is still accepted
 _PG_DSN_ENV = "DATABASE_URL"
 _PG_DSN_ENV_LEGACY = "FUSION_PG_DSN"
 
@@ -57,10 +60,11 @@ CREATE INDEX IF NOT EXISTS idx_sessions_tenant ON sessions(tenant_id)
 
 
 class _AsyncPgBackend:
-    """postgres asyncpg 后台 loop 线程桥 — 供 sync SessionStore 调。
+    """Postgres asyncpg background loop-thread bridge — used by the sync SessionStore.
 
-    sync 调用方 (DeskRPC dispatch) 不持事件循环; 此桥在独立 daemon 线程跑 loop,
-    sync 方法经 run_coroutine_threadsafe 提交并等结果。pool 全局一份。
+    Sync callers (DeskRPC dispatch) hold no event loop; this bridge runs a loop in a
+    dedicated daemon thread, and sync methods submit via run_coroutine_threadsafe and
+    wait for the result. One pool, shared globally.
     """
 
     def __init__(self, dsn: str):
@@ -87,7 +91,7 @@ class _AsyncPgBackend:
                 s = stmt.strip()
                 if s:
                     await conn.execute(s)
-        logger.info("SessionStore postgres pool 初始化完成")
+        logger.info("SessionStore postgres pool initialized")
         return pool
 
     def exec(self, sql: str, params: tuple = ()) -> int:
@@ -144,7 +148,8 @@ class Session:
 
     def __post_init__(self):
         if not self.id:
-            # HI-13: 128-bit session id (uuid4 hex 全长), 防 32/48 位可枚举
+            # HI-13: 128-bit session id (full uuid4 hex) to prevent enumeration of
+            # 32/48-bit ids
             self.id = f"sess_{uuid.uuid4().hex}"
         now = time.time()
         if not self.created_at:
@@ -183,22 +188,22 @@ class SessionStore:
                     tenant_id TEXT NOT NULL DEFAULT ''
                 )
             """)
-            # v0.4.0: 旧库无 tenant_id 列 → ALTER 补列 (幂等)
+            # v0.4.0: older DBs lack the tenant_id column -> idempotent ALTER to add it
             cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()}
             if "tenant_id" not in cols:
                 conn.execute("ALTER TABLE sessions ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_tenant ON sessions(tenant_id)")
-        logger.debug(f"SessionStore 初始化完成 (sqlite): {self._db_path}")
+        logger.debug(f"SessionStore initialized (sqlite): {self._db_path}")
 
     def _init_postgres(self) -> None:
         try:
             import asyncpg  # noqa: F401
         except ImportError as e:
-            raise RuntimeError("postgres 后端需 asyncpg: pip install 'fusion-cowork[cloud]'") from e
+            raise RuntimeError("postgres backend requires asyncpg: pip install 'fusion-cowork[cloud]'") from e
         self._pg = _AsyncPgBackend(self._dsn)
-        logger.info("SessionStore 初始化完成 (postgres pool)")
+        logger.info("SessionStore initialized (postgres pool)")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._db_path)
@@ -209,7 +214,7 @@ class SessionStore:
         if self._pg is not None:
             self._pg.close()
             self._pg = None
-            logger.info("SessionStore 已关闭 (postgres pool)")
+            logger.info("SessionStore closed (postgres pool)")
 
     def _row_to_session(self, row: Any) -> Session:
         return Session(
@@ -266,7 +271,7 @@ class SessionStore:
         else:
             assert self._pg is not None
             self._pg.exec(sql, params)
-        logger.debug(f"Session 保存: {session.id} status={session.status} tenant={tid}")
+        logger.debug(f"Session saved: {session.id} status={session.status} tenant={tid}")
         return session
 
     def get(self, session_id: str, tenant_id: Optional[str] = None) -> Optional[Session]:
@@ -326,7 +331,7 @@ class SessionStore:
         else:
             assert self._pg is not None
             self._pg.exec(sql, params)
-        logger.debug(f"Session 更新状态: {session_id} -> {status} tenant={tid}")
+        logger.debug(f"Session status updated: {session_id} -> {status} tenant={tid}")
 
     def update_steps(self, session_id: str, steps: List[Dict[str, Any]], tenant_id: Optional[str] = None):
         now = time.time()
@@ -343,7 +348,7 @@ class SessionStore:
     def fork(self, session_id: str, from_step: int = 0, tenant_id: Optional[str] = None) -> Optional[Session]:
         original = self.get(session_id, tenant_id=tenant_id)
         if not original:
-            logger.warning(f"Fork 失败: Session {session_id} 不存在")
+            logger.warning(f"Fork failed: session {session_id} does not exist")
             return None
         forked = Session(
             workflow_id=original.workflow_id,
@@ -371,16 +376,16 @@ class SessionStore:
             assert self._pg is not None
             deleted = self._pg.exec(sql, params) > 0
         if deleted:
-            logger.debug(f"Session 删除: {session_id} tenant={tid}")
+            logger.debug(f"Session deleted: {session_id} tenant={tid}")
         return deleted
 
     def resume(self, session_id: str, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         session = self.get(session_id, tenant_id=tenant_id)
         if not session:
-            logger.warning(f"resume 失败: 会话不存在 {session_id}")
+            logger.warning(f"resume failed: session not found {session_id}")
             return None
         if session.status in ("completed", "cancelled"):
-            logger.info(f"resume: 会话已终态 ({session.status}), 返回快照供重放")
+            logger.info(f"resume: session already terminal ({session.status}), returning snapshot for replay")
         logger.info(
             f"Session resume: {session_id} status={session.status} "
             f"steps={len(session.steps_snapshot)} tenant={session.tenant_id}"
@@ -395,8 +400,10 @@ class SessionStore:
         }
 
     def list_resumable(self, limit: int = 20, tenant_id: Optional[str] = None) -> List[Session]:
-        # R-4: 旧版含 'running' → 恢复一个仍在跑的会话 = 双重执行 (同 session_id 并发跑两遍)。
-        # running 视为活跃, 不入可恢复列表。仅 paused/failed 可恢复。
+        # R-4: older versions included 'running' -> resuming a still-running session
+        # means double execution (the same session_id running twice concurrently).
+        # Treat running as active and exclude it from the resumable list. Only
+        # paused/failed are resumable.
         tid = resolve_tenant_id(tenant_id)
         sql = (
             "SELECT * FROM sessions WHERE status IN ('paused','failed') AND tenant_id = ? "
@@ -409,14 +416,16 @@ class SessionStore:
         else:
             assert self._pg is not None
             rows = self._pg.fetchall(sql, params)
-        logger.info(f"list_resumable: {len(rows)} 条可恢复会话 (排除 running 防双重执行) tenant={tid}")
+        logger.info(f"list_resumable: {len(rows)} resumable sessions (running excluded to prevent double execution) tenant={tid}")
         return [self._row_to_session(r) for r in rows]
 
     def cleanup_expired(self, expire_days: int = SESSION_EXPIRE_DAYS, tenant_id: Optional[str] = None) -> int:
         tid = resolve_tenant_id(tenant_id)
         cutoff = time.time() - expire_days * 86400
-        # R-1: paused 会话长期不活动也回收 (旧版只清终态, paused 永驻泄漏)。
-        # paused 用更短阈值: 暂停超 3 倍 expire_days 视为遗忘, 回收。
+        # R-1: paused sessions are also reaped after long inactivity (older versions
+        # only cleaned terminal states, so paused leaked forever).
+        # Paused uses a shorter threshold: paused beyond 3x expire_days counts as
+        # abandoned and is reaped.
         paused_cutoff = time.time() - expire_days * 3 * 86400
         final_sql = (
             "DELETE FROM sessions WHERE updated_at < ? AND status IN ('completed', 'failed', 'cancelled') "
@@ -435,7 +444,7 @@ class SessionStore:
             paused_count = self._pg.exec(paused_sql, (paused_cutoff, tid))
         count = final_count + paused_count
         if count:
-            logger.info(f"清理过期 Session: {count} 条 (终态={final_count}, 长期paused={paused_count}) tenant={tid}")
+            logger.info(f"Expired sessions cleaned: {count} (terminal={final_count}, long-paused={paused_count}) tenant={tid}")
         return count
 
     def to_dict(self, session: Session) -> Dict[str, Any]:

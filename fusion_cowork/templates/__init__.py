@@ -1,4 +1,4 @@
-"""Fusion-Cowork 模板中心。"""
+"""Fusion-Cowork template center."""
 
 from .template_manager import BUILTIN_TEMPLATES, TemplateManager
 

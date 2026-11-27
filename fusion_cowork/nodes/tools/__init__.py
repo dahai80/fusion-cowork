@@ -1,4 +1,4 @@
-"""通用工具节点 — 吸纳自 Squish 内置工具集。"""
+"""Generic tool nodes — adapted from the Squish built-in toolset."""
 
 from .tool_nodes import ApplyEditNode, FetchURLNode, PythonREPLNode, ShellExecNode, WebSearchNode
 

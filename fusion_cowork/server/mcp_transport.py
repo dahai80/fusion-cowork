@@ -1,7 +1,7 @@
-"""MCP stdio 传输层 — stdin/stdout JSON-RPC 2.0。
+"""MCP stdio transport — stdin/stdout JSON-RPC 2.0.
 
-Fusion-Cowork 作为 MCP server，通过 stdin/stdout 与 Claude Code 通信。
-符合 Model Context Protocol 规范 2024-11-05。
+Fusion-Cowork acts as MCP server, talking to Claude Code over stdin/stdout.
+Conforms to the Model Context Protocol spec 2024-11-05.
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# R-8: readline 无界读 → 畸形长行 (无 \n) OOM。设行上限, 超限抛 LimitOverrunError。
-MAX_LINE_BYTES = 8 * 1024 * 1024  # 8 MiB 行上限 (单个 MCP 请求, 足够富余)
+# R-8: unbounded readline → malformed long lines (no \n) OOM. Set a line cap; over-limit raises LimitOverrunError.
+MAX_LINE_BYTES = 8 * 1024 * 1024  # 8 MiB line cap (single MCP request, ample headroom)
 
 MCP_PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "fusion-cowork"
@@ -32,7 +32,7 @@ except Exception:
 
 
 class StdioTransport:
-    """MCP stdio 传输 — 从 stdin 读取 JSON-RPC，向 stdout 写入响应。"""
+    """MCP stdio transport — reads JSON-RPC from stdin, writes responses to stdout."""
 
     def __init__(self, tool_registry: MCPToolRegistry):
         self._registry = tool_registry
@@ -48,10 +48,10 @@ class StdioTransport:
         }
 
     async def run(self) -> None:
-        """主循环: 从 stdin 读取请求，处理，写回 stdout。"""
+        """Main loop: read requests from stdin, process, write back to stdout."""
         self._running = True
-        logger.info("MCP stdio 传输启动")
-        # R-8: 限长 StreamReader, readline 超过 limit 抛 LimitOverrunError (而非无界累积)。
+        logger.info("MCP stdio transport started")
+        # R-8: length-limited StreamReader, readline past limit raises LimitOverrunError (instead of unbounded accumulation).
         reader = asyncio.StreamReader(limit=MAX_LINE_BYTES)
         protocol = asyncio.StreamReaderProtocol(reader)
         await asyncio.get_event_loop().connect_read_pipe(lambda: protocol, sys.stdin)
@@ -68,7 +68,7 @@ class StdioTransport:
                 try:
                     request = json.loads(line)
                 except json.JSONDecodeError as e:
-                    logger.warning(f"无效 JSON: {e}")
+                    logger.warning(f"invalid JSON: {e}")
                     await self._send_error(None, -32700, "Parse error")
                     continue
 
@@ -77,19 +77,19 @@ class StdioTransport:
             except TimeoutError:
                 continue
             except asyncio.LimitOverrunError:
-                # R-8: 行超 MAX_LINE_BYTES (无 \n 终止)。排空缓冲避免卡死, 报错继续。
-                logger.error(f"MCP 行超上限 {MAX_LINE_BYTES} 字节, 丢弃 (可能畸形输入)")
+                # R-8: line exceeded MAX_LINE_BYTES (no \n terminator). Drain the buffer to avoid stalling, report error and continue.
+                logger.error(f"MCP line exceeded {MAX_LINE_BYTES} bytes, dropped (possibly malformed input)")
                 reader._buffer.clear()
                 await self._send_error(None, -32602, "Request too large")
                 continue
             except Exception as e:
-                logger.error(f"stdio 读取异常: {e}")
+                logger.error(f"stdio read error: {e}")
                 break
 
-        logger.info("MCP stdio 传输停止")
+        logger.info("MCP stdio transport stopped")
 
     async def _dispatch(self, request: Dict[str, Any]) -> None:
-        """分发 JSON-RPC 请求到对应处理器。"""
+        """Dispatch a JSON-RPC request to the matching handler."""
         method = request.get("method", "")
         req_id = request.get("id")
         params = request.get("params", {})
@@ -110,17 +110,17 @@ class StdioTransport:
             if req_id is not None:
                 await self._send_result(req_id, result)
         except Exception as e:
-            # HI-5: trace_id 入响应, 栈仅日志, 不泄 str(e) 给 MCP 客户端
+            # HI-5: trace_id into the response, stack trace only logged, str(e) never leaked to the MCP client
             trace_id = get_trace_id()
             logger.error(
-                "MCP stdio 处理异常 trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc()
+                "MCP stdio handler exception trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc()
             )
             if req_id is not None:
                 await self._send_error(req_id, -32603, f"Internal error (trace_id={trace_id})")
 
     async def _handle_initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
         client_info = params.get("clientInfo", {})
-        logger.info(f"MCP 客户端: {client_info.get('name', 'unknown')} {client_info.get('version', '')}")
+        logger.info(f"MCP client: {client_info.get('name', 'unknown')} {client_info.get('version', '')}")
 
         return {
             "protocolVersion": MCP_PROTOCOL_VERSION,
@@ -135,7 +135,7 @@ class StdioTransport:
 
     async def _handle_initialized(self, params: Dict[str, Any]) -> Dict[str, Any]:
         self._initialized = True
-        logger.info("MCP 会话已初始化")
+        logger.info("MCP session initialized")
         return {}
 
     async def _handle_tools_list(self, params: Dict[str, Any]) -> Dict[str, Any]:

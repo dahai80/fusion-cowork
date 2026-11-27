@@ -1,16 +1,20 @@
-"""邮箱消费者池 (issue #190) — daemon 常驻的消息消费端。
+"""Mailbox consumer pool (issue #190) — the daemon-resident message consumer.
 
-花名册 (cowork_roster) 里登记的每个 agent 都是一条活消费线:
-拉取未读 → 派发给 handler (跑工作流) → 派发成功才 ack (at-least-once)。
-run 终态后把结果作为回信投回发送方信箱, 跨仓对话无需任何人工 RPC 拉动。
+Every agent registered in the roster (cowork_roster) is a live consumption
+line: pull unread → dispatch to the handler (run the workflow) → ack only
+after dispatch succeeds (at-least-once).
+Once a run reaches a terminal state the result is mailed back to the
+sender's mailbox, so cross-repo conversations need no manual RPC pull.
 
-推进方式:
-- 推送: 本地 TeamMailbox.send 触发 wake() 立即消费; 外部 (其他 daemon)
-  可调 wake() / HTTP notify 唤醒, 见 web_api 的 /api/team/notify。
-- 轮询: 兜底间隔 FUSION_INBOX_POLL_INTERVAL (默认 5s), 覆盖无通知能力的对端。
+Advancement:
+- Push: a local TeamMailbox.send triggers wake() for immediate consumption;
+  external parties (other daemons) can call wake() / HTTP notify, see
+  /api/team/notify in web_api.
+- Polling: fallback interval FUSION_INBOX_POLL_INTERVAL (default 5s),
+  covering peers with no notification capability.
 
 issue #494 (K4) kernel convergence note, RE-RATIFIED by issue #533 item 3
-(2026-11-19, against kernel-abstract-roadmap-2026-11-14.md 裁决): kernel
+(2026-11-19, against kernel-abstract-roadmap-2026-11-14.md ruling): kernel
 TeamRuntime.run_member is NOT the execution path for this pool — and that
 is the ratified end state, not a pending gap. run_member's mechanism is
 LLM subagent execution (kernel SubagentRunner: SpawnBrief contract, member
@@ -42,7 +46,7 @@ _REPLY_BODY_MAX = 4000
 
 
 class RunnerPool:
-    """花名册驱动的 durable 消息消费池。"""
+    """Roster-driven durable message consumption pool."""
 
     def __init__(
         self,
@@ -53,7 +57,7 @@ class RunnerPool:
         poll_interval: float = 5.0,
         reply: bool = True,
     ):
-        # dispatch(agent, message) -> run_id (async): 派发失败必须抛异常, 不 ack
+        # dispatch(agent, message) -> run_id (async): dispatch failure must raise, no ack
         # get_run(run_id) -> {status, last_result, last_error} | None (async)
         self.roster = roster
         self.mailbox = mailbox
@@ -64,7 +68,7 @@ class RunnerPool:
         self._task: Optional[asyncio.Task] = None
         self._running = False
         self._wake_event = asyncio.Event()
-        # message_id → 在途 run, 防止同一消息在 run 未终态前被重复派发
+        # message_id → in-flight run, prevents the same message from being dispatched again before the run reaches a terminal state
         self._in_flight: Dict[str, str] = {}
         self._pending_replies: Dict[str, Dict[str, Any]] = {}
         self.metrics: Dict[str, Any] = {
@@ -75,11 +79,11 @@ class RunnerPool:
             "oldest_unacked_age_s": 0.0,
             "per_agent": {},
         }
-        # 本地发送即刻唤醒 (推送路径的进程内一段)
+        # wake immediately on local send (the in-process leg of the push path)
         try:
             self.mailbox.on_send = self.wake
         except Exception as e:
-            logger.warning(f"邮箱推送钩子注册失败 (退回纯轮询): {e}")
+            logger.warning(f"failed to register mailbox push hook (falling back to pure polling): {e}")
 
     @property
     def running(self) -> bool:
@@ -94,7 +98,7 @@ class RunnerPool:
         self._running = True
         self._task = asyncio.ensure_future(self._loop())
         logger.info(
-            f"邮箱消费池启动: poll_interval={self.poll_interval}s agents={len(self.roster.list(enabled_only=True))}"
+            f"mailbox consumer pool started: poll_interval={self.poll_interval}s agents={len(self.roster.list(enabled_only=True))}"
         )
 
     async def stop(self) -> None:
@@ -106,20 +110,21 @@ class RunnerPool:
             except asyncio.CancelledError:
                 pass
             self._task = None
-        logger.info("邮箱消费池已停止")
+        logger.info("mailbox consumer pool stopped")
 
     async def _loop(self) -> None:
         while self._running:
-            # 先 clear 再 tick: tick 期间到达的 send/wake 会保留 set 状态,
-            # 下一轮 wait 立即返回 — 旧顺序 (tick 后 clear) 会吞掉该唤醒,
-            # 消息只能等满 poll_interval 才被消费 (macOS CI 慢机暴露)。
+            # clear before tick: send/wake arriving during the tick keep the set state,
+            # so the next wait returns immediately — the old order (clear after tick)
+            # would swallow that wake and the message would wait a full poll_interval
+            # before being consumed (exposed on a slow macOS CI machine).
             self._wake_event.clear()
             try:
                 await self.tick()
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.exception(f"邮箱消费池 tick 失败: {e}")
+                logger.exception(f"mailbox consumer pool tick failed: {e}")
             try:
                 await asyncio.wait_for(self._wake_event.wait(), timeout=self.poll_interval)
             except TimeoutError:
@@ -138,7 +143,7 @@ class RunnerPool:
                 messages = await asyncio.to_thread(self.mailbox.inbox, agent_id)
             except Exception as e:
                 self.metrics["dispatch_errors"] += 1
-                logger.error(f"消费池读取信箱失败 agent={agent_id}: {e}")
+                logger.error(f"consumer pool failed to read mailbox agent={agent_id}: {e}")
                 continue
             for message in messages:
                 await self._dispatch_one(agent, message)
@@ -152,24 +157,24 @@ class RunnerPool:
         try:
             run_id = await self.dispatch(agent, message)
         except Exception as e:
-            # 不 ack: 下一 tick 重投 (at-least-once)
+            # no ack: redelivered on the next tick (at-least-once)
             self.metrics["dispatch_errors"] += 1
-            logger.error(f"消费池派发失败 agent={agent_id} message={message_id}: {e}")
+            logger.error(f"consumer pool dispatch failed agent={agent_id} message={message_id}: {e}")
             return
         if not run_id:
             self.metrics["dispatch_errors"] += 1
-            logger.error(f"消费池派发未拿到 run_id agent={agent_id} message={message_id}")
+            logger.error(f"consumer pool dispatch returned no run_id agent={agent_id} message={message_id}")
             return
         self._in_flight[message_id] = run_id
         acked = await asyncio.to_thread(self.mailbox.ack, agent_id, message_id)
         if not acked:
-            logger.warning(f"消费池 ack 未命中 agent={agent_id} message={message_id} (对端已 ack?)")
+            logger.warning(f"consumer pool ack missed agent={agent_id} message={message_id} (already acked by peer?)")
         self.metrics["consumed"] += 1
         per = self.metrics["per_agent"].setdefault(agent_id, {"consumed": 0, "replies_sent": 0, "errors": 0})
         per["consumed"] += 1
         latency_ms = (time.time() - started) * 1000
         logger.info(
-            f"消费池已派发 agent={agent_id} message={message_id} run={run_id} "
+            f"consumer pool dispatched agent={agent_id} message={message_id} run={run_id} "
             f"sender={message.get('sender', '')} latency={latency_ms:.0f}ms"
         )
         if self.reply and message.get("sender"):
@@ -187,7 +192,7 @@ class RunnerPool:
             try:
                 run = await self.get_run(run_id)
             except Exception as e:
-                logger.warning(f"消费池查询 run 失败 run={run_id}: {e}")
+                logger.warning(f"consumer pool failed to query run run={run_id}: {e}")
                 continue
             if not run:
                 continue
@@ -197,7 +202,7 @@ class RunnerPool:
             self._in_flight.pop(info["message_id"], None)
             self._pending_replies.pop(run_id, None)
             if status not in ("completed", "success"):
-                logger.warning(f"消费池 run 未成功 run={run_id} status={status} (不回信)")
+                logger.warning(f"consumer pool run not successful run={run_id} status={status} (no reply sent)")
                 continue
             body = self._reply_body(info["message_id"], run)
             try:
@@ -211,14 +216,14 @@ class RunnerPool:
                 )
             except Exception as e:
                 self.metrics["dispatch_errors"] += 1
-                logger.error(f"消费池回信失败 run={run_id} → {info['recipient']}: {e}")
+                logger.error(f"consumer pool reply failed run={run_id} → {info['recipient']}: {e}")
                 continue
             self.metrics["replies_sent"] += 1
             per = self.metrics["per_agent"].setdefault(
                 info["agent_id"], {"consumed": 0, "replies_sent": 0, "errors": 0}
             )
             per["replies_sent"] += 1
-            logger.info(f"消费池已回信 {info['agent_id']} → {info['recipient']} run={run_id}")
+            logger.info(f"consumer pool replied {info['agent_id']} → {info['recipient']} run={run_id}")
 
     @staticmethod
     def _reply_body(message_id: str, run: Dict[str, Any]) -> str:
@@ -233,9 +238,9 @@ class RunnerPool:
             self.metrics["mailbox_depth"] = int(self.mailbox.depth())
             self.metrics["oldest_unacked_age_s"] = round(float(self.mailbox.oldest_unacked_age()), 3)
         except Exception as e:
-            logger.warning(f"消费池指标刷新失败 (忽略): {e}")
+            logger.warning(f"consumer pool metrics refresh failed (ignored): {e}")
         logger.debug(
-            f"消费池指标: depth={self.metrics['mailbox_depth']} "
+            f"consumer pool metrics: depth={self.metrics['mailbox_depth']} "
             f"oldest_age={self.metrics['oldest_unacked_age_s']}s "
             f"consumed={self.metrics['consumed']} replies={self.metrics['replies_sent']} "
             f"errors={self.metrics['dispatch_errors']}"
@@ -247,7 +252,7 @@ class RunnerPool:
         try:
             rows = self.roster.list()
         except Exception as e:
-            logger.warning(f"消费池状态查询花名册失败: {e}")
+            logger.warning(f"consumer pool failed to query roster for status: {e}")
             rows = []
         for row in rows:
             agent_id = row["agent_id"]
@@ -283,29 +288,29 @@ _last_exported: Dict[str, int] = {"consumed": 0, "replies_sent": 0}
 
 
 def _export_metrics(metrics: Dict[str, Any]) -> None:
-    # 三件套: 信箱深度 / 最老未 ack 年龄 / 已消费数 — 挂到既有 OTel 表面
+    # Three metrics: mailbox depth / oldest unacked age / consumed count — attached to the existing OTel surface
     try:
         from ..observability.metrics import get_meter
 
         meter = get_meter()
         if "depth" not in _instruments:
-            _instruments["depth"] = meter.create_histogram("fusion_team_mailbox_depth", description="团队信箱积压深度")
+            _instruments["depth"] = meter.create_histogram("fusion_team_mailbox_depth", description="team mailbox backlog depth")
             _instruments["oldest"] = meter.create_histogram(
-                "fusion_team_oldest_unacked_age_seconds", description="最老未 ack 消息年龄"
+                "fusion_team_oldest_unacked_age_seconds", description="age of the oldest unacked message"
             )
             _instruments["consumed"] = meter.create_counter(
-                "fusion_team_mailbox_consumed_total", description="已消费消息总数"
+                "fusion_team_mailbox_consumed_total", description="total messages consumed"
             )
             _instruments["replies"] = meter.create_counter(
-                "fusion_team_mailbox_replies_total", description="已回信总数"
+                "fusion_team_mailbox_replies_total", description="total replies sent"
             )
         _instruments["depth"].record(metrics["mailbox_depth"])
         _instruments["oldest"].record(metrics["oldest_unacked_age_s"])
-        # 计数器只加增量, 累计值重放会让计数二次增长
+        # counters only take deltas; replaying cumulative values would double-count
         for key, instrument in (("consumed", "consumed"), ("replies_sent", "replies")):
             delta = int(metrics.get(key, 0)) - _last_exported[key]
             if delta > 0:
                 _instruments[instrument].add(delta)
                 _last_exported[key] = int(metrics.get(key, 0))
     except Exception as e:
-        logger.debug(f"消费池指标导出跳过: {e}")
+        logger.debug(f"consumer pool metrics export skipped: {e}")

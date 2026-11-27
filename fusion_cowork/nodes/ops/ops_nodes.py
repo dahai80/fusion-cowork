@@ -1,10 +1,10 @@
-"""issue #262: 官方通用节点库第一组 — agent_exec / github_api / command_evidence / http_webhook / approval_gate。
+"""issue #262: official generic node library group 1 — agent_exec / github_api / command_evidence / http_webhook / approval_gate.
 
-设计约束 (issue #262):
-- 全部配置 per-flow-instance 数据, 节点代码零业务常量
-- 令牌只走环境变量 (repo 白名单 / ${ENV} 插值 / HMAC secret env), 绝不入 flow 定义
-- 白名单不匹配大声拒绝 (fail-loud), 不静默放行
-- approval_gate 天生审批: 靠 HIGH_RISK_NODES 注册进平台 HITL 闸门 (#260 blocked 步骤可见)
+Design constraints (issue #262):
+- All configuration is per-flow-instance data, zero business constants in node code
+- Tokens only via environment variables (repo allowlist / ${ENV} interpolation / HMAC secret env), never in flow definitions
+- Allowlist mismatch is rejected loudly (fail-loud), never silently allowed
+- approval_gate is approval-native: registered in HIGH_RISK_NODES into the platform HITL gate (#260 blocked steps visible)
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from ...engine.node import (
 
 logger = logging.getLogger(__name__)
 
-# 内置密钥形态 (capture 脱敏 + 输出兜底), 覆盖常见 token 家族
+# Built-in secret shapes (capture redaction + output fallback), covering common token families
 _BUILTIN_SECRET_PATTERNS = (
     r"ghp_[A-Za-z0-9]{20,}",
     r"gh[ours]_[A-Za-z0-9]{20,}",
@@ -51,34 +51,40 @@ def _scrub(text: str, extra_patterns: List[str]) -> str:
         try:
             text = re.sub(pat, "[REDACTED]", text)
         except re.error as e:
-            logger.warning(f"脱敏正则无效, 跳过: {pat} ({e})")
+            logger.warning(f"Invalid redaction regex, skipping: {pat} ({e})")
     return text
 
 
 def _tail(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
-    return f"...[截断]...\n{text[-limit:]}"
+    return f"...[truncated]...\n{text[-limit:]}"
 
 
 @register_node
 class AgentExecNode(BaseNode):
-    """外部无头 agent/CLI 进程执行 — 捕获退出码/输出, 崩溃结构化上报。
+    """External headless agent/CLI process execution — captures exit code/output, reports crashes structurally.
 
-    进程生命周期不在此重实现 (issue #262 契约): 崩溃 = 节点 FAILED,
-    重启策略由调用方以重跑节点/新 run 承接, 状态走外部存储。
+    Process lifecycle is not re-implemented here (issue #262 contract): crash = node FAILED,
+    restart policy is owned by the caller via node re-run / new run, state lives in external storage.
     """
 
     name = "agent_exec"
+    # i18n: user-facing
     display_name = "Agent 执行"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "以 argv 启动外部无头 agent/CLI 进程, 捕获退出码与输出"
     icon = "🤖"
+    # i18n: user-facing
     default_label = "Agent 执行"
 
+    # i18n: user-facing
     inputs = [{"key": "command", "label": "命令 argv", "type": "list[string]"}]
     outputs = [
+        # i18n: user-facing
         {"key": "exit_code", "label": "退出码", "type": "number"},
+        # i18n: user-facing
         {"key": "output", "label": "输出 (尾段)", "type": "string"},
     ]
 
@@ -86,10 +92,15 @@ class AgentExecNode(BaseNode):
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "command": {"type": "array", "items": {"type": "string"}, "description": "argv 列表 (不经 shell)"},
+                # i18n: user-facing
                 "cwd": {"type": "string", "description": "工作目录 (须已存在)"},
+                # i18n: user-facing
                 "timeout": {"type": "number", "description": "秒", "default": 120},
+                # i18n: user-facing
                 "env_keys": {"type": "array", "items": {"type": "string"}, "description": "透传的环境变量名白名单"},
+                # i18n: user-facing
                 "max_output": {"type": "number", "description": "输出保留字符数", "default": 20000},
             },
             "required": ["command"],
@@ -104,10 +115,10 @@ class AgentExecNode(BaseNode):
         max_output = int(params.get("max_output") or 20000)
 
         if not isinstance(command, list) or not command or not all(isinstance(c, str) and c for c in command):
-            return NodeResult(status=NodeStatus.FAILED, error="command 须为非空字符串数组 (argv, 不经 shell)")
+            return NodeResult(status=NodeStatus.FAILED, error="command must be a non-empty string array (argv, no shell)")
         if cwd:
             if not Path(cwd).is_dir():
-                return NodeResult(status=NodeStatus.FAILED, error=f"工作目录不存在: {cwd}")
+                return NodeResult(status=NodeStatus.FAILED, error=f"Working directory does not exist: {cwd}")
         env = {
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
             "HOME": os.environ.get("HOME", ""),
@@ -127,54 +138,58 @@ class AgentExecNode(BaseNode):
                 stderr=asyncio.subprocess.STDOUT,
             )
         except OSError as e:
-            return NodeResult(status=NodeStatus.FAILED, error=f"进程启动失败: {e}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"Process launch failed: {e}")
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError:
             proc.kill()
             await proc.wait()
-            logger.warning(f"agent_exec 超时被杀: argv0={command[0]} timeout={timeout:g}s")
+            logger.warning(f"agent_exec killed on timeout: argv0={command[0]} timeout={timeout:g}s")
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"agent 进程超时 ({timeout:g}s), 已终止", data={"exit_code": None}
+                status=NodeStatus.FAILED, error=f"agent process timed out ({timeout:g}s), terminated", data={"exit_code": None}
             )
         output = _tail(stdout.decode("utf-8", "replace"), max_output)
         code = proc.returncode
         if code == 0:
             logger.info(f"agent_exec ok: argv0={command[0]} exit=0")
             return NodeResult(
-                status=NodeStatus.SUCCESS, data={"exit_code": 0, "output": output}, summary="agent 进程成功"
+                status=NodeStatus.SUCCESS, data={"exit_code": 0, "output": output}, summary="agent process succeeded"
             )
         if code is not None and code < 0:
-            logger.error(f"agent_exec 崩溃: argv0={command[0]} signal={-code}")
+            logger.error(f"agent_exec crashed: argv0={command[0]} signal={-code}")
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"agent 进程崩溃 (signal={-code}); 重启策略: 重跑本节点即重启, 状态由外部存储承接",
+                error=f"agent process crashed (signal={-code}); restart policy: re-run this node to restart, state is owned by external storage",
                 data={"exit_code": code, "output": output},
             )
-        logger.warning(f"agent_exec 非零退出: argv0={command[0]} exit={code}")
+        logger.warning(f"agent_exec non-zero exit: argv0={command[0]} exit={code}")
         return NodeResult(
             status=NodeStatus.FAILED,
-            error=f"agent 进程退出码 {code}",
+            error=f"agent process exit code {code}",
             data={"exit_code": code, "output": output},
-            summary=f"退出码 {code}",
+            summary=f"Exit code {code}",
         )
 
 
 @register_node
 class GitHubNode(BaseNode):
-    """GitHub API 节点 — issue/PR/label 操作, org/repo 白名单 + 环境变量令牌。"""
+    """GitHub API node — issue/PR/label operations, org/repo allowlist + environment variable token."""
 
     name = "github_api"
     display_name = "GitHub"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "GitHub issue/PR/label 操作; 仓库白名单 + GITHUB_TOKEN 环境变量鉴权"
     icon = "🐙"
     default_label = "GitHub"
 
     inputs = [
+        # i18n: user-facing
         {"key": "repo", "label": "仓库 (org/repo)", "type": "string"},
+        # i18n: user-facing
         {"key": "issue_number", "label": "Issue/PR 编号", "type": "number"},
     ]
+    # i18n: user-facing
     outputs = [{"key": "result", "label": "API 结果", "type": "object"}]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -192,21 +207,28 @@ class GitHubNode(BaseNode):
                         "list_labels",
                         "linked_pr",
                     ],
+                    # i18n: user-facing
                     "description": "操作",
                 },
+                # i18n: user-facing
                 "repo": {"type": "string", "description": "org/repo"},
+                # i18n: user-facing
                 "allowed_repos": {"type": "array", "items": {"type": "string"}, "description": "仓库白名单"},
+                # i18n: user-facing
                 "issue_number": {"type": "number", "description": "issue/PR 编号"},
                 "require": {
                     "type": "boolean",
                     "default": False,
+                    # i18n: user-facing
                     "description": "linked_pr 专用: 无关联 PR 时节点失败 (显式阻塞, 重跑即复查)",
                 },
                 "require_closing_link": {
                     "type": "boolean",
                     "default": False,
                     "description": (
+                        # i18n: user-facing
                         "linked_pr 专用: PR 仅在正文提及 issue (无 Closes/Fixes/Resolves 关闭关键词) 时节点失败 — "
+                        # i18n: user-facing
                         "拦截 hygiene/aside PR 冒充交付 (issue #362)"
                     ),
                 },
@@ -214,10 +236,11 @@ class GitHubNode(BaseNode):
                 "body": {"type": "string"},
                 "labels": {"type": "array", "items": {"type": "string"}},
                 "timeout": {"type": "number", "default": 30},
-                # issue #387: 合成 E2E — dry_run 返回确定性伪结果, 零网络零 token
+                # issue #387: synthetic E2E — dry_run returns a deterministic canned result, zero network and zero tokens
                 "dry_run": {
                     "type": "boolean",
                     "default": False,
+                    # i18n: user-facing
                     "description": "合成模式: 不调 GitHub API, 返回确定性伪结果 (合成 E2E 管线用)",
                 },
             },
@@ -225,7 +248,7 @@ class GitHubNode(BaseNode):
         }
 
     def _client(self, base_url: str, token: str, timeout: float) -> httpx.AsyncClient:
-        # 测试缝: monkeypatch 本方法注入 MockTransport
+        # Test seam: monkeypatch this method to inject a MockTransport
         return httpx.AsyncClient(
             base_url=base_url,
             headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
@@ -240,7 +263,7 @@ class GitHubNode(BaseNode):
         issue_number = int(inputs.get("issue_number") or params.get("issue_number") or 0)
         title = str(params.get("title") or "")
         body = str(params.get("body") or "")
-        # issue #427: 空串标签过滤 — 模板按判定插值 extension 标签, 非扩展运行为空串
+        # issue #427: empty-label filtering — templates interpolate extension labels per verdict, empty string on non-extend runs
         labels = [str(x) for x in (params.get("labels") or []) if str(x).strip()]
         timeout = float(params.get("timeout") or 30)
 
@@ -253,16 +276,16 @@ class GitHubNode(BaseNode):
             "list_labels",
             "linked_pr",
         ):
-            return NodeResult(status=NodeStatus.FAILED, error=f"未知操作: {op}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"Unknown operation: {op}")
         if repo not in allowed:
-            logger.warning(f"github_api 拒绝: {repo} 不在白名单 {allowed}")
-            return NodeResult(status=NodeStatus.FAILED, error=f"仓库 {repo} 不在 allowed_repos 白名单内")
-        # issue #387: 合成 E2E — 校验仍走白名单/操作合法, 但零网络返回确定性伪结果
+            logger.warning(f"github_api rejected: {repo} not in allowlist {allowed}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"Repository {repo} not in allowed_repos allowlist")
+        # issue #387: synthetic E2E — validation still goes through allowlist/op checks, but zero network, returns a deterministic canned result
         dry_run = params.get("dry_run", False)
         if isinstance(dry_run, str):
             dry_run = dry_run.strip().lower() not in ("false", "0", "no", "off")
         if dry_run:
-            logger.info(f"github_api dry_run 合成模式: {op} {repo}#{issue_number or '-'}")
+            logger.info(f"github_api dry_run synthetic mode: {op} {repo}#{issue_number or '-'}")
             canned: Dict[str, Any]
             if op == "issue_create":
                 canned = {
@@ -286,36 +309,36 @@ class GitHubNode(BaseNode):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"result": canned, "dry_run": True},
-                summary=f"{op} {repo} (dry_run 合成)",
+                summary=f"{op} {repo} (dry_run synthetic)",
             )
         token = os.environ.get("GITHUB_TOKEN", "").strip()
         if not token:
-            return NodeResult(status=NodeStatus.FAILED, error="GITHUB_TOKEN 未配置 (令牌只走环境变量, 不入 flow 定义)")
+            return NodeResult(status=NodeStatus.FAILED, error="GITHUB_TOKEN not configured (tokens only via env vars, never in flow definitions)")
         base_url = os.environ.get("FUSION_GITHUB_API", "https://api.github.com").rstrip("/")
 
         method, path, payload = "GET", "", None
         if op == "issue_create":
             method, path, payload = "POST", f"/repos/{repo}/issues", {"title": title, "body": body, "labels": labels}
             if not title:
-                return NodeResult(status=NodeStatus.FAILED, error="issue_create 缺少 title")
+                return NodeResult(status=NodeStatus.FAILED, error="issue_create missing title")
         elif op == "issue_comment":
             if not issue_number:
-                return NodeResult(status=NodeStatus.FAILED, error="issue_comment 缺少 issue_number")
+                return NodeResult(status=NodeStatus.FAILED, error="issue_comment missing issue_number")
             method, path, payload = "POST", f"/repos/{repo}/issues/{issue_number}/comments", {"body": body}
         elif op == "issue_set_labels":
             if not issue_number:
-                return NodeResult(status=NodeStatus.FAILED, error="issue_set_labels 缺少 issue_number")
+                return NodeResult(status=NodeStatus.FAILED, error="issue_set_labels missing issue_number")
             method, path, payload = "PUT", f"/repos/{repo}/issues/{issue_number}/labels", {"labels": labels}
         elif op == "pr_get":
             if not issue_number:
-                return NodeResult(status=NodeStatus.FAILED, error="pr_get 缺少 issue_number")
+                return NodeResult(status=NodeStatus.FAILED, error="pr_get missing issue_number")
             method, path = "GET", f"/repos/{repo}/pulls/{issue_number}"
         elif op == "linked_pr":
-            # issue #306: 关联 PR 前置检查 — 纯 REST 读 (零 LLM), G4 验收闸门的证据闸门。
-            # timeline 含 cross-referenced 事件, source.issue 带 pull_request 即为关联 PR;
-            # 找到 PR 时尽力取 CI 状态 (失败不阻塞, 置空)。
+            # issue #306: linked-PR precheck — pure REST reads (zero LLM), evidence gate for the G4 acceptance gate.
+            # timeline contains cross-referenced events; source.issue with pull_request is a linked PR;
+            # when a PR is found, best-effort fetch of CI status (failure does not block, left empty).
             if not issue_number:
-                return NodeResult(status=NodeStatus.FAILED, error="linked_pr 缺少 issue_number")
+                return NodeResult(status=NodeStatus.FAILED, error="linked_pr missing issue_number")
             method, path = "GET", f"/repos/{repo}/issues/{issue_number}/timeline"
         elif op == "issue_list":
             # issue #283: list issues by label (governance batch fan-out intake)
@@ -326,13 +349,13 @@ class GitHubNode(BaseNode):
         logger.info(f"github_api {op} {repo}#{issue_number or '-'}")
         try:
             async with self._client(base_url, token, timeout) as client:
-                # issue #352: issue_create 幂等 — 先查同标题 issue, 命中即复用不重建
-                # (管道重跑不再重复建任务 issue; 标题精确相等才算命中)
-                # issue #368: 查全状态 (open+closed) — 已交付关闭的同标题 issue 也是重复,
-                # 只查 open 会在 PR 合并关闭后重跑时再建一条假任务
+                # issue #352: issue_create idempotency — search for a same-title issue first, reuse on hit instead of recreating
+                # (pipeline re-runs no longer duplicate task issues; exact title equality counts as a hit)
+                # issue #368: query all states (open+closed) — a same-title issue closed after delivery is also a duplicate,
+                # querying only open would create a fake task again on re-run after the PR merge closes it
                 if op == "issue_create":
-                    # issue #409: GitHub search q 上限 256 字符 — 长标题截断 (best-effort 去重,
-                    # 非身份判定; 建 issue 用完整标题不受影响); 截断不吃掉转义反斜杠
+                    # issue #409: GitHub search q cap of 256 chars — truncate long titles (best-effort dedup,
+                    # not identity judgment; issue creation uses the full title, unaffected); truncation must not eat an escaped backslash
                     q_fixed = len(f'repo:{repo} is:issue "') + 1
                     q_title = title.replace(chr(34), chr(92) + chr(34))
                     if q_fixed + len(q_title) > 256:
@@ -344,17 +367,17 @@ class GitHubNode(BaseNode):
                     for item in (sresp.json() or {}).get("items") or []:
                         if isinstance(item, dict) and str(item.get("title") or "") == title:
                             logger.info(
-                                f"github_api issue_create 幂等复用: {repo}#{item.get('number')} "
-                                f"(同标题 issue 已存在, state={item.get('state')})"
+                                f"github_api issue_create idempotent reuse: {repo}#{item.get('number')} "
+                                f"(same-title issue already exists, state={item.get('state')})"
                             )
                             return NodeResult(
                                 status=NodeStatus.SUCCESS,
                                 data={"result": dict(item), "deduplicated": True, "state": item.get("state") or ""},
-                                summary=f"issue 已存在 ({item.get('state')}), 复用 #{item.get('number')}: {title[:60]}",
+                                summary=f"Issue already exists ({item.get('state')}), reusing #{item.get('number')}: {title[:60]}",
                             )
 
-                # issue #382: 写操作 (POST/PUT) 经 outbox 回执 — 同 run 同节点同 op 重放
-                # (崩溃恢复/重试) 不再重复写; 读操作不走回执
+                # issue #382: write operations (POST/PUT) go through outbox receipts — replays of the same run/node/op
+                # (crash recovery/retry) no longer write twice; read operations skip receipts
                 async def _do_write():
                     r = await client.request(method, path, json=payload)
                     r.raise_for_status()
@@ -370,7 +393,7 @@ class GitHubNode(BaseNode):
                         cmd_id = f"{cmd_id}:{title}"
                     data, _replayed = await _ob.execute_idempotent_async(cmd_id, f"github:{repo}", _do_write)
                     if _replayed:
-                        logger.info(f"github_api {op} {repo} outbox 回执重放, 跳过重复写")
+                        logger.info(f"github_api {op} {repo} outbox receipt replay, skipping duplicate write")
                 else:
                     resp = await client.request(method, path, json=payload)
                     resp.raise_for_status()
@@ -381,14 +404,14 @@ class GitHubNode(BaseNode):
                 status=NodeStatus.FAILED, error=f"GitHub API HTTP {e.response.status_code}: {e.response.text[:200]}"
             )
         except Exception as e:
-            logger.warning(f"github_api 失败: {op} {repo}: {e}")
-            return NodeResult(status=NodeStatus.FAILED, error=f"GitHub API 调用失败: {e}")
+            logger.warning(f"github_api failed: {op} {repo}: {e}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"GitHub API call failed: {e}")
         result = data if isinstance(data, (dict, list)) else {}
         if isinstance(result, dict):
             result.pop("diff_url", None)
         if op == "linked_pr":
-            # issue #306: 扫 timeline 事件找 cross-referenced 的关联 PR; require 语义 —
-            # 无 PR 即失败 (显式 "先提 PR 再进验收"), 重跑节点即复查。
+            # issue #306: scan timeline events for a cross-referenced linked PR; require semantics —
+            # no PR means failure (explicit 'PR first, then acceptance'), re-running the node rechecks.
             found_url, found_num = "", 0
             for evt in result if isinstance(result, list) else []:
                 if not isinstance(evt, dict) or evt.get("event") != "cross-referenced":
@@ -402,20 +425,20 @@ class GitHubNode(BaseNode):
             link_strength = ""
             if found_num:
                 ci_status = await self._pr_ci_status(base_url, token, timeout, repo, found_num)
-                # issue #362: 链接强度 — closing (PR 正文带 Closes/Fixes/Resolves #N) 才算
-                # 交付性关联; mention (仅正文提及) 记 WARN, 可选 require_closing_link 阻塞
+                # issue #362: link strength — only closing (PR body contains Closes/Fixes/Resolves #N) counts
+                # as a delivery link; mention (body mention only) logs WARN, optional require_closing_link blocks
                 link_strength = await self._pr_link_strength(base_url, token, timeout, repo, found_num, issue_number)
                 if link_strength == "mention":
                     logger.warning(
-                        f"github_api linked_pr: {repo}#{issue_number} PR#{found_num} 仅提及 issue "
-                        "(无关闭关键词), pr_link_strength=mention"
+                        f"github_api linked_pr: {repo}#{issue_number} PR#{found_num} only mentions the issue "
+                        "(no closing keywords), pr_link_strength=mention"
                     )
             if bool(params.get("require")) and not found_url:
-                # issue #368: issue 已被派发会话关闭 (duplicate/invalid 处置, 无 PR 交付)
-                # 不算验收阻塞 — no-op 交付放行; 状态查询失败 (空串) 走原阻塞路径
+                # issue #368: issue already closed by the dispatched session (duplicate/invalid disposition, no PR delivery)
+                # does not count as an acceptance block — no-op delivery passes; state query failure (empty string) follows the original blocking path
                 state = await self._issue_state(base_url, token, timeout, repo, issue_number)
                 if state == "closed":
-                    logger.info(f"github_api linked_pr: {repo}#{issue_number} 无 PR 但 issue 已关闭 (no-op 交付, 放行)")
+                    logger.info(f"github_api linked_pr: {repo}#{issue_number} no PR but issue already closed (no-op delivery, passing)")
                     return NodeResult(
                         status=NodeStatus.SUCCESS,
                         data={
@@ -428,24 +451,24 @@ class GitHubNode(BaseNode):
                                 "issue_closed": True,
                             }
                         },
-                        summary=f"issue #{issue_number} 已关闭且无关联 PR (no-op 交付)",
+                        summary=f"Issue #{issue_number} closed with no linked PR (no-op delivery)",
                     )
-                logger.warning(f"github_api linked_pr: {repo}#{issue_number} 无关联 PR (require=true, 阻塞)")
+                logger.warning(f"github_api linked_pr: {repo}#{issue_number} no linked PR (require=true, blocking)")
                 return NodeResult(
                     status=NodeStatus.FAILED,
-                    error="先提 PR 再进验收 (issue 无关联 PR, G4 不得自证)",
+                    error="Open a PR before acceptance (issue has no linked PR, G4 cannot self-certify)",
                     data={"found": False, "pr_url": "", "pr_number": 0, "ci_status": ""},
-                    summary="无关联 PR, 阻塞验收",
+                    summary="No linked PR, blocking acceptance",
                 )
             if bool(params.get("require_closing_link")) and found_url and link_strength == "mention":
                 logger.warning(
-                    f"github_api linked_pr: {repo}#{issue_number} PR#{found_num} 无关闭链接 (require_closing_link=true, 阻塞)"
+                    f"github_api linked_pr: {repo}#{issue_number} PR#{found_num} no closing link (require_closing_link=true, blocking)"
                 )
                 return NodeResult(
                     status=NodeStatus.FAILED,
                     error=(
-                        f"PR#{found_num} 仅提及 issue 未以关闭关键词关联 (需 Closes/Fixes/Resolves #{issue_number} "
-                        "在 PR 正文), 不计为交付 PR (issue #362)"
+                        f"PR#{found_num} only mentions the issue without a closing-keyword link (needs Closes/Fixes/Resolves #{issue_number} "
+                        "in the PR body), does not count as a delivery PR (issue #362)"
                     ),
                     data={
                         "found": True,
@@ -454,7 +477,7 @@ class GitHubNode(BaseNode):
                         "ci_status": ci_status,
                         "pr_link_strength": link_strength,
                     },
-                    summary="PR 无关闭链接, 阻塞验收",
+                    summary="PR has no closing link, blocking acceptance",
                 )
             logger.info(
                 f"github_api linked_pr: {repo}#{issue_number} found={found_num or False} ci={ci_status or '-'} link={link_strength or '-'}"
@@ -470,12 +493,12 @@ class GitHubNode(BaseNode):
                         "pr_link_strength": link_strength,
                     }
                 },
-                summary=f"linked_pr {'✓ ' + found_url if found_url else '未关联 PR'}",
+                summary=f"linked_pr {'✓ ' + found_url if found_url else 'no linked PR'}",
             )
         return NodeResult(status=NodeStatus.SUCCESS, data={"result": result}, summary=f"{op} {repo} ok")
 
     async def _pr_ci_status(self, base_url: str, token: str, timeout: float, repo: str, pr_number: int) -> str:
-        # issue #306: 尽力取 PR CI 状态 (combined status); 任何失败返回空串不阻塞
+        # issue #306: best-effort fetch of PR CI status (combined status); any failure returns an empty string without blocking
         try:
             async with self._client(base_url, token, timeout) as client:
                 pr = (await client.request("GET", f"/repos/{repo}/pulls/{pr_number}")).json()
@@ -485,13 +508,13 @@ class GitHubNode(BaseNode):
                 st = (await client.request("GET", f"/repos/{repo}/commits/{sha}/status")).json()
                 return str((st or {}).get("state") or "")
         except Exception as e:
-            logger.info(f"github_api linked_pr: CI 状态获取失败 (忽略): {e}")
+            logger.info(f"github_api linked_pr: CI status fetch failed (ignored): {e}")
             return ""
 
     async def _pr_link_strength(
         self, base_url: str, token: str, timeout: float, repo: str, pr_number: int, issue_number: int
     ) -> str:
-        # issue #362: closing = PR 正文带关闭关键词关联本 issue; mention = 仅提及; 失败降级 mention
+        # issue #362: closing = PR body links this issue with closing keywords; mention = mention only; failure degrades to mention
         try:
             async with self._client(base_url, token, timeout) as client:
                 pr = (await client.request("GET", f"/repos/{repo}/pulls/{pr_number}")).json()
@@ -499,35 +522,42 @@ class GitHubNode(BaseNode):
             pattern = rf"\b(?:close[sd]?|fix(?:e[sd]?)?|resolve[sd]?)\s*:?\s*#{issue_number}\b"
             return "closing" if re.search(pattern, body, re.IGNORECASE) else "mention"
         except Exception as e:
-            logger.info(f"github_api linked_pr: PR 正文获取失败 (降级 mention): {e}")
+            logger.info(f"github_api linked_pr: PR body fetch failed (degrading to mention): {e}")
             return "mention"
 
     async def _issue_state(self, base_url: str, token: str, timeout: float, repo: str, issue_number: int) -> str:
-        # issue #368: 尽力取 issue 状态; 失败返回空串 (调用方走原阻塞路径, 不放行)
+        # issue #368: best-effort fetch of issue state; failure returns an empty string (caller follows the original blocking path, no pass-through)
         try:
             async with self._client(base_url, token, timeout) as client:
                 issue = (await client.request("GET", f"/repos/{repo}/issues/{issue_number}")).json()
             return str((issue or {}).get("state") or "")
         except Exception as e:
-            logger.info(f"github_api linked_pr: issue 状态获取失败 (按未关闭处理): {e}")
+            logger.info(f"github_api linked_pr: issue state fetch failed (treated as not closed): {e}")
             return ""
 
 
 @register_node
 class CommandEvidenceNode(BaseNode):
-    """白名单命令执行 + 证据归档 — 端口对账 / 存活探测 / 密钥脱敏。"""
+    """Allowlisted command execution + evidence archiving — port reconciliation / liveness probing / secret redaction."""
 
     name = "command_evidence"
+    # i18n: user-facing
     display_name = "命令取证"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "白名单命令执行, stdout/stderr 脱敏后归档证据目录, 附端口对账与存活探测"
     icon = "🧾"
+    # i18n: user-facing
     default_label = "命令取证"
 
+    # i18n: user-facing
     inputs = [{"key": "command", "label": "命令 argv", "type": "list[string]"}]
     outputs = [
+        # i18n: user-facing
         {"key": "exit_code", "label": "退出码", "type": "number"},
+        # i18n: user-facing
         {"key": "evidence_path", "label": "证据文件", "type": "string"},
+        # i18n: user-facing
         {"key": "ports", "label": "端口对账", "type": "list[object]"},
     ]
 
@@ -535,15 +565,21 @@ class CommandEvidenceNode(BaseNode):
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "command": {"type": "array", "items": {"type": "string"}, "description": "argv (不经 shell)"},
                 "allowlist": {
                     "type": "array",
                     "items": {"type": "string"},
+                    # i18n: user-facing
                     "description": "fnmatch 模式, 匹配 'argv 全拼' / argv0 basename / basename 去版本后缀 (python3.12 归一为 python)",
                 },
+                # i18n: user-facing
                 "evidence_dir": {"type": "string", "description": "证据归档目录"},
+                # i18n: user-facing
                 "ports": {"type": "array", "items": {"type": "number"}, "description": "对账/探测端口"},
+                # i18n: user-facing
                 "port_registry": {"type": "string", "description": "端口登记 JSON ({port: service}) 路径"},
+                # i18n: user-facing
                 "redact": {"type": "array", "items": {"type": "string"}, "description": "额外脱敏正则"},
                 "timeout": {"type": "number", "default": 120},
                 "max_output": {"type": "number", "default": 20000},
@@ -573,22 +609,22 @@ class CommandEvidenceNode(BaseNode):
 
         joined = " ".join(command) if isinstance(command, list) else str(command)
         if not isinstance(command, list) or not command or not all(isinstance(c, str) and c for c in command):
-            return NodeResult(status=NodeStatus.FAILED, error="command 须为非空字符串数组 (argv, 不经 shell)")
+            return NodeResult(status=NodeStatus.FAILED, error="command must be a non-empty string array (argv, no shell)")
         if not allowlist:
-            return NodeResult(status=NodeStatus.FAILED, error="allowlist 为空 — 拒绝执行 (fail-loud, 不放行)")
-        # 白名单匹配三种形态: argv 全拼 (含绝对路径) + argv0 basename + basename 去版本后缀
-        # (issue #334: venv/pyenv 解释器常为 python3.12/python3 — 与 `python *` 同族, 归一匹配)
+            return NodeResult(status=NodeStatus.FAILED, error="allowlist is empty — refusing to execute (fail-loud, no pass-through)")
+        # Allowlist matches three shapes: full argv (with absolute path) + argv0 basename + basename without version suffix
+        # (issue #334: venv/pyenv interpreters are often python3.12/python3 — same family as `python *`, normalized match)
         argv0_base = Path(command[0]).name
         argv0_family = argv0_base.rstrip(".0123456789")
         rest_joined = " ".join(str(c) for c in command[1:])
         candidates = (joined, " ".join([argv0_base, rest_joined]), " ".join([argv0_family, rest_joined]))
         if not any(fnmatch.fnmatch(cand, pat) for cand in candidates for pat in allowlist):
-            logger.warning(f"command_evidence 拒绝白名单外命令: {joined}")
+            logger.warning(f"command_evidence rejected non-allowlisted command: {joined}")
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"命令不在白名单内, 已拒绝: {joined} (allowlist={allowlist})"
+                status=NodeStatus.FAILED, error=f"Command not in allowlist, rejected: {joined} (allowlist={allowlist})"
             )
         if not evidence_dir:
-            return NodeResult(status=NodeStatus.FAILED, error="evidence_dir 必填")
+            return NodeResult(status=NodeStatus.FAILED, error="evidence_dir is required")
 
         logger.info(f"command_evidence start: {joined}")
         try:
@@ -602,9 +638,9 @@ class CommandEvidenceNode(BaseNode):
             except TimeoutError:
                 proc.kill()
                 await proc.wait()
-                return NodeResult(status=NodeStatus.FAILED, error=f"命令超时 ({timeout:g}s), 已终止")
+                return NodeResult(status=NodeStatus.FAILED, error=f"Command timed out ({timeout:g}s), terminated")
         except OSError as e:
-            return NodeResult(status=NodeStatus.FAILED, error=f"命令启动失败: {e}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"Command launch failed: {e}")
 
         raw = stdout.decode("utf-8", "replace")
         scrubbed = _scrub(raw, extra_redact)
@@ -615,7 +651,7 @@ class CommandEvidenceNode(BaseNode):
             f"{header}\nexit={proc.returncode}\nat={time.strftime('%Y-%m-%dT%H:%M:%S')}\n\n{scrubbed}\n",
             encoding="utf-8",
         )
-        logger.info(f"command_evidence 归档: {out_path} exit={proc.returncode}")
+        logger.info(f"command_evidence archived: {out_path} exit={proc.returncode}")
 
         port_report: List[Dict[str, Any]] = []
         registry: Dict[str, Any] = {}
@@ -623,24 +659,24 @@ class CommandEvidenceNode(BaseNode):
             try:
                 registry = json.loads(Path(port_registry).read_text(encoding="utf-8"))
             except Exception as e:
-                logger.warning(f"端口登记文件不可读 (忽略): {e}")
+                logger.warning(f"Port registry file unreadable (ignored): {e}")
         for port in ports:
             live = await self._probe_port(port)
             expected = registry.get(str(port), registry.get(port))
             port_report.append({"port": port, "expected": expected, "live": live})
             if expected is not None and bool(live) != bool(expected):
-                logger.warning(f"command_evidence 端口对账不一致: {port} 登记={expected} 实测存活={live}")
+                logger.warning(f"command_evidence port reconciliation mismatch: {port} registered={expected} live={live}")
 
         output_tail = _tail(scrubbed, max_output)
         if proc.returncode == 0:
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"exit_code": 0, "evidence_path": str(out_path), "ports": port_report, "output": output_tail},
-                summary=f"exit=0, 证据已归档 ({len(port_report)} 端口对账)",
+                summary=f"exit=0, evidence archived ({len(port_report)} port reconciliations)",
             )
         return NodeResult(
             status=NodeStatus.FAILED,
-            error=f"命令退出码 {proc.returncode}",
+            error=f"Command exit code {proc.returncode}",
             data={
                 "exit_code": proc.returncode,
                 "evidence_path": str(out_path),
@@ -652,18 +688,22 @@ class CommandEvidenceNode(BaseNode):
 
 @register_node
 class HttpWebhookNode(BaseNode):
-    """HTTP/Webhook 调用 — 重试策略 + 出站 HMAC 签名; ${ENV} 插值令牌不入 flow。"""
+    """HTTP/Webhook call — retry policy + outbound HMAC signing; ${ENV} interpolation keeps tokens out of flows."""
 
     name = "http_webhook"
     display_name = "HTTP Webhook"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "调用外部 HTTP API (重试 + HMAC 出站签名); 入站回调走 /api/hooks/webhook/{run_id} 续跑审批闸门"
     icon = "🔗"
     default_label = "HTTP Webhook"
 
+    # i18n: user-facing
     inputs = [{"key": "body", "label": "请求体", "type": "object"}]
     outputs = [
+        # i18n: user-facing
         {"key": "status_code", "label": "HTTP 状态码", "type": "number"},
+        # i18n: user-facing
         {"key": "response", "label": "响应 (截断)", "type": "object"},
     ]
 
@@ -671,15 +711,19 @@ class HttpWebhookNode(BaseNode):
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "url": {"type": "string", "description": "http/https 目标"},
                 "method": {"type": "string", "enum": ["GET", "POST", "PUT"], "default": "POST"},
+                # i18n: user-facing
                 "headers": {"type": "object", "description": "值支持 ${ENV_NAME} 运行时插值"},
+                # i18n: user-facing
                 "retry": {"type": "number", "default": 2, "description": "网络错误/5xx 重试次数"},
                 "retry_backoff": {"type": "number", "default": 1.0},
                 "timeout": {"type": "number", "default": 30},
                 "sign_secret_env": {
                     "type": "string",
                     "default": "FUSION_COWORK_WEBHOOK_SECRET",
+                    # i18n: user-facing
                     "description": "出站 HMAC secret 的环境变量名",
                 },
                 "body": {"type": "object"},
@@ -694,7 +738,7 @@ class HttpWebhookNode(BaseNode):
         env_name = m.group(1)
         resolved = os.environ.get(env_name, "")
         if not resolved:
-            raise RuntimeError(f"头 {env_name} 引用的环境变量为空 — 令牌只走环境变量")
+            raise RuntimeError(f"Environment variable referenced by header {env_name} is empty — tokens only via env vars")
         return resolved
 
     async def execute(self, inputs: Dict[str, Any]) -> NodeResult:
@@ -711,7 +755,7 @@ class HttpWebhookNode(BaseNode):
 
         if not url.startswith(("http://", "https://")):
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"非法 URL scheme: {url.split(':')[0] if ':' in url else url}"
+                status=NodeStatus.FAILED, error=f"Invalid URL scheme: {url.split(':')[0] if ':' in url else url}"
             )
         try:
             headers = {str(k): self._resolve_header(v) for k, v in raw_headers.items()}
@@ -734,7 +778,7 @@ class HttpWebhookNode(BaseNode):
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     resp = await client.request(method, url, content=payload, headers=send_headers)
                 if resp.status_code >= 500 and attempts <= retry:
-                    logger.warning(f"http_webhook 5xx ({resp.status_code}), 第 {attempts} 次重试前退避 {backoff:g}s")
+                    logger.warning(f"http_webhook 5xx ({resp.status_code}), backing off {backoff:g}s before retry {attempts}")
                     await asyncio.sleep(backoff)
                     continue
                 truncated: Any
@@ -760,32 +804,39 @@ class HttpWebhookNode(BaseNode):
             except Exception as e:
                 last_err = str(e)
                 if attempts <= retry:
-                    logger.warning(f"http_webhook 网络错误重试 {attempts}/{retry}: {e}")
+                    logger.warning(f"http_webhook network error retry {attempts}/{retry}: {e}")
                     await asyncio.sleep(backoff)
         return NodeResult(
-            status=NodeStatus.FAILED, error=f"重试 {retry} 次后仍失败: {last_err}", data={"attempts": attempts}
+            status=NodeStatus.FAILED, error=f"Still failing after {retry} retries: {last_err}", data={"attempts": attempts}
         )
 
 
 @register_node
 class ApprovalGateNode(BaseNode):
-    """人工决策闸门 — 平台审批收件箱承载, 不做终端提示。
+    """Human decision gate — carried by the platform approval inbox, no terminal prompts.
 
-    天生审批: 注册进 HIGH_RISK_NODES → 权限层默认拒绝 → HITL 暂停
-    (#260 blocked 步骤可见) → Web 审批卡 / 签名 webhook 回调决定 → 续跑。
+    Approval-native: registered in HIGH_RISK_NODES -> permission layer denies by default -> HITL pause
+    (#260 blocked steps visible) -> Web approval card / signed webhook callback decides -> resume.
     """
 
     name = "approval_gate"
+    # i18n: user-facing
     display_name = "审批闸门"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "暂停流程等待人工决定; 审批走平台收件箱或签名 webhook 回调"
     icon = "🚧"
+    # i18n: user-facing
     default_label = "审批闸门"
 
+    # i18n: user-facing
     inputs = [{"key": "payload", "label": "待审内容", "type": "object"}]
     outputs = [
+        # i18n: user-facing
         {"key": "approved", "label": "审批结论", "type": "boolean"},
+        # i18n: user-facing
         {"key": "payload", "label": "透传内容", "type": "object"},
+        # i18n: user-facing
         {"key": "human_reply", "label": "人工回复", "type": "object"},
     ]
 
@@ -793,23 +844,28 @@ class ApprovalGateNode(BaseNode):
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "prompt": {"type": "string", "description": "给审批人的说明"},
                 "details": {"type": "string"},
-                # issue #413: intake 选择的免评审闸门 — false 时节点自动通过, 不进 HITL
+                # issue #413: review-free gate selected by intake — false auto-passes the node, skips HITL
                 "require_review": {
                     "type": "boolean",
                     "default": True,
+                    # i18n: user-facing
                     "description": "false = 免评审 (intake review_arch=false), 节点自动通过记录 auto_passed",
                 },
-                # issue #508: 节点级超时策略 — timeout_s 覆盖引擎默认, on_timeout 决定超时走法
+                # issue #508: node-level timeout policy — timeout_s overrides the engine default, on_timeout decides the timeout path
                 "timeout_policy": {
                     "type": "object",
+                    # i18n: user-facing
                     "description": "等待审批超时策略 {timeout_s: 秒, on_timeout: deny|fail}",
                     "properties": {
+                        # i18n: user-facing
                         "timeout_s": {"type": "number", "description": "审批等待超时秒数 (覆盖引擎全局默认)"},
                         "on_timeout": {
                             "type": "string",
                             "enum": ["deny", "fail"],
+                            # i18n: user-facing
                             "description": "deny = 合成拒绝走修订回路; fail (默认) = 分支直接失败终态",
                         },
                     },
@@ -826,7 +882,7 @@ class ApprovalGateNode(BaseNode):
         if isinstance(require_review, str):
             require_review = require_review.strip().lower() not in ("false", "0", "no", "off")
         if not require_review:
-            # issue #413: 免评审闸门自动通过 — 引擎侧同步跳过权限/HITL 检查 (workflow.py)
+            # issue #413: review-free gate auto-pass — engine side also skips permission/HITL checks (workflow.py)
             logger.info(f"approval_gate auto-pass (require_review=false): {prompt[:80]}")
             return NodeResult(
                 status=NodeStatus.SUCCESS,
@@ -839,25 +895,25 @@ class ApprovalGateNode(BaseNode):
                     "prompt": prompt,
                     "details": details,
                 },
-                summary=f"免评审自动通过 (require_review=false): {prompt[:40]}",
+                summary=f"Review-free auto-pass (require_review=false): {prompt[:40]}",
             )
-        # issue #309: 逐项决定透传 — batch_verdict 由引擎在混合决定唤醒后并入节点输入
+        # issue #309: per-item decision pass-through — batch_verdict merged into node inputs by the engine after mixed-decision wakeup
         batch = inputs.get("batch_verdict") or []
         if batch:
             rejected = [x for x in batch if not x.get("approved")]
             logger.info(
-                f"approval_gate 逐项决定: {len(batch)} 项, 接受 {len(batch) - len(rejected)}, 拒绝 {len(rejected)}"
+                f"approval_gate per-item decisions: {len(batch)} items, accepted {len(batch) - len(rejected)}, rejected {len(rejected)}"
             )
-            summary = f"人工逐项决定 ({len(batch) - len(rejected)}/{len(batch)} 接受): {prompt[:40]}"
+            summary = f"Human per-item decisions ({len(batch) - len(rejected)}/{len(batch)} accepted): {prompt[:40]}"
         else:
             rejected = []
-            summary = f"人工批准: {prompt[:40]}"
-            logger.info(f"approval_gate 通过: {prompt[:80]}")
-        # issue #508: 结构化人工回复透传 — 下游节点经闸门输出读取 human_reply
+            summary = f"Human approved: {prompt[:40]}"
+            logger.info(f"approval_gate approved: {prompt[:80]}")
+        # issue #508: structured human reply pass-through — downstream nodes read human_reply from the gate output
         human_reply = inputs.get("human_reply") or {}
         if isinstance(human_reply, dict) and human_reply:
-            summary += f" +回复({len(human_reply)}项)"
-            logger.info(f"approval_gate 人工回复透传: {sorted(human_reply)}")
+            summary += f" +reply({len(human_reply)} items)"
+            logger.info(f"approval_gate human reply pass-through: {sorted(human_reply)}")
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={
@@ -873,32 +929,39 @@ class ApprovalGateNode(BaseNode):
         )
 
 
-# issue #358: detach 会话的后台收割任务强引用集 — 防止任务被 GC, 完成后自清理
+# issue #358: strong-ref set for detached-session background watcher tasks — prevents GC, self-cleans on completion
 _DETACHED_WATCHERS: set = set()
 
 
 @register_node
 class ClaudeDispatchNode(BaseNode):
-    """issue #308: claude_dispatch — 派发短命 coder 会话 (claude -p) 处理单个任务 issue。
+    """issue #308: claude_dispatch — dispatch a short-lived coder session (claude -p) for a single task issue.
 
-    硬性护栏:
-    - HIGH_RISK_NODES 注册 (sandbox 逐次评估)
-    - token + 墙钟预算上限; 超限 -> 任务 issue 回 state:ready + 通知, 绝不静默丢失
-    - 会话崩溃/超时 -> 同回退路径
-    - 产出必须以 PR 交付 (结果无 PR URL = 失败回退, 禁止直推 main)
+    Hard guardrails:
+    - HIGH_RISK_NODES registration (sandbox evaluated per run)
+    - token + wall-clock budget caps; over budget -> task issue back to state:ready + notify, never silently lost
+    - session crash/timeout -> same fallback path
+    - output must be delivered as a PR (result without PR URL = failure fallback, direct push to main forbidden)
     """
 
     name = "claude_dispatch"
+    # i18n: user-facing
     display_name = "Coder 派发"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "派发 claude -p 短命会话处理任务 issue, 预算上限 + 崩溃/超时回退 state:ready, 产出必须为 PR"
     icon = "🚀"
+    # i18n: user-facing
     default_label = "Coder 派发"
 
+    # i18n: user-facing
     inputs = [{"key": "prompt", "label": "任务指令", "type": "string"}]
     outputs = [
+        # i18n: user-facing
         {"key": "pr_url", "label": "PR 链接", "type": "string"},
+        # i18n: user-facing
         {"key": "pr_number", "label": "PR 编号", "type": "number"},
+        # i18n: user-facing
         {"key": "total_tokens", "label": "会话 token 用量", "type": "number"},
     ]
 
@@ -906,37 +969,50 @@ class ClaudeDispatchNode(BaseNode):
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "repo": {"type": "string", "description": "org/repo (回退标签操作目标)"},
+                # i18n: user-facing
                 "allowed_repos": {"type": "array", "items": {"type": "string"}, "description": "仓库白名单"},
+                # i18n: user-facing
                 "issue_number": {"type": "number", "description": "任务 issue 编号"},
+                # i18n: user-facing
                 "prompt": {"type": "string", "description": "任务指令 (会话 prompt 主体)"},
                 "context_links": {
                     "type": "array",
                     "items": {"type": "string"},
+                    # i18n: user-facing
                     "description": "PRD/架构等上下文链接, 注入 prompt",
                 },
+                # i18n: user-facing
                 "cwd": {"type": "string", "description": "脚手架仓库工作目录 (须已存在)"},
+                # i18n: user-facing
                 "claude_bin": {"type": "string", "default": "claude", "description": "claude 可执行文件路径"},
                 "timeout": {
                     "type": "number",
                     "default": 3600,
+                    # i18n: user-facing
                     "description": "墙钟上限 (秒, 缺省 3600, 可用 FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT 覆盖)",
                 },
+                # i18n: user-facing
                 "max_tokens": {"type": "number", "default": 200000, "description": "token 用量上限"},
                 "permission_mode": {
                     "type": "string",
                     "default": "bypassPermissions",
+                    # i18n: user-facing
                     "description": (
+                        # i18n: user-facing
                         "claude CLI --permission-mode (headless -p 下需审批的工具默认被自动拒绝, "
+                        # i18n: user-facing
                         "自主派发默认 bypassPermissions; 补偿控制: allowed_repos 白名单 + 固定 cwd + PR 交付契约)"
                     ),
                 },
                 "ready_label": {"type": "string", "default": "state:ready"},
                 "dispatched_label": {"type": "string", "default": "state:dispatched"},
-                # issue #387: 合成 E2E — dry_run 不 spawn 会话, 返回确定性伪 PR
+                # issue #387: synthetic E2E — dry_run does not spawn a session, returns a deterministic canned PR
                 "dry_run": {
                     "type": "boolean",
                     "default": False,
+                    # i18n: user-facing
                     "description": "合成模式: 不派发 claude 会话, 返回确定性伪 PR (合成 E2E 管线用)",
                 },
             },
@@ -961,7 +1037,7 @@ class ClaudeDispatchNode(BaseNode):
             return 0.0
 
     async def _issue_state(self, repo: str, issue_number: int) -> str:
-        # issue #368: 尽力取 issue 状态判定 no-op 交付; 失败返回空串 (走原失败路径, 不放行)
+        # issue #368: best-effort fetch of issue state for no-op delivery judgment; failure returns an empty string (follows the original failure path, no pass-through)
         token = os.environ.get("GITHUB_TOKEN", "").strip()
         if not token or not issue_number:
             return ""
@@ -971,14 +1047,14 @@ class ClaudeDispatchNode(BaseNode):
                 issue = (await client.request("GET", f"/repos/{repo}/issues/{issue_number}")).json()
             return str((issue or {}).get("state") or "")
         except Exception as e:
-            logger.info(f"claude_dispatch issue 状态获取失败 (按未关闭处理): {e}")
+            logger.info(f"claude_dispatch issue state fetch failed (treated as not closed): {e}")
             return ""
 
     async def _back_to_ready(self, repo: str, issue_number: int, ready_label: str, dispatched_label: str) -> bool:
         # best-effort label restore; failure is loud (WARN) and surfaces in node error data
         token = os.environ.get("GITHUB_TOKEN", "").strip()
         if not token:
-            logger.warning(f"claude_dispatch 回退失败: GITHUB_TOKEN 未配置, issue #{issue_number} 标签未恢复")
+            logger.warning(f"claude_dispatch fallback failed: GITHUB_TOKEN not configured, issue #{issue_number} labels not restored")
             return False
         base_url = os.environ.get("FUSION_GITHUB_API", "https://api.github.com").rstrip("/")
         try:
@@ -988,12 +1064,12 @@ class ClaudeDispatchNode(BaseNode):
                     await client.request("DELETE", f"/repos/{repo}/issues/{issue_number}/labels/{dispatched_label}")
             ok = r1.status_code < 300
             if ok:
-                logger.warning(f"claude_dispatch 回退: {repo}#{issue_number} 标签恢复 {ready_label}")
+                logger.warning(f"claude_dispatch fallback: {repo}#{issue_number} labels restored {ready_label}")
             else:
-                logger.warning(f"claude_dispatch 回退 HTTP {r1.status_code}: {repo}#{issue_number}")
+                logger.warning(f"claude_dispatch fallback HTTP {r1.status_code}: {repo}#{issue_number}")
             return ok
         except Exception as e:
-            logger.warning(f"claude_dispatch 回退异常: {repo}#{issue_number} ({e})")
+            logger.warning(f"claude_dispatch fallback error: {repo}#{issue_number} ({e})")
             return False
 
     @staticmethod
@@ -1036,7 +1112,7 @@ class ClaudeDispatchNode(BaseNode):
         )
 
     def _spawn_detached_watcher(self, comm_task, proc, repo, issue_number, ready_label, dispatched_label) -> None:
-        # issue #358: detach 收割 — 同一个 communicate 任务在后台跑完 (不二次 communicate, 不丢数据)
+        # issue #358: detach reaping — the same communicate task finishes in the background (no second communicate, no data loss)
         task = asyncio.create_task(
             self._watch_detached(comm_task, proc, repo, issue_number, ready_label, dispatched_label)
         )
@@ -1044,23 +1120,23 @@ class ClaudeDispatchNode(BaseNode):
         task.add_done_callback(_DETACHED_WATCHERS.discard)
 
     async def _watch_detached(self, comm_task, proc, repo, issue_number, ready_label, dispatched_label) -> None:
-        # issue #358: 收割 detach 会话终局 — 交付 PR 则留痕可回收; 无 PR 则回退 state:ready, 绝不静默丢失
+        # issue #358: reap the detached session's end state — delivered PR is recorded for recovery; no PR falls back to state:ready, never silently lost
         try:
             stdout, _ = await comm_task
             output = stdout.decode("utf-8", "replace")
             pr_url = self._extract_pr_url(output)
             if proc.returncode == 0 and pr_url:
                 logger.info(
-                    f"claude_dispatch detach 会话交付: {repo}#{issue_number} -> {pr_url} "
-                    "(节点已超时返回, PR 需人工关联或重跑管线验收)"
+                    f"claude_dispatch detached session delivered: {repo}#{issue_number} -> {pr_url} "
+                    "(node already returned on timeout, PR needs manual linking or a pipeline re-run for acceptance)"
                 )
                 return
             head = output.strip()[:200]
             logger.warning(
-                f"claude_dispatch detach 会话无 PR 终局: {repo}#{issue_number} exit={proc.returncode} output_head={head}"
+                f"claude_dispatch detached session ended without PR: {repo}#{issue_number} exit={proc.returncode} output_head={head}"
             )
         except Exception as e:
-            logger.warning(f"claude_dispatch detach watcher 异常: {repo}#{issue_number} ({e})")
+            logger.warning(f"claude_dispatch detach watcher error: {repo}#{issue_number} ({e})")
         await self._back_to_ready(repo, issue_number, ready_label, dispatched_label)
 
     async def execute(self, inputs: Dict[str, Any]) -> NodeResult:
@@ -1072,33 +1148,33 @@ class ClaudeDispatchNode(BaseNode):
         context_links = [str(x) for x in (params.get("context_links") or [])]
         cwd = str(params.get("cwd") or "")
         claude_bin = str(params.get("claude_bin") or "claude")
-        # issue #358: 缺省 1800s 会硬杀真实交付会话 (实现+自测+PR 周期普遍超 1800s) —
-        # 3600s 起步, 可用 FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT 环境变量全局调整
+        # issue #358: a 1800s default would hard-kill real delivery sessions (implement+self-test+PR cycles often exceed 1800s) —
+        # start at 3600s, globally adjustable via the FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT env var
         timeout = float(params.get("timeout") or os.environ.get("FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT") or 3600)
         max_tokens = int(params.get("max_tokens") or 200000)
-        # issue #353: headless -p 下需审批工具被自动拒绝 — 自主派发默认 bypassPermissions,
-        # 补偿控制: allowed_repos 白名单 + 固定 cwd + PR-only 交付契约 + 标签状态机回退
+        # issue #353: approval-requiring tools are auto-denied under headless -p — autonomous dispatch defaults to bypassPermissions,
+        # compensating controls: allowed_repos allowlist + fixed cwd + PR-only delivery contract + label state-machine fallback
         permission_mode = str(params.get("permission_mode") or "bypassPermissions")
         ready_label = str(params.get("ready_label") or "state:ready")
         dispatched_label = str(params.get("dispatched_label") or "state:dispatched")
 
         if repo not in allowed:
-            logger.warning(f"claude_dispatch 拒绝: {repo} 不在白名单 {allowed}")
-            return NodeResult(status=NodeStatus.FAILED, error=f"仓库 {repo} 不在 allowed_repos 白名单内")
+            logger.warning(f"claude_dispatch rejected: {repo} not in allowlist {allowed}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"Repository {repo} not in allowed_repos allowlist")
         if not issue_number or issue_number < 1:
-            return NodeResult(status=NodeStatus.FAILED, error="issue_number 须为正整数")
+            return NodeResult(status=NodeStatus.FAILED, error="issue_number must be a positive integer")
         if not prompt:
-            return NodeResult(status=NodeStatus.FAILED, error="prompt 不能为空")
+            return NodeResult(status=NodeStatus.FAILED, error="prompt must not be empty")
         if not cwd or not Path(cwd).is_dir():
-            return NodeResult(status=NodeStatus.FAILED, error=f"工作目录不存在: {cwd}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"Working directory does not exist: {cwd}")
 
-        # issue #387: 合成 E2E — 校验仍走白名单/参数完整, 但不 spawn 会话, 零成本确定性伪 PR
+        # issue #387: synthetic E2E — validation still goes through allowlist/param checks, but no session is spawned, zero-cost deterministic canned PR
         dry_run = params.get("dry_run", False)
         if isinstance(dry_run, str):
             dry_run = dry_run.strip().lower() not in ("false", "0", "no", "off")
         if dry_run:
             pr_url = f"https://github.invalid/{repo}/pull/1"
-            logger.info(f"claude_dispatch dry_run 合成模式: {repo}#{issue_number} -> {pr_url}")
+            logger.info(f"claude_dispatch dry_run synthetic mode: {repo}#{issue_number} -> {pr_url}")
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={
@@ -1107,7 +1183,7 @@ class ClaudeDispatchNode(BaseNode):
                     "total_tokens": 0,
                     "dry_run": True,
                 },
-                summary=f"dry_run 合成交付: {repo}#{issue_number} -> {pr_url}",
+                summary=f"dry_run synthetic delivery: {repo}#{issue_number} -> {pr_url}",
             )
 
         full_prompt = prompt
@@ -1134,8 +1210,8 @@ class ClaudeDispatchNode(BaseNode):
         # session needs repo push/PR rights
         if os.environ.get("GITHUB_TOKEN"):
             env["GITHUB_TOKEN"] = os.environ["GITHUB_TOKEN"]
-        # issue #347: claude CLI 认证变量透传 — env 白名单缺 ANTHROPIC_AUTH_TOKEN 时
-        # CLI 未登录直接退出 1 (daemon/launchd 上下文无 Keychain 更是必挂)
+        # issue #347: claude CLI auth variable pass-through — when the env allowlist lacks ANTHROPIC_AUTH_TOKEN,
+        # the CLI exits 1 immediately as not logged in (guaranteed crash in daemon/launchd contexts without Keychain)
         for _k in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL"):
             if os.environ.get(_k):
                 env[_k] = os.environ[_k]
@@ -1154,39 +1230,39 @@ class ClaudeDispatchNode(BaseNode):
             )
         except OSError as e:
             await self._back_to_ready(repo, issue_number, ready_label, dispatched_label)
-            return NodeResult(status=NodeStatus.FAILED, error=f"claude 进程启动失败: {e}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"claude process launch failed: {e}")
 
         started = time.monotonic()
-        # issue #358: communicate 整体交给任务 — 超时时同一任务移交 watcher 继续收割
-        # (不二次 communicate 不丢数据, 子进程绝不 kill)
+        # issue #358: communicate is handed to the task as a whole — on timeout the same task is handed to the watcher to keep reaping
+        # (no second communicate, no data loss, the subprocess is never killed)
         comm_task = asyncio.create_task(proc.communicate())
         try:
             done, _pending = await asyncio.wait({comm_task}, timeout=timeout)
         except asyncio.CancelledError:
-            # issue #358: 引擎级看门狗 (#257) 先于节点超时取消本节点 — 会话不杀,
-            # 移交 watcher 收割终局, 避免孤儿进程无归属
-            # issue #378: 双超时同框 — node deadline 与 engine 取消一起留痕
+            # issue #358: the engine-level watchdog (#257) cancels this node before the node timeout — session is not killed,
+            # handed to the watcher to reap the end state, avoiding an orphan process with no owner
+            # issue #378: both timeouts in one frame — node deadline and engine cancellation recorded together
             logger.warning(
-                f"claude_dispatch 被看门狗取消, detach 收割: {repo}#{issue_number} pid={proc.pid} "
-                f"node_deadline={timeout:g}s (会话保留继续执行)"
+                f"claude_dispatch cancelled by watchdog, detach reaping: {repo}#{issue_number} pid={proc.pid} "
+                f"node_deadline={timeout:g}s (session kept running)"
             )
             self._spawn_detached_watcher(comm_task, proc, repo, issue_number, ready_label, dispatched_label)
             raise
         if comm_task not in done:
             elapsed = time.monotonic() - started
-            # issue #358: 超时不 kill — detach 语义与 StudioRunNode (#351/#354) 对齐:
-            # 交付中段硬杀会丢弃接近完成的会话; 会话保留继续执行, watcher 收割终局
-            # (交付 PR 则留痕, 无 PR 则回退 state:ready); 标签保持 state:dispatched 防重复派发
+            # issue #358: timeout does not kill — detach semantics aligned with StudioRunNode (#351/#354):
+            # hard-killing mid-delivery would discard sessions close to completion; the session keeps running, the watcher reaps the end state
+            # (delivered PR is recorded, no PR falls back to state:ready); the label stays state:dispatched to prevent re-dispatch
             logger.warning(
-                f"claude_dispatch 超时 detach: {repo}#{issue_number} timeout={timeout:g}s "
-                f"elapsed={elapsed:.1f}s pid={proc.pid} (会话保留继续执行, 不 kill)"
+                f"claude_dispatch timeout detach: {repo}#{issue_number} timeout={timeout:g}s "
+                f"elapsed={elapsed:.1f}s pid={proc.pid} (session kept running, not killed)"
             )
             self._spawn_detached_watcher(comm_task, proc, repo, issue_number, ready_label, dispatched_label)
             return NodeResult(
                 status=NodeStatus.FAILED,
                 error=(
-                    f"claude 会话超时 ({timeout:g}s), 已 detach (pid={proc.pid}, elapsed={elapsed:.0f}s): "
-                    "会话保留继续执行, 终局由后台收割 (交付 PR 留痕 / 无 PR 回退 state:ready)"
+                    f"claude session timed out ({timeout:g}s), detached (pid={proc.pid}, elapsed={elapsed:.0f}s): "
+                    "session keeps running, end state reaped in the background (delivered PR recorded / no PR falls back to state:ready)"
                 ),
                 data={
                     "notification": f"task {repo}#{issue_number} dispatch timeout, session detached (pid {proc.pid})",
@@ -1203,12 +1279,12 @@ class ClaudeDispatchNode(BaseNode):
         code = proc.returncode
         if code != 0:
             restored = await self._back_to_ready(repo, issue_number, ready_label, dispatched_label)
-            # issue #347: 会话输出头并入错误 — 崩溃可诊断, 无需本地复现
+            # issue #347: session output head merged into the error — crashes are diagnosable without local reproduction
             head = output.strip()[:500]
-            logger.warning(f"claude_dispatch 会话失败: {repo}#{issue_number} exit={code} output_head={head[:120]}")
+            logger.warning(f"claude_dispatch session failed: {repo}#{issue_number} exit={code} output_head={head[:120]}")
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"claude 会话退出码 {code}, 任务已回退 ({'state:ready 已恢复' if restored else '标签恢复失败, 需人工检查'}): {head}",
+                error=f"claude session exit code {code}, task sent back ({'state:ready restored' if restored else 'label restore failed, manual check needed'}): {head}",
                 data={
                     "notification": f"task {repo}#{issue_number} dispatch crash (exit {code}), sent back to ready",
                     "output_head": head,
@@ -1234,10 +1310,10 @@ class ClaudeDispatchNode(BaseNode):
         pr_url = self._extract_pr_url(result_text)
         if total > max_tokens:
             restored = await self._back_to_ready(repo, issue_number, ready_label, dispatched_label)
-            logger.warning(f"claude_dispatch token 超限: {repo}#{issue_number} {total}>{max_tokens}")
+            logger.warning(f"claude_dispatch token budget exceeded: {repo}#{issue_number} {total}>{max_tokens}")
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"token 预算超限 ({total} > {max_tokens}), 任务已回退 ({'state:ready 已恢复' if restored else '标签恢复失败'})",
+                error=f"token budget exceeded ({total} > {max_tokens}), task sent back ({'state:ready restored' if restored else 'label restore failed'})",
                 data={"notification": f"task {repo}#{issue_number} token budget exceeded ({total})", "pr_url": pr_url},
             )
         # issue #381: declared re-delivery takes precedence — session linked the task
@@ -1268,7 +1344,7 @@ class ClaudeDispatchNode(BaseNode):
             state = await self._issue_state(repo, issue_number)
             if state == "closed":
                 logger.info(
-                    f"claude_dispatch no-op 交付: {repo}#{issue_number} issue 已关闭且无 PR (duplicate/invalid 处置)"
+                    f"claude_dispatch no-op delivery: {repo}#{issue_number} issue already closed with no PR (duplicate/invalid disposition)"
                 )
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
@@ -1279,15 +1355,15 @@ class ClaudeDispatchNode(BaseNode):
                         "session_claim": result_text.strip()[:500],
                         "outcome": "closed_no_pr",
                     },
-                    summary=f"{repo}#{issue_number} 已关闭且无 PR (no-op 交付, tokens {total})",
+                    summary=f"{repo}#{issue_number} closed with no PR (no-op delivery, tokens {total})",
                 )
             restored = await self._back_to_ready(repo, issue_number, ready_label, dispatched_label)
-            logger.warning(f"claude_dispatch linked-PR 交付未通过校验: {repo}#{issue_number} {linked}")
+            logger.warning(f"claude_dispatch linked-PR delivery failed verification: {repo}#{issue_number} {linked}")
             return NodeResult(
                 status=NodeStatus.FAILED,
                 error=(
-                    f"delivered_pr 校验未通过 ({linked}: 须 open 且 body 含 Closes #{issue_number}), "
-                    f"任务已回退 ({'state:ready 已恢复' if restored else '标签恢复失败'})"
+                    f"delivered_pr failed verification ({linked}: must be open with body containing Closes #{issue_number}), "
+                    f"task sent back ({'state:ready restored' if restored else 'label restore failed'})"
                 ),
                 data={
                     "notification": f"task {repo}#{issue_number} delivered_pr failed verification, sent back to ready",
@@ -1295,12 +1371,12 @@ class ClaudeDispatchNode(BaseNode):
                 },
             )
         if not pr_url:
-            # issue #368: 会话将 issue 关闭为 duplicate/invalid (带证据) 是合法 no-op 交付 —
-            # 不回退 state:ready 不报失败; 状态查询失败 (空串) 走原失败路径
+            # issue #368: session closing the issue as duplicate/invalid (with evidence) is a legitimate no-op delivery —
+            # no state:ready fallback, no failure; state query failure (empty string) follows the original failure path
             state = await self._issue_state(repo, issue_number)
             if state == "closed":
                 logger.info(
-                    f"claude_dispatch no-op 交付: {repo}#{issue_number} issue 已关闭且无 PR (duplicate/invalid 处置)"
+                    f"claude_dispatch no-op delivery: {repo}#{issue_number} issue already closed with no PR (duplicate/invalid disposition)"
                 )
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
@@ -1311,19 +1387,19 @@ class ClaudeDispatchNode(BaseNode):
                         "session_claim": result_text.strip()[:500],
                         "outcome": "closed_no_pr",
                     },
-                    summary=f"{repo}#{issue_number} 已关闭且无 PR (no-op 交付, tokens {total})",
+                    summary=f"{repo}#{issue_number} closed with no PR (no-op delivery, tokens {total})",
                 )
             restored = await self._back_to_ready(repo, issue_number, ready_label, dispatched_label)
-            logger.warning(f"claude_dispatch 无 PR 产出: {repo}#{issue_number}")
+            logger.warning(f"claude_dispatch produced no PR: {repo}#{issue_number}")
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"会话未产出 PR (交付契约要求 PR, 禁止直推 main), 任务已回退 ({'state:ready 已恢复' if restored else '标签恢复失败'})",
+                error=f"Session produced no PR (delivery contract requires a PR, direct push to main forbidden), task sent back ({'state:ready restored' if restored else 'label restore failed'})",
                 data={"notification": f"task {repo}#{issue_number} no PR delivered, sent back to ready"},
             )
 
         pr_number = int(pr_url.rsplit("/", 1)[-1])
         logger.info(f"claude_dispatch ok: {repo}#{issue_number} -> {pr_url} tokens={total}")
-        # issue #362: 会话自述交付声明并入输出 — HITL 评审可区分交付 PR 与 hygiene/aside PR
+        # issue #362: session's self-declared delivery claim merged into the output — HITL review can distinguish delivery PRs from hygiene/aside PRs
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={
@@ -1338,23 +1414,29 @@ class ClaudeDispatchNode(BaseNode):
 
 @register_node
 class RepoScaffoldNode(BaseNode):
-    """issue #307: repo_scaffold — 确定性脚手架, 从架构文档约定生成新业务仓库骨架。
+    """issue #307: repo_scaffold — deterministic scaffold, generates a new business repo skeleton from architecture-doc conventions.
 
-    产出 ~/fusion/business/ai-<slug>/: pyproject.toml / CLAUDE.md / README.md +
-    README_CN.md / .python-version, git init, 端口登记提示文件。目录已存在即失败
-    (不覆盖既有仓库)。
+    Produces ~/fusion/business/ai-<slug>/: pyproject.toml / CLAUDE.md / README.md +
+    README_CN.md / .python-version, git init, a port-registry hint file. Fails if the directory exists
+    (never overwrites an existing repo).
     """
 
     name = "repo_scaffold"
+    # i18n: user-facing
     display_name = "仓库脚手架"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "确定性生成 ai-<slug> 业务仓库骨架 (pyproject/CLAUDE.md/双语 README/.python-version) + git init"
     icon = "🏗️"
+    # i18n: user-facing
     default_label = "仓库脚手架"
 
+    # i18n: user-facing
     inputs = [{"key": "slug", "label": "仓库 slug", "type": "string"}]
     outputs = [
+        # i18n: user-facing
         {"key": "repo_path", "label": "仓库路径", "type": "string"},
+        # i18n: user-facing
         {"key": "created_files", "label": "创建文件清单", "type": "list[string]"},
     ]
 
@@ -1362,29 +1444,37 @@ class RepoScaffoldNode(BaseNode):
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "slug": {"type": "string", "description": "仓库 slug (^[a-z0-9][a-z0-9-]*$), 生成 ai-<slug>"},
                 "base_dir": {
                     "type": "string",
                     "default": "~/fusion/business",
+                    # i18n: user-facing
                     "description": "业务仓库根目录 (目录须已存在)",
                 },
+                # i18n: user-facing
                 "display_name": {"type": "string", "description": "README 标题用显示名"},
                 "overwrite": {
                     "type": "boolean",
                     "default": False,
+                    # i18n: user-facing
                     "description": (
+                        # i18n: user-facing
                         "目标目录已存在且有内容时补齐缺失的脚手架文件 (issue #352 重跑幂等; "
+                        # i18n: user-facing
                         "issue #368 非破坏性: 不覆写任何既有文件 — 既有文件视为交付/用户内容; 空目录始终自动复用)"
                     ),
                 },
-                # issue #422: extend 路径 — verdict=extend 时不再生成新脚手架, 改为
-                # clone 已有仓库 (extend_repo), 增量扩展; token 只走环境变量
+                # issue #422: extend path — on verdict=extend no new scaffold is generated; instead
+                # clone the existing repo (extend_repo) and extend incrementally; tokens only via env vars
                 "verdict": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "historical_match 判定 (extend/base/new; 非 extend 走正常脚手架)",
                 },
                 "extend_repo": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "extend 模式克隆的已有仓库 (owner/name; 缺省取上游输入 extend_repo)",
                 },
             },
@@ -1397,7 +1487,7 @@ class RepoScaffoldNode(BaseNode):
         base_dir = str(params.get("base_dir") or "~/fusion/business")
         display_name = str(params.get("display_name") or "")
         overwrite = bool(params.get("overwrite") or False)
-        # issue #422: extend 路径 — 判定 extend 时 clone 已有仓, 不建新脚手架
+        # issue #422: extend path — when the verdict is extend, clone the existing repo instead of building a new scaffold
         verdict = str(inputs.get("verdict") or params.get("verdict", "") or "")
         extend_repo = str(inputs.get("extend_repo") or params.get("extend_repo", "") or "").strip()
 
@@ -1405,30 +1495,30 @@ class RepoScaffoldNode(BaseNode):
             return await self._extend_clone(base_dir, extend_repo)
 
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
-            return NodeResult(status=NodeStatus.FAILED, error=f"slug 须匹配 ^[a-z0-9][a-z0-9-]*$: {slug!r}")
-        # issue #416: intake 派生的 slug 本就带 ai- 前缀 — 先归一化再统一加前缀, 杜绝 ai-ai- 双前缀目录
+            return NodeResult(status=NodeStatus.FAILED, error=f"slug must match ^[a-z0-9][a-z0-9-]*$: {slug!r}")
+        # issue #416: intake-derived slugs already carry the ai- prefix — normalize first, then add the prefix once, preventing ai-ai- double-prefix directories
         base_slug = slug[3:] if slug.startswith("ai-") else slug
         base = Path(base_dir).expanduser()
         if not base.is_dir():
-            return NodeResult(status=NodeStatus.FAILED, error=f"base_dir 不存在: {base}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"base_dir does not exist: {base}")
         repo_path = base / f"ai-{base_slug}"
-        # issue #352: 重跑幂等 — 空目录自动复用; 有内容时 overwrite=true 补齐缺失脚手架文件
-        # issue #368: overwrite 非破坏性 — 既有文件一律不覆写 (视为交付/用户内容,
-        # 复写会把已交付仓库打回 stub 造成未提交回退), 否则明确报错给补救提示
+        # issue #352: re-run idempotency — empty directories are reused automatically; with content, overwrite=true fills in missing scaffold files
+        # issue #368: overwrite is non-destructive — existing files are never overwritten (treated as delivery/user content;
+        # rewriting would knock a delivered repo back to stub, causing uncommitted regressions), otherwise fail loudly with a remediation hint
         reused = False
         existed = repo_path.exists()
         if repo_path.exists():
             if not any(repo_path.iterdir()):
                 reused = True
-                logger.info(f"repo_scaffold 复用空目录: {repo_path}")
+                logger.info(f"repo_scaffold reusing empty directory: {repo_path}")
             elif overwrite:
-                logger.warning(f"repo_scaffold overwrite: 补齐缺失脚手架文件 (不覆写既有文件): {repo_path}")
+                logger.warning(f"repo_scaffold overwrite: filling in missing scaffold files (existing files not overwritten): {repo_path}")
             else:
                 return NodeResult(
                     status=NodeStatus.FAILED,
                     error=(
-                        f"目标目录已存在: {repo_path} (重跑幂等: 传 overwrite=true 补齐缺失脚手架文件, "
-                        "空目录会自动复用, 或手动删除后重试)"
+                        f"Target directory already exists: {repo_path} (re-run idempotency: pass overwrite=true to fill in missing scaffold files, "
+                        "empty directories are reused automatically, or delete it manually and retry)"
                     ),
                 )
 
@@ -1449,6 +1539,7 @@ class RepoScaffoldNode(BaseNode):
                 f"- 4-space indentation, no docstrings, always include logging\n"
             ),
             "README.md": f"# {title}\n\nScaffolded by fusion-cowork repo_scaffold.\n",
+            # i18n: user-facing
             "README_CN.md": f"# {title}\n\n由 fusion-cowork repo_scaffold 脚手架生成。\n",
             ".python-version": "3.12\n",
             "port_registry_entry.json": json.dumps(
@@ -1464,7 +1555,7 @@ class RepoScaffoldNode(BaseNode):
         created: List[str] = []
         skipped: List[str] = []
         try:
-            # 复用空目录/补齐/全新三种路径都落脚手架文件; issue #368: 既有文件一律跳过不覆写
+            # All three paths (reuse empty / fill in / fresh) land the scaffold files; issue #368: existing files are always skipped, never overwritten
             for rel, content in files.items():
                 p = repo_path / rel
                 if p.exists():
@@ -1473,7 +1564,7 @@ class RepoScaffoldNode(BaseNode):
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(content, encoding="utf-8")
                 created.append(rel)
-            # 已有 .git 的目录跳过 init (git init 重复执行无害, 但省一次子进程)
+            # Skip init for directories that already have .git (re-running git init is harmless, but saves a subprocess)
             if not (repo_path / ".git").exists():
                 proc = await asyncio.create_subprocess_exec(
                     "git",
@@ -1486,38 +1577,38 @@ class RepoScaffoldNode(BaseNode):
                 _, err = await asyncio.wait_for(proc.communicate(), timeout=30)
                 if proc.returncode != 0:
                     logger.warning(
-                        f"repo_scaffold git init 退出码 {proc.returncode}: {err.decode('utf-8', 'replace')[:200]}"
+                        f"repo_scaffold git init exit code {proc.returncode}: {err.decode('utf-8', 'replace')[:200]}"
                     )
         except OSError as e:
-            return NodeResult(status=NodeStatus.FAILED, error=f"脚手架写入失败: {e}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"Scaffold write failed: {e}")
         except TimeoutError:
-            return NodeResult(status=NodeStatus.FAILED, error="git init 超时 (30s)")
+            return NodeResult(status=NodeStatus.FAILED, error="git init timed out (30s)")
 
         logger.info(f"repo_scaffold ok: {repo_path} ({len(created)} written, {len(skipped)} skipped, reused={reused})")
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"repo_path": str(repo_path), "created_files": created, "skipped_files": skipped, "reused": reused},
-            summary=f"脚手架完成{' (复用已有目录)' if existed else ''}: {repo_path}",
+            summary=f"Scaffold complete{' (reused existing directory)' if existed else ''}: {repo_path}",
         )
 
     async def _extend_clone(self, base_dir: str, extend_repo: str) -> NodeResult:
-        # issue #422: extend 路径 — clone 客户已有仓库做增量扩展 (绝不建新仓/新 slug)。
-        # token 只走环境变量 (GIT_CONFIG_* 注入 http.extraHeader, 不进 argv 不进日志)
+        # issue #422: extend path — clone the customer's existing repo for incremental extension (never creates a new repo/slug).
+        # tokens only via env vars (GIT_CONFIG_* injects http.extraheader, never in argv, never in logs)
         base = Path(base_dir).expanduser()
         if not base.is_dir():
-            return NodeResult(status=NodeStatus.FAILED, error=f"base_dir 不存在: {base}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"base_dir does not exist: {base}")
         repo_name = extend_repo.rsplit("/", 1)[-1]
         repo_path = base / repo_name
         if repo_path.is_dir() and any(repo_path.iterdir()):
-            logger.info(f"repo_scaffold extend 复用已有工作树: {repo_path}")
+            logger.info(f"repo_scaffold extend reusing existing worktree: {repo_path}")
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"repo_path": str(repo_path), "extended": True, "extend_repo": extend_repo, "created_files": []},
-                summary=f"extend 复用已有工作树: {repo_path}",
+                summary=f"extend reusing existing worktree: {repo_path}",
             )
         token = os.environ.get("GITHUB_TOKEN", "").strip()
         if not token:
-            return NodeResult(status=NodeStatus.FAILED, error="extend clone 需要 GITHUB_TOKEN (环境变量)")
+            return NodeResult(status=NodeStatus.FAILED, error="extend clone requires GITHUB_TOKEN (environment variable)")
         clone_url = f"https://github.com/{extend_repo}.git"
         env = dict(os.environ)
         env.update(
@@ -1542,17 +1633,17 @@ class RepoScaffoldNode(BaseNode):
             )
             _, err = await asyncio.wait_for(proc.communicate(), timeout=300)
         except OSError as e:
-            return NodeResult(status=NodeStatus.FAILED, error=f"extend clone 启动失败: {e}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"extend clone launch failed: {e}")
         except TimeoutError:
-            return NodeResult(status=NodeStatus.FAILED, error=f"extend clone 超时 (300s): {extend_repo}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"extend clone timed out (300s): {extend_repo}")
         if proc.returncode != 0:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"extend clone 失败 ({proc.returncode}): {err.decode('utf-8', 'replace')[:200]}",
+                error=f"extend clone failed ({proc.returncode}): {err.decode('utf-8', 'replace')[:200]}",
             )
         logger.info(f"repo_scaffold extend clone ok: {repo_path}")
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"repo_path": str(repo_path), "extended": True, "extend_repo": extend_repo, "created_files": []},
-            summary=f"extend 克隆完成: {repo_path}",
+            summary=f"extend clone complete: {repo_path}",
         )

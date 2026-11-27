@@ -1,11 +1,11 @@
-"""D1 轨迹飞轮 — space_messages 分支轨迹导出。
+"""D1 trajectory flywheel - space_messages branch trajectory export.
 
-将 cowork space 的消息分支（parent_msg_id / thread_id）写入统一汇聚目录
-~/.fusion/trajectories/cowork/space_<space_id>.jsonl，保留 thread 分支结构以识别重试。
+Writes cowork space message branches (parent_msg_id / thread_id) to the unified aggregation directory
+~/.fusion/trajectories/cowork/space_<space_id>.jsonl, preserving thread branch structure to identify retries.
 
-接入方式：
-- SpaceStore.add_message 后调用 export_message(msg) 增量写入
-- 或调用 SpaceTrajectoryExporter.export_space(store, space_id) 全量导出
+Integration:
+- call export_message(msg) for incremental writes after SpaceStore.add_message
+- or call SpaceTrajectoryExporter.export_space(store, space_id) for a full export
 """
 
 from __future__ import annotations
@@ -41,12 +41,12 @@ class SpaceMessageTrajectory:
 
 
 class SpaceTrajectoryExporter:
-    """space_messages 分支轨迹导出器。"""
+    """space_messages branch trajectory exporter."""
 
     def __init__(self, trajectory_dir: str = DEFAULT_SPACE_TRAJECTORY_DIR):
         self._dir = Path(trajectory_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
-        logger.debug(f"SpaceTrajectoryExporter 初始化: {self._dir}")
+        logger.debug(f"SpaceTrajectoryExporter initialized: {self._dir}")
 
     def _path(self, space_id: str) -> Path:
         safe = space_id or "unknown_space"
@@ -73,7 +73,7 @@ class SpaceTrajectoryExporter:
         path = self._path(traj.space_id)
         with open(path, "a", encoding="utf-8") as f:
             f.write(traj.to_jsonl() + "\n")
-        logger.debug(f"space 轨迹写入: {path.name} msg={traj.msg_id} retry={is_retry}")
+        logger.debug(f"space trajectory written: {path.name} msg={traj.msg_id} retry={is_retry}")
         return str(path)
 
     async def export_space(self, store: Any, space_id: str, limit: int = 10000) -> int:
@@ -98,7 +98,7 @@ class SpaceTrajectoryExporter:
                 )
                 f.write(traj.to_jsonl() + "\n")
                 count += 1
-        logger.info(f"space 全量导出: space={space_id} count={count} -> {path.name}")
+        logger.info(f"space full export: space={space_id} count={count} -> {path.name}")
         return count
 
     def list_space_trajectories(self) -> List[str]:

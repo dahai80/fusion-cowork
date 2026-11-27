@@ -1,7 +1,7 @@
-"""远程控制服务 — WebSocket 接入。
+"""Remote control service — WebSocket access.
 
-允许外部客户端连接运行中的 fusion-cowork 会话，
-查看状态、提交工作流、取消任务，事件通过 WS 实时推送。
+Allows external clients to connect to a running fusion-cowork session,
+view status, submit workflows, cancel tasks; events pushed in real time over WS.
 """
 
 from __future__ import annotations
@@ -33,17 +33,17 @@ class RemoteControlServer:
         self._server = None
         self._clients: Dict[str, Any] = {}
         self._running = False
-        # A-5: 服务端连接认证态 — 首次有效 token 标记该 client 已认证,
-        # 不读请求体里的 _authenticated 字段 (客户端可伪造绕过 token 校验)
+        # A-5: server-side connection auth state — first valid token marks the client as authenticated,
+        # never read the _authenticated field from the request body (client-forgeable, bypasses token validation)
         self._client_authed: Dict[str, bool] = {}
-        # 命名会话 attach: session_id -> {client_id, attached_at}
+        # named session attach: session_id -> {client_id, attached_at}
         self._session_attachments: Dict[str, str] = {}
 
     async def start(self):
         try:
             import websockets
         except ImportError:
-            logger.error("websockets 未安装，请运行: pip install websockets")
+            logger.error("websockets not installed, run: pip install websockets")
             raise
 
         self._running = True
@@ -60,10 +60,10 @@ class RemoteControlServer:
         )
 
     def _build_ssl_context(self):
-        """构造 TLS ssl_context — P2-10。仅当 tls_cert/tls_key 提供时启用。
+        """Build TLS ssl_context — P2-10. Enabled only when tls_cert/tls_key are provided.
 
-        fail-closed: 配了证书但加载失败 → raise, 不降级明文 (防止静默暴露未加密 WS)。
-        未配证书 → None (明文, 调用方自行决定是否接受)。
+        fail-closed: certificate configured but load failed → raise, no plaintext fallback (prevents silently exposing unencrypted WS).
+        No certificate configured → None (plaintext, caller decides whether to accept).
         """
         if not self.tls_cert or not self.tls_key:
             return None
@@ -72,11 +72,11 @@ class RemoteControlServer:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         try:
             ctx.load_cert_chain(certfile=self.tls_cert, keyfile=self.tls_key)
-            logger.info(f"RemoteControlServer TLS 已启用: cert={self.tls_cert}")
+            logger.info(f"RemoteControlServer TLS enabled: cert={self.tls_cert}")
             return ctx
         except Exception as e:
-            logger.error(f"TLS 证书加载失败, 拒绝降级明文 (fail-closed): {e}")
-            raise RuntimeError(f"TLS 证书加载失败, 拒绝降级明文: {e}") from e
+            logger.error(f"TLS certificate load failed, refusing plaintext fallback (fail-closed): {e}")
+            raise RuntimeError(f"TLS certificate load failed, refusing plaintext fallback: {e}") from e
 
     async def stop(self):
         self._running = False
@@ -112,7 +112,7 @@ class RemoteControlServer:
         finally:
             self._clients.pop(client_id, None)
             self._client_authed.pop(client_id, None)
-            # R-1: 断连清该 client 的会话绑定, 防 _session_attachments 悬挂泄漏
+            # R-1: clear this client's session bindings on disconnect, prevents dangling _session_attachments leak
             self._detach_client_sessions(client_id)
             logger.info(f"Remote client disconnected: {client_id}")
 
@@ -122,17 +122,17 @@ class RemoteControlServer:
         req_id = request.get("id")
 
         if self.token and not self._client_authed.get(client_id):
-            # A-5: 不信请求体 _authenticated 字段 (可伪造); 仅服务端连接态为准。
-            # 首次有效 token → 标记该连接已认证, 后续请求免校验。
+            # A-5: never trust the request-body _authenticated field (forgeable); server-side connection state is authoritative.
+            # First valid token → mark the connection authenticated, later requests skip validation.
             auth_token = params.get("token") or request.get("token", "")
-            # Stage 2: JWT 优先, 静态 token fallback (verify_any_token)
+            # Stage 2: JWT first, static token fallback (verify_any_token)
             from fusion_cowork.auth import verify_any_token
 
             if verify_any_token(auth_token, self.token) is None:
-                logger.warning(f"Remote client {client_id} 认证失败 (token 无效)")
+                logger.warning(f"Remote client {client_id} authentication failed (invalid token)")
                 return {"id": req_id, "error": "Authentication failed"}
             self._client_authed[client_id] = True
-            logger.info(f"Remote client {client_id} 认证通过")
+            logger.info(f"Remote client {client_id} authenticated")
 
         if method == "status":
             return {"id": req_id, "result": await self._get_status()}
@@ -251,21 +251,21 @@ class RemoteControlServer:
             return []
 
     async def _attach_session(self, client_id: str, session_id: str) -> Dict[str, Any]:
-        """命名会话 attach — P2-10。客户端绑定指定 session_id, 后续事件推送定向送达。
+        """Named session attach — P2-10. Binds the client to the given session_id, subsequent event pushes delivered targeted.
 
-        返回会话快照 (供客户端重放) + 标记绑定关系。
+        Returns the session snapshot (for client replay) + records the binding.
         """
         if not session_id:
-            return {"error": "缺少 session_id"}
+            return {"error": "missing session_id"}
         try:
             from fusion_cowork.engine.session import SessionStore
 
             store = SessionStore()
             session = store.get(session_id)
             if not session:
-                return {"error": f"会话不存在: {session_id}"}
+                return {"error": f"session not found: {session_id}"}
             self._session_attachments[session_id] = client_id
-            logger.info(f"Remote client {client_id} attach 会话: {session_id} (status={session.status})")
+            logger.info(f"Remote client {client_id} attached session: {session_id} (status={session.status})")
             return {
                 "attached": True,
                 "session_id": session_id,
@@ -278,12 +278,12 @@ class RemoteControlServer:
             return {"error": str(e)}
 
     def _detach_client_sessions(self, client_id: str) -> None:
-        """R-1: 清该 client 所有会话绑定, 防 _session_attachments 悬挂泄漏 (断连不 detach 则残留)。"""
+        """R-1: clear all session bindings for this client, prevents dangling _session_attachments leak (leftover if disconnect skips detach)."""
         stale = [sid for sid, cid in self._session_attachments.items() if cid == client_id]
         for sid in stale:
             self._session_attachments.pop(sid, None)
         if stale:
-            logger.info(f"Remote client {client_id} detach 会话: {stale}")
+            logger.info(f"Remote client {client_id} detached sessions: {stale}")
 
     async def _broadcast(self, message: Dict[str, Any]):
         msg_str = json.dumps(message, ensure_ascii=False)
@@ -296,7 +296,7 @@ class RemoteControlServer:
         for cid in disconnected:
             self._clients.pop(cid, None)
             self._client_authed.pop(cid, None)
-            # R-1: 广播失败断连的 client 也清会话绑定, 防 _session_attachments 悬挂泄漏
+            # R-1: also clear session bindings for clients disconnected on broadcast failure, prevents dangling _session_attachments leak
             self._detach_client_sessions(cid)
 
 
@@ -310,14 +310,14 @@ class RemoteControlClient:
         try:
             import websockets
         except ImportError:
-            logger.error("websockets 未安装，请运行: pip install websockets")
+            logger.error("websockets not installed, run: pip install websockets")
             raise
         connect_kwargs: Dict[str, Any] = {}
         if url.startswith("wss://") and not self.tls_verify:
-            # 仅自签名开发证书场景; 生产应将 CA 加入信任库, 保留 tls_verify=True
+            # self-signed dev certificate scenario only; production should add the CA to the trust store, keep tls_verify=True
             import ssl
 
-            logger.warning("RemoteControlClient 禁用 TLS 校验 (仅限自签名开发证书)")
+            logger.warning("RemoteControlClient TLS verification disabled (self-signed dev certificates only)")
             connect_kwargs["ssl"] = ssl._create_unverified_context()
         self._ws = await websockets.connect(url, **connect_kwargs)
         logger.info(f"RemoteControlClient connected to {url}")
@@ -367,6 +367,6 @@ class RemoteControlClient:
         return result.get("result", [])
 
     async def attach_session(self, session_id: str) -> Dict[str, Any]:
-        """绑定命名会话 — P2-10。返回会话快照供客户端重放。"""
+        """Attach to a named session — P2-10. Returns the session snapshot for client replay."""
         result = await self._request("attach_session", {"session_id": session_id})
         return result.get("result", {})

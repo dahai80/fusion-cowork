@@ -1,4 +1,4 @@
-"""Fusion 生态互通节点 — 对接 fusion-trainer / fusion-mlx / fusion-memory / fusion-agent-studio 等同仓生态工具。"""
+"""Fusion ecosystem interop nodes — bridge to fusion-trainer / fusion-mlx / fusion-memory / fusion-agent-studio and other in-repo ecosystem tools."""
 
 from .decision_gate_node import DecisionGateNode
 from .desigma_node import DesignContextNode

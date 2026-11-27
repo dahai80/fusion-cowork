@@ -1,9 +1,11 @@
-"""AST Diff 传输 — 仅传输 AST 变更部分，减少网络开销。
+"""AST diff transport — transfers only the changed parts of the AST to
+reduce network overhead.
 
-迁移自 fusion-multi-node (AR审计 P2)，原模块已标记 DeprecationWarning。
-- compute_ast_diff: 计算 old_ast 与 new_ast 之间的差异
-- apply_ast_diff: 从 base_ast + diff 重建完整 AST
-- 差异类型: added_nodes, removed_nodes, modified_nodes
+Migrated from fusion-multi-node (AR audit P2); the original module has
+been marked with a DeprecationWarning.
+- compute_ast_diff: compute the difference between old_ast and new_ast
+- apply_ast_diff: rebuild the full AST from base_ast + diff
+- Diff types: added_nodes, removed_nodes, modified_nodes
 """
 
 from __future__ import annotations
@@ -184,8 +186,10 @@ def _insert_node(tree: dict[str, Any], path: str, node_data: dict[str, Any]) -> 
     parent.setdefault("children", []).append(new_node)
 
 
-# issue #142: 文本 diff 工具 — 审批卡逐块审阅 + 文件产物 unified diff 的底层引擎。
-# AST diff 面向树结构; 以下三个函数面向文本, 供 server/web_api 审批/UI 链路使用。
+# issue #142: text diff utilities — the underlying engine for approval-card
+# block-by-block review and file-artifact unified diffs.
+# AST diff targets tree structures; the three functions below target text
+# and are used by the server/web_api approval/UI paths.
 
 
 def text_diff_blocks(old_text: str, new_text: str) -> list[dict[str, Any]]:

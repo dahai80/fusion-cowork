@@ -23,11 +23,14 @@ export function SessionsPage() {
 
     // Web capability completion: fork session / cleanup expired sessions
     async function forkSession() {
+        // i18n: user-facing
         const sid = prompt(t('会话 ID', 'Session ID'));
         if (!sid) return;
+        // i18n: user-facing
         const stepRaw = prompt(t('起始步骤 (留空从头)', 'From step (blank = start)'), '');
         try {
             const resp = await api.forkSession(sid.trim(), stepRaw ? Number(stepRaw) : undefined);
+            // i18n: user-facing
             setNote(t(`已派生会话 ${resp.session_id}`, `Forked session ${resp.session_id}`));
             retry.manualRetry();
         } catch (e) {
@@ -36,11 +39,13 @@ export function SessionsPage() {
     }
 
     async function cleanupSessions() {
+        // i18n: user-facing
         const daysRaw = prompt(t('过期天数', 'Expire days'), '30');
         if (daysRaw === null) return;
         const days = Number(daysRaw) || 30;
         try {
             const resp = await api.cleanupSessions(days);
+            // i18n: user-facing
             setNote(t(`已清理 ${resp.removed} 个过期会话`, `Removed ${resp.removed} expired sessions`));
             retry.manualRetry();
         } catch (e) {
@@ -53,8 +58,11 @@ export function SessionsPage() {
 
     const sessions = retry.data?.sessions ?? [];
     const sourceLabel: Record<SessionSource, string> = {
+        // i18n: user-facing
         engine: t('执行', 'Run'),
+        // i18n: user-facing
         space: t('协作空间', 'Space'),
+        // i18n: user-facing
         scheduler: t('调度', 'Schedule'),
     };
 
@@ -62,8 +70,10 @@ export function SessionsPage() {
         <div className="mx-auto max-w-4xl">
             <div className="flex items-end justify-between pb-3">
                 <div>
+                    {/* i18n: user-facing */}
                     <div className="text-lg font-medium text-text-primary">{t('会话', 'Sessions')}</div>
                     <div className="text-xs text-text-muted">
+                        {/* i18n: user-facing */}
                         {t('执行会话 / 协作空间 / 调度历史统一列表', 'Runs, spaces and scheduler history')}
                     </div>
                 </div>
@@ -73,15 +83,20 @@ export function SessionsPage() {
                         value={source}
                         onChange={(e) => setSource(e.target.value as '' | SessionSource)}
                     >
+                        {/* i18n: user-facing */}
                         <option value="">{t('全部来源', 'All sources')}</option>
+                        {/* i18n: user-facing */}
                         <option value="engine">{t('执行', 'Run')}</option>
+                        {/* i18n: user-facing */}
                         <option value="space">{t('协作空间', 'Space')}</option>
+                        {/* i18n: user-facing */}
                         <option value="scheduler">{t('调度', 'Schedule')}</option>
                     </select>
                     <div className="text-xs text-text-muted">{sessions.length}</div>
                 </div>
             </div>
             {sessions.length === 0 ? (
+                // i18n: user-facing
                 <EmptyState title={t('暂无会话', 'No sessions')} />
             ) : (
                 <div className="space-y-2">
@@ -129,6 +144,7 @@ export function SessionsPage() {
                     className="rounded-md border border-border px-3 py-1 text-xs text-text-secondary hover:bg-bg-muted"
                     onClick={() => void forkSession()}
                 >
+                    {/* i18n: user-facing */}
                     {t('派生会话', 'Fork session')}
                 </button>
                 <button
@@ -136,6 +152,7 @@ export function SessionsPage() {
                     className="rounded-md border border-border px-3 py-1 text-xs text-text-secondary hover:bg-bg-muted"
                     onClick={() => void cleanupSessions()}
                 >
+                    {/* i18n: user-facing */}
                     {t('清理过期会话', 'Cleanup expired')}
                 </button>
                 {note && <span className="text-xs text-text-muted">{note}</span>}

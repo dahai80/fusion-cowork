@@ -1,9 +1,9 @@
-"""分布式追踪 (v0.4.0 Stage 4).
+"""Distributed tracing (v0.4.0 Stage 4).
 
-OpenTelemetry TracerProvider + span ctx mgr + OTLP exporter (env OTEL_EXPORTER_OTLP_ENDPOINT)。
-无 OTel SDK → no-op span (不阻断)。
+OpenTelemetry TracerProvider + span ctx mgr + OTLP exporter (env OTEL_EXPORTER_OTLP_ENDPOINT).
+Without the OTel SDK -> no-op span (non-blocking).
 
-用法:
+Usage:
     from fusion_cowork.observability.tracing import span
     with span("desk_rpc.dispatch", method="desk.nodes.list"):
         ...
@@ -41,15 +41,15 @@ def get_tracer() -> Any:
                         fromlist=["BatchSpanProcessor"],
                     ).BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint))
                 )
-                logger.info(f"OTLP span exporter → {endpoint}")
+                logger.info(f"OTLP span exporter -> {endpoint}")
             except ImportError:
-                logger.debug("otlp exporter 包未装 — span 仅本地")
+                logger.debug("otlp exporter package not installed — spans local only")
         ott.set_tracer_provider(provider)
         _tracer = ott.get_tracer("fusion-cowork", "0.4.0")
-        logger.info("OpenTelemetry TracerProvider 已启用")
+        logger.info("OpenTelemetry TracerProvider enabled")
     except ImportError:
         _tracer = _NoopTracer()
-        logger.debug("opentelemetry-sdk 未装 — tracing 退化为 no-op")
+        logger.debug("opentelemetry-sdk not installed — tracing degrades to no-op")
     return _tracer
 
 
@@ -73,7 +73,7 @@ class _NoopSpan:
 
 
 class span:
-    """ctx mgr — 起当前 tracer span, 可设属性。同步/异步兼容 (不 await)。"""
+    """ctx mgr — starts the current tracer span, attributes can be set. Sync/async compatible (no await)."""
 
     def __init__(self, name: str, **attrs: Any):
         self._name = name

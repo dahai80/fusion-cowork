@@ -2,8 +2,8 @@
 # Cowork public API (PermissionManager/PermissionLevel/Permission/
 # HIGH_RISK_NODES/confirm_guard/list_pending_guard/guard delegation, 5
 # cowork levels) lives in permission_manager.py; kernel types come from the
-# fusion-harness package ([plugins] extra, #2; 裸装缺包时给出可执行安装指引 —
-# issue #196). issue #493 (K1): rule-model/scope-matching semantics now
+# fusion-harness package ([plugins] extra, #2; a bare install gets an
+# actionable install hint — issue #196). issue #493 (K1): rule-model/scope-matching semantics now
 # delegate to fusion_harness.scoped_permissions; PermissionManager keeps the
 # cowork check() orchestration (hook audit, HITL gate exemption, trusted-sync,
 # capability gate, guard IPC) — kernel scoped_permissions docstring records

@@ -25,7 +25,7 @@ class EventBus:
     async def wait(self, name: str, timeout: float = 300.0) -> Dict[str, Any]:
         name = str(name or "").strip()
         if not name:
-            raise ValueError("event name 必填")
+            raise ValueError("event name is required")
         loop = asyncio.get_running_loop()
         fut: asyncio.Future = loop.create_future()
         self._waiters.setdefault(name, []).append(fut)
@@ -43,7 +43,7 @@ class EventBus:
     def emit(self, name: str, payload: Any = None) -> int:
         name = str(name or "").strip()
         if not name:
-            raise ValueError("event name 必填")
+            raise ValueError("event name is required")
         waiters = self._waiters.pop(name, None)
         if not waiters:
             logger.info(f"event emitted with no waiters: {name}")

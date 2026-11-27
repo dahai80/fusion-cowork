@@ -1,12 +1,15 @@
-"""issue #249: run-context token budget + rolling summary — resume 链不再整链回放祖先步骤体。
+"""issue #249: run-context token budget + rolling summary — the resume chain no longer
+replays ancestor step bodies in full.
 
-三层细节降级 (超预算时按序丢, 不做字符串中段截断):
-  full body (output_data 原样) → compact (标量截 200 字符/键数截 10) → ref-only
-  (只剩 step://<run>/<node> 引用行) → ancestor_summary 里再丢 output_summary → 丢条目。
+Three-tier detail demotion (dropped in order when over budget, never mid-string
+truncation):
+  full body (output_data as-is) -> compact (scalars capped at 200 chars / 10 keys) ->
+  ref-only (just the step://<run>/<node> reference line) -> drop output_summary from
+  ancestor_summary -> drop the entry.
 
-环境变量:
-  FUSION_COWORK_RESUME_BUDGET_TOKENS  模型侧上下文预算 (默认 12000, 下限 200)
-  FUSION_COWORK_RESUME_KEEP_RECENT    最近 N 步保全量 output_data (默认 8, 下限 1)
+Environment variables:
+  FUSION_COWORK_RESUME_BUDGET_TOKENS  model-side context budget (default 12000, floor 200)
+  FUSION_COWORK_RESUME_KEEP_RECENT    keep full output_data for the last N steps (default 8, floor 1)
 """
 
 from __future__ import annotations
@@ -24,15 +27,18 @@ _MAX_ANCESTOR_ENTRIES = 50
 _SCALAR_CHARS = 200
 _MAX_KEYS = 10
 
-# 快照可选状态: success/completed = 正常成功步; skipped = 断点续跑预载副本
-# (engine 跳过重跑时产出的 SKIPPED 步, 携带恢复的 output_data)。
+# Snapshot-eligible statuses: success/completed = normally succeeded step;
+# skipped = preloaded copy for checkpoint resume (the SKIPPED step the engine
+# emits when it skips a re-run, carrying restored output_data).
 SNAPSHOT_ELIGIBLE_STATUSES = ("success", "completed", "skipped")
 
 
 def estimate_tokens(text: str) -> int:
-    # 记录式启发: CJK 字符 ≈ 1 token, 其余 ≈ 4 字符/token (文档化预算, 非精确计数)
+    # Documented heuristic: CJK chars ~= 1 token, everything else ~= 4 chars/token
+    # (documented budget, not an exact count)
     if not text:
         return 0
+    # i18n: user-facing
     cjk = sum(1 for ch in text if "一" <= ch <= "鿿")
     return max(1, cjk + (len(text) - cjk + 3) // 4)
 
@@ -74,7 +80,8 @@ def _cap_value(value: Any) -> Any:
 
 
 def summarize_step(run_id: str, step: Dict[str, Any]) -> Dict[str, Any]:
-    # ancestor_summary 条目: 每节点结果 + 关键输出 (截断) + 引用行; 无完整 output_data
+    # ancestor_summary entry: per-node result + key output (capped) + reference line;
+    # no full output_data
     return {
         "node_id": step.get("node_id", ""),
         "node_name": step.get("node_name", ""),
@@ -86,7 +93,8 @@ def summarize_step(run_id: str, step: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _snapshot_entry(step: Dict[str, Any], status: str) -> Dict[str, Any]:
-    # engine 快照恢复只认 success/completed → skipped 副本归一化为 success (携带恢复输出)
+    # engine snapshot recovery only accepts success/completed -> normalize the
+    # skipped copy to success (carrying restored output)
     entry = dict(step)
     entry["status"] = status
     return entry
@@ -101,11 +109,13 @@ def build_resume_snapshot(
     steps: List[Dict[str, Any]],
     cut_index: int,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, int]]:
-    """切点前的可选步骤 → (快照, 本轮新增 ancestor 摘要, 统计)。
+    """Eligible steps before the cut point -> (snapshot, ancestor summaries added
+    this round, stats).
 
-    近 keep_recent 步保全量 output_data (执行正确性); 更早步收成摘要
-    (快照条目降级为 compact 输出), 摘要行进 ancestor_summary。超预算按
-    full → compact → ref-only → 丢摘要键 → 丢条目逐级降细节。
+    The last keep_recent steps keep full output_data (execution correctness); older
+    steps are summarized (snapshot entries demoted to compact output) and their
+    summary lines go into ancestor_summary. Over budget, detail is demoted tier by
+    tier: full -> compact -> ref-only -> drop summary key -> drop entry.
     """
     eligible = [
         s
@@ -127,7 +137,7 @@ def build_resume_snapshot(
     limit = budget_tokens()
 
     def demote(entry: Dict[str, Any]) -> bool:
-        # True = 细节又降了一级; False = 已到 ref-only 底线
+        # True = demoted detail one more level; False = already at the ref-only floor
         out = entry.get("output_data")
         entry.setdefault("output_ref", step_ref(run_id, str(entry.get("node_id", ""))))
         if out is None:
@@ -143,7 +153,8 @@ def build_resume_snapshot(
         if snapshot and demote(snapshot[0]):
             continue
         if snapshot:
-            # 最老条目已 ref-only → 逐个跳过找还能降的; 全 ref-only 后丢最老条目
+            # oldest entry already ref-only -> scan forward for anything still
+            # demotable; once all are ref-only, drop the oldest entry
             dropped = snapshot.pop(0)
             ancestor_new.insert(0, summarize_step(run_id, dropped))
             continue
@@ -165,7 +176,7 @@ def build_resume_snapshot(
         "budget": limit,
     }
     logger.info(
-        f"[run-context] resume 快照: eligible={stats['eligible']} full={full} "
+        f"[run-context] resume snapshot: eligible={stats['eligible']} full={full} "
         f"snapshot={stats['snapshot_steps']} ancestor_new={stats['ancestor_new']} "
         f"~{stats['estimated_tokens']}tok (budget {limit})"
     )
@@ -176,7 +187,8 @@ def compose_ancestor_summary(
     prior: List[Dict[str, Any]],
     newer: List[Dict[str, Any]],
 ) -> Tuple[List[Dict[str, Any]], int]:
-    # 链式续接: 祖先摘要 + 本轮新增; 超上限丢最老 (线性增长封顶 → 链深亚线性)
+    # Chained continuation: ancestor summaries + this round's additions; drop the
+    # oldest over the cap (linear growth capped -> sub-linear in chain depth)
     merged = list(prior or []) + list(newer or [])
     truncated = 0
     if len(merged) > _MAX_ANCESTOR_ENTRIES:

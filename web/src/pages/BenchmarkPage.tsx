@@ -59,6 +59,7 @@ export default function BenchmarkPage() {
 
     return (
         <div className="mx-auto max-w-4xl space-y-4 p-4">
+            {/* i18n: user-facing */}
             <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">节点基准测试</h1>
             {error && (
                 <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
@@ -71,12 +72,14 @@ export default function BenchmarkPage() {
                     <input
                         value={node}
                         onChange={(e) => setNode(e.target.value)}
+                        // i18n: user-facing
                         placeholder="node 名 (如 shell_exec)"
                         className="flex-1 rounded-xl border border-zinc-200/80 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
                     />
                     <input
                         value={params}
                         onChange={(e) => setParams(e.target.value)}
+                        // i18n: user-facing
                         placeholder='params JSON, 如 {"command":"true"}'
                         className="flex-1 rounded-xl border border-zinc-200/80 bg-white px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
                     />
@@ -97,6 +100,7 @@ export default function BenchmarkPage() {
                         onClick={() => void run()}
                         className="rounded-xl bg-indigo-600 px-4 py-2 font-medium text-white shadow-sm disabled:opacity-50"
                     >
+                        {/* i18n: user-facing */}
                         {running ? '运行中…' : '运行'}
                     </button>
                 </div>
@@ -132,6 +136,7 @@ export default function BenchmarkPage() {
                         {results.length === 0 && (
                             <tr>
                                 <td colSpan={4} className="py-3 text-center text-xs text-zinc-400">
+                                    {/* i18n: user-facing */}
                                     {running ? '运行中…' : '暂无结果'}
                                 </td>
                             </tr>

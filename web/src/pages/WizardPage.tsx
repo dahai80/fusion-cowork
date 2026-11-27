@@ -1,4 +1,4 @@
-// issue #263: 仓库 onboarding 向导 — GitHub org 一次性初始化
+// issue #263: repository onboarding wizard — one-time GitHub org initialization
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 
@@ -76,6 +76,7 @@ export default function WizardPage() {
             setResults([]);
             setPlans([]);
             setRepos((prev) => prev);
+            // i18n: user-facing
             setError(`已卸载 ${resp.results.filter((r) => r.removed.length > 0).length} 个仓库的向导产物`);
         } catch (e) {
             setError(String(e instanceof Error ? e.message : e));
@@ -85,6 +86,7 @@ export default function WizardPage() {
     }, [org, selected]);
 
     useEffect(() => {
+        // i18n: user-facing
         document.title = 'Onboarding 向导 — Cowork';
     }, []);
 
@@ -93,8 +95,10 @@ export default function WizardPage() {
 
     return (
         <div className="mx-auto max-w-4xl space-y-4 p-4">
+            {/* i18n: user-facing */}
             <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">仓库 Onboarding 向导</h1>
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                {/* i18n: user-facing */}
                 为 GitHub 仓库统一铺设 label 税 / issue 表单 / CODEOWNERS / 分支保护。Token 走环境变量 GITHUB_TOKEN。
             </p>
 
@@ -102,6 +106,7 @@ export default function WizardPage() {
                 <input
                     value={org}
                     onChange={(e) => setOrg(e.target.value)}
+                    // i18n: user-facing
                     placeholder="org 或用户名"
                     className="flex-1 rounded-xl border border-zinc-200/80 bg-white px-3 py-2 text-sm shadow-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
                 />
@@ -111,6 +116,7 @@ export default function WizardPage() {
                     disabled={busy || !org.trim()}
                     className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm disabled:opacity-50"
                 >
+                    {/* i18n: user-facing */}
                     列出仓库
                 </button>
             </div>
@@ -119,9 +125,11 @@ export default function WizardPage() {
                 <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
                     <div className="mb-2 flex items-center justify-between">
                         <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                            {/* i18n: user-facing */}
                             选择仓库 ({selected.length})
                         </span>
                         <label className="flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400">
+                            {/* i18n: user-facing */}
                             必需检查:
                             <input
                                 value={checks}
@@ -149,6 +157,7 @@ export default function WizardPage() {
                             disabled={busy}
                             className="rounded-xl border border-zinc-200/80 px-4 py-2 text-sm shadow-sm dark:border-zinc-700"
                         >
+                            {/* i18n: user-facing */}
                             预览
                         </button>
                         <button
@@ -157,6 +166,7 @@ export default function WizardPage() {
                             disabled={busy}
                             className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm disabled:opacity-50"
                         >
+                            {/* i18n: user-facing */}
                             应用
                         </button>
                         <button
@@ -165,6 +175,7 @@ export default function WizardPage() {
                             disabled={busy}
                             className="rounded-xl bg-zinc-600 px-4 py-2 text-sm font-medium text-white shadow-sm disabled:opacity-50"
                         >
+                            {/* i18n: user-facing */}
                             卸载
                         </button>
                     </div>
@@ -201,6 +212,7 @@ export default function WizardPage() {
                     className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm shadow-sm dark:border-emerald-900 dark:bg-emerald-950"
                 >
                     <div className="font-medium text-emerald-800 dark:text-emerald-300">
+                        {/* i18n: user-facing */}
                         {r.repo}: {r.applied.length} 项变更
                     </div>
                     <ul className="mt-1 space-y-0.5 font-mono text-xs text-emerald-700 dark:text-emerald-400">

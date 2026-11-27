@@ -1,7 +1,7 @@
-"""输出 Schema 校验 — 对标 --json-schema。
+"""Output schema validation — aligned with --json-schema.
 
-工作流/节点输出可按 JSON Schema 校验，
-不符合 schema 时标记为 FAILED。
+Workflow/node outputs can be validated against a JSON Schema;
+outputs that do not conform to the schema are marked FAILED.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ class OutputSchema:
             jsonschema.validate(instance=data, schema=schema)
             return True
         except ImportError:
-            logger.debug("jsonschema 未安装，使用内置校验")
+            logger.debug("jsonschema not installed, using built-in validation")
             return OutputSchema._builtin_validate(data, schema)
         except Exception as e:
             logger.debug(f"Schema validation failed: {e}")

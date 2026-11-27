@@ -48,9 +48,9 @@ class TriggerRegistry:
         name = str(name or "").strip()
         workflow_id = str(workflow_id or "").strip()
         if not name:
-            raise ValueError("trigger name 必填")
+            raise ValueError("trigger name is required")
         if not workflow_id:
-            raise ValueError("workflow_id 必填")
+            raise ValueError("workflow_id is required")
         trigger_id = f"trg_{secrets.token_hex(5)}"
         token = f"trgk_{secrets.token_hex(16)}"
         record = {

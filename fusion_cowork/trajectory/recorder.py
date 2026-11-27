@@ -1,17 +1,17 @@
-"""D1 轨迹飞轮 — 轨迹记录器。
+"""D1 trajectory flywheel - trajectory recorder.
 
-设计 (issue #520, K3 closeout):
-- TrajectoryRecorder 注册到 HookManager，监听 14 种 HookEvent
-- 每个事件经 kernel_record() 映射为 kernel `fusion_harness.trajectory`
-  TrajectoryRecord (唯一 schema；本地不再保留任何轨迹 schema)，append jsonl
-- cowork 语义事件名保留在 payload.legacy_event，与 kernel reader 的
-  legacy 适配约定一致；旧格式文件由 kernel TrajectoryReader 归一化读取
-- fusion-harness 必装 (#521 drop-fallback ruling)：缺包是 import 期
-  startup error（带可执行安装指引），不存在降级模式
-- WORKFLOW_END 时回填 sessions.steps_snapshot（含完整步骤快照）
-- NODE_ERROR 单独标注 is_error，供 D1 清洗流水线消费
+Design (issue #520, K3 closeout):
+- TrajectoryRecorder registers with HookManager, listening to 14 HookEvent types
+- Each event maps via kernel_record() to the kernel `fusion_harness.trajectory`
+  TrajectoryRecord (the only schema; no local trajectory schema is kept), appended as jsonl
+- cowork semantic event names are preserved in payload.legacy_event, matching the kernel
+  reader's legacy adaptation convention; old-format files are normalized by kernel TrajectoryReader
+- fusion-harness is mandatory (#521 drop-fallback ruling): a missing package is an import-time
+  startup error (with actionable install guidance), no degraded mode exists
+- On WORKFLOW_END, backfills sessions.steps_snapshot (with the full step snapshot)
+- NODE_ERROR is flagged separately with is_error for the D1 cleaning pipeline
 
-汇聚目录: ~/.fusion/trajectories/cowork/<session_id>.jsonl
+Aggregation directory: ~/.fusion/trajectories/cowork/<session_id>.jsonl
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ def kernel_record(
 
 
 def _json_safe(obj: Any) -> Any:
-    """递归将对象转为 JSON 可序列化形式（枚举取 value，其余转 str）。"""
+    """Recursively convert an object into a JSON-serializable form (enums take .value, everything else becomes str)."""
     if obj is None or isinstance(obj, (str, int, float, bool)):
         return obj
     if isinstance(obj, dict):
@@ -107,12 +107,12 @@ def _json_safe(obj: Any) -> Any:
 
 
 class TrajectoryWriter:
-    """轨迹写入器 — 按 session (payload.session_id) append 到汇聚目录 jsonl。"""
+    """Trajectory writer - appends per session (payload.session_id) to the aggregation directory jsonl."""
 
     def __init__(self, trajectory_dir: str = DEFAULT_TRAJECTORY_DIR):
         self._dir = Path(trajectory_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
-        logger.debug(f"TrajectoryWriter 初始化: {self._dir}")
+        logger.debug(f"TrajectoryWriter initialized: {self._dir}")
 
     def write(self, record: TrajectoryRecord) -> str:
         session_id = str((record.payload or {}).get("session_id") or "no_session")
@@ -120,13 +120,13 @@ class TrajectoryWriter:
         line = record.to_json()
         with open(path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
-        # v4 方案①: size-based rotation + retention cleanup — the writer is
+        # v4 plan-1: size-based rotation + retention cleanup — the writer is
         # append-only and task_step made writes much more frequent; without
         # this a 7x24 deployment grows the pool until disk quota dies.
         # Best-effort: cleanup failures never break the actual write.
         self._rotate_if_oversized(path)
         self._cleanup_expired()
-        logger.debug(f"轨迹写入: {path.name} event={record.event} node={record.node_id}")
+        logger.debug(f"trajectory written: {path.name} event={record.event} node={record.node_id}")
         return str(path)
 
     @staticmethod
@@ -144,7 +144,7 @@ class TrajectoryWriter:
             return 200 * 1024 * 1024
 
     def _rotate_if_oversized(self, path: Path) -> None:
-        """方案①: rename an over-limit jsonl aside (timestamped) so the
+        """Plan-1: rename an over-limit jsonl aside (timestamped) so the
         active file stays bounded; the rotated file ages out via retention."""
         try:
             if not path.exists() or path.stat().st_size < self._max_file_bytes():
@@ -156,7 +156,7 @@ class TrajectoryWriter:
             logger.debug(f"trajectory rotation skipped: {e}")
 
     def _cleanup_expired(self) -> None:
-        """方案①: delete jsonl files older than the retention window.
+        """Plan-1: delete jsonl files older than the retention window.
         Throttled to once per hour per writer instance; readers are
         best-effort, so removed files degrade gracefully."""
         now = time.time()
@@ -182,9 +182,9 @@ class TrajectoryWriter:
 
 
 class TrajectoryRecorder:
-    """轨迹记录器 — 注册到 HookManager，持久化结构化执行轨迹。
+    """Trajectory recorder - registers with HookManager, persists structured execution trajectories.
 
-    用法：
+    Usage:
         recorder = TrajectoryRecorder(hook_manager, session_store=store, session_id=sess.id)
         recorder.attach()
     """
@@ -200,13 +200,13 @@ class TrajectoryRecorder:
         self._session_store = session_store
         self._session_id = session_id
         self._writer = TrajectoryWriter(trajectory_dir)
-        # CR-12: 按 execution_id 命名空间, 防共享 HookManager 上并发执行互相覆盖快照/元数据
+        # CR-12: namespace by execution_id to prevent concurrent executions on a shared HookManager overwriting each other's snapshots/metadata
         self._execs: Dict[str, Dict[str, Any]] = {}
         self._attached = False
 
     def attach(self) -> None:
         if self._attached:
-            logger.warning("TrajectoryRecorder 已 attach，跳过重复注册")
+            logger.warning("TrajectoryRecorder already attached, skipping duplicate registration")
             return
         self._do_attach()
 
@@ -214,9 +214,9 @@ class TrajectoryRecorder:
         if not session_id:
             return
         if self._session_id and self._session_id != session_id:
-            logger.warning(f"TrajectoryRecorder 切换 session: {self._session_id} -> {session_id}")
+            logger.warning(f"TrajectoryRecorder switching session: {self._session_id} -> {session_id}")
         self._session_id = session_id
-        logger.debug(f"TrajectoryRecorder 绑定 session: {session_id}")
+        logger.debug(f"TrajectoryRecorder bound session: {session_id}")
 
     def _do_attach(self) -> None:
         events = [
@@ -238,7 +238,7 @@ class TrajectoryRecorder:
         for evt in events:
             self._hook_manager.register(evt, self._make_handler(evt))
         self._attached = True
-        logger.info(f"TrajectoryRecorder 已注册 {len(events)} 个 Hook 处理器, session={self._session_id}")
+        logger.info(f"TrajectoryRecorder registered {len(events)} hook handlers, session={self._session_id}")
 
     def _make_handler(self, evt: HookEvent):
         async def handler(ctx: HookContext) -> None:
@@ -249,7 +249,7 @@ class TrajectoryRecorder:
 
     async def _on_hook(self, evt: HookEvent, ctx: HookContext) -> None:
         data = ctx.data or {}
-        # CR-12: 每个执行独立状态槽, 按 execution_id 隔离 (并发执行互不覆盖)
+        # CR-12: per-execution state slot, isolated by execution_id (concurrent executions never overwrite each other)
         exec_id = data.get("execution_id", "")
         state = self._execs.get(exec_id)
         if evt == HookEvent.WORKFLOW_START:
@@ -261,13 +261,14 @@ class TrajectoryRecorder:
             }
             self._execs[exec_id] = state
         if state is None:
-            # CR-12: exec_id 缺失 (如手动 fire POST_NODE 未带 execution_id) 时,
-            # 回退唯一活跃执行槽 (单并发常见), 避免步骤落入孤立临时槽永不回填
+            # CR-12: when exec_id is missing (e.g. manual POST_NODE fire without execution_id),
+            # fall back to the single active execution slot (common in single concurrency) so steps
+            # do not land in an orphaned temp slot that never gets backfilled
             if not exec_id and len(self._execs) == 1:
                 state = next(iter(self._execs.values()))
                 exec_id = state["execution_id"]
             else:
-                # 非 workflow 事件或未知 exec_id — 用临时槽, 不持久化回 _execs
+                # Non-workflow event or unknown exec_id - use a temp slot, not persisted back into _execs
                 state = {
                     "execution_id": exec_id,
                     "workflow_id": "",
@@ -321,22 +322,22 @@ class TrajectoryRecorder:
         try:
             self._writer.write(traj)
         except Exception as e:
-            logger.error(f"轨迹写入失败: {evt.value} -> {e}")
+            logger.error(f"Trajectory write failed: {evt.value} -> {e}")
         if evt == HookEvent.WORKFLOW_END:
             if self._session_store and self._session_id:
                 try:
                     self._session_store.update_steps(self._session_id, state["steps_snapshot"])
                     logger.info(
-                        f"steps_snapshot 回填: session={self._session_id} "
+                        f"steps_snapshot backfilled: session={self._session_id} "
                         f"exec={exec_id} steps={len(state['steps_snapshot'])}"
                     )
                 except Exception as e:
-                    logger.error(f"steps_snapshot 回填失败: {e}")
-            # CR-12: 执行结束无条件清理状态槽防内存增长 (与 session_store 无关)
+                    logger.error(f"steps_snapshot backfill failed: {e}")
+            # CR-12: unconditionally clean up the state slot at execution end to prevent memory growth (independent of session_store)
             self._execs.pop(exec_id, None)
 
     def record_directive(self, execution_id: str, directive: Dict[str, Any]) -> None:
-        """W8/B1: 运行改向指令单独落轨迹, 供复盘/训练流水线消费。"""
+        """W8/B1: record run-redirect directives as their own trajectory entries, consumed by the replay/training pipeline."""
         state = self._execs.get(execution_id) or {}
         traj = kernel_record(
             event="directive",
@@ -353,13 +354,13 @@ class TrajectoryRecorder:
         try:
             self._writer.write(traj)
         except Exception as e:
-            logger.error(f"改向指令轨迹写入失败: exec={execution_id} -> {e}")
+            logger.error(f"Redirect directive trajectory write failed: exec={execution_id} -> {e}")
             raise
-        logger.info(f"改向指令已落轨迹: exec={execution_id} action={directive.get('action', '')}")
+        logger.info(f"Redirect directive recorded to trajectory: exec={execution_id} action={directive.get('action', '')}")
 
     @property
     def steps_snapshot(self) -> List[Dict[str, Any]]:
-        # CR-12: 无 exec_id 上下文时返回最后已知执行快照 (兼容旧调用)
+        # CR-12: return the last known execution snapshot when there is no exec_id context (backward compatible)
         if self._execs:
             last = next(reversed(self._execs.values()))
             return list(last["steps_snapshot"])

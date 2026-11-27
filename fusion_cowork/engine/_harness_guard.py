@@ -1,6 +1,8 @@
-# #196: fusion-harness 内核装在 [plugins] extra (仅 git tag, 不在 PyPI) —
-# 裸装 `pip install -e ".[test]"` 时缺包, 引擎 shim 模块用本 helper 把
-# 裸 ImportError 换成带可执行安装指引的报错 (fail-visible)。
+# #196: the fusion-harness kernel ships in the [plugins] extra (git tag
+# only, not on PyPI) — when the package is missing after a bare
+# `pip install -e ".[test]"`, engine shim modules use this helper to turn
+# the raw ImportError into an error with an actionable install hint
+# (fail-visible).
 
 from __future__ import annotations
 
@@ -12,5 +14,5 @@ HARNESS_INSTALL_HINT = (
 
 
 def harness_import_error(exc: BaseException) -> ImportError:
-    # __cause__ 由调用点的 `raise ... from exc` 设置
+    # __cause__ is set by the caller's `raise ... from exc`
     return ImportError(HARNESS_INSTALL_HINT)

@@ -1,10 +1,10 @@
-"""FSB 模块集成 — 侧边栏入口、工作台会话隔离与权限模型复用。
+"""FSB module integration — sidebar entries, workbench session isolation, and permission model reuse.
 
-提供:
-- 模块注册机制 (desk.module.register/list/enable/disable)
-- FSB Workspace ≈ Space 级隔离确认
-- 权限模型复用 (SpacePermission 4 级角色)
-- 审批任务通知推送 (SSE + desk.notification.push)
+Provides:
+- Module registration mechanism (desk.module.register/list/enable/disable)
+- FSB Workspace ≈ Space-level isolation confirmation
+- Permission model reuse (SpacePermission 4-level roles)
+- Approval task notification push (SSE + desk.notification.push)
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class ModuleRegistry:
-    """侧边栏模块注册 — 管理一级入口的注册/启用/禁用 (按租户隔离)。"""
+    """Sidebar module registry — manages registration/enable/disable of top-level entries (tenant-isolated)."""
 
     def __init__(self, store: SpaceStore):
         self._store = store
@@ -40,7 +40,7 @@ class ModuleRegistry:
     ) -> Dict[str, Any]:
         tid = resolve_tenant_id(tenant_id)
         now = datetime.now().isoformat()
-        # INSERT OR REPLACE 是 sqlite 专用; ON CONFLICT DO UPDATE 双后端兼容 (sqlite 3.24+/pg)。
+        # INSERT OR REPLACE is sqlite-only; ON CONFLICT DO UPDATE works on both backends (sqlite 3.24+/pg).
         async with self._store.write_tx(tid) as h:
             await h.exec(
                 "INSERT INTO sidebar_modules "
@@ -114,7 +114,7 @@ class ModuleRegistry:
 
 
 class NotificationService:
-    """审批任务通知推送 — SSE 事件 + desk.notification.push (按租户隔离)。"""
+    """Approval task notification push — SSE events + desk.notification.push (tenant-isolated)."""
 
     def __init__(self, store: SpaceStore):
         self._store = store

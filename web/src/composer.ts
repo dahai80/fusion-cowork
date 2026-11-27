@@ -1,6 +1,6 @@
 import type { ComposerActionItem, ComposerChip } from '@fusion/web-ui';
 
-// issue #231 (FCS-1): 任务/运行 composer 共享接线 — 纯函数产出五区 props, 页面零重复
+// issue #231 (FCS-1): task/run composer shared wiring — pure functions produce five-zone props, zero duplication across pages
 
 export type RefKind = 'directory' | 'task' | 'artifact';
 
@@ -11,8 +11,11 @@ export interface RefSource {
 }
 
 const REF_META: Record<RefKind, { icon: string; token: string }> = {
+    // i18n: user-facing
     directory: { icon: '📁', token: '@目录' },
+    // i18n: user-facing
     task: { icon: '☰', token: '@任务' },
+    // i18n: user-facing
     artifact: { icon: '▦', token: '@产物' },
 };
 
@@ -28,7 +31,7 @@ export function buildReferenceItems(sources: RefSource[], insert: (token: string
     }));
 }
 
-// FCS-1 ① 上下文条 — 工作目录 + 一次性 chip (派生/产物注入) + 审批等待徽标
+// FCS-1 (1) context bar — working directory + one-shot chip (derive / artifact injection) + approval-waiting badge
 export interface ContextChipInput {
     dirLabel?: string;
     onSwitchDir?: () => void;
@@ -50,23 +53,26 @@ export function buildContextChips(input: ContextChipInput): ComposerChip[] {
     if (input.deriveFrom && input.onClearDerive) {
         chips.push({
             key: 'derive',
+            // i18n: user-facing
             label: `✚ ${input.deriveLabel ?? '派生自'} ${input.deriveFrom.slice(0, 8)}`,
             onClick: input.onClearDerive,
         });
     }
     if (input.artifactRefName && input.onClearArtifact) {
         const label = input.artifactFromArtifacts
-            ? `▦ 来自 Artifacts · ${input.artifactRefName}`
+            ? // i18n: user-facing
+              `▦ 来自 Artifacts · ${input.artifactRefName}`
             : `▦ ${input.artifactRefName}`;
         chips.push({ key: 'artifact', label, onClick: input.onClearArtifact });
     }
     if (input.waitingApproval) {
+        // i18n: user-facing
         chips.push({ key: 'hitl', label: `⏸ ${input.waitingLabel ?? '等待审批'}`, onClick: () => undefined });
     }
     return chips;
 }
 
-// issue #231 §6: 审批等待变体 — composer 禁用 + 徽标, 不另造替代 UI
+// issue #231 §6: approval-waiting variant — composer disabled + badge, no substitute UI invented
 export function composerApprovalVariant(hitlPending: boolean): { disabled: boolean; waitingApproval: boolean } {
     return { disabled: hitlPending, waitingApproval: hitlPending };
 }

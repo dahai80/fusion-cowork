@@ -1,16 +1,15 @@
-"""issue #452: demo_contract — 交付演示三件套契约门 + bundle 清单 + executor 注册钩子。
+"""issue #452: demo_contract — delivered-demo three-piece contract gate + bundle manifest + executor registration hook.
 
-契约 (AGENTS.md rule 7, 与 meta repo scripts/check-demo-runnable.py 语义一致):
-1. docker-compose.demo.yml — 每个 service 必须带 healthcheck
-2. demo.yaml — web.port 或 terminal 入口; mobile 段可选 (platform=android|ios + artifact + stream)
-3. stub pack — demo-stubs/ 或 tests/fixtures/stubs/ 非空 (CI 录制 fixture 回放, 不手写 mock)
+Contract (AGENTS.md rule 7, semantics consistent with meta repo scripts/check-demo-runnable.py):
+1. docker-compose.demo.yml — every service must carry a healthcheck
+2. demo.yaml — web.port or terminal entry; optional mobile section (platform=android|ios + artifact + stream)
+3. stub pack — demo-stubs/ or tests/fixtures/stubs/ non-empty (CI-recorded fixture replay, no hand-written mocks)
 
-缺件 = 交付失败 (actionable error 逐条列出)。可选运行 meta repo 门脚本
-(check_script 参数, 全局跑; 仅当本仓库被点名才判失败, 别的仓库违规只告警 —
-按仓库归属公平)。secret 扫描缺省开启: stub pack 命中疑似凭据 = 失败
-(验收 4: bundle 零真实客户数据)。register=true 时向 executor demo API 注册
-(FUSION_EXECUTOR_URL / executor_url 参数; fusion-executor#68), 未配置 = 显式
-报错不静默。
+Missing pieces = delivery failure (actionable errors listed item by item). Optionally runs the meta repo gate script
+(check_script param, run globally; only failures naming THIS repo block, other repos' violations only warn —
+fair by repo ownership). Secret scanning is on by default: a stub pack hitting suspected credentials = failure
+(acceptance 4: zero real customer data in the bundle). With register=true, registers to the executor demo API
+(FUSION_EXECUTOR_URL / executor_url param; fusion-executor#68); unset = explicit error, never silent.
 """
 
 from __future__ import annotations
@@ -144,7 +143,7 @@ class DemoContractNode(BaseNode):
         deliverable = str(cfg.get("deliverable_dir", "") or "").strip()
         slug = str(cfg.get("slug", "") or "").strip()
         if not deliverable:
-            # 缺省定位: FUSION_BUSINESS_ROOT/<slug> (脚手架标准布局), 未配置 root 则显式报错
+            # Default location: FUSION_BUSINESS_ROOT/<slug> (standard scaffold layout); explicit error if root unset
             business_root = os.environ.get("FUSION_BUSINESS_ROOT", "").strip()
             if not slug:
                 raise ValueError(

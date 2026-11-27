@@ -1,9 +1,9 @@
-"""技能持久化 + 用户自写 skill 包 — P2-11。
+"""Skill persistence + user-authored skill packages - P2-11.
 
-用户 skill 包存于 ~/.fusion-cowork/skills/<name>/skill.json, 三种 handler 类型:
-- workflow: 引用模板 id, 经 WorkflowEngine 执行
-- node:     引用节点名 + params, 经 NodeRegistry 执行
-- script:   引用 handler.py, 调用 async def handle(args) -> Any
+User skill packages live in ~/.fusion-cowork/skills/<name>/skill.json, three handler types:
+- workflow: references a template id, executed via WorkflowEngine
+- node:     references a node name + params, executed via NodeRegistry
+- script:   references handler.py, calls async def handle(args) -> Any
 """
 
 from __future__ import annotations
@@ -73,17 +73,17 @@ def _pack_dir(skills_dir: Path, name: str) -> Path:
 
 
 def save_skill_pack(pack: SkillPack, skills_dir: Path = None) -> Path:
-    """写入 skill 包到磁盘。返回包目录。"""
+    """Write a skill package to disk. Returns the package directory."""
     skills_dir = skills_dir or DEFAULT_SKILLS_DIR
     skills_dir.mkdir(parents=True, exist_ok=True)
     if pack.type not in VALID_TYPES:
-        raise ValueError(f"非法 skill 类型: {pack.type}, 允许: {VALID_TYPES}")
+        raise ValueError(f"Invalid skill type: {pack.type}, allowed: {VALID_TYPES}")
     if not pack.name:
-        raise ValueError("skill name 不能为空")
+        raise ValueError("skill name must not be empty")
     pdir = _pack_dir(skills_dir, pack.name)
     pdir.mkdir(parents=True, exist_ok=True)
     (pdir / "skill.json").write_text(json.dumps(pack.to_manifest(), ensure_ascii=False, indent=2), encoding="utf-8")
-    logger.info(f"skill 包已保存: {pack.name} -> {pdir}")
+    logger.info(f"Skill package saved: {pack.name} -> {pdir}")
     return pdir
 
 
@@ -91,17 +91,17 @@ def delete_skill_pack(name: str, skills_dir: Path = None) -> bool:
     skills_dir = skills_dir or DEFAULT_SKILLS_DIR
     pdir = _pack_dir(skills_dir, name)
     if not pdir.exists():
-        logger.warning(f"skill 包不存在: {name}")
+        logger.warning(f"Skill package not found: {name}")
         return False
     import shutil
 
     shutil.rmtree(pdir)
-    logger.info(f"skill 包已删除: {name}")
+    logger.info(f"Skill package deleted: {name}")
     return True
 
 
 def list_skill_packs(skills_dir: Path = None) -> List[SkillPack]:
-    """扫描磁盘上的用户 skill 包。"""
+    """Scan user skill packages on disk."""
     skills_dir = skills_dir or DEFAULT_SKILLS_DIR
     if not skills_dir.exists():
         return []
@@ -114,8 +114,8 @@ def list_skill_packs(skills_dir: Path = None) -> List[SkillPack]:
             continue
         try:
             data = json.loads(manifest.read_text(encoding="utf-8"))
-            # issue #554: skill 载入前 artifact_scan — 注入指令/凭据泄漏规则命中即
-            # 隔离 + 跳过 (不进 SkillRegistry, 不进 MCP skill 列表)
+            # issue #554: artifact_scan before skill load - injection/credential-leak rule hits are
+            # quarantined + skipped (not added to SkillRegistry, not in MCP skill list)
             from ..engine.kernel_gates import get_quarantine, scan_or_quarantine
 
             clean, report = scan_or_quarantine(
@@ -123,17 +123,17 @@ def list_skill_packs(skills_dir: Path = None) -> List[SkillPack]:
             )
             if not clean:
                 get_quarantine().add(report, preview=json.dumps(data, ensure_ascii=False)[:200])
-                logger.warning(f"skill 包扫描未通过, 已隔离跳过 {pdir.name}: rules={report.rule_names()}")
+                logger.warning(f"Skill package scan failed, quarantined and skipped {pdir.name}: rules={report.rule_names()}")
                 continue
             packs.append(SkillPack.from_manifest(data))
         except (json.JSONDecodeError, KeyError) as e:
-            logger.warning(f"skill 包解析失败 {pdir.name}: {e}")
-    logger.info(f"扫描到 {len(packs)} 个用户 skill 包")
+            logger.warning(f"Skill package parse failed {pdir.name}: {e}")
+    logger.info(f"Found {len(packs)} user skill packages")
     return packs
 
 
 def make_pack_handler(pack: SkillPack, skills_dir: Path = None) -> Callable:
-    """为 skill 包构造异步 handler。skills_dir 与安装目录一致, 脚本包按目录定位。"""
+    """Build an async handler for a skill package. skills_dir matches the install directory; script packages are located by directory."""
 
     async def _handler(args: str = "") -> Any:
         return await _execute_pack(pack, args, skills_dir)
@@ -148,7 +148,7 @@ async def _execute_pack(pack: SkillPack, args: str = "", skills_dir: Path = None
         return await _exec_node_pack(pack, args)
     elif pack.type == "script":
         return await _exec_script_pack(pack, args, skills_dir)
-    return {"error": f"未知 skill 类型: {pack.type}"}
+    return {"error": f"Unknown skill type: {pack.type}"}
 
 
 async def _exec_workflow_pack(pack: SkillPack, args: str) -> Any:
@@ -158,7 +158,7 @@ async def _exec_workflow_pack(pack: SkillPack, args: str) -> Any:
     mgr = TemplateManager()
     template = mgr.get_template(pack.template_id)
     if not template:
-        return {"error": f"模板不存在: {pack.template_id}"}
+        return {"error": f"Template not found: {pack.template_id}"}
     try:
         wf = Workflow.from_dict(template.get("workflow", template))
         engine = WorkflowEngine()
@@ -168,7 +168,7 @@ async def _exec_workflow_pack(pack: SkillPack, args: str) -> Any:
             "steps": len(result.steps) if hasattr(result, "steps") else 0,
         }
     except Exception as e:
-        logger.error(f"workflow skill 执行失败 {pack.name}: {e}")
+        logger.error(f"workflow skill execution failed {pack.name}: {e}")
         return {"error": str(e)}
 
 
@@ -177,12 +177,12 @@ async def _exec_node_pack(pack: SkillPack, args: str) -> Any:
 
     node = NodeRegistry.create(pack.node, config=NodeConfig(params=dict(pack.params)))
     if node is None:
-        return {"error": f"节点不可用: {pack.node}"}
+        return {"error": f"Node unavailable: {pack.node}"}
     try:
         result = await node.execute(dict(pack.inputs))
         return {"status": result.status.value, "summary": result.summary, "data": getattr(result, "data", None)}
     except Exception as e:
-        logger.error(f"node skill 执行失败 {pack.name}: {e}")
+        logger.error(f"node skill execution failed {pack.name}: {e}")
         return {"error": str(e)}
 
 
@@ -191,25 +191,25 @@ async def _exec_script_pack(pack: SkillPack, args: str, skills_dir: Path = None)
     pdir = _pack_dir(skills_dir, pack.name)
     script_path = (pdir / pack.script) if pack.script else None
     if not script_path or not script_path.exists():
-        return {"error": f"脚本不存在: {pack.script}"}
+        return {"error": f"Script not found: {pack.script}"}
     try:
         mod_name = f"fusion_cowork_skill_{pack.name.lstrip('/')}"
         spec = importlib.util.spec_from_file_location(mod_name, str(script_path))
         if spec is None or spec.loader is None:
-            return {"error": f"脚本模块加载失败: {script_path}"}
+            return {"error": f"Script module load failed: {script_path}"}
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         handle = getattr(module, "handle", None)
         if handle is None:
-            return {"error": "脚本缺少 async def handle(args) 函数"}
+            return {"error": "Script is missing the async def handle(args) function"}
         return await handle(args)
     except Exception as e:
-        logger.error(f"script skill 执行失败 {pack.name}: {e}")
+        logger.error(f"script skill execution failed {pack.name}: {e}")
         return {"error": str(e)}
 
 
 def register_user_packs(registry: SkillRegistry, skills_dir: Path = None) -> List[str]:
-    """加载磁盘 skill 包并注册到 registry。返回注册名列表。"""
+    """Load skill packages from disk and register them into the registry. Returns the list of registered names."""
     packs = list_skill_packs(skills_dir)
     registered = []
     for pack in packs:
@@ -224,6 +224,6 @@ def register_user_packs(registry: SkillRegistry, skills_dir: Path = None) -> Lis
             registry.register(skill)
             registered.append(pack.name)
         except Exception as e:
-            logger.error(f"注册用户 skill 包失败 {pack.name}: {e}")
-    logger.info(f"注册 {len(registered)} 个用户 skill 包")
+            logger.error(f"Failed to register user skill package {pack.name}: {e}")
+    logger.info(f"Registered {len(registered)} user skill packages")
     return registered

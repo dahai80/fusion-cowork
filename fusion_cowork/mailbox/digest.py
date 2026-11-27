@@ -17,13 +17,21 @@ from ..server.email_notify import resolve_recipient, smtp_config_from_env
 logger = logging.getLogger(__name__)
 
 _CATEGORY_LABELS = {
+    # i18n: user-facing
     "bug": "Bug 报告",
+    # i18n: user-facing
     "feature": "功能需求",
+    # i18n: user-facing
     "business": "商务询价",
+    # i18n: user-facing
     "data_rights": "数据权利",
+    # i18n: user-facing
     "account": "账号问题",
+    # i18n: user-facing
     "consult": "使用咨询",
+    # i18n: user-facing
     "spam": "垃圾/退信",
+    # i18n: user-facing
     "unclassified": "未分类",
 }
 

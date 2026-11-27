@@ -1,15 +1,15 @@
-"""工作流节点基类 — 所有自动化节点的抽象基类。
+"""Workflow node base class — abstract base for all automation nodes.
 
-每个节点包含：
-- 输入/输出数据定义
-- 执行逻辑（execute 方法）
-- 配置参数校验
-- 执行状态报告
+Each node contains:
+- Input/output data definitions
+- Execution logic (the execute method)
+- Config parameter validation
+- Execution status reporting
 
-整合自 Squish ToolRegistry 模式：
-- 参数类型强制转换（_coerce_*），处理 LLM 输出的字符串类型参数
-- JSON Schema 参数校验
-- 工具名称映射
+Adapted from the Squish ToolRegistry pattern:
+- Parameter type coercion (_coerce_*), handling string-typed params from LLM output
+- JSON Schema parameter validation
+- Tool name mapping
 """
 
 from __future__ import annotations
@@ -44,21 +44,21 @@ except ImportError as exc:
 
 logger = logging.getLogger(__name__)
 
-# ── 参数类型强制转换（吸纳自 Squish tool_registry.py） ──
-# 小型/量化模型经常输出字符串标量（"10", "true"），
-# 这些函数自动将字符串强制转换为 JSON Schema 声明的类型，
-# 确保 LLM 生成的参数能被正确解析执行。
+# ── Parameter type coercion (absorbed from Squish tool_registry.py) ──
+# Small/quantized models often emit string scalars ("10", "true");
+# these functions automatically coerce strings to the types declared by JSON Schema,
+# ensuring LLM-generated params are parsed and executed correctly.
 
 _TRUE_STR = frozenset({"true", "1", "yes", "y", "on"})
 _FALSE_STR = frozenset({"false", "0", "no", "n", "off"})
 
 
 def _coerce_int(value: Any) -> Any:
-    """将值强制转换为 int。"""
+    """Coerce a value to int."""
     if isinstance(value, bool):
         return value
     if isinstance(value, float):
-        return int(value)  # 截断浮点数为整型
+        return int(value)  # truncate float to int
     if isinstance(value, str):
         s = value.strip()
         try:
@@ -67,14 +67,14 @@ def _coerce_int(value: Any) -> Any:
             pass
         try:
             f = float(s)
-            return int(f)  # 截断浮点数字符串为整型
+            return int(f)  # truncate float-string to int
         except ValueError:
             return value
     return value
 
 
 def _coerce_number(value: Any) -> Any:
-    """将值强制转换为 float。"""
+    """Coerce a value to float."""
     if isinstance(value, str):
         try:
             return float(value.strip())
@@ -84,7 +84,7 @@ def _coerce_number(value: Any) -> Any:
 
 
 def _coerce_bool(value: Any) -> Any:
-    """将值强制转换为 bool。"""
+    """Coerce a value to bool."""
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -99,7 +99,7 @@ def _coerce_bool(value: Any) -> Any:
 
 
 def _coerce_array(value: Any) -> Any:
-    """将值强制转换为 list。"""
+    """Coerce a value to list."""
     if isinstance(value, list):
         return value
     if isinstance(value, str):
@@ -111,7 +111,7 @@ def _coerce_array(value: Any) -> Any:
                 return json.loads(s)
             except (json.JSONDecodeError, ValueError):
                 pass
-        # 逗号分隔的字符串转为列表
+        # Comma-separated string to list
         return [item.strip() for item in s.split(",") if item.strip()]
     if isinstance(value, (set, tuple, frozenset)):
         return list(value)
@@ -119,16 +119,16 @@ def _coerce_array(value: Any) -> Any:
 
 
 def coerce_param(value: Any, param_type: str) -> Any:
-    """根据 JSON Schema 类型强制转换参数值。
+    """Coerce a parameter value according to its JSON Schema type.
 
     Args:
-        value: 原始值（可能来自 LLM 输出的字符串）
-        param_type: JSON Schema 类型（"integer", "number", "boolean", "array", "object", "string"）
+        value: raw value (possibly a string from LLM output)
+        param_type: JSON Schema type ("integer", "number", "boolean", "array", "object", "string")
 
     Returns:
-        强制转换后的值
+        The coerced value
 
-    整合自 Squish tool_registry.py 的 _coerce_* 函数族。
+    Adapted from the _coerce_* function family in Squish tool_registry.py.
     """
     if param_type == "integer":
         return _coerce_int(value)
@@ -156,14 +156,14 @@ def coerce_params(
     params: Dict[str, Any],
     schema: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """根据 JSON Schema 批量强制转换参数字典。
+    """Coerce a params dict in bulk according to a JSON Schema.
 
     Args:
-        params: 原始参数字典（可能来自 LLM 输出）
-        schema: JSON Schema 定义（来自 get_params_schema()）
+        params: raw params dict (possibly from LLM output)
+        schema: JSON Schema definition (from get_params_schema())
 
     Returns:
-        强制转换后的参数字典
+        The coerced params dict
     """
     properties = schema.get("properties", {})
     coerced = {}
@@ -177,7 +177,7 @@ def coerce_params(
 
 
 class NodeStatus(Enum):
-    """节点执行状态。"""
+    """Node execution status."""
 
     PENDING = "pending"
     RUNNING = "running"
@@ -185,29 +185,29 @@ class NodeStatus(Enum):
     FAILED = "failed"
     SKIPPED = "skipped"
     DENIED = "denied"
-    # issue #260: HITL 闸门等待中 — 时间线立即可见, 节点终态步骤随后追加
+    # issue #260: waiting on HITL gate — visible on the timeline immediately, the node's terminal step appended later
     BLOCKED = "blocked"
     CANCELLED = "cancelled"
 
 
 class NodeCategory(Enum):
-    """节点分类。"""
+    """Node category."""
 
-    MACOS_SYSTEM = "macos_system"  # macOS 系统操作
-    FILE_OPERATION = "file_operation"  # 文件操作
-    AI_PROCESSING = "ai_processing"  # AI 处理
-    TOOL = "tool"  # 通用工具（新增，来自 Squish 工具模式）
-    IO = "io"  # 输入/输出
-    LOGIC = "logic"  # 逻辑控制
-    FUSION_ECOSYSTEM = "fusion_ecosystem"  # Fusion 生态互通
-    # 同值别名：业务进程源码引用合规名（TASK-CONFIG-2026-10-28，
-    # FUSION_ 前缀名在 business 仓源码中属契约外变量）
-    ECOSYSTEM = "fusion_ecosystem"  # Fusion 生态互通（alias）
+    MACOS_SYSTEM = "macos_system"  # macOS system operations
+    FILE_OPERATION = "file_operation"  # File operations
+    AI_PROCESSING = "ai_processing"  # AI processing
+    TOOL = "tool"  # General tools (new, from the Squish tool pattern)
+    IO = "io"  # Input/output
+    LOGIC = "logic"  # Logic control
+    FUSION_ECOSYSTEM = "fusion_ecosystem"  # Fusion ecosystem interop
+    # Same-value alias: business-process source references the compliant name (TASK-CONFIG-2026-10-28;
+    # the FUSION_-prefixed name is out-of-contract in business repo source)
+    ECOSYSTEM = "fusion_ecosystem"  # Fusion ecosystem interop (alias)
 
 
 @dataclass
 class NodeConfig:
-    """节点配置参数。"""
+    """Node config parameters."""
 
     label: str = ""
     description: str = ""
@@ -215,9 +215,9 @@ class NodeConfig:
     max_retries: int = 0
     retry_delay: float = 1.0
     timeout: float = 0.0  # 0 = no timeout
-    # issue #182: 业务失败 (NodeResult FAILED, 非异常) 默认不重试; 显式开启后参与引擎重试
+    # issue #182: business failures (NodeResult FAILED, not exceptions) are not retried by default; once explicitly enabled they join engine retries
     retry_on_business_failure: bool = False
-    # issue #189: 节点执行器 (simple=直接 node.execute, agent=委托 fusion-agent-studio)
+    # issue #189: node executor (simple = call node.execute directly, agent = delegate to fusion-agent-studio)
     executor: str = "simple"
     agent: str = ""
     tools: List[str] = field(default_factory=list)
@@ -225,10 +225,10 @@ class NodeConfig:
     max_turns: int = 0
     budget_tokens: int = 0
     params: Dict[str, Any] = field(default_factory=dict)
-    # issue #422: 数据驱动条件跳过 — 全部条件命中时本节点记 SKIPPED
-    # (verdict 分支路由: extend 跳过 new-only 步骤)。条件形如
-    # {"source": "<node_id>", "path": "a.b", "equals": x}; 另支持
-    # not_equals / in / not_in; source 缺省对合并上游输入求值
+    # issue #422: data-driven conditional skip — when all conditions hit, this node is recorded SKIPPED
+    # (verdict branch routing: extend skips new-only steps). Conditions look like
+    # {"source": "<node_id>", "path": "a.b", "equals": x}; not_equals / in / not_in also supported;
+    # missing source evaluates against the merged upstream inputs
     skip_if: List[Dict[str, Any]] = field(default_factory=list)
     # exp/dynamic-orchestration: LLM-informed one-shot repair after retry exhaustion.
     # Default OFF, zero behavior change. See docs/pr-repair-step.md.
@@ -242,7 +242,7 @@ class NodeConfig:
 
 @dataclass
 class NodeResult:
-    """节点执行结果。"""
+    """Node execution result."""
 
     status: NodeStatus
     data: Optional[Dict[str, Any]] = None
@@ -261,27 +261,32 @@ class NodeResult:
 
 
 class BaseNode(KernelBaseNode, ABC):
-    """所有自动化节点的基类。
+    """Base class for all automation nodes.
 
-    节点是整个工作流的基本单元。每个节点执行一个特定操作，
-    接收输入数据，产生输出数据，传递给下一个节点。
+    A node is the basic unit of the whole workflow. Each node performs one
+    specific operation, receives input data, produces output data, and passes
+    it to the next node.
 
     issue #494: subclasses the fusion-harness kernel BaseNode — id
     generation (`node_<hex8>`) and the kernel `node_type` attribute come
     from the kernel; cowork adds config/status/`name`-keyed metadata.
     """
 
-    # 节点元数据（子类覆盖）
+    # Node metadata (subclasses override)
     name: str = "base"
+    # i18n: user-facing
     display_name: str = "基础节点"
     category: NodeCategory = NodeCategory.IO
+    # i18n: user-facing
     description: str = "基础节点"
     icon: str = "⚙️"
+    # i18n: user-facing
     default_label: str = "节点"
 
-    # 输入/输出定义（kernel BaseNode declares inputs/outputs as Dict — cowork
+    # Input/output definitions (kernel BaseNode declares inputs/outputs as Dict — cowork
     # schema is a list of {key,label,type}; subclass attr wins)
     inputs: List[Dict[str, Any]] = []
+    # i18n: user-facing
     outputs: List[Dict[str, Any]] = [{"key": "output", "label": "输出", "type": "any"}]
 
     def __init__(self, node_id: str = "", config: Optional[NodeConfig] = None):
@@ -292,18 +297,18 @@ class BaseNode(KernelBaseNode, ABC):
 
     @abstractmethod
     async def execute(self, inputs: Dict[str, Any]) -> NodeResult:
-        """执行节点逻辑。
+        """Execute the node logic.
 
         Args:
-            inputs: 上游节点传入的输入数据字典
+            inputs: input data dict passed from upstream nodes
 
         Returns:
-            NodeResult: 节点执行结果
+            NodeResult: the node execution result
         """
         ...
 
     def validate_config(self) -> List[str]:
-        """校验节点配置，返回错误列表。空列表表示配置有效。"""
+        """Validate node config, returning a list of errors. An empty list means the config is valid."""
         return []
 
     def watchdog_floor(self) -> float:
@@ -320,7 +325,7 @@ class BaseNode(KernelBaseNode, ABC):
         return []
 
     def get_params_schema(self) -> Dict[str, Any]:
-        """返回节点参数的 JSON Schema，用于 UI 自动生成配置表单。"""
+        """Return the node params JSON Schema, used by the UI to auto-generate config forms."""
         return {
             "type": "object",
             "properties": {},
@@ -329,8 +334,8 @@ class BaseNode(KernelBaseNode, ABC):
 
     @classmethod
     def _cached_default_schema(cls) -> Dict[str, Any]:
-        # E-15: list()/create() 旧版每节点新建实例取 schema (47× 构造 + uuid 副作用)。
-        # schema 仅依赖类 (get_params_schema 不读 self.config.params), 缓存类级空配置 schema。
+        # E-15: the old list()/create() built a per-node instance to fetch the schema (47x construction + uuid side effects).
+        # The schema depends only on the class (get_params_schema doesn't read self.config.params); cache the class-level empty-config schema.
         cached = cls.__dict__.get("_schema_cache")
         if cached is not None:
             return cached
@@ -370,10 +375,10 @@ class BaseNode(KernelBaseNode, ABC):
 
     @classmethod
     def from_dict(cls, data: dict) -> BaseNode:
-        """从字典反序列化节点。"""
+        """Deserialize a node from a dict."""
         cfg = data.get("config") or {}
-        # issue #266: 模板/API 格式节点 params 在顶层 — 之前只读 config.params,
-        # 反序列化后 params 丢失, HITL 批准恢复后节点以空参数重跑 ("未指定命令")
+        # issue #266: template/API-format nodes carry params at the top level — previously only config.params was read,
+        # so params were lost after deserialization and the node re-ran with empty params after HITL approval restore ("no command specified")
         if "params" in cfg:
             params = cfg["params"]
         else:
@@ -401,16 +406,16 @@ class BaseNode(KernelBaseNode, ABC):
 
 
 class NodeRegistry:
-    """节点类型注册表 — 管理所有可用的节点类型。
+    """Node type registry — manages all available node types.
 
-    类似 n8n 的节点类型注册机制，用于：
-    - 节点查找和实例化
-    - 模板反序列化时的节点创建
-    - UI 节点面板展示
+    Similar to n8n's node type registry, used for:
+    - Node lookup and instantiation
+    - Node creation during template deserialization
+    - UI node panel display
 
-    整合自 Squish ToolRegistry：
-    - 参数强制转换（coerce_params）
-    - 参数校验（validate_params）
+    Adapted from Squish ToolRegistry:
+    - Parameter coercion (coerce_params)
+    - Parameter validation (validate_params)
     """
 
     _registry: Dict[str, type[BaseNode]] = {}
@@ -419,34 +424,34 @@ class NodeRegistry:
     # mirror dict for alias lookup / unregister / clear (kernel registry has no
     # removal API; rebuilds happen on those paths).
     _kernel_registry: KernelNodeRegistry = KernelNodeRegistry()
-    # 工具名称映射表（吸纳自 Squish tool_name_map.py）
-    # 用于用户友好的名称 ↔ 后端节点名称的转换
+    # Tool name mapping table (absorbed from Squish tool_name_map.py)
+    # Used to convert user-friendly names ↔ backend node names
     _name_aliases: Dict[str, str] = {}
-    # CR-20: 已注册名保护 — 插件覆盖已注册节点 → 拒绝 (防劫持)
-    # 首次注册视为基线; 同类重注册幂等放行 (import_all_nodes 多次调用安全)
+    # CR-20: registered-name protection — a plugin overriding a registered node → reject (anti-hijack)
+    # First registration is treated as baseline; idempotent re-registration of the same class is allowed (import_all_nodes may be called multiple times)
     _protected_names: set[str] = set()
-    # E-13: 基线内置节点名 — freeze_builtins() 在 import_all_nodes 后冻结。
-    # unregister 拒卸内置名 (防恶意插件 node_map 声明拥有 shell_exec → unload 删内置)。
+    # E-13: baseline builtin node names — freeze_builtins() freezes after import_all_nodes.
+    # unregister refuses to unload builtin names (prevents a malicious plugin node_map claiming shell_exec → unload deleting builtins).
     _builtin_names: set[str] = set()
     _builtins_frozen: bool = False
-    # R-3: 类级可变状态并发保护 — register/clear 与 create/list 间 check-then-set TOCTOU。
-    # RLock 容 create()→get() 重入; 装饰器导入期 + 运行期并发注册均安全。
+    # R-3: concurrency protection for class-level mutable state — check-then-set TOCTOU between register/clear and create/list.
+    # RLock tolerates create()→get() reentrancy; both import-time decorator and runtime concurrent registration are safe.
     _lock: threading.RLock = threading.RLock()
 
     @classmethod
     def register(cls, node_class: type[BaseNode], *, force: bool = False) -> type[BaseNode]:
-        """注册一个节点类型。
+        """Register a node type.
 
-        CR-20: 若 name 已注册且新类非已注册类本身 → 拒绝覆盖 (防插件劫持内置节点)。
-        force=True 显式覆盖 (内部卸载后重注册场景)。
-        R-3: 锁内 check-then-set, 防并发注册覆盖竞态。
+        CR-20: if the name is already registered and the new class is not the registered class itself → reject the override (prevents plugin hijacking of builtin nodes).
+        force=True explicitly overrides (internal unload-then-reregister scenarios).
+        R-3: check-then-set inside the lock, preventing concurrent registration override races.
         """
         name = node_class.name
         with cls._lock:
             existing = cls._registry.get(name)
             if existing is not None and existing is not node_class and not force:
                 logger.error(
-                    f"节点类型 '{name}' 已注册为 {existing.__name__}, 拒绝 {node_class.__name__} 覆盖 (防劫持)"
+                    f"Node type '{name}' already registered as {existing.__name__}, rejecting override by {node_class.__name__} (anti-hijack)"
                 )
                 return node_class
             # issue #494: kernel registry is the registration gate. force=True
@@ -485,13 +490,13 @@ class NodeRegistry:
 
     @classmethod
     def get(cls, name: str) -> Optional[type[BaseNode]]:
-        """获取节点类型（支持别名查找）。"""
+        """Get a node type (alias lookup supported)."""
         with cls._lock:
-            # 先直接查找
+            # Direct lookup first
             node_class = cls._registry.get(name)
             if node_class:
                 return node_class
-            # 再通过别名查找
+            # Then via alias
             backend_name = cls._name_aliases.get(name)
             if backend_name:
                 return cls._registry.get(backend_name)
@@ -499,55 +504,55 @@ class NodeRegistry:
 
     @classmethod
     def create(cls, name: str, **kwargs) -> Optional[BaseNode]:
-        """创建节点实例（支持参数强制转换）。
+        """Create a node instance (parameter coercion supported).
 
-        如果传入 params 且节点有 schema，自动进行类型强制转换。
-        整合自 Squish ToolRegistry 的 _coerce_* 机制。
+        If params are passed and the node has a schema, types are coerced automatically.
+        Adapted from the _coerce_* mechanism in Squish ToolRegistry.
         """
         node_class = cls.get(name)
         if node_class is None:
-            logger.error(f"未知节点类型: {name}")
+            logger.error(f"Unknown node type: {name}")
             return None
 
-        # 检查是否传入 params 参数，如果有则自动进行类型强制转换
+        # Check whether params were passed; if so, coerce types automatically
         if "config" in kwargs and kwargs["config"] is not None:
             config = kwargs["config"]
             if hasattr(config, "params") and config.params:
-                # 获取节点 schema 进行参数强制转换 (E-15: 走类级缓存避免每请求新建实例)
+                # Fetch the node schema for param coercion (E-15: use the class-level cache to avoid a per-request instance)
                 try:
                     schema = node_class._cached_default_schema()
                     config.params = coerce_params(config.params, schema)
                 except Exception as e:
-                    logger.debug(f"参数强制转换失败: {e}")
+                    logger.debug(f"Param coercion failed: {e}")
 
         return node_class(**kwargs)
 
     @classmethod
     def register_alias(cls, alias: str, target_name: str) -> None:
-        """注册工具名称别名。
+        """Register a tool name alias.
 
-        整合自 Squish tool_name_map.py 的 VSCODE_TO_BACKEND 映射模式。
-        用于用户友好的名称（如"桌面清理"）映射到后端节点名（"desktop_clean"）。
+        Adapted from the VSCODE_TO_BACKEND mapping pattern in Squish tool_name_map.py.
+        Maps user-friendly names (e.g. "desktop cleanup") to backend node names ("desktop_clean").
 
         Args:
-            alias: 别名（用户友好名称）
-            target_name: 目标节点名称
+            alias: the alias (user-friendly name)
+            target_name: the target node name
         """
         with cls._lock:
             if target_name not in cls._registry:
-                logger.debug(f"别名 '{alias}' → '{target_name}' 目标节点未注册 (节点导入后自动解析)")
+                logger.debug(f"Alias '{alias}' → '{target_name}' target node not yet registered (auto-resolves after node import)")
             cls._name_aliases[alias] = target_name
-        logger.debug(f"注册别名: {alias} → {target_name}")
+        logger.debug(f"Alias registered: {alias} → {target_name}")
 
     @classmethod
     def resolve_alias(cls, name: str) -> str:
-        """解析别名，返回后端节点名称。
+        """Resolve an alias, returning the backend node name.
 
         Args:
-            name: 用户输入的名称（可能是别名）
+            name: the user-entered name (possibly an alias)
 
         Returns:
-            str: 后端节点名称
+            str: the backend node name
         """
         with cls._lock:
             if name in cls._registry:
@@ -557,13 +562,13 @@ class NodeRegistry:
 
     @classmethod
     def list_aliases(cls) -> Dict[str, str]:
-        """列出所有别名映射。"""
+        """List all alias mappings."""
         with cls._lock:
             return dict(cls._name_aliases)
 
     @classmethod
     def list(cls, category: Optional[NodeCategory] = None) -> List[Dict[str, Any]]:
-        """列出所有注册的节点类型（可选按分类过滤）。"""
+        """List all registered node types (optionally filtered by category)."""
         with cls._lock:
             items = list(cls._registry.items())
         result = []
@@ -585,30 +590,30 @@ class NodeRegistry:
 
     @classmethod
     def freeze_builtins(cls, *, extra_names: Optional[set] = None) -> None:
-        """E-13: 冻结基线内置节点名。import_all_nodes 后调用。
+        """E-13: freeze the baseline builtin node names. Called after import_all_nodes.
 
-        仅冻结实际节点模块注册的名 (extra_names), 不含测试 fixture 等非模块名。
-        冻结后 unregister 拒卸内置名 (防恶意插件 node_map 谎报拥有 shell_exec →
-        loader.unload 调 unregister("shell_exec") 删内置节点)。
+        Only freezes names actually registered by node modules (extra_names), not test fixtures or other non-module names.
+        After freezing, unregister refuses to unload builtin names (prevents a malicious plugin node_map falsely claiming
+        shell_exec → loader.unload calling unregister("shell_exec") to delete builtins).
 
         Args:
-            extra_names: 本次模块新注册的节点名集合, 累加到已有 builtin 快照。
+            extra_names: set of node names newly registered by this module, accumulated into the existing builtin snapshot.
         """
         with cls._lock:
             if extra_names:
                 cls._builtin_names |= extra_names
             cls._builtins_frozen = True
-        logger.info(f"基线内置节点冻结: {len(cls._builtin_names)} 个")
+        logger.info(f"Baseline builtin nodes frozen: {len(cls._builtin_names)} names")
 
     @classmethod
     def unregister(cls, name: str, *, force: bool = False) -> None:
-        """注销节点类型 (同时释放保护标记)。
+        """Unregister a node type (also releases the protection mark).
 
-        E-13: 内置基线节点拒绝卸载 (force=True 显式覆盖, 仅内部卸载重注册场景)。
+        E-13: builtin baseline nodes refuse unloading (force=True explicitly overrides; internal unload-reregister scenarios only).
         """
         with cls._lock:
             if cls._builtins_frozen and name in cls._builtin_names and not force:
-                logger.error(f"拒卸载内置节点 '{name}' (E-13: 防插件 node_map 劫持删内置)")
+                logger.error(f"Refusing to unload builtin node '{name}' (E-13: prevents plugin node_map hijack-deleting builtins)")
                 return
             cls._registry.pop(name, None)
             cls._protected_names.discard(name)
@@ -616,7 +621,7 @@ class NodeRegistry:
 
     @classmethod
     def clear(cls) -> None:
-        """清空注册表。"""
+        """Clear the registry."""
         with cls._lock:
             cls._registry.clear()
             cls._kernel_registry = KernelNodeRegistry()
@@ -626,9 +631,9 @@ class NodeRegistry:
 
 
 def register_node(func=None, *, name: str = ""):
-    """装饰器：便捷注册节点。
+    """Decorator: convenient node registration.
 
-    用法:
+    Usage:
         @register_node
         class MyNode(BaseNode): ...
 

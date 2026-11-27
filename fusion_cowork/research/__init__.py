@@ -1,7 +1,7 @@
-"""深度研究包 — P2-6。
+"""Deep research package - P2-6.
 
-多 Agent 研究: 规划 (分解问题) → 搜索 (并行 web 搜索) → 合成 (LLM 汇总带引用报告)。
-LLM 不可用时降级返回结构化原始发现。
+Multi-agent research: planning (decompose question) -> search (parallel web search) -> synthesis (LLM-summarized report with citations).
+Degrades to structured raw findings when LLM is unavailable.
 """
 
 from .deep_research import (

@@ -1,16 +1,16 @@
-"""协作空间持久化存储 — 双后端 (v0.4.0 Stage 3).
+"""Collaborative space persistence store — dual backend (v0.4.0 Stage 3).
 
-14 张表: spaces, space_members, space_messages, space_comments,
-         space_agents, space_snapshots, space_invite_links,
-         space_workflows, space_artifacts, sync_events,
-         sidebar_modules, space_notifications (+ schema_migrations)。
+14 tables: spaces, space_members, space_messages, space_comments,
+           space_agents, space_snapshots, space_invite_links,
+           space_workflows, space_artifacts, sync_events,
+           sidebar_modules, space_notifications (+ schema_migrations).
 
-后端选择 (Option C 单类):
-- 传 dsn 或 env DATABASE_URL (issue #221, 规范 DB-3; 旧名 FUSION_PG_DSN 仍接受) → postgres (asyncpg pool, RLS 纵深防御)
-- 只传 data_dir → sqlite (aiosqlite WAL, 测试/本地替身)
+Backend selection (Option C single class):
+- dsn or env DATABASE_URL given (issue #221, spec DB-3; legacy name FUSION_PG_DSN still accepted) → postgres (asyncpg pool, RLS defense-in-depth)
+- only data_dir given → sqlite (aiosqlite WAL, test/local stand-in)
 
-SQL 全用 ? 占位符 (SQLite 风格); postgres 路径经 _DbHandle.exec 自动 ?→$1,$2 归一化。
-946 测试零改动 (仍传 data_dir, 选 sqlite)。
+All SQL uses ? placeholders (SQLite style); the postgres path normalizes ?→$1,$2 automatically via _DbHandle.exec.
+946 tests unchanged (still pass data_dir, selecting sqlite).
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_DATA_DIR = os.path.expanduser("~/.fusion-cowork/spaces")
 _DB_FILENAME = "spaces.db"
-# issue #221 (规范 DB-3): DATABASE_URL 为唯一规范连接名; FUSION_PG_DSN 旧名仍接受
+# issue #221 (spec DB-3): DATABASE_URL is the single canonical connection name; legacy name FUSION_PG_DSN still accepted
 _PG_DSN_ENV = "DATABASE_URL"
 _PG_DSN_ENV_LEGACY = "FUSION_PG_DSN"
 
@@ -200,9 +200,10 @@ CREATE INDEX IF NOT EXISTS idx_space_artifacts_space ON space_artifacts(space_id
 CREATE INDEX IF NOT EXISTS idx_sync_events_space ON sync_events(space_id);
 """
 
-# #122: tenant 索引不能进 _SCHEMA_SQL — 旧库表无 tenant_id 列, executescript 会
-# `no such column: tenant_id` 直接死, MigrationRunner v1 (ADD COLUMN) 永远没机会跑。
-# 这 4 条索引在 MigrationRunner.run_pending() 之后执行 (v1 已补列, IF NOT EXISTS 幂等)。
+# #122: tenant indexes must not go into _SCHEMA_SQL — old databases lack the tenant_id column,
+# executescript would die immediately with `no such column: tenant_id` and MigrationRunner v1
+# (ADD COLUMN) would never get a chance to run. These 4 indexes run after MigrationRunner.run_pending()
+# (v1 has added the columns; IF NOT EXISTS keeps it idempotent).
 _TENANT_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_space_members_tenant ON space_members(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_space_messages_tenant ON space_messages(tenant_id);
@@ -212,16 +213,16 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_tenant ON audit_log(tenant_id, created_
 
 
 def _pg_schema_sql() -> str:
-    """Postgres 方言变体 — 把 SQLite 特有语法换为 Postgres 兼容。
+    """Postgres dialect variant — swaps SQLite-specific syntax for Postgres-compatible forms.
 
     - INTEGER PRIMARY KEY AUTOINCREMENT → BIGSERIAL PRIMARY KEY
-    其余 TEXT/INTEGER/CREATE INDEX IF NOT EXISTS 两边兼容。
+    The remaining TEXT/INTEGER/CREATE INDEX IF NOT EXISTS are compatible on both sides.
     """
     return _SCHEMA_SQL.replace("id INTEGER PRIMARY KEY AUTOINCREMENT", "id BIGSERIAL PRIMARY KEY")
 
 
 class _ExecResult:
-    """写操作结果 — rowcount (影响行数) + lastrowid (sqlite AUTOINCREMENT id)。"""
+    """Write result — rowcount (affected rows) + lastrowid (sqlite AUTOINCREMENT id)."""
 
     __slots__ = ("lastrowid", "rowcount")
 
@@ -231,9 +232,9 @@ class _ExecResult:
 
 
 def _parse_pg_rowcount(status: str) -> int:
-    """asyncpg execute() 返回命令标签 — 解析影响行数。
+    """Parses the command tag returned by asyncpg execute() into affected row count.
 
-    "DELETE 3" → 3; "INSERT 0 1" → 1; "UPDATE 2" → 2; "BEGIN"/"COMMIT" → 0。
+    "DELETE 3" → 3; "INSERT 0 1" → 1; "UPDATE 2" → 2; "BEGIN"/"COMMIT" → 0.
     """
     if not status:
         return 0
@@ -244,19 +245,19 @@ def _parse_pg_rowcount(status: str) -> int:
 
 
 class _DbHandle:
-    """统一 DB 句柄 — 跨 sqlite/postgres。
+    """Unified DB handle — works across sqlite/postgres.
 
-    SQL 保持 ? 占位符 (SQLite 风格); postgres 路径自动归一化为 $1,$2。
-    - exec: 写, 返回 _ExecResult (rowcount/lastrowid)
-    - fetchone/fetchall/fetchval: 读, 返回行/列表/标量
-    行访问 row["col"] 两后端兼容 (aiosqlite.Row + asyncpg.Record)。
+    SQL keeps ? placeholders (SQLite style); the postgres path normalizes them to $1,$2 automatically.
+    - exec: write, returns _ExecResult (rowcount/lastrowid)
+    - fetchone/fetchall/fetchval: read, returns row/list/scalar
+    Row access row["col"] is compatible on both backends (aiosqlite.Row + asyncpg.Record).
     """
 
     def __init__(self, backend: str, conn: Any, owned: bool, pool: Any = None):
         self._backend = backend
         self._conn = conn
-        self._owned = owned  # postgres read/tx: 用完归还 pool; sqlite: 共享 conn 不归还
-        self._pool = pool  # postgres: 归还 conn 用
+        self._owned = owned  # postgres read/tx: return conn to pool after use; sqlite: shared conn, not returned
+        self._pool = pool  # postgres: used to return the conn
 
     async def exec(self, sql: str, params: Any = ()) -> _ExecResult:
         if self._backend == "sqlite":
@@ -301,16 +302,16 @@ class _DbHandle:
             await self._conn.execute("ROLLBACK")
 
     async def close(self) -> None:
-        # postgres 归还 conn 到 pool; sqlite 共享 conn 不关
+        # postgres returns the conn to the pool; sqlite shared conn is not closed
         if self._owned and self._backend == "postgres" and self._pool is not None:
             try:
                 await self._pool.release(self._conn)
             except Exception as e:
-                logger.warning(f"postgres conn 归还失败: {e}")
+                logger.warning(f"postgres conn release failed: {e}")
 
 
 def _sqlite_executor(db: aiosqlite.Connection):
-    """MigrationRunner executor — sqlite (aiosqlite conn)。"""
+    """MigrationRunner executor — sqlite (aiosqlite conn)."""
 
     async def _exec(sql: str, params: Any = (), read: bool = False):
         cursor = await db.execute(sql, params or ())
@@ -323,7 +324,7 @@ def _sqlite_executor(db: aiosqlite.Connection):
 
 
 def _pg_executor(conn: Any):
-    """MigrationRunner executor — postgres (asyncpg conn, 事务内)。"""
+    """MigrationRunner executor — postgres (asyncpg conn, inside a transaction)."""
 
     async def _exec(sql: str, params: Any = (), read: bool = False):
         pgsql = normalize_placeholders(sql)
@@ -336,9 +337,9 @@ def _pg_executor(conn: Any):
 
 
 class SpaceStore:
-    """协作空间存储 — 双后端 (sqlite/postgres) 异步 CRUD。
+    """Collaborative space store — dual-backend (sqlite/postgres) async CRUD.
 
-    传 dsn (或 env DATABASE_URL, 旧名 FUSION_PG_DSN) → postgres asyncpg pool; 只传 data_dir → sqlite aiosqlite。
+    Pass a dsn (or env DATABASE_URL, legacy name FUSION_PG_DSN) → postgres asyncpg pool; pass only data_dir → sqlite aiosqlite.
     """
 
     def __init__(
@@ -354,11 +355,11 @@ class SpaceStore:
         self._db: Optional[aiosqlite.Connection] = None
         self._pool = None  # asyncpg.Pool (postgres)
         self._trajectory_exporter = trajectory_exporter
-        # A-8: sqlite 写事务序列化锁 — 单共享连接下并发写必 OperationalError: database is locked。
-        # asyncio.Lock 让写串行, 配 busy_timeout 重试, 不再裸 commit。postgres 走 pool+MVCC, 此锁 no-op。
+        # A-8: sqlite write-transaction serialization lock — with a single shared connection, concurrent writes always hit OperationalError: database is locked.
+        # asyncio.Lock serializes writes, paired with busy_timeout retries, no more bare commits. Postgres uses pool+MVCC, so this lock is a no-op there.
         self._write_lock = asyncio.Lock()
-        # issue #463: _ensure_db 并发触发 initialize 双跑 — 第二个 executescript 会撞
-        # 'no such table' (WAL 下另一连接尚未见到未提交 schema)。锁 + 幂等哨兵。
+        # issue #463: concurrent _ensure_db triggers used to double-run initialize — the second executescript
+        # would hit 'no such table' (under WAL the other connection has not yet seen the uncommitted schema). Lock + idempotent sentinel.
         self._init_lock = asyncio.Lock()
         self._initialized = False
 
@@ -387,26 +388,26 @@ class SpaceStore:
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA foreign_keys=ON")
-        # A-8: busy_timeout 5s — 写冲突时等待而非立即报 locked。
+        # A-8: busy_timeout 5s — wait on write conflicts instead of failing immediately with locked.
         await self._db.execute("PRAGMA busy_timeout=5000")
         await self._db.executescript(_SCHEMA_SQL)
-        # 版本化迁移 (替旧盲 ALTER try/except)
+        # Versioned migrations (replaces the old blind ALTER try/except)
         runner = MigrationRunner(
             "sqlite",
             executor=_sqlite_executor(self._db),
             error_class=aiosqlite.OperationalError,
         )
         await runner.run_pending()
-        # #122: tenant 索引须在 v1 (ADD COLUMN tenant_id) 之后建
+        # #122: tenant indexes must be created after v1 (ADD COLUMN tenant_id)
         await self._db.executescript(_TENANT_INDEX_SQL)
         await self._db.commit()
-        logger.info(f"SpaceStore 初始化完成 (sqlite): {self._db_path}")
+        logger.info(f"SpaceStore initialization complete (sqlite): {self._db_path}")
 
     async def _init_postgres(self) -> None:
         try:
             import asyncpg
         except ImportError as e:
-            raise RuntimeError("postgres 后端需 asyncpg: pip install 'fusion-cowork[cloud]'") from e
+            raise RuntimeError("postgres backend requires asyncpg: pip install 'fusion-cowork[cloud]'") from e
         import asyncpg
 
         self._pool = await asyncpg.create_pool(dsn=self._dsn, min_size=2, max_size=10)
@@ -418,22 +419,22 @@ class SpaceStore:
                 error_class=asyncpg.DuplicateColumnError,
             )
             await runner.run_pending()
-            # #122: tenant 索引须在 v1 (ADD COLUMN tenant_id) 之后建
+            # #122: tenant indexes must be created after v1 (ADD COLUMN tenant_id)
             for stmt in filter(None, (s.strip() for s in _TENANT_INDEX_SQL.split(";"))):
                 await conn.execute(stmt)
-            # RLS 纵深防御 (仅 postgres): SQL 漏 tenant_id 守卫时仍挡跨租户
+            # RLS defense-in-depth (postgres only): still blocks cross-tenant access when SQL misses a tenant_id guard
             await apply_rls(conn)
-        logger.info("SpaceStore 初始化完成 (postgres): pool min=2 max=10")
+        logger.info("SpaceStore initialization complete (postgres): pool min=2 max=10")
 
     async def close(self) -> None:
         if self._db:
             await self._db.close()
             self._db = None
-            logger.info("SpaceStore 已关闭 (sqlite)")
+            logger.info("SpaceStore closed (sqlite)")
         if self._pool:
             await self._pool.close()
             self._pool = None
-            logger.info("SpaceStore 已关闭 (postgres pool)")
+            logger.info("SpaceStore closed (postgres pool)")
 
     async def _ensure_db(self) -> Any:
         if self._db is None and self._backend == "sqlite":
@@ -441,16 +442,16 @@ class SpaceStore:
         return self._db
 
     async def _read_handle(self) -> _DbHandle:
-        """读路径句柄 — sqlite 用共享 conn; postgres 从 pool 取一个 conn (用完归还)。"""
+        """Read-path handle — sqlite uses the shared conn; postgres takes one conn from the pool (returned after use)."""
         if self._backend == "sqlite":
             db = await self._ensure_db()
             return _DbHandle(self._backend, db, owned=False)
-        # postgres: 调用方用完必须 await handle.close() 归还 conn
+        # postgres: the caller must await handle.close() to return the conn after use
         conn = await self._pool.acquire()
         return _DbHandle(self._backend, conn, owned=True, pool=self._pool)
 
-    # A-8: 写事务上下文 — sqlite 串行锁 + BEGIN IMMEDIATE; postgres pool.acquire + BEGIN。
-    # 所有写方法 (含 artifact service) 走此上下文, 杜绝裸 commit。
+    # A-8: write transaction context — sqlite serial lock + BEGIN IMMEDIATE; postgres pool.acquire + BEGIN.
+    # All write methods (including the artifact service) go through this context, eliminating bare commits.
     class _WriteTx:
         def __init__(self, store: SpaceStore, tenant_id: Optional[str] = None):
             self._store = store
@@ -467,7 +468,7 @@ class SpaceStore:
             else:
                 conn = await store._pool.acquire()
                 await conn.execute("BEGIN")
-                # RLS: 设本事务的 tenant 上下文, 策略据此过滤
+                # RLS: set this transaction's tenant context; policies filter on it
                 if self._tenant_id is not None:
                     await set_tenant_context(conn, self._tenant_id)
                 self.handle = _DbHandle("postgres", conn, owned=True, pool=store._pool)
@@ -482,7 +483,7 @@ class SpaceStore:
                 else:
                     await h.rollback()
             except Exception as ce:
-                logger.error(f"_WriteTx 收尾异常: {ce}")
+                logger.error(f"_WriteTx finalization error: {ce}")
             finally:
                 await h.close()
                 if self._store._backend == "sqlite":
@@ -490,10 +491,10 @@ class SpaceStore:
             return False
 
     def write_tx(self, tenant_id: Optional[str] = None) -> _WriteTx:
-        # 公共入口 — artifact/service 等跨模块写共享同一串行事务, 保证写隔离。
+        # Public entry point — cross-module writes (artifact/service, etc.) share the same serial transaction for write isolation.
         return self._WriteTx(self, tenant_id=tenant_id)
 
-    # ── 读辅助 — sqlite 用共享 conn; postgres pool 取+归还 ──
+    # ── Read helpers — sqlite uses the shared conn; postgres takes from the pool and returns it ──
 
     async def _fetchone(self, sql: str, params: Any = ()) -> Any:
         h = await self._read_handle()
@@ -520,10 +521,11 @@ class SpaceStore:
 
     async def create_space(self, space: Space, tenant_id: Optional[str] = None) -> Space:
         tid = resolve_tenant_id(tenant_id or getattr(space, "tenant_id", None))
-        # 始终用解析后的 tid 覆盖 space.tenant_id — 防调用方未显式设 (默认 DEFAULT_TENANT)
-        # 却传 tenant_id 参数时, space 对象仍带旧默认导致下游 (add_member 等) 错租户。
+        # Always overwrite space.tenant_id with the resolved tid — prevents the case where the caller
+        # does not set it explicitly (default DEFAULT_TENANT) but passes a tenant_id argument, leaving the
+        # space object carrying the old default and sending downstream (add_member etc.) to the wrong tenant.
         space.tenant_id = tid
-        # Stage 7: per-tenant 配额校验 (opt-in, 无 config 配额 → 无限透传)
+        # Stage 7: per-tenant quota check (opt-in; no quota configured → unlimited pass-through)
         from ..security.quotas import get_default_quota_enforcer
 
         try:
@@ -532,7 +534,7 @@ class SpaceStore:
         except Exception as e:
             if "QuotaExceeded" in type(e).__name__:
                 raise
-            logger.debug(f"配额校验跳过: {e}")
+            logger.debug(f"quota check skipped: {e}")
         async with self.write_tx(tid) as h:
             await h.exec(
                 "INSERT INTO spaces (id, name, description, owner_id, status, "
@@ -590,13 +592,13 @@ class SpaceStore:
 
     async def update_space(self, space_id: str, tenant_id: Optional[str] = None, **kwargs) -> Optional[Space]:
         tid = resolve_tenant_id(tenant_id)
-        # CR-4: 列白名单, 拒非白名单列 (防 kwargs 插值注入未知列名)
+        # CR-4: column whitelist, rejects non-whitelisted columns (prevents kwargs interpolation injecting unknown column names)
         _ALLOWED = {"name", "description", "owner_id", "status", "kb_bind_mode", "kb_id", "collab_mode", "config"}
         sets = []
         params: list = []
         for key, val in kwargs.items():
             if key not in _ALLOWED:
-                logger.warning(f"SpaceStore.update_space 拒非白名单列: {key}")
+                logger.warning(f"SpaceStore.update_space rejected non-whitelisted column: {key}")
                 continue
             if key == "config":
                 sets.append("config = ?")
@@ -671,7 +673,7 @@ class SpaceStore:
                 (member.space_id, tid),
             )
             if max_members > 0 and int(cur or 0) >= max_members:
-                raise ValueError(f"空间 {member.space_id} 已满 ({max_members} 人)")
+                raise ValueError(f"space {member.space_id} is full ({max_members} members)")
             await h.exec(
                 "INSERT INTO space_members (space_id, user_id, role, display_name, joined_at, last_active, tenant_id) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -713,13 +715,13 @@ class SpaceStore:
         self, space_id: str, user_id: str, tenant_id: Optional[str] = None, **kwargs
     ) -> Optional[SpaceMember]:
         tid = resolve_tenant_id(tenant_id)
-        # CR-4: 列白名单
+        # CR-4: column whitelist
         _ALLOWED = {"role", "display_name", "last_active"}
         sets = []
         params: list = []
         for key, val in kwargs.items():
             if key not in _ALLOWED:
-                logger.warning(f"SpaceStore.update_member 拒非白名单列: {key}")
+                logger.warning(f"SpaceStore.update_member rejected non-whitelisted column: {key}")
                 continue
             if isinstance(val, SpaceRole):
                 val = val.value
@@ -778,7 +780,7 @@ class SpaceStore:
             except Exception as e:
                 if "QuotaExceeded" in type(e).__name__:
                     raise
-                logger.debug(f"配额校验跳过: {e}")
+                logger.debug(f"quota check skipped: {e}")
             await h.exec(
                 "INSERT INTO space_messages (id, space_id, user_id, agent_id, role, content, "
                 "content_type, attachments, parent_msg_id, thread_id, metadata, created_at, tenant_id) "
@@ -804,7 +806,7 @@ class SpaceStore:
             try:
                 self._trajectory_exporter.export_message(msg)
             except Exception as e:
-                logger.error(f"space 轨迹导出失败 msg={msg.id}: {e}")
+                logger.error(f"space trajectory export failed msg={msg.id}: {e}")
         return msg
 
     async def get_messages(
@@ -846,7 +848,7 @@ class SpaceStore:
 
         tid = resolve_tenant_id(tenant_id or agent_data.get("tenant_id"))
         agent_id = agent_data.get("id") or f"agent_{uuid.uuid4().hex[:8]}"
-        # Stage 7: per-tenant agent quota (opt-in, default 无限)
+        # Stage 7: per-tenant agent quota (opt-in, unlimited by default)
         from ..security.quotas import get_default_quota_enforcer
 
         try:
@@ -858,7 +860,7 @@ class SpaceStore:
         except Exception as e:
             if "QuotaExceeded" in type(e).__name__:
                 raise
-            logger.debug(f"配额校验跳过: {e}")
+            logger.debug(f"quota check skipped: {e}")
         async with self.write_tx(tid) as h:
             await h.exec(
                 "INSERT INTO space_agents (id, space_id, name, agent_type, system_prompt, "

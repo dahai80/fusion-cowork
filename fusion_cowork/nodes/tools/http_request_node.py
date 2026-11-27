@@ -1,11 +1,11 @@
-"""issue #206: 通用 HTTP 请求节点 — DAG 内调用任意外部 REST API。
+"""issue #206: generic HTTP request node — call any external REST API from the DAG.
 
-一节点一次请求: method/url/headers/body, 请求体支持 ${dotted.path} 模板
-(从上游输入/首节点注入解析); 响应 JSON 进 step 输出供下游消费;
-非 2xx 映射为节点失败 (run 状态对账成立)。
-高危节点 (任意目标请求面), 权限规则支持 url: 前缀 scope 精确授权。
-本节点面向本机/内网自家服务 (local-first), 与 fetch_url 的公网 SSRF 策略不同,
-不做私网拦截 — 由 HIGH_RISK 默认拒 + url: scope 显式放行控制。
+One request per node: method/url/headers/body; the request body supports ${dotted.path} templates
+(resolved from upstream inputs / first-node injection); the response JSON lands in step output for downstream consumption;
+non-2xx maps to node failure (run status reconciliation holds).
+High-risk node (arbitrary-target request surface); permission rules support url:-prefix scopes for precise authorization.
+This node targets local/intranet first-party services (local-first); unlike fetch_url's public-internet SSRF policy,
+it does no private-network blocking — controlled by HIGH_RISK default-deny + explicit url: scope allow.
 """
 
 import json
@@ -32,9 +32,9 @@ _MAX_BODY_SNIPPET = 500
 
 
 def resolve_template(value: Any, context: Dict[str, Any]) -> Any:
-    # 递归解析 url/headers/body 中的 ${dotted.path} — 从上游输入 (含首节点注入)
-    # 逐级取值; ${env.VAR} 从进程环境取值 (issue #287: 模板鉴权头不硬编码);
-    # 未命中保留字面量并记 WARNING (调用方可观测漏配)。
+    # Recursively resolve ${dotted.path} in url/headers/body — values fetched level by level
+    # from upstream inputs (including first-node injection); ${env.VAR} reads the process env (issue #287: template auth headers are not hardcoded);
+    # on a miss the literal is kept and a WARNING is logged (missed config is observable to the caller).
     if isinstance(value, str):
         return _TEMPLATE_RE.sub(lambda m: _lookup(m.group(1), context, m.group(0)), value)
     if isinstance(value, dict):
@@ -45,17 +45,17 @@ def resolve_template(value: Any, context: Dict[str, Any]) -> Any:
 
 
 def _lookup(path: str, context: Dict[str, Any], literal: str) -> str:
-    # issue #287: ${env.VAR} 前缀 — 鉴权头等敏感值从环境注入, 不落模板明文
+    # issue #287: the ${env.VAR} prefix — sensitive values such as auth headers are injected from the environment, never as template plaintext
     if path.startswith("env."):
         env_val = os.environ.get(path[4:], "")
         if env_val:
             return env_val
-        logger.warning(f"http_request: 环境变量未命中, 保留字面量: {literal}")
+        logger.warning(f"http_request: env variable miss, keeping the literal: {literal}")
         return literal
     node: Any = context
     for part in path.split("."):
         if not isinstance(node, dict) or part not in node:
-            logger.warning(f"http_request: 模板变量未命中, 保留字面量: {literal}")
+            logger.warning(f"http_request: template variable miss, keeping the literal: {literal}")
             return literal
         node = node[part]
     if isinstance(node, (dict, list)):
@@ -66,22 +66,32 @@ def _lookup(path: str, context: Dict[str, Any], literal: str) -> str:
 @register_node
 class HttpRequestNode(BaseNode):
     name = "http_request"
+    # i18n: user-facing
     display_name = "HTTP 请求"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "发起任意 HTTP 请求 (method/url/headers/body), 响应 JSON 供下游节点消费"
     icon = "🌐"
+    # i18n: user-facing
     default_label = "HTTP 请求"
 
     inputs = [
         {"key": "url", "label": "URL", "type": "string"},
+        # i18n: user-facing
         {"key": "method", "label": "HTTP 方法", "type": "string"},
+        # i18n: user-facing
         {"key": "headers", "label": "请求头 (JSON 对象)", "type": "object"},
+        # i18n: user-facing
         {"key": "body", "label": "请求体 (JSON 对象或字符串)", "type": "object"},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "status_code", "label": "响应状态码", "type": "integer"},
+        # i18n: user-facing
         {"key": "json", "label": "响应 JSON (解析失败为 None)", "type": "object"},
+        # i18n: user-facing
         {"key": "text", "label": "响应文本", "type": "string"},
+        # i18n: user-facing
         {"key": "headers", "label": "响应头", "type": "object"},
     ]
 
@@ -90,16 +100,20 @@ class HttpRequestNode(BaseNode):
             "type": "object",
             "properties": {
                 "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"], "default": "POST"},
+                # i18n: user-facing
                 "url": {"type": "string", "description": "目标 URL (http/https)"},
+                # i18n: user-facing
                 "headers": {"type": "object", "description": "请求头 (如鉴权)", "default": {}},
+                # i18n: user-facing
                 "body": {"description": "请求体 (对象或 JSON 字符串), 支持 ${path} 模板", "default": {}},
+                # i18n: user-facing
                 "timeout": {"type": "number", "description": "超时秒数", "default": 30},
             },
             "required": ["url"],
         }
 
     def _client(self, timeout: float) -> httpx.AsyncClient:
-        # 测试接缝: 子类/monkeypatch 可注入 MockTransport
+        # Test seam: subclasses/monkeypatch can inject a MockTransport
         return httpx.AsyncClient(timeout=timeout, trust_env=False)
 
     async def execute(self, inputs: Dict[str, Any]) -> NodeResult:
@@ -111,19 +125,19 @@ class HttpRequestNode(BaseNode):
         timeout = float(params.get("timeout", 30) or 30)
 
         if not url:
-            return NodeResult(status=NodeStatus.FAILED, error="缺少 url 参数", summary="参数缺失")
+            return NodeResult(status=NodeStatus.FAILED, error="Missing url param", summary="Missing params")
         if not url.startswith(("http://", "https://")):
-            return NodeResult(status=NodeStatus.FAILED, error=f"非法 URL: {url}", summary="参数非法")
+            return NodeResult(status=NodeStatus.FAILED, error=f"Invalid URL: {url}", summary="Bad params")
         if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
-            return NodeResult(status=NodeStatus.FAILED, error=f"不支持的 HTTP 方法: {method}", summary="参数非法")
+            return NodeResult(status=NodeStatus.FAILED, error=f"Unsupported HTTP method: {method}", summary="Bad params")
 
         headers = resolve_template(headers, inputs)
-        # issue #287: 鉴权头安全 — 解析后仍含 ${...} 的头 (env 未配) 直接丢弃,
-        # 绝不把模板字面量当凭证发出去; body 保留字面量 (向后兼容, 可观测)。
+        # issue #287: auth header safety — headers still containing ${...} after resolution (env unset) are dropped outright,
+        # never sending the template literal as a credential; body keeps the literal (backward compatible, observable).
         dropped = [k for k, v in headers.items() if isinstance(v, str) and "${" in v]
         for k in dropped:
             headers.pop(k, None)
-            logger.warning(f"http_request: 鉴权头模板未解析, 已丢弃该头: {k}")
+            logger.warning(f"http_request: auth header template unresolved, header dropped: {k}")
         body = resolve_template(body, inputs)
         if isinstance(body, str):
             try:
@@ -138,17 +152,17 @@ class HttpRequestNode(BaseNode):
                 request_kwargs["content"] = str(body)
 
         logger.info(
-            f"http_request: {method} {url} (body={'有' if 'json' in request_kwargs or 'content' in request_kwargs else '无'})"
+            f"http_request: {method} {url} (body={'yes' if 'json' in request_kwargs or 'content' in request_kwargs else 'no'})"
         )
         try:
             async with self._client(timeout) as client:
                 resp = await client.request(method, url, **request_kwargs)
         except httpx.TimeoutException as e:
-            logger.warning(f"http_request: 超时 {method} {url}: {e}")
-            return NodeResult(status=NodeStatus.FAILED, error=f"HTTP 请求超时: {e}", summary="请求超时")
+            logger.warning(f"http_request: timeout {method} {url}: {e}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"HTTP request timed out: {e}", summary="Request timed out")
         except httpx.HTTPError as e:
-            logger.warning(f"http_request: 连接失败 {method} {url}: {e}")
-            return NodeResult(status=NodeStatus.FAILED, error=f"HTTP 连接失败: {e}", summary="连接失败")
+            logger.warning(f"http_request: connection failed {method} {url}: {e}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"HTTP connection failed: {e}", summary="Connection failed")
 
         text = resp.text
         try:
@@ -158,7 +172,7 @@ class HttpRequestNode(BaseNode):
 
         if resp.status_code < 200 or resp.status_code >= 300:
             snippet = text[:_MAX_BODY_SNIPPET]
-            logger.warning(f"http_request: 非 2xx 响应 {method} {url} status={resp.status_code}")
+            logger.warning(f"http_request: non-2xx response {method} {url} status={resp.status_code}")
             return NodeResult(
                 status=NodeStatus.FAILED,
                 error=f"HTTP {resp.status_code}: {snippet}",
@@ -166,7 +180,7 @@ class HttpRequestNode(BaseNode):
                 summary=f"HTTP {resp.status_code}",
             )
 
-        logger.info(f"http_request: {method} {url} 成功 status={resp.status_code} ({len(text)} chars)")
+        logger.info(f"http_request: {method} {url} succeeded status={resp.status_code} ({len(text)} chars)")
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={
@@ -175,5 +189,5 @@ class HttpRequestNode(BaseNode):
                 "text": text,
                 "headers": dict(resp.headers),
             },
-            summary=f"HTTP {resp.status_code} 成功",
+            summary=f"HTTP {resp.status_code} succeeded",
         )

@@ -1,8 +1,8 @@
 # 109: fusion-harness kernel shim for hooks.
 # Cowork public API (HookManager/HookEvent/HookContext, 14 cowork events,
 # priority ordering, fail-closed PRE_* events) lives in hook_manager.py;
-# kernel types come from the fusion-harness package ([plugins] extra, #2; 裸装
-# 缺包时给出可执行安装指引 — issue #196).
+# kernel types come from the fusion-harness package ([plugins] extra, #2; a
+# bare install gets an actionable install hint — issue #196).
 # Cowork hook semantics (priority, HookContext, fail_closed) do not map 1:1
 # onto the kernel, so HookManager stays backed by the cowork implementation.
 

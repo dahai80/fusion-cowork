@@ -47,6 +47,7 @@ export function govGateProgress(steps: GovStep[]): GateProgressItem[] {
 
 export function isGovernanceRun(workflowName: string): boolean {
     const n = workflowName ?? '';
+    // i18n: user-facing
     return n.includes('G1-G5') || n.includes('governance') || n.includes('治理');
 }
 

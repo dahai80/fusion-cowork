@@ -1,14 +1,14 @@
-"""Fusion-Cowork Space — 协作空间模块。
+"""Fusion-Cowork Space — collaborative space module.
 
-V2.0 M6 里程碑: 离线协作空间基础。
-V2.0 M7 里程碑: 共享对话 + 知识库绑定。
-提供本地优先的多人协作环境，支持:
-- 空间 CRUD (create/list/get/update/archive/delete)
-- 成员管理 (invite/join/leave/role)
-- 基于角色的权限控制 (Owner/Admin/Member/Viewer)
-- 共享对话上下文 + SSE 流式
-- 知识库绑定 + 文档管理 + RAG
-- P2P 同步 (CRDT LWW-Register)
+V2.0 M6 milestone: offline collaborative space foundation.
+V2.0 M7 milestone: shared conversation + knowledge base binding.
+Provides a local-first multi-user collaboration environment, supporting:
+- Space CRUD (create/list/get/update/archive/delete)
+- Member management (invite/join/leave/role)
+- Role-based permission control (Owner/Admin/Member/Viewer)
+- Shared conversation context + SSE streaming
+- Knowledge base binding + document management + RAG
+- P2P sync (CRDT LWW-Register)
 """
 
 from __future__ import annotations

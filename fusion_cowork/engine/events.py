@@ -1,9 +1,9 @@
-"""流式事件 — 工作流执行过程的实时事件推送。
+"""Streaming events — real-time event push for workflow execution.
 
-EventEmitter 支持：
-- 事件发布/订阅（pub/sub）
-- SSE 推送到 HTTP 客户端
-- 事件缓冲（断线重连后回放）
+EventEmitter supports:
+- event publish/subscribe (pub/sub)
+- SSE push to HTTP clients
+- event buffering (replay after reconnect)
 """
 
 import asyncio
@@ -73,12 +73,12 @@ class EventEmitter:
         sub_id = sub_id or f"sub_{uuid.uuid4().hex[:6]}"
         queue = asyncio.Queue(maxsize=500)
         self._subscribers[sub_id] = queue
-        logger.debug(f"EventEmitter 订阅: {sub_id}")
+        logger.debug(f"EventEmitter subscribe: {sub_id}")
         return sub_id, queue
 
     def unsubscribe(self, sub_id: str):
         self._subscribers.pop(sub_id, None)
-        logger.debug(f"EventEmitter 取消订阅: {sub_id}")
+        logger.debug(f"EventEmitter unsubscribe: {sub_id}")
 
     def on_event(self, callback: Callable):
         self._callbacks.append(callback)
@@ -91,12 +91,12 @@ class EventEmitter:
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
-                logger.warning(f"订阅 {sub_id} 队列已满，丢弃事件")
+                logger.warning(f"subscriber {sub_id} queue full, dropping event")
         for cb in self._callbacks:
             try:
                 cb(event)
             except Exception as e:
-                logger.error(f"事件回调异常: {e}")
+                logger.error(f"event callback error: {e}")
         if self._lifecycle_bus is not None:
             try:
                 self._lifecycle_bus.emit(

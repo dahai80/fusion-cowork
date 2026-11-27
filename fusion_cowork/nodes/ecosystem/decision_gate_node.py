@@ -103,20 +103,25 @@ def _low_confidence(answer: Dict[str, Any], threshold: float) -> bool:
 
 @register_node
 class DecisionGateNode(BaseNode):
-    """fusion-mlx 决策门 — 用 Laya 决策头做短状态门控决策, 不烧整轮 LLM."""
+    """fusion-mlx decision gate — typed short-state gating via the Laya decision head, no full LLM turn burned."""
 
     name = "decision_gate"
+    # i18n: user-facing
     display_name = "决策门"
     category = NodeCategory.FUSION_ECOSYSTEM
     description = "Call the fusion-mlx decision lane (/v1/decisions or /v1/laya/decide) for short-state gating; noul/low-confidence falls back to an LLM turn"
     icon = "🚦"
+    # i18n: user-facing
     default_label = "决策门"
 
     inputs = [
+        # i18n: user-facing
         {"key": "state", "label": "决策状态", "type": "object"},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "answers", "label": "决策答案", "type": "object"},
+        # i18n: user-facing
         {"key": "decision_meta", "label": "决策元信息", "type": "object"},
     ]
 
@@ -203,15 +208,15 @@ class DecisionGateNode(BaseNode):
 
         state_raw = inputs.get("state", params.get("state"))
         if state_raw is None or (isinstance(state_raw, str) and not state_raw.strip()):
-            return NodeResult(status=NodeStatus.FAILED, error="缺少必填参数 state")
+            return NodeResult(status=NodeStatus.FAILED, error="missing required param state")
         questions = params.get("questions") or {}
         if not isinstance(questions, dict):
             return NodeResult(
-                status=NodeStatus.FAILED, error="questions 须为对象 {qid: {type, instructions, criteria}}"
+                status=NodeStatus.FAILED, error="questions must be an object {qid: {type, instructions, criteria}}"
             )
         preset = str(params.get("preset") or "")
         if not preset and not questions:
-            return NodeResult(status=NodeStatus.FAILED, error="questions 与 preset 至少填一项")
+            return NodeResult(status=NodeStatus.FAILED, error="fill at least one of questions or preset")
         threshold = 0.5
         try:
             threshold = float(params.get("confidence_threshold", _DEFAULT_CONFIDENCE_THRESHOLD))

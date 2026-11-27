@@ -17,8 +17,10 @@ export function ClusterPage() {
         return (
             <div className="mx-auto max-w-3xl">
                 <EmptyState
+                    // i18n: user-facing
                     title={t('集群未启用', 'Cluster disabled')}
                     description={t(
+                        // i18n: user-facing
                         '设置 FUSION_CLUSTER_ENABLED=1 启用分布式状态层',
                         'Set FUSION_CLUSTER_ENABLED=1 to enable the distributed state layer'
                     )}
@@ -30,12 +32,15 @@ export function ClusterPage() {
     return (
         <div className="mx-auto max-w-3xl">
             <div className="flex items-end justify-between pb-2">
+                {/* i18n: user-facing */}
                 <div className="text-sm font-medium text-text-primary">{t('集群', 'Cluster')}</div>
                 <div className="text-xs text-text-muted">
+                    {/* i18n: user-facing */}
                     {t('节点', 'Nodes')}: {state.nodes.length} · vRAM {state.total_allocated_mb} MB
                 </div>
             </div>
             {state.nodes.length === 0 ? (
+                // i18n: user-facing
                 <EmptyState title={t('暂无节点', 'No nodes')} />
             ) : (
                 <div className="space-y-1">
@@ -63,6 +68,7 @@ export function ClusterPage() {
                             ) : null}
                             <StatusBadge
                                 status={n.last_heartbeat_at ? 'success' : 'offline'}
+                                // i18n: user-facing
                                 label={n.last_heartbeat_at ? t('在线', 'alive') : t('无心跳', 'no heartbeat')}
                             />
                         </div>
@@ -72,6 +78,7 @@ export function ClusterPage() {
             {Object.keys(state.vram).length > 0 ? (
                 <div className="pt-3">
                     <div className="pb-1 text-xs text-text-secondary">
+                        {/* i18n: user-facing */}
                         {t('vRAM 分配 (按插件)', 'vRAM allocations (by plugin)')}
                     </div>
                     <div className="space-y-1">

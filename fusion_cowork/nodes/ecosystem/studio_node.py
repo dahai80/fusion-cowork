@@ -1,11 +1,12 @@
-"""Fusion 生态互通节点 — 对接 fusion-agent-studio 的 graph/agent 运行时。
+"""Fusion ecosystem interop node — bridges to the fusion-agent-studio graph/agent runtime.
 
-通过 agent-studio HTTP REST (默认 127.0.0.1:11442) 提交 graph/agent 运行:
-sync 模式等待终态收集结果 (graph 同步 execute 拿全量 events), async 模式
-返回 run_id 由上游编排。鉴权可选 — 上游未配 key 时本地受信放行, 配置了
-FUSION_AGENT_STUDIO_API_KEY 则随请求携带 (x-api-key)。
+Submits graph/agent runs via agent-studio HTTP REST (default 127.0.0.1:11442):
+sync mode waits for terminal state and collects results (graph sync execute
+returns full events), async mode returns run_id for upstream orchestration.
+Auth is optional — local trusted access when the upstream has no key configured;
+when FUSION_AGENT_STUDIO_API_KEY is set it rides every request (x-api-key).
 
-参考: fusion-agent-studio/agent_runtime/api_server.py (/v1/runs,
+Reference: fusion-agent-studio/agent_runtime/api_server.py (/v1/runs,
 /v1/graphs/{id}/execute, /v1/runs/{id}, /v1/runs/{id}/result,
 /v1/runs/{id}/cancel)
 """
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 # agent-studio daemon — the executed entities live there, not in-process.
 _DEFAULT_BASE_URL = "http://127.0.0.1:11442"
 
-# 对齐 agent-studio task_store._VALID_STATUSES 终态 (canceled 单 l)
+# aligned with agent-studio task_store._VALID_STATUSES terminal states (single-l "canceled")
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "canceled"})
 
 _POLL_INTERVAL = 2.0
@@ -48,7 +49,7 @@ def _get_base_url() -> str:
 
 
 def _build_headers() -> Dict[str, str]:
-    # 上游鉴权可选: 未配置 key 时本地受信放行, 有则 x-api-key 携带
+    # upstream auth optional: locally trusted when no key configured, x-api-key header when set
     key = os.environ.get("FUSION_AGENT_STUDIO_API_KEY", "").strip()
     headers = {"Content-Type": "application/json"}
     if key:
@@ -63,8 +64,8 @@ async def _submit_run(client: httpx.AsyncClient, payload: Dict[str, Any]) -> Dic
 
 
 async def _execute_graph(client: httpx.AsyncClient, graph_id: str, input_text: str) -> Dict[str, Any]:
-    # issue #135 F-1: 上游 GraphExecuteRequest 要求 body 携带 graph_id (与路径参数冗余
-    # 但必填), 缺失 422
+    # issue #135 F-1: upstream GraphExecuteRequest requires graph_id in the body (redundant
+    # with the path param but mandatory), missing -> 422
     resp = await client.post(
         f"/v1/graphs/{graph_id}/execute",
         json={"graph_id": graph_id, "input_text": input_text},
@@ -106,25 +107,33 @@ def _is_budget_exhausted(res: NodeResult) -> bool:
 
 @register_node
 class StudioRunNode(BaseNode):
-    """Studio 运行节点 — cowork DAG 内调用 fusion-agent-studio 运行 graph/agent。
+    """Studio run node — invoke fusion-agent-studio graph/agent runs from within a cowork DAG.
 
-    graph + sync: POST /v1/graphs/{id}/execute 直接拿全量 events;
-    其余: POST /v1/runs 提交, sync 轮询至终态后取 /result, async 返回 run_id。
+    graph + sync: POST /v1/graphs/{id}/execute returns full events directly;
+    otherwise: submit via POST /v1/runs, sync polls to terminal state then fetches
+    /result, async returns run_id.
     """
 
     name = "studio_run"
+    # i18n: user-facing
     display_name = "Studio 运行"
     category = NodeCategory.FUSION_ECOSYSTEM
+    # i18n: user-facing
     description = "调用 fusion-agent-studio 运行 graph/agent (sync 等待终态 / async 返回 run_id)"
     icon = "🎬"
+    # i18n: user-facing
     default_label = "Studio 运行"
 
     inputs = [
+        # i18n: user-facing
         {"key": "input", "label": "输入文本", "type": "string"},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "run_id", "label": "运行 ID", "type": "string"},
+        # i18n: user-facing
         {"key": "status", "label": "运行状态", "type": "string"},
+        # i18n: user-facing
         {"key": "result", "label": "运行结果", "type": "object"},
     ]
 
@@ -134,57 +143,73 @@ class StudioRunNode(BaseNode):
             "properties": {
                 "graph_id": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "agent-studio graph ID (与 agent_id 二选一)",
                 },
                 "agent_id": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "agent-studio agent ID (与 graph_id 二选一)",
                 },
                 "input": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "输入文本 (graph execute 的 input_text / run 的 goal)",
                 },
                 "mode": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "sync 等待终态 / async 提交即返回 run_id",
                     "enum": ["sync", "async"],
                     "default": "sync",
                 },
                 "timeout": {
                     "type": "number",
+                    # i18n: user-facing
                     "description": "sync 模式等待终态的总超时秒数 (缺省 1800, 可用 FUSION_COWORK_STUDIO_RUN_TIMEOUT 覆盖)",
                     "default": 1800.0,
                 },
                 "poll_interval": {
                     "type": "number",
+                    # i18n: user-facing
                     "description": "sync 模式轮询间隔秒数",
                     "default": 2.0,
                 },
                 "title": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "run 标题 (缺省取 input 前 80 字符, 上游默认行为)",
                 },
                 "idempotency_key": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "幂等键 (重复提交去重, 上游 deduped 标记)",
                 },
                 "max_turns": {
                     "type": "number",
+                    # i18n: user-facing
                     "description": (
+                        # i18n: user-facing
                         "run 轮次预算 (经 /v1/runs body spec.max_turns 传入; 缺省不传 — 上游按 agent "
+                        # i18n: user-facing
                         "manifest 或 studio 默认 8 轮; 多产物角色建议 24-48, issue #363/#373)"
                     ),
                 },
-                # issue #387: 座位模型钉选 — 经 /v1/runs body spec.model 传入; 缺省不传
-                # (上游按 agent manifest 选模); replay-dev = 零成本确定性回放 (fusion-mlx#1518)
+                # issue #387: seat model pinning — passed via /v1/runs body spec.model; omitted by
+                # default (upstream picks by agent manifest); replay-dev = zero-cost deterministic
+                # replay (fusion-mlx#1518)
                 "model": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "座位模型 id (spec.model; 缺省不传; 合成 E2E 用 replay-dev)",
                 },
                 "report_recovery": {
                     "type": "boolean",
+                    # i18n: user-facing
                     "description": (
+                        # i18n: user-facing
                         "run 因 Max iterations 耗尽轮次且报告为空时, 自动补一轮 report-only 续跑 "
+                        # i18n: user-facing
                         "(交付物通常已写入 workspace; 缺省开启, issue #373)"
                     ),
                     "default": True,
@@ -202,9 +227,10 @@ class StudioRunNode(BaseNode):
         agent_id = str(inputs.get("agent_id", params.get("agent_id", "")) or "")
         text = str(inputs.get("input", params.get("input", "")) or "")
         mode = str(params.get("mode", "sync") or "sync")
-        # issue #351: 默认 300s 会取消健康的 4B 座位长生成 — 900s 起步;
-        # issue #409: 并发管线 mlx 争抢下 900s 仍不够 (上游 460s 后才终态而管线已判死) — 缺省提到 1800s,
-        # 可用 FUSION_COWORK_STUDIO_RUN_TIMEOUT 环境变量全局调整
+        # issue #351: the legacy 300s default cancels healthy long 4B seat generations — 900s floor;
+        # issue #409: under concurrent-pipeline mlx contention even 900s is not enough (upstream
+        # terminates after 460s while the pipeline already declares death) — default raised to 1800s,
+        # globally adjustable via the FUSION_COWORK_STUDIO_RUN_TIMEOUT env var
         timeout = params.get("timeout") or float(os.environ.get("FUSION_COWORK_STUDIO_RUN_TIMEOUT") or 1800.0)
         poll_interval = _clamp_poll_interval(float(params.get("poll_interval", _POLL_INTERVAL) or _POLL_INTERVAL))
         title = str(params.get("title", "") or "")
@@ -218,14 +244,14 @@ class StudioRunNode(BaseNode):
         if not text:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="缺少必填参数 input",
-                summary="参数不完整",
+                error="missing required param input",
+                summary="incomplete params",
             )
         if bool(graph_id) == bool(agent_id):
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="缺少必填参数 graph_id 或 agent_id (二选一, 不可同时为空或同时设置)",
-                summary="参数不完整",
+                error="missing required param graph_id or agent_id (exactly one; both empty or both set is invalid)",
+                summary="incomplete params",
             )
 
         headers = _build_headers()
@@ -255,8 +281,8 @@ class StudioRunNode(BaseNode):
                 if idempotency_key:
                     payload["idempotency_key"] = idempotency_key
                 if max_turns or model:
-                    # issue #363: 显式轮次预算 — studio 默认 8 轮会饿死多产物角色
-                    # issue #387: spec.model 座位模型钉选 (合成 E2E 钉 replay-dev)
+                    # issue #363: explicit turn budget — the studio default 8 turns starves multi-artifact roles
+                    # issue #387: spec.model seat model pinning (synthetic E2E pins replay-dev)
                     spec: Dict[str, Any] = {}
                     if max_turns:
                         spec["max_turns"] = int(max_turns)
@@ -268,19 +294,20 @@ class StudioRunNode(BaseNode):
                 if not run_id:
                     return NodeResult(
                         status=NodeStatus.FAILED,
-                        error=f"上游未返回 run_id: {submitted}",
-                        summary="提交失败",
+                        error=f"upstream returned no run_id: {submitted}",
+                        summary="submit failed",
                     )
                 if mode == "async":
                     logger.info("StudioRunNode submitted run_id=%s (async)", run_id)
                     return NodeResult(
                         status=NodeStatus.SUCCESS,
                         data={"run_id": run_id, "status": str(submitted.get("status", "pending")), "result": {}},
-                        summary=f"已提交 run {run_id}",
+                        summary=f"submitted run {run_id}",
                     )
                 res = await self._await_terminal(client, run_id, timeout, poll_interval)
-                # issue #373: budget 耗尽且报告为空 — 交付物通常已在 workspace, 补一轮
-                # report-only 续跑回收最终报告, 而不是硬失败
+                # issue #373: budget exhausted with empty report — deliverables are usually already in
+                # the workspace, add one report-only continuation run to recover the final report
+                # instead of hard-failing
                 if res.status is NodeStatus.FAILED and report_recovery and _is_budget_exhausted(res):
                     recovered = await self._report_recovery(client, payload, run_id, timeout, poll_interval)
                     if recovered is not None:
@@ -294,14 +321,14 @@ class StudioRunNode(BaseNode):
             return NodeResult(
                 status=NodeStatus.FAILED,
                 error=f"agent-studio HTTP {e.response.status_code if e.response is not None else '?'}: {body}",
-                summary="上游 HTTP 错误",
+                summary="upstream HTTP error",
             )
         except Exception as e:
-            logger.exception("StudioRunNode 执行异常")
+            logger.exception("StudioRunNode execution exception")
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"Studio 运行异常: {e}",
-                summary="执行异常",
+                error=f"studio run exception: {e}",
+                summary="execution exception",
             )
 
     async def _run_graph_sync(self, client: httpx.AsyncClient, graph_id: str, text: str) -> NodeResult:
@@ -309,18 +336,18 @@ class StudioRunNode(BaseNode):
         status = str(payload.get("status", ""))
         events = payload.get("events", [])
         if status != "completed":
-            logger.warning("StudioRunNode graph %s 非完成态: %s", graph_id, status)
+            logger.warning("StudioRunNode graph %s non-completed status: %s", graph_id, status)
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"graph {graph_id} 执行状态 {status or 'unknown'}",
+                error=f"graph {graph_id} execution status {status or 'unknown'}",
                 data={"run_id": "", "status": status or "unknown", "result": payload},
-                summary="graph 执行未完成",
+                summary="graph execution not completed",
             )
-        logger.info("StudioRunNode graph %s 完成: %d events", graph_id, len(events))
+        logger.info("StudioRunNode graph %s finished: %d events", graph_id, len(events))
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"run_id": "", "status": status, "result": payload},
-            summary=f"graph 执行完成 ({len(events)} events)",
+            summary=f"graph execution finished ({len(events)} events)",
         )
 
     async def _report_recovery(
@@ -375,34 +402,37 @@ class StudioRunNode(BaseNode):
             if status in _TERMINAL_STATUSES:
                 break
             if time.monotonic() >= deadline:
-                # issue #351: 超时不取消 — 取消会丢弃健康 run 已完成的产物 (仅生成时长抖动);
-                # 保留 run 在上游继续执行, 凭 run_id 可查询/回收结果
+                # issue #351: do NOT cancel on timeout — cancellation would discard artifacts a healthy
+                # run already completed (mere generation-time jitter); keep the run executing upstream,
+                # results can be queried/recovered later by run_id
                 logger.warning(
-                    "StudioRunNode run %s 等待终态超时 (%.0fs), 不取消 (run 保留在上游继续执行)", run_id, timeout
+                    "StudioRunNode run %s terminal-state wait timed out (%.0fs), not cancelling (run keeps executing upstream)",
+                    run_id,
+                    timeout,
                 )
                 return NodeResult(
                     status=NodeStatus.FAILED,
                     error=(
-                        f"等待 run {run_id} 终态超时 ({timeout:.0f}s), run 已保留在上游继续执行 (未取消), "
-                        "可凭 run_id 在 agent-studio 查询/回收结果"
+                        f"timed out waiting for run {run_id} terminal state ({timeout:.0f}s), run kept executing "
+                        "upstream (not cancelled); query/recover results in agent-studio by run_id"
                     ),
                     data={"run_id": run_id, "status": status or "unknown", "result": {}, "detached": True},
-                    summary="等待终态超时 (run 保留, 未取消)",
+                    summary="terminal-state wait timed out (run kept, not cancelled)",
                 )
             await asyncio.sleep(poll_interval)
-        logger.info("StudioRunNode run %s 终态: %s", run_id, status)
+        logger.info("StudioRunNode run %s terminal state: %s", run_id, status)
         result = await _get_run_result(client, run_id)
         artifacts = result.get("artifacts", []) if isinstance(result, dict) else []
         if status != "completed":
             last_error = str(result.get("last_error", "") or "") if isinstance(result, dict) else ""
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"run {run_id} 终态 {status}: {last_error or '无错误详情'}",
+                error=f"run {run_id} terminal status {status}: {last_error or 'no error detail'}",
                 data={"run_id": run_id, "status": status, "result": result},
-                summary=f"run 终态 {status}",
+                summary=f"run terminal status {status}",
             )
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"run_id": run_id, "status": status, "result": result},
-            summary=f"run {run_id} 完成 ({len(artifacts)} artifacts)",
+            summary=f"run {run_id} finished ({len(artifacts)} artifacts)",
         )

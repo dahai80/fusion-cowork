@@ -1,6 +1,6 @@
-"""Fusion-Cowork 内置模板 — 开箱即用的自动化模板。
+"""Fusion-Cowork built-in templates — out-of-the-box automation templates.
 
-每个模板是一个预定义的工作流定义，用户可一键运行。
+Each template is a predefined workflow definition that users can run with one click.
 """
 
 from __future__ import annotations
@@ -15,19 +15,27 @@ from ..engine.workflow import Workflow
 
 logger = logging.getLogger(__name__)
 
-# 内置模板定义
+# Built-in template definitions
 BUILTIN_TEMPLATES = [
     {
         "id": "desktop_daily_cleanup",
+        # i18n: user-facing
         "name": "桌面每日规整",
+        # i18n: user-facing
         "description": "每天自动规整桌面文件，按类型分类到子文件夹",
+        # i18n: user-facing
         "category": "桌面清理",
+        # i18n: user-facing
         "tags": ["桌面", "清理", "分类", "日常"],
         "icon": "🧹",
+        # i18n: user-facing
         "difficulty": "简单",
+        # i18n: user-facing
         "estimated_time": "30秒",
         "workflow": {
+            # i18n: user-facing
             "name": "桌面每日规整",
+            # i18n: user-facing
             "description": "按文件类型自动规整桌面文件",
             "nodes": [
                 {
@@ -62,15 +70,23 @@ BUILTIN_TEMPLATES = [
     },
     {
         "id": "download_organizer",
+        # i18n: user-facing
         "name": "下载文件夹自动归档",
+        # i18n: user-facing
         "description": "自动整理下载文件夹，按类型归档、去重、清理过期文件",
+        # i18n: user-facing
         "category": "文件整理",
+        # i18n: user-facing
         "tags": ["下载", "归档", "去重", "清理"],
         "icon": "📥",
+        # i18n: user-facing
         "difficulty": "简单",
+        # i18n: user-facing
         "estimated_time": "1分钟",
         "workflow": {
+            # i18n: user-facing
             "name": "下载文件夹自动归档",
+            # i18n: user-facing
             "description": "自动整理下载文件夹，按类型归档、去重",
             "nodes": [
                 {
@@ -105,16 +121,24 @@ BUILTIN_TEMPLATES = [
     },
     {
         "id": "pdf_summarizer",
+        # i18n: user-facing
         "name": "PDF/文档批量总结",
+        # i18n: user-facing
         "description": "批量总结 PDF、Word、Markdown 文档，提取关键词和结论，生成汇总报告",
+        # i18n: user-facing
         "category": "AI 处理",
+        # i18n: user-facing
         "tags": ["PDF", "文档", "摘要", "AI", "批量"],
         "icon": "📝",
+        # i18n: user-facing
         "difficulty": "中等",
+        # i18n: user-facing
         "estimated_time": "2-5分钟",
         "needs_ai": True,
         "workflow": {
+            # i18n: user-facing
             "name": "文档批量AI摘要",
+            # i18n: user-facing
             "description": "批量总结文档并生成汇总报告",
             "nodes": [
                 {
@@ -148,6 +172,7 @@ BUILTIN_TEMPLATES = [
                     "config": {
                         "params": {
                             "output_path": "~/Desktop/Output",
+                            # i18n: user-facing
                             "file_name": "文档摘要报告_{date}",
                             "format": "markdown",
                         }
@@ -159,16 +184,24 @@ BUILTIN_TEMPLATES = [
     },
     {
         "id": "file_classify_organize",
+        # i18n: user-facing
         "name": "AI 智能文件分类归档",
+        # i18n: user-facing
         "description": "AI 根据文件内容语义自动分类并归档到对应文件夹",
+        # i18n: user-facing
         "category": "AI 处理",
+        # i18n: user-facing
         "tags": ["AI", "分类", "归档", "智能"],
         "icon": "🏷️",
+        # i18n: user-facing
         "difficulty": "中等",
+        # i18n: user-facing
         "estimated_time": "1-3分钟",
         "needs_ai": True,
         "workflow": {
+            # i18n: user-facing
             "name": "AI 智能文件分类归档",
+            # i18n: user-facing
             "description": "AI 根据文件内容语义自动分类并归档",
             "nodes": [
                 {
@@ -194,16 +227,24 @@ BUILTIN_TEMPLATES = [
     },
     {
         "id": "batch_ai_rename",
+        # i18n: user-facing
         "name": "AI 批量智能重命名",
+        # i18n: user-facing
         "description": "AI 根据文件内容智能生成规范的文件名，批量重命名",
+        # i18n: user-facing
         "category": "AI 处理",
+        # i18n: user-facing
         "tags": ["AI", "重命名", "批量", "智能"],
         "icon": "✏️",
+        # i18n: user-facing
         "difficulty": "中等",
+        # i18n: user-facing
         "estimated_time": "1-2分钟",
         "needs_ai": True,
         "workflow": {
+            # i18n: user-facing
             "name": "AI 批量智能重命名",
+            # i18n: user-facing
             "description": "AI 根据内容智能生成规范文件名",
             "nodes": [
                 {
@@ -227,15 +268,23 @@ BUILTIN_TEMPLATES = [
     },
     {
         "id": "disk_cleanup",
+        # i18n: user-facing
         "name": "磁盘空间清理",
+        # i18n: user-facing
         "description": "扫描并清理缓存、临时文件、__pycache__、.DS_Store 等垃圾文件",
+        # i18n: user-facing
         "category": "系统维护",
+        # i18n: user-facing
         "tags": ["磁盘", "清理", "缓存", "系统"],
         "icon": "💾",
+        # i18n: user-facing
         "difficulty": "简单",
+        # i18n: user-facing
         "estimated_time": "1-3分钟",
         "workflow": {
+            # i18n: user-facing
             "name": "磁盘空间清理",
+            # i18n: user-facing
             "description": "扫描并清理系统垃圾文件",
             "nodes": [
                 {
@@ -260,15 +309,23 @@ BUILTIN_TEMPLATES = [
     },
     {
         "id": "project_docs_collect",
+        # i18n: user-facing
         "name": "项目资料一键归集",
+        # i18n: user-facing
         "description": "递归扫描项目目录，按类型归集文档、代码、图片等资料",
+        # i18n: user-facing
         "category": "文件整理",
+        # i18n: user-facing
         "tags": ["项目", "归集", "整理", "批量"],
         "icon": "📂",
+        # i18n: user-facing
         "difficulty": "简单",
+        # i18n: user-facing
         "estimated_time": "30秒",
         "workflow": {
+            # i18n: user-facing
             "name": "项目资料一键归集",
+            # i18n: user-facing
             "description": "按类型归集项目资料",
             "nodes": [
                 {
@@ -287,6 +344,7 @@ BUILTIN_TEMPLATES = [
                     "id": "n2",
                     "name": "file_classifier",
                     "config": {
+                        # i18n: user-facing
                         "params": {"move_to_subdirs": True, "target_base": "~/Desktop/项目归集", "dry_run": False}
                     },
                 },
@@ -296,15 +354,23 @@ BUILTIN_TEMPLATES = [
     },
     {
         "id": "duplicate_finder",
+        # i18n: user-facing
         "name": "重复文件扫描清理",
+        # i18n: user-facing
         "description": "扫描指定目录中的重复文件，识别并清理",
+        # i18n: user-facing
         "category": "系统维护",
+        # i18n: user-facing
         "tags": ["去重", "清理", "重复文件"],
         "icon": "🔍",
+        # i18n: user-facing
         "difficulty": "中等",
+        # i18n: user-facing
         "estimated_time": "1-5分钟",
         "workflow": {
+            # i18n: user-facing
             "name": "重复文件扫描清理",
+            # i18n: user-facing
             "description": "扫描并清理重复文件",
             "nodes": [
                 {
@@ -338,15 +404,23 @@ BUILTIN_TEMPLATES = [
     },
     {
         "id": "log_cleaner",
+        # i18n: user-facing
         "name": "日志文件自动清洗",
+        # i18n: user-facing
         "description": "扫描并清理日志文件，汇总生成清理报告",
+        # i18n: user-facing
         "category": "系统维护",
+        # i18n: user-facing
         "tags": ["日志", "清洗", "清理", "系统"],
         "icon": "📋",
+        # i18n: user-facing
         "difficulty": "简单",
+        # i18n: user-facing
         "estimated_time": "30秒",
         "workflow": {
+            # i18n: user-facing
             "name": "日志文件自动清洗",
+            # i18n: user-facing
             "description": "扫描并清理日志文件",
             "nodes": [
                 {
@@ -369,15 +443,23 @@ BUILTIN_TEMPLATES = [
     },
     {
         "id": "image_batch_rename",
+        # i18n: user-facing
         "name": "图片批量重命名分类",
+        # i18n: user-facing
         "description": "批量重命名图片文件并按类型分类",
+        # i18n: user-facing
         "category": "文件整理",
+        # i18n: user-facing
         "tags": ["图片", "重命名", "分类", "批量"],
         "icon": "🖼️",
+        # i18n: user-facing
         "difficulty": "简单",
+        # i18n: user-facing
         "estimated_time": "30秒",
         "workflow": {
+            # i18n: user-facing
             "name": "图片批量重命名分类",
+            # i18n: user-facing
             "description": "批量重命名图片并按类型分类",
             "nodes": [
                 {
@@ -409,6 +491,7 @@ BUILTIN_TEMPLATES = [
                 {
                     "id": "n3",
                     "name": "file_classifier",
+                    # i18n: user-facing
                     "config": {"params": {"move_to_subdirs": True, "target_base": "~/Desktop/图片", "dry_run": False}},
                 },
             ],
@@ -417,16 +500,24 @@ BUILTIN_TEMPLATES = [
     },
     {
         "id": "weekly_readout_pptx",
+        # i18n: user-facing
         "name": "周度数据读出 (PPT)",
+        # i18n: user-facing
         "description": "从 JSON 数据源生成周度读出 deck: 环比对比, 超 10% 变动自动打标 (issue #152)",
+        # i18n: user-facing
         "category": "办公交付",
+        # i18n: user-facing
         "tags": ["PPT", "周报", "环比", "读出"],
         "icon": "📽️",
+        # i18n: user-facing
         "difficulty": "简单",
+        # i18n: user-facing
         "estimated_time": "10秒",
         "needs_ai": False,
         "workflow": {
+            # i18n: user-facing
             "name": "周度数据读出",
+            # i18n: user-facing
             "description": "本期 vs 上期对比, 超阈值变动打标, 生成可编辑 deck",
             "nodes": [
                 {
@@ -439,24 +530,32 @@ BUILTIN_TEMPLATES = [
                             "overwrite": True,
                             "spec": json.dumps(
                                 {
+                                    # i18n: user-facing
                                     "title": "周度数据读出",
+                                    # i18n: user-facing
                                     "subtitle": "本期 vs 上期 (>10% 变动打标)",
                                     "slides": [
                                         {
                                             "layout": "chart",
+                                            # i18n: user-facing
                                             "title": "核心指标对比",
                                             "chart": {
                                                 "type": "column",
+                                                # i18n: user-facing
                                                 "categories": ["营收", "订单", "活跃", "转化率"],
                                                 "series": [
+                                                    # i18n: user-facing
                                                     {"name": "上期", "values": [100, 90, 180, 3.2]},
+                                                    # i18n: user-facing
                                                     {"name": "本期", "values": [128, 84, 205, 3.0]},
                                                 ],
                                             },
                                         }
                                     ],
                                     "period_compare": {
+                                        # i18n: user-facing
                                         "metric": "指标",
+                                        # i18n: user-facing
                                         "categories": ["营收", "订单", "活跃", "转化率"],
                                         "previous": [100, 90, 180, 3.2],
                                         "current": [128, 84, 205, 3.0],
@@ -475,21 +574,30 @@ BUILTIN_TEMPLATES = [
     # issue #283: governance G1-G5 gate pipeline (multi-repo automation setup guide)
     {
         "id": "governance_issue_lifecycle",
+        # i18n: user-facing
         "name": "治理-议题生命周期 (G1-G4-G5 闸门)",
+        # i18n: user-facing
         "description": "每议题一次运行: 提案打标 -> 同步 G1 决策任务 -> G1 提案闸门 -> 实施记录 -> 关联 PR 检查 (零 LLM 证据闸门, 无 PR 阻塞: 先提 PR 再进验收, 重跑复查) -> 同步 G4 验收任务 (带 run_id + PR/CI 证据) -> G4 验收闸门 -> accepted 打标 -> 同步 G5 发布任务 -> G5 发布闸门 -> rollout 打标。G1/G4/G5 均自动同步 agent-studio 审批任务, 决策经平台收件箱或签名 webhook 自动续跑。见 architecture/multi-repo-automation-setup-guide-1104.md",
+        # i18n: user-facing
         "category": "治理",
+        # i18n: user-facing
         "tags": ["治理", "闸门", "审批", "G-gate", "多仓库"],
         "icon": "🚦",
+        # i18n: user-facing
         "difficulty": "进阶",
+        # i18n: user-facing
         "estimated_time": "人工决定",
-        # issue #287: 模板级参数 — 装配时经 template_to_workflow(param_values=...) 替换
+        # issue #287: template-level params — substituted at assembly time via template_to_workflow(param_values=...)
         "params": {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "repo": {"type": "string", "description": "目标仓库 (owner/name)", "default": "org/repo"},
+                # i18n: user-facing
                 "issue_number": {"type": "integer", "description": "议题编号", "default": 1},
                 "approvals_url": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "agent-studio 审批任务同步端点",
                     # product-level call (roadmap §6): template param default —
                     # the approval task store lives in the agent-studio daemon.
@@ -499,6 +607,7 @@ BUILTIN_TEMPLATES = [
             "required": ["repo", "issue_number"],
         },
         "workflow": {
+            # i18n: user-facing
             "name": "治理-议题生命周期",
             "description": "G1-G5 gate pipeline for one issue",
             "nodes": [
@@ -516,7 +625,7 @@ BUILTIN_TEMPLATES = [
                     },
                 },
                 {
-                    # issue #294: G1 决策同步 agent-studio — 平台收件箱可见, webhook 续跑本 run
+                    # issue #294: G1 decision synced to agent-studio — visible in the platform inbox, webhook resumes this run
                     "id": "n1b",
                     "name": "http_request",
                     "config": {
@@ -543,7 +652,9 @@ BUILTIN_TEMPLATES = [
                     "name": "approval_gate",
                     "config": {
                         "params": {
+                            # i18n: user-facing
                             "prompt": "G1 提案闸门: 批准后开始实施",
+                            # i18n: user-facing
                             "details": "确认议题方案与标签状态机 (state:proposal -> approved)",
                         }
                     },
@@ -562,9 +673,11 @@ BUILTIN_TEMPLATES = [
                     },
                 },
                 {
-                    # issue #306: G4 前置证据闸门 — 纯 REST 读 (零 LLM)。issue 无关联 PR 时
-                    # 节点失败阻塞 (错误 "先提 PR 再进验收"), PR 出现后从本步骤重跑即复查;
-                    # PR 链接 + CI 状态经 ${result.*} 进入 n4 同步 payload, 审批卡可见。
+                    # issue #306: G4 pre-evidence gate — pure REST read (zero LLM). When the
+                    # issue has no linked PR the node fails and blocks (error "file a PR
+                    # before acceptance"); once the PR appears, rerun from this step to
+                    # recheck; PR link + CI status flow into the n4 sync payload via
+                    # ${result.*}, visible on the approval card.
                     "id": "n4a",
                     "name": "github_api",
                     "config": {
@@ -584,23 +697,26 @@ BUILTIN_TEMPLATES = [
                         "params": {
                             "method": "POST",
                             "url": "${param.approvals_url}",
-                            # issue #287: 鉴权头从环境注入 (${env.VAR}), 未配置时节点侧
-                            # 丢弃该头 — 模板绝不硬编码密钥
+                            # issue #287: auth header injected from the environment (${env.VAR});
+                            # when unset the node side drops the header — the template never
+                            # hardcodes secrets
                             "headers": {"x-api-key": "${env.FUSION_AGENT_STUDIO_API_KEY}"},
                             "body": {
-                                # issue #291: approvals API 必填字段 — 缺 requester 直接 400;
-                                # requester/assigned_to 必须不同 (平台禁止自审批, 422)
+                                # issue #291: approvals API required fields — missing requester
+                                # gets a 400; requester/assigned_to must differ (platform
+                                # forbids self-approval, 422)
                                 "title": "G4 acceptance ${param.repo}#${param.issue_number}",
                                 "requester": "cowork-agent",
                                 "assigned_to": "owner",
-                                # issue #293: agent-studio 只持久化嵌套 payload 对象作任务参数
-                                # (顶层 run_id/gate/kind 被丢弃, 决策 webhook 路由不回 run)
+                                # issue #293: agent-studio persists only the nested payload object
+                                # as task params (top-level run_id/gate/kind are dropped, the
+                                # decision webhook does not route back to the run)
                                 "payload": {
                                     "run_id": "${run_id}",
                                     "gate": "G4",
                                     "kind": "acceptance",
-                                    # issue #306: 证据 — n4a 的 linked_pr 结果 (edge 默认端口
-                                    # 并入 inputs, ${result.*} 从上游输出取值)
+                                    # issue #306: evidence — n4a's linked_pr result (edge default
+                                    # port merges into inputs, ${result.*} reads upstream output)
                                     "evidence": {
                                         "pr_url": "${result.pr_url}",
                                         "ci_status": "${result.ci_status}",
@@ -616,7 +732,9 @@ BUILTIN_TEMPLATES = [
                     "name": "approval_gate",
                     "config": {
                         "params": {
+                            # i18n: user-facing
                             "prompt": "G4 验收闸门: 批准后标记 accepted",
+                            # i18n: user-facing
                             "details": "agent-studio 审批任务已同步; 决定经 webhook 自动续跑本 run",
                         }
                     },
@@ -635,7 +753,7 @@ BUILTIN_TEMPLATES = [
                     },
                 },
                 {
-                    # issue #294: G5 决策同步 agent-studio (发布闸门前, 平台侧可审批)
+                    # issue #294: G5 decision synced to agent-studio (before the rollout gate, approvable on the platform side)
                     "id": "n6b",
                     "name": "http_request",
                     "config": {
@@ -662,7 +780,9 @@ BUILTIN_TEMPLATES = [
                     "name": "approval_gate",
                     "config": {
                         "params": {
+                            # i18n: user-facing
                             "prompt": "G5 发布闸门: 批准后进入 rollout",
+                            # i18n: user-facing
                             "details": "最终发布确认",
                         }
                     },
@@ -697,22 +817,31 @@ BUILTIN_TEMPLATES = [
     },
     {
         "id": "governance_batch_audit",
+        # i18n: user-facing
         "name": "治理-批次审计 (state:approved 巡检)",
+        # i18n: user-facing
         "description": "按 state:approved 标签列出试点仓库议题 -> G 闸门人工复核 -> 审计结论回写议题评论。逐议题派生生命周期 run 需编排层支持, 见 architecture/multi-repo-automation-setup-guide-1104.md",
+        # i18n: user-facing
         "category": "治理",
+        # i18n: user-facing
         "tags": ["治理", "审计", "批次", "G-gate"],
         "icon": "📋",
+        # i18n: user-facing
         "difficulty": "进阶",
+        # i18n: user-facing
         "estimated_time": "人工决定",
-        # issue #287: 模板级参数 (批次审计: 仓库 + 巡检标签); issue #294: labels 可从 GUI 表单传入
+        # issue #287: template-level params (batch audit: repo + audit labels); issue #294: labels can be passed in from the GUI form
         "params": {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "repo": {"type": "string", "description": "目标仓库 (owner/name)", "default": "org/repo"},
+                # i18n: user-facing
                 "issue_number": {"type": "integer", "description": "议题编号", "default": 1},
                 "labels": {
                     "type": "array",
                     "items": {"type": "string"},
+                    # i18n: user-facing
                     "description": "巡检标签 (issue_list 过滤用)",
                     "default": ["state:approved"],
                 },
@@ -720,6 +849,7 @@ BUILTIN_TEMPLATES = [
             "required": ["repo"],
         },
         "workflow": {
+            # i18n: user-facing
             "name": "治理-批次审计",
             "description": "Batch audit over state:approved issues",
             "nodes": [
@@ -731,7 +861,7 @@ BUILTIN_TEMPLATES = [
                             "op": "issue_list",
                             "repo": "${param.repo}",
                             "allowed_repos": ["${param.repo}"],
-                            # issue #294: labels 走模板参数 (整串占位符保留数组类型)
+                            # issue #294: labels come from a template param (full-string placeholder preserves the array type)
                             "labels": "${param.labels}",
                         }
                     },
@@ -741,7 +871,9 @@ BUILTIN_TEMPLATES = [
                     "name": "approval_gate",
                     "config": {
                         "params": {
+                            # i18n: user-facing
                             "prompt": "批次审计闸门: 复核 state:approved 议题清单",
+                            # i18n: user-facing
                             "details": "确认入验收批次的议题范围",
                         }
                     },
@@ -776,203 +908,254 @@ BUILTIN_TEMPLATES = [
         # issue #485: workflow-definition ids registered at web-serve seed time —
         # external callers (fusion-site factory) kick off runs by these ids
         "web_aliases": ["product_lifecycle_agents"],
+        # i18n: user-facing
         "name": "交付-产品生命周期 (A/B/C 三闸门)",
+        # i18n: user-facing
         "description": "全交付管线: BA 出 PRD -> 闸门 A -> 架构 -> 闸门 B -> 脚手架 ai-<slug> -> 建任务 issue (state:ready) -> claude_dispatch 派发 coder 会话 (PR-only 契约, 预算上限) -> 关联 PR 机器验收 -> Env/Mock 代理 -> 闸门 C 人工验收 (支持逐项 batch 决定) -> accepted 打标 + 证据归档。LLM 座位经 studio_run 调 agent-studio graph 或 agent (issue #320, 默认 delivery-* seat agents)。",
+        # i18n: user-facing
         "category": "交付",
+        # i18n: user-facing
         "tags": ["交付", "管线", "闸门", "脚手架", "派发"],
         "icon": "🏭",
+        # i18n: user-facing
         "difficulty": "进阶",
+        # i18n: user-facing
         "estimated_time": "人工决定",
         "params": {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "slug": {"type": "string", "description": "仓库 slug, 生成 ai-<slug>", "default": "demo"},
+                # i18n: user-facing
                 "repo": {"type": "string", "description": "任务 issue 所在仓库 (owner/name)", "default": "org/repo"},
+                # i18n: user-facing
                 "task_title": {"type": "string", "description": "任务 issue 标题", "default": "Implement v0.1 scope"},
                 "task_prompt": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "claude_dispatch 任务指令",
-                    # issue #362: 交付契约要求 PR 正文带关闭关键词 — linked_pr 机器验收按
-                    # pr_link_strength=closing 判交付, 仅提及 (hygiene PR) 会被阻塞
+                    # issue #362: the delivery contract requires a closing keyword in the PR
+                    # body — linked_pr machine acceptance judges delivery by
+                    # pr_link_strength=closing; mention-only (hygiene PR) gets blocked
                     "default": (
                         "Implement the assigned task per PRD/architecture docs; deliver via PR with self-test "
                         "evidence. The PR body must link this issue with a closing keyword (Closes #N)."
                     ),
                 },
-                # issue #361: 重跑幂等 — 已有脚手架目录默认拒绝, 传 true 复写脚手架文件
-                # (既有产出保留; 空目录始终自动复用)
+                # issue #361: rerun idempotency — existing scaffold dir is rejected by
+                # default; pass true to overwrite scaffold files (existing outputs
+                # preserved; empty dirs are always auto-reused)
                 "scaffold_overwrite": {
                     "type": "boolean",
+                    # i18n: user-facing
                     "description": "重跑时复写已有脚手架目录 (repo_scaffold overwrite=true; 空目录自动复用, 既有产出保留)",
                     "default": False,
                 },
-                # issue #362: PR 链接强度闸门 — 仅提及 issue 的 PR (hygiene/aside) 阻塞验收
+                # issue #362: PR link-strength gate — mention-only PRs (hygiene/aside) block acceptance
                 "require_closing_link": {
                     "type": "boolean",
+                    # i18n: user-facing
                     "description": "linked_pr 仅接受关闭关键词关联的 PR (Closes/Fixes/Resolves #N), 仅提及即阻塞",
                     "default": True,
                 },
                 "ba_graph_id": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "agent-studio BA 代理 graph ID (与 ba_agent_id 二选一)",
                     "default": "",
                 },
                 "ba_agent_id": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "agent-studio BA 代理 agent ID (与 ba_graph_id 二选一; Builder 部署的 seat agent)",
                     "default": "delivery-ba",
                 },
                 "arch_graph_id": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "agent-studio 架构代理 graph ID (与 arch_agent_id 二选一)",
                     "default": "",
                 },
                 "arch_agent_id": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "agent-studio 架构代理 agent ID (与 arch_graph_id 二选一)",
                     "default": "delivery-architect",
                 },
                 "env_graph_id": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "agent-studio Env/Mock 代理 graph ID (与 env_agent_id 二选一)",
                     "default": "",
                 },
                 "env_agent_id": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "agent-studio Env/Mock 代理 agent ID (与 env_graph_id 二选一)",
                     "default": "delivery-env-mock",
                 },
-                # issue #358: 1800s 会硬杀真实交付会话 — 3600s 起步, 可用
-                # FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT 环境变量全局调整
+                # issue #358: 1800s hard-kills real delivery sessions — start at 3600s,
+                # globally tunable via the FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT env var
                 "dispatch_timeout": {
                     "type": "number",
+                    # i18n: user-facing
                     "description": "派发墙钟上限 (秒, 缺省 3600, 可用 FUSION_COWORK_CLAUDE_DISPATCH_TIMEOUT 覆盖)",
                     "default": 3600,
                 },
+                # i18n: user-facing
                 "dispatch_max_tokens": {"type": "number", "description": "派发 token 上限", "default": 200000},
-                # issue #363/#373: studio_run 座位轮次预算 — studio 默认 8 轮会饿死多产物角色
-                # (env-mock/architect), 经 spec.max_turns 显式传入; live 证据 24 轮对
-                # 内容密集座位仍耗尽 (run_e5d4d34da020), 缺省提到 48
+                # issue #363/#373: studio_run seat turn budget — the studio default of 8
+                # turns starves multi-artifact roles (env-mock/architect); passed
+                # explicitly via spec.max_turns. Live evidence shows 24 turns still run
+                # out for content-dense seats (run_e5d4d34da020), default raised to 48
                 "seat_max_turns": {
                     "type": "number",
+                    # i18n: user-facing
                     "description": "studio_run 座位轮次预算 (spec.max_turns; 缺省 48, studio 默认 8 轮会饿死多产物角色)",
                     "default": 48,
                 },
-                # issue #413: 架构评审闸门 (gate B) 在 intake 时二选一 — 缺省不评审 (自动通过),
-                # review_arch=true 时闸 B 照常暂停等人工批准
+                # issue #413: architecture review gate (gate B) chosen at intake — no
+                # review by default (auto-pass); with review_arch=true gate B still
+                # pauses for human approval
                 "review_arch": {
                     "type": "boolean",
+                    # i18n: user-facing
                     "description": "是否需要架构评审 (闸门 B); 缺省 false = 自动通过, true = 暂停等人工批准",
                     "default": False,
                 },
-                # issue #409: studio_run 上游等待可配 — 并发管线 mlx 争抢下 900s 固定等待不够
+                # issue #409: studio_run upstream wait configurable — a fixed 900s wait is not enough under concurrent-pipeline mlx contention
                 "studio_wait_timeout": {
                     "type": "number",
+                    # i18n: user-facing
                     "description": "studio_run 各座位 sync 等待终态上限 (秒; 缺省 1800)",
                     "default": 1800,
                 },
-                # issue #387: 合成 E2E — 三开关缺省全关 = 生产行为; 合成启动传
-                # seat_model=replay-dev + gates_human=false + node_dry_run=true,
-                # 管线零真实模型 token、零 GitHub 写、无人工闸门
+                # issue #387: synthetic E2E — all three switches default off = production
+                # behavior; synthetic launches pass seat_model=replay-dev +
+                # gates_human=false + node_dry_run=true: zero real model tokens, zero
+                # GitHub writes, no human gates
                 "seat_model": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "座位模型钉选 (spec.model; 缺省空 = 按 agent manifest 选模; 合成 E2E 用 replay-dev)",
                     "default": "",
                 },
                 "gates_human": {
                     "type": "boolean",
+                    # i18n: user-facing
                     "description": "人工闸门 A/C 是否需要评审 (闸 B 由 review_arch 独立控制); 缺省 true, 合成 E2E 传 false",
                     "default": True,
                 },
                 "node_dry_run": {
                     "type": "boolean",
+                    # i18n: user-facing
                     "description": "GitHub/派发节点合成模式 (确定性伪结果, 零网络); 缺省 false, 合成 E2E 传 true",
                     "default": False,
                 },
-                # issue #422: 历史项目比对 — match 节点参数; candidates 缺省空 = 永远判 new
-                # (现行为), 候选由操作员/上游维护
+                # issue #422: historical project matching — match node params; empty
+                # candidates default = always verdict "new" (current behavior),
+                # candidates are maintained by the operator/upstream
                 "match_candidates": {
                     "type": "array",
+                    # i18n: user-facing
                     "description": "候选项目列表 [{slug, repo, capabilities, stack, customer, health}]",
                     "default": [],
                 },
                 "match_candidates_file": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "候选 JSON 文件路径 (与 match_candidates 合并; 缺省空)",
                     "default": "",
                 },
                 "match_threshold": {
                     "type": "number",
+                    # i18n: user-facing
                     "description": "extend/base 判定分数阈值 (缺省 0.6)",
                     "default": 0.6,
                 },
                 "own_customer": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "本客户标识 (candidate.customer 相等才判 extend; 缺省空 = 全部自有)",
                     "default": "",
                 },
                 "required_capabilities": {
                     "type": "array",
+                    # i18n: user-facing
                     "description": "需求要求的能力清单 (gaps = 要求 - 候选已具备)",
                     "default": [],
                 },
-                # issue #431: 客户设计稿 — design_workspace 空 = 无设计稿, 行为与旧版完全一致;
-                # 有设计稿时 design_context 经 desigma-mcp (stdio) 导出结构 + 代码, 注入 coder prompt
+                # issue #431: customer design workspace — empty design_workspace = no
+                # design, behavior identical to the old version; with a design,
+                # design_context exports structure + code via desigma-mcp (stdio) and
+                # injects it into the coder prompt
                 "design_workspace": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "客户设计稿工作区路径 (.desigma 目录); 空 = 无设计稿 (现行为)",
                     "default": "",
                 },
                 "design_command": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "desigma-mcp 命令 (basename 须在 FUSION_COWORK_MCP_STDIO_ALLOW 白名单)",
                     "default": "desigma-mcp",
                 },
                 "design_frame_id": {
                     "type": "number",
+                    # i18n: user-facing
                     "description": "导出的设计 frame 节点 id; 0 = 取首个节点",
                     "default": 0,
                 },
                 "design_languages": {
                     "type": "array",
+                    # i18n: user-facing
                     "description": "导出语言 (缺省 react + tailwind)",
                     "default": ["react", "tailwind"],
                 },
                 "design_timeout": {
                     "type": "number",
+                    # i18n: user-facing
                     "description": "desigma-mcp 单请求超时 (秒)",
                     "default": 60,
                 },
-                # issue #452: 演示契约门 — demo_gate=false 时 n13 成功 no-op (现行为);
-                # true 时校验交付物三件套 (docker-compose.demo.yml / demo.yaml / stub pack),
-                # 缺件 = 交付失败; register=true 时向 executor demo API 注册样例
+                # issue #452: demo contract gate — with demo_gate=false n13 is a
+                # successful no-op (current behavior); with true it validates the three
+                # deliverable artifacts (docker-compose.demo.yml / demo.yaml / stub
+                # pack), any missing = delivery failure; with register=true it registers
+                # the sample via the executor demo API
                 "demo_gate": {
                     "type": "boolean",
+                    # i18n: user-facing
                     "description": "是否启用演示契约门 (AGENTS.md rule 7); 缺省 false = 跳过",
                     "default": False,
                 },
                 "demo_deliverable_dir": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "交付物仓库/worktree 路径 (缺省空 = 用脚手架目录 business/<repo>)",
                     "default": "",
                 },
                 "demo_check_script": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "meta repo check-demo-runnable.py 路径 (可选, 全局跑, 仅本仓库违规判失败)",
                     "default": "",
                 },
                 "demo_register": {
                     "type": "boolean",
+                    # i18n: user-facing
                     "description": "契约通过后向 executor demo API 注册样例 (缺省 false)",
                     "default": False,
                 },
                 "demo_executor_url": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "executor demo API base (缺省空 = FUSION_EXECUTOR_URL 环境变量)",
                     "default": "",
                 },
             },
-            # issue #320: 座位 ID 二选一 — 装配时显式 graph_id 优先, 清空 agent 缺省 (反之亦然)
+            # issue #320: seat ID either-or — an explicit graph_id wins at assembly time and clears the agent default (and vice versa)
             "seat_pairs": [
                 ["ba_graph_id", "ba_agent_id"],
                 ["arch_graph_id", "arch_agent_id"],
@@ -981,6 +1164,7 @@ BUILTIN_TEMPLATES = [
             "required": ["slug", "repo", "task_title"],
         },
         "workflow": {
+            # i18n: user-facing
             "name": "交付-产品生命周期",
             "description": "PRD gate A -> design context -> arch gate B -> scaffold -> dispatch -> PR evidence -> env/mock -> gate C -> accepted",
             "nodes": [
@@ -991,8 +1175,9 @@ BUILTIN_TEMPLATES = [
                         "params": {
                             "graph_id": "${param.ba_graph_id}",
                             "agent_id": "${param.ba_agent_id}",
-                            # issue #443: 座位输入必须携带原始需求 — 只给 slug 时 BA 只能
-                            # 编造无关 PRD; task_title/task_prompt 是权威需求原文
+                            # issue #443: seat input must carry the original requirement — with
+                            # only a slug the BA can only invent an unrelated PRD;
+                            # task_title/task_prompt are the authoritative requirement text
                             "input": (
                                 "Write the PRD for product ${param.slug}. Output the PRD document content.\n\n"
                                 "Customer requirement (authoritative — design exactly this scope, do not invent):\n"
@@ -1000,11 +1185,11 @@ BUILTIN_TEMPLATES = [
                                 "${param.task_prompt}"
                             ),
                             "mode": "sync",
-                            # issue #363: 显式轮次预算 — studio 默认 8 轮饿死多产物角色
+                            # issue #363: explicit turn budget — the studio default of 8 turns starves multi-artifact roles
                             "max_turns": "${param.seat_max_turns}",
-                            # issue #387: 座位模型钉选 (合成 E2E 钉 replay-dev; 空 = 上游选模)
+                            # issue #387: seat model pinning (synthetic E2E pins replay-dev; empty = upstream picks the model)
                             "model": "${param.seat_model}",
-                            # issue #409: 上游等待可配 (缺省 1800s)
+                            # issue #409: upstream wait configurable (default 1800s)
                             "timeout": "${param.studio_wait_timeout}",
                         }
                     },
@@ -1014,20 +1199,25 @@ BUILTIN_TEMPLATES = [
                     "name": "approval_gate",
                     "config": {
                         "params": {
+                            # i18n: user-facing
                             "prompt": "闸门 A: PRD 评审",
+                            # i18n: user-facing
                             "details": "批准 PRD 后进入架构设计; 拒绝则 BA 代理按评审意见修订",
-                            # issue #387: gates_human=false (合成 E2E) 闸门 A 自动通过
+                            # issue #387: gates_human=false (synthetic E2E) gate A auto-passes
                             "require_review": "${param.gates_human}",
-                            # issue #328: 拒绝 → 修订回路 — 回到 n1 (BA) 带评审意见重跑
+                            # issue #328: reject -> revision loop — back to n1 (BA), rerunning with the review feedback
                             "on_reject": "revise",
                             "revision_node": "n1",
                         }
                     },
                 },
                 {
-                    # issue #431: 设计上下文 — 闸门 A (需求确认) 后挂载; workspace 空 = 无设计稿
-                    # 空转成功 (design_section 空串, coder prompt 逐字节不变); 有设计稿时导出
-                    # 结构 + 代码, design_section 以完整段落拼在 n7 coder prompt 尾部 (实现红线)
+                    # issue #431: design context — mounted after gate A (requirement
+                    # confirmation); empty workspace = no design, succeeds as a no-op
+                    # (empty design_section string, coder prompt byte-identical); with a
+                    # design, exports structure + code, design_section is appended as a
+                    # full paragraph at the end of the n7 coder prompt (implementation
+                    # red line)
                     "id": "n4d",
                     "name": "design_context",
                     "config": {
@@ -1047,25 +1237,32 @@ BUILTIN_TEMPLATES = [
                         "params": {
                             "graph_id": "${param.arch_graph_id}",
                             "agent_id": "${param.arch_agent_id}",
-                            # issue #346: 规范交接 — 下方传入 BA 产物的 artifact id (agent-studio
-                            # run result artifacts[0] 为 id 字符串), 下游座位按 id 取 PRD, 不猜路径
-                            # issue #478: replay-dev 等座位不产 artifacts 时 artifacts.0 必然断链 —
-                            # 加 |fallback 降级, artifacts 存在时规范 id 交接不变, 空时内联报告兜底
+                            # issue #346: canonical handoff — pass the BA artifact id below
+                            # (agent-studio run result artifacts[0] is an id string); downstream
+                            # seats fetch the PRD by id instead of guessing paths
+                            # issue #478: when seats like replay-dev produce no artifacts,
+                            # artifacts.0 would break the chain — added |fallback degradation;
+                            # with artifacts present the canonical id handoff is unchanged,
+                            # empty falls back to the inline report
                             "input": "Write the architecture/plan for product ${param.slug} based on the approved PRD below.\n\nPRD artifact id (canonical reference — read the PRD by this artifact id, never guess file paths; may be absent):\n${step.n1.result.artifacts.0|(no artifact id — use the PRD document below)}\n\nPRD document:\n${step.n1.result.last_result.report}",
                             "mode": "sync",
                             "max_turns": "${param.seat_max_turns}",
-                            # issue #387: 座位模型钉选 (合成 E2E 钉 replay-dev; 空 = 上游选模)
+                            # issue #387: seat model pinning (synthetic E2E pins replay-dev; empty = upstream picks the model)
                             "model": "${param.seat_model}",
-                            # issue #409: 上游等待可配 (缺省 1800s)
+                            # issue #409: upstream wait configurable (default 1800s)
                             "timeout": "${param.studio_wait_timeout}",
                         }
                     },
                 },
                 {
-                    # issue #422: 历史项目比对 — 在闸门 B (确认点) 之前自动运行, 闸 B 暂停时
-                    # 运行视图展示判定卡 (分数/缺口), 操作员可改判 (override_output 改向指令)
-                    # 后再批准; extend 复用客户已有仓 (增量扩展), base 提炼公共能力后新仓继承
-                    # (绝不写他客户仓, 绝不泄露他客户项目名), new 现行为
+                    # issue #422: historical project matching — runs automatically before
+                    # gate B (confirmation point); when gate B pauses, the run view shows
+                    # the verdict card (score/gaps) and the operator can override
+                    # (override_output redirect directive) before approving; extend reuses
+                    # the customer's existing repo (incremental extension), base distills
+                    # shared capabilities into a new inheriting repo (never writes to
+                    # another customer's repo, never leaks other customer project names),
+                    # new = current behavior
                     "id": "n4m",
                     "name": "historical_match",
                     "config": {
@@ -1084,19 +1281,23 @@ BUILTIN_TEMPLATES = [
                     "name": "approval_gate",
                     "config": {
                         "params": {
+                            # i18n: user-facing
                             "prompt": "闸门 B: 架构评审",
+                            # i18n: user-facing
                             "details": "批准架构后脚手架 + 派发; 拒绝则架构代理按评审意见修订",
-                            # issue #413: review_arch=false (缺省) → 闸门自动通过不进 HITL
+                            # issue #413: review_arch=false (default) -> gate auto-passes without entering HITL
                             "require_review": "${param.review_arch}",
-                            # issue #328: 拒绝 → 修订回路 — 回到 n3 (架构) 带评审意见重跑
+                            # issue #328: reject -> revision loop — back to n3 (architecture), rerunning with the review feedback
                             "on_reject": "revise",
                             "revision_node": "n3",
                         }
                     },
                 },
                 {
-                    # issue #361: scaffold_overwrite 模板参数透传 — 重跑管线不再被已有工作树硬阻塞
-                    # issue #422: verdict=extend 时 repo_scaffold 转为 clone 已有仓 (增量扩展)
+                    # issue #361: scaffold_overwrite template param passthrough — rerunning
+                    # the pipeline is no longer hard-blocked by an existing worktree
+                    # issue #422: with verdict=extend repo_scaffold switches to cloning the
+                    # existing repo (incremental extension)
                     "id": "n5",
                     "name": "repo_scaffold",
                     "config": {
@@ -1118,10 +1319,11 @@ BUILTIN_TEMPLATES = [
                             "allowed_repos": ["${param.repo}"],
                             "title": "${param.task_title}",
                             "body": "Task for ${param.slug}. Scaffold: ${result.repo_path}. Deliver via PR; self-test evidence required.",
-                            # issue #427: 扩展可追溯 — extend 判定的运行带 extension 标签
-                            # (github_api 过滤空串, 非扩展运行标签集不变)
+                            # issue #427: traceable extensions — runs with an extend verdict
+                            # carry the extension label (github_api filters empty strings,
+                            # non-extend runs keep the same label set)
                             "labels": ["state:ready", "${step.n4m.extension_label}"],
-                            # issue #387: 合成 E2E dry_run — 确定性伪 issue, 零 GitHub 写
+                            # issue #387: synthetic E2E dry_run — deterministic fake issue, zero GitHub writes
                             "dry_run": "${param.node_dry_run}",
                         }
                     },
@@ -1130,28 +1332,32 @@ BUILTIN_TEMPLATES = [
                     "id": "n7",
                     "name": "claude_dispatch",
                     "config": {
-                        # issue #358: 看门狗 (#257 默认 1800s) 必须晚于节点内部超时触发,
-                        # 否则节点被取消、detach 语义 (#358) 永远走不到 — 3600 + 300s 余量。
-                        # dispatch_timeout 显式调大超过 3900 时需同步上调此处
+                        # issue #358: the watchdog (#257 default 1800s) must fire later than
+                        # the node internal timeout, otherwise the node gets cancelled and
+                        # the detach semantics (#358) are never reached — 3600 + 300s
+                        # headroom. If dispatch_timeout is raised above 3900, raise this
+                        # value in lockstep
                         "timeout": 3900,
                         "params": {
                             "repo": "${param.repo}",
                             "allowed_repos": ["${param.repo}"],
                             "issue_number": "${result.number}",
-                            # issue #431: design_section 空串 (无设计稿) 时 prompt 逐字节不变;
-                            # 有设计稿时完整设计契约段落拼在尾部 (结构/token 以导出为准, fd-design-lint 外不偏离)
+                            # issue #431: with an empty design_section string (no design) the
+                            # prompt is byte-identical; with a design the full design-contract
+                            # paragraph is appended (structure/tokens per the export, no
+                            # deviation outside fd-design-lint)
                             "prompt": "${param.task_prompt}${step.n4d.design_section}${step.n4m.extension_contract}",
                             "context_links": ["${result.repo_path}/CLAUDE.md"],
                             "cwd": "${result.repo_path}",
                             "timeout": "${param.dispatch_timeout}",
                             "max_tokens": "${param.dispatch_max_tokens}",
-                            # issue #387: 合成 E2E dry_run — 不 spawn 会话, 确定性伪 PR
+                            # issue #387: synthetic E2E dry_run — no session spawned, deterministic fake PR
                             "dry_run": "${param.node_dry_run}",
                         },
                     },
                 },
                 {
-                    # issue #362: 机器验收按关闭关键词判交付 — hygiene/aside PR (仅提及 issue) 阻塞
+                    # issue #362: machine acceptance judges delivery by closing keyword — hygiene/aside PRs (mention-only) block
                     "id": "n8",
                     "name": "github_api",
                     "config": {
@@ -1162,7 +1368,7 @@ BUILTIN_TEMPLATES = [
                             "issue_number": "${result.number}",
                             "require": True,
                             "require_closing_link": "${param.require_closing_link}",
-                            # issue #387: 合成 E2E dry_run — 确定性伪关联 PR, 零 GitHub 读
+                            # issue #387: synthetic E2E dry_run — deterministic fake linked PR, zero GitHub reads
                             "dry_run": "${param.node_dry_run}",
                         }
                     },
@@ -1174,14 +1380,16 @@ BUILTIN_TEMPLATES = [
                         "params": {
                             "graph_id": "${param.env_graph_id}",
                             "agent_id": "${param.env_agent_id}",
-                            # issue #346: env pack 同样收规范 artifact id 交接 (PRD + 架构)
-                            # issue #478: artifacts 为空时降级为内联报告交接 (|fallback)
+                            # issue #346: the env pack also gets canonical artifact id handoff
+                            # (PRD + architecture)
+                            # issue #478: when artifacts are empty, degrade to inline report
+                            # handoff (|fallback)
                             "input": "Prepare the env/mock pack for product ${param.slug} per the PRD and architecture below.\n\nPRD artifact id (canonical reference; may be absent):\n${step.n1.result.artifacts.0|(no artifact id — use the PRD document below)}\n\nArchitecture artifact id (canonical reference; may be absent):\n${step.n3.result.artifacts.0|(no artifact id — use the architecture document below)}\n\nPRD document:\n${step.n1.result.last_result.report}\n\nArchitecture document:\n${step.n3.result.last_result.report}",
                             "mode": "sync",
                             "max_turns": "${param.seat_max_turns}",
-                            # issue #387: 座位模型钉选 (合成 E2E 钉 replay-dev; 空 = 上游选模)
+                            # issue #387: seat model pinning (synthetic E2E pins replay-dev; empty = upstream picks the model)
                             "model": "${param.seat_model}",
-                            # issue #409: 上游等待可配 (缺省 1800s)
+                            # issue #409: upstream wait configurable (default 1800s)
                             "timeout": "${param.studio_wait_timeout}",
                         }
                     },
@@ -1191,9 +1399,11 @@ BUILTIN_TEMPLATES = [
                     "name": "approval_gate",
                     "config": {
                         "params": {
+                            # i18n: user-facing
                             "prompt": "闸门 C: 人工验收",
+                            # i18n: user-facing
                             "details": "支持逐项 batch 决定 (items[]); 全拒 = 任务回退, 混合 = 带逐项结论继续",
-                            # issue #387: gates_human=false (合成 E2E) 闸门 C 自动通过
+                            # issue #387: gates_human=false (synthetic E2E) gate C auto-passes
                             "require_review": "${param.gates_human}",
                         }
                     },
@@ -1208,7 +1418,7 @@ BUILTIN_TEMPLATES = [
                             "allowed_repos": ["${param.repo}"],
                             "issue_number": "${result.number}",
                             "labels": ["state:accepted"],
-                            # issue #387: 合成 E2E dry_run — 零 GitHub 写
+                            # issue #387: synthetic E2E dry_run — zero GitHub writes
                             "dry_run": "${param.node_dry_run}",
                         }
                     },
@@ -1221,18 +1431,20 @@ BUILTIN_TEMPLATES = [
                             "op": "issue_comment",
                             "repo": "${param.repo}",
                             "allowed_repos": ["${param.repo}"],
-                            # issue #478: ${result.*} 速记对最近上游 (n11 issue_set_labels) 解析,
-                            # 其信封无 number — 显式引用 issue_create 节点 n6 的 result.number
+                            # issue #478: the ${result.*} shorthand resolves against the nearest
+                            # upstream (n11 issue_set_labels), whose envelope has no number —
+                            # reference the issue_create node n6's result.number explicitly
                             "issue_number": "${step.n6.result.number}",
                             "body": "Gate C accepted — PR ${result.pr_url} evidence archived (run ${run_id})",
-                            # issue #387: 合成 E2E dry_run — 零 GitHub 写
+                            # issue #387: synthetic E2E dry_run — zero GitHub writes
                             "dry_run": "${param.node_dry_run}",
                         }
                     },
                 },
                 {
-                    # issue #452: 演示契约门 — demo_gate=false 成功 no-op; true 时校验
-                    # 三件套, 缺件 = 交付失败 (AGENTS.md rule 7)
+                    # issue #452: demo contract gate — demo_gate=false is a successful
+                    # no-op; with true it validates the three artifacts, any missing =
+                    # delivery failure (AGENTS.md rule 7)
                     "id": "n13",
                     "name": "demo_contract",
                     "config": {
@@ -1275,10 +1487,12 @@ BUILTIN_TEMPLATES = [
 
 
 def _substitute_params(value: Any, params: Dict[str, Any]) -> Any:
-    # issue #287: 递归替换节点配置里的 ${param.X} 占位符 — 未命中的占位符保留字面量
-    # (记 WARNING 可观测), 已知参数缺失时装配即失败比静默 org/repo 上线更诚实。
+    # issue #287: recursively substitute ${param.X} placeholders in node config —
+    # unmatched placeholders keep their literal text (log a WARNING for
+    # observability); failing at assembly time on a missing known param is more
+    # honest than silently shipping org/repo
     if isinstance(value, str):
-        # 整串占位符 → 保留参数原始类型 (issue_number 42 保持 int, 不变 "42" 字符串)
+        # full-string placeholder -> keep the param's original type (issue_number 42 stays int, not the string "42")
         m = re.fullmatch(r"\$\{(param\.[A-Za-z_][A-Za-z0-9_]*)\}", value)
         if m and m.group(1)[6:] in params:
             return params[m.group(1)[6:]]
@@ -1299,13 +1513,13 @@ def _substitute_params(value: Any, params: Dict[str, Any]) -> Any:
 
 
 class TemplateManager:
-    """模板管理器 — 管理内置模板和用户自定义模板。
+    """Template manager — manages built-in and user-defined templates.
 
-    功能：
-    - 内置模板列表
-    - 模板搜索/推荐（调用 AI）
-    - 模板加载为工作流
-    - 用户自定义模板保存/加载
+    Features:
+    - list built-in templates
+    - template search/recommendation (AI-backed)
+    - load a template as a workflow
+    - save/load user-defined templates
     """
 
     def __init__(self, custom_dir: str = ""):
@@ -1318,27 +1532,27 @@ class TemplateManager:
         tag: str = "",
         needs_ai: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
-        """列出模板。
+        """List templates.
 
         Args:
-            category: 按分类筛选
-            tag: 按标签筛选
-            needs_ai: 按是否需要 AI 筛选
+            category: filter by category
+            tag: filter by tag
+            needs_ai: filter by whether AI is required
 
         Returns:
-            list[dict]: 模板列表
+            list[dict]: list of templates
         """
         templates = list(BUILTIN_TEMPLATES)
 
-        # 加载用户自定义模板
+        # Load user-defined templates
         for tpl_file in self._custom_dir.glob("*.json"):
             try:
                 tpl = json.loads(tpl_file.read_text(encoding="utf-8"))
                 templates.append(tpl)
             except Exception as e:
-                logger.warning(f"加载自定义模板失败 {tpl_file}: {e}")
+                logger.warning(f"Failed to load custom template {tpl_file}: {e}")
 
-        # 筛选
+        # Filtering
         if category:
             templates = [t for t in templates if t.get("category", "") == category]
         if tag:
@@ -1349,7 +1563,7 @@ class TemplateManager:
         return templates
 
     def get_template(self, template_id: str) -> Optional[Dict[str, Any]]:
-        """获取指定模板的详细信息。"""
+        """Get details of the specified template."""
         for tpl in self.list_templates():
             if tpl.get("id") == template_id:
                 return tpl
@@ -1358,31 +1572,33 @@ class TemplateManager:
     def template_to_workflow(
         self, template_id: str, param_values: Optional[Dict[str, Any]] = None
     ) -> Optional[Workflow]:
-        """将模板加载为可执行的工作流。
+        """Load a template as an executable workflow.
 
         Args:
-            template_id: 模板 ID
-            param_values: issue #287 模板级参数 — 节点配置里的 ${param.X} 占位符
-                在装配时用这里的值替换 (repo/issue_number/approvals_url 等)
+            template_id: template ID
+            param_values: issue #287 template-level params — ${param.X} placeholders
+                in node config are substituted at assembly time with these values
+                (repo/issue_number/approvals_url etc.)
 
         Returns:
-            Optional[Workflow]: 工作流实例，如果模板不存在则返回 None
+            Optional[Workflow]: workflow instance, or None if the template does not exist
         """
         tpl = self.get_template(template_id)
         if not tpl:
-            logger.error(f"模板不存在: {template_id}")
+            logger.error(f"Template not found: {template_id}")
             return None
 
         workflow_data = tpl.get("workflow", {})
-        # issue #287: 模板参数装配 — schema defaults 先落底, 显式 param_values 覆盖;
-        # 未传值时占位符也不会残留在节点配置里
+        # issue #287: template param assembly — schema defaults applied first,
+        # explicit param_values override; placeholders never remain in node config
+        # even when no value is passed
         effective = {
             key: (spec or {}).get("default")
             for key, spec in (tpl.get("params", {}).get("properties") or {}).items()
             if (spec or {}).get("default") is not None
         }
         effective.update({k: v for k, v in (param_values or {}).items() if v is not None})
-        # issue #320: 座位 ID 二选一 — 显式值优先, 另一侧清空, 避免 studio_run 校验双设冲突
+        # issue #320: seat ID either-or — explicit value wins and the other side is cleared, avoiding studio_run dual-set validation conflicts
         for pair in tpl.get("params", {}).get("seat_pairs") or []:
             if len(pair) == 2 and all(p in effective for p in pair):
                 first, second = pair
@@ -1397,7 +1613,7 @@ class TemplateManager:
         return wf
 
     def save_custom_template(self, template: Dict[str, Any]) -> bool:
-        """保存用户自定义模板。"""
+        """Save a user-defined template."""
         try:
             tpl_id = template.get("id", f"custom_{int(__import__('time').time())}")
             tpl_file = self._custom_dir / f"{tpl_id}.json"
@@ -1405,14 +1621,14 @@ class TemplateManager:
                 json.dumps(template, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-            logger.info(f"已保存自定义模板: {tpl_id}")
+            logger.info(f"Custom template saved: {tpl_id}")
             return True
         except Exception as e:
-            logger.error(f"保存自定义模板失败: {e}")
+            logger.error(f"Failed to save custom template: {e}")
             return False
 
     def delete_custom_template(self, template_id: str) -> bool:
-        """删除自定义模板。"""
+        """Delete a custom template."""
         tpl_file = self._custom_dir / f"{template_id}.json"
         if tpl_file.exists():
             tpl_file.unlink()
@@ -1420,15 +1636,16 @@ class TemplateManager:
         return False
 
     def get_categories(self) -> List[str]:
-        """获取所有模板分类。"""
+        """Get all template categories."""
         categories = set()
         for tpl in self.list_templates():
+            # i18n: user-facing
             cat = tpl.get("category", "其他")
             categories.add(cat)
         return sorted(categories)
 
     def search_templates(self, query: str) -> List[Dict[str, Any]]:
-        """搜索模板（按名称和描述匹配）。"""
+        """Search templates (matches by name and description)."""
         query = query.lower()
         results = []
         for tpl in self.list_templates():

@@ -30,18 +30,23 @@ class _CDPNodeBase(BaseNode):
 @register_node
 class CDPNavigateNode(_CDPNodeBase):
     name = "cdp_navigate"
+    # i18n: user-facing
     display_name = "CDP 导航"
+    # i18n: user-facing
     description = "通过 Chrome CDP 导航到指定 URL"
     icon = "🌐"
+    # i18n: user-facing
     default_label = "CDP 导航"
 
     inputs = [{"key": "url", "label": "URL", "type": "string"}]
+    # i18n: user-facing
     outputs = [{"key": "frame_id", "label": "帧ID", "type": "string"}]
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "url": {"type": "string", "description": "目标 URL"},
                 "host": {"type": "string", "default": "127.0.0.1"},
                 "port": {"type": "integer", "default": 9222},
@@ -53,7 +58,7 @@ class CDPNavigateNode(_CDPNodeBase):
         params = coerce_params(self.config.params, self.get_params_schema())
         url = inputs.get("url", params.get("url", ""))
         if not url:
-            return NodeResult(status=NodeStatus.FAILED, error="未指定 URL")
+            return NodeResult(status=NodeStatus.FAILED, error="No URL specified")
         client = self._get_client(inputs, params)
         try:
             await client.connect()
@@ -62,21 +67,25 @@ class CDPNavigateNode(_CDPNodeBase):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"url": url, "frame_id": result.get("frameId", "")},
-                summary=f"已导航到: {url}",
+                summary=f"Navigated to: {url}",
             )
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 导航失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP navigation failed")
 
 
 @register_node
 class CDPSnapshotNode(_CDPNodeBase):
     name = "cdp_snapshot"
+    # i18n: user-facing
     display_name = "CDP 快照"
+    # i18n: user-facing
     description = "获取页面无障碍树 (a11y tree)"
     icon = "🌳"
+    # i18n: user-facing
     default_label = "CDP 快照"
 
+    # i18n: user-facing
     outputs = [{"key": "tree", "label": "无障碍树", "type": "object"}]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -99,27 +108,32 @@ class CDPSnapshotNode(_CDPNodeBase):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"tree": tree, "node_count": len(nodes)},
-                summary=f"a11y tree: {len(nodes)} 节点",
+                summary=f"a11y tree: {len(nodes)} node(s)",
             )
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 快照失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP snapshot failed")
 
 
 @register_node
 class CDPClickNode(_CDPNodeBase):
     name = "cdp_click"
+    # i18n: user-facing
     display_name = "CDP 点击"
+    # i18n: user-facing
     description = "通过 CDP 点击页面元素"
     icon = "👆"
+    # i18n: user-facing
     default_label = "CDP 点击"
 
+    # i18n: user-facing
     inputs = [{"key": "backend_node_id", "label": "节点ID", "type": "integer"}]
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "backend_node_id": {"type": "integer", "description": "a11y tree 中的 backendNodeId"},
                 "host": {"type": "string", "default": "127.0.0.1"},
                 "port": {"type": "integer", "default": 9222},
@@ -131,33 +145,38 @@ class CDPClickNode(_CDPNodeBase):
         params = coerce_params(self.config.params, self.get_params_schema())
         node_id = inputs.get("backend_node_id", params.get("backend_node_id", 0))
         if not node_id:
-            return NodeResult(status=NodeStatus.FAILED, error="未指定 backend_node_id")
+            return NodeResult(status=NodeStatus.FAILED, error="No backend_node_id specified")
         client = self._get_client(inputs, params)
         try:
             await client.connect()
             ok = await client.click(int(node_id))
             await client.disconnect()
             if ok:
-                return NodeResult(status=NodeStatus.SUCCESS, data={"clicked": True}, summary="点击成功")
-            return NodeResult(status=NodeStatus.FAILED, error="点击失败", summary="点击失败")
+                return NodeResult(status=NodeStatus.SUCCESS, data={"clicked": True}, summary="Click succeeded")
+            return NodeResult(status=NodeStatus.FAILED, error="Click failed", summary="Click failed")
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 点击失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP click failed")
 
 
 @register_node
 class CDPFillNode(_CDPNodeBase):
     name = "cdp_fill"
+    # i18n: user-facing
     display_name = "CDP 填写"
+    # i18n: user-facing
     description = "通过 CSS 选择器填写表单字段"
     icon = "✍️"
+    # i18n: user-facing
     default_label = "CDP 填写"
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "selector": {"type": "string", "description": "CSS 选择器"},
+                # i18n: user-facing
                 "value": {"type": "string", "description": "填写值"},
                 "host": {"type": "string", "default": "127.0.0.1"},
                 "port": {"type": "integer", "default": 9222},
@@ -170,26 +189,29 @@ class CDPFillNode(_CDPNodeBase):
         selector = inputs.get("selector", params.get("selector", ""))
         value = inputs.get("value", params.get("value", ""))
         if not selector or not value:
-            return NodeResult(status=NodeStatus.FAILED, error="缺少 selector 或 value")
+            return NodeResult(status=NodeStatus.FAILED, error="Missing selector or value")
         client = self._get_client(inputs, params)
         try:
             await client.connect()
             ok = await client.fill(selector, value)
             await client.disconnect()
             if ok:
-                return NodeResult(status=NodeStatus.SUCCESS, data={"filled": True}, summary="填写成功")
-            return NodeResult(status=NodeStatus.FAILED, error="填写失败", summary="填写失败")
+                return NodeResult(status=NodeStatus.SUCCESS, data={"filled": True}, summary="Fill succeeded")
+            return NodeResult(status=NodeStatus.FAILED, error="Fill failed", summary="Fill failed")
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 填写失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP fill failed")
 
 
 @register_node
 class CDPFillFormNode(_CDPNodeBase):
     name = "cdp_fill_form"
+    # i18n: user-facing
     display_name = "CDP 批量填写"
+    # i18n: user-facing
     description = "批量填写多个表单字段"
     icon = "📝"
+    # i18n: user-facing
     default_label = "CDP 批量填写"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -198,6 +220,7 @@ class CDPFillFormNode(_CDPNodeBase):
             "properties": {
                 "fields": {
                     "type": "array",
+                    # i18n: user-facing
                     "description": "表单字段列表 [{selector, value}]",
                     "items": {
                         "type": "object",
@@ -217,7 +240,7 @@ class CDPFillFormNode(_CDPNodeBase):
         params = coerce_params(self.config.params, self.get_params_schema())
         fields = inputs.get("fields", params.get("fields", []))
         if not fields:
-            return NodeResult(status=NodeStatus.FAILED, error="缺少 fields")
+            return NodeResult(status=NodeStatus.FAILED, error="Missing fields")
         client = self._get_client(inputs, params)
         try:
             await client.connect()
@@ -230,25 +253,29 @@ class CDPFillFormNode(_CDPNodeBase):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"results": results, "success_count": success_count},
-                summary=f"填写 {success_count}/{len(fields)} 个字段",
+                summary=f"Filled {success_count}/{len(fields)} field(s)",
             )
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 批量填写失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP batch fill failed")
 
 
 @register_node
 class CDPScreenshotNode(_CDPNodeBase):
     name = "cdp_screenshot"
+    # i18n: user-facing
     display_name = "CDP 截图"
+    # i18n: user-facing
     description = "通过 CDP 截取页面截图"
     icon = "📸"
+    # i18n: user-facing
     default_label = "CDP 截图"
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "save_path": {"type": "string", "description": "保存路径", "default": ""},
                 "host": {"type": "string", "default": "127.0.0.1"},
                 "port": {"type": "integer", "default": 9222},
@@ -272,36 +299,41 @@ class CDPScreenshotNode(_CDPNodeBase):
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
                     data={"size": len(png_bytes), "path": str(p)},
-                    summary=f"截图已保存: {p} ({len(png_bytes)} bytes)",
+                    summary=f"Screenshot saved: {p} ({len(png_bytes)} bytes)",
                 )
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"size": len(png_bytes)},
-                summary=f"截图完成 ({len(png_bytes)} bytes)",
+                summary=f"Screenshot done ({len(png_bytes)} bytes)",
             )
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 截图失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP screenshot failed")
 
 
 @register_node
 class CDPEvaluateNode(_CDPNodeBase):
     name = "cdp_evaluate"
+    # i18n: user-facing
     display_name = "CDP 执行JS"
+    # i18n: user-facing
     description = "通过 CDP 在页面中执行 JavaScript"
     icon = "⚙️"
+    # i18n: user-facing
     default_label = "CDP 执行JS"
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "script": {"type": "string", "description": "JavaScript 代码"},
                 "host": {"type": "string", "default": "127.0.0.1"},
                 "port": {"type": "integer", "default": 9222},
                 "allow_js": {
                     "type": "boolean",
                     "default": False,
+                    # i18n: user-facing
                     "description": "CR-14: 显式确认放行任意 JS 执行 (高危)",
                 },
             },
@@ -312,14 +344,14 @@ class CDPEvaluateNode(_CDPNodeBase):
         params = coerce_params(self.config.params, self.get_params_schema())
         script = inputs.get("script", params.get("script", ""))
         if not script:
-            return NodeResult(status=NodeStatus.FAILED, error="未指定 script")
-        # CR-14: 任意 JS 执行高危, 须显式 allow_js 确认 (Stage 3 将接 PermissionManager)
+            return NodeResult(status=NodeStatus.FAILED, error="No script specified")
+        # CR-14: arbitrary JS execution is high risk and requires explicit allow_js confirmation (Stage 3 will wire PermissionManager)
         if not params.get("allow_js", False):
-            logger.error("cdp_evaluate 拒绝: 未设 allow_js=true (任意 JS 执行高危, 须显式确认)")
+            logger.error("cdp_evaluate rejected: allow_js=true not set (arbitrary JS execution is high risk, explicit confirmation required)")
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="CDP 执行 JS 被拒绝: 须显式确认 (allow_js=true) + 权限放行",
-                summary="CDP JS 执行未授权",
+                error="CDP JS execution rejected: requires explicit confirmation (allow_js=true) + permission allow",
+                summary="CDP JS execution unauthorized",
             )
         client = self._get_client(inputs, params)
         client.confirm_js_eval()
@@ -330,26 +362,31 @@ class CDPEvaluateNode(_CDPNodeBase):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"result": value},
-                summary="JS 执行成功",
+                summary="JS execution succeeded",
             )
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP JS 执行失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP JS execution failed")
 
 
 @register_node
 class CDPEmulateNode(_CDPNodeBase):
     name = "cdp_emulate"
+    # i18n: user-facing
     display_name = "CDP 设备模拟"
+    # i18n: user-facing
     description = "模拟设备视口/缩放"
     icon = "📱"
+    # i18n: user-facing
     default_label = "CDP 设备模拟"
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "width": {"type": "integer", "description": "视口宽度", "default": 1280},
+                # i18n: user-facing
                 "height": {"type": "integer", "description": "视口高度", "default": 720},
                 "device_scale": {"type": "number", "default": 1.0},
                 "mobile": {"type": "boolean", "default": False},
@@ -372,19 +409,22 @@ class CDPEmulateNode(_CDPNodeBase):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"width": width, "height": height, "mobile": mobile},
-                summary=f"视口已设为 {width}x{height}",
+                summary=f"Viewport set to {width}x{height}",
             )
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 设备模拟失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP device emulation failed")
 
 
 @register_node
 class CDPNetworkNode(_CDPNodeBase):
     name = "cdp_network"
+    # i18n: user-facing
     display_name = "CDP 网络监控"
+    # i18n: user-facing
     description = "查询网络请求 (需要事件监听)"
     icon = "🔗"
+    # i18n: user-facing
     default_label = "CDP 网络"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -406,19 +446,22 @@ class CDPNetworkNode(_CDPNodeBase):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"requests": requests, "count": len(requests)},
-                summary=f"网络请求: {len(requests)} 条",
+                summary=f"Network requests: {len(requests)}",
             )
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 网络查询失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP network query failed")
 
 
 @register_node
 class CDPConsoleNode(_CDPNodeBase):
     name = "cdp_console"
+    # i18n: user-facing
     display_name = "CDP 控制台"
+    # i18n: user-facing
     description = "查询控制台消息 (需要事件监听)"
     icon = "🖥️"
+    # i18n: user-facing
     default_label = "CDP 控制台"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -440,19 +483,22 @@ class CDPConsoleNode(_CDPNodeBase):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"messages": messages, "count": len(messages)},
-                summary=f"控制台消息: {len(messages)} 条",
+                summary=f"Console messages: {len(messages)}",
             )
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 控制台查询失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP console query failed")
 
 
 @register_node
 class CDPListPagesNode(_CDPNodeBase):
     name = "cdp_list_pages"
+    # i18n: user-facing
     display_name = "CDP 页面列表"
+    # i18n: user-facing
     description = "列出当前 Chrome 打开的所有页面 (tab)"
     icon = "📋"
+    # i18n: user-facing
     default_label = "CDP 页面列表"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -470,24 +516,28 @@ class CDPListPagesNode(_CDPNodeBase):
         try:
             pages = await client.list_pages()
             return NodeResult(
-                status=NodeStatus.SUCCESS, data={"pages": pages, "count": len(pages)}, summary=f"页面: {len(pages)} 个"
+                status=NodeStatus.SUCCESS, data={"pages": pages, "count": len(pages)}, summary=f"Pages: {len(pages)}"
             )
         except Exception as e:
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 页面列表失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP page list failed")
 
 
 @register_node
 class CDPSelectPageNode(_CDPNodeBase):
     name = "cdp_select_page"
+    # i18n: user-facing
     display_name = "CDP 选择页面"
+    # i18n: user-facing
     description = "切换 CDP 连接到指定 target_id 的页面"
     icon = "🎯"
+    # i18n: user-facing
     default_label = "CDP 选择页面"
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "target_id": {"type": "string", "description": "页面 target id"},
                 "host": {"type": "string", "default": "127.0.0.1"},
                 "port": {"type": "integer", "default": 9222},
@@ -499,26 +549,29 @@ class CDPSelectPageNode(_CDPNodeBase):
         params = coerce_params(self.config.params, self.get_params_schema())
         target_id = inputs.get("target_id", params.get("target_id", ""))
         if not target_id:
-            return NodeResult(status=NodeStatus.FAILED, error="未指定 target_id")
+            return NodeResult(status=NodeStatus.FAILED, error="No target_id specified")
         client = self._get_client(inputs, params)
         try:
             await client.connect()
             await client.select_page(target_id)
             await client.disconnect()
             return NodeResult(
-                status=NodeStatus.SUCCESS, data={"selected": target_id}, summary=f"已切换到页面: {target_id}"
+                status=NodeStatus.SUCCESS, data={"selected": target_id}, summary=f"Switched to page: {target_id}"
             )
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 切换页面失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP select page failed")
 
 
 @register_node
 class CDPNewPageNode(_CDPNodeBase):
     name = "cdp_new_page"
+    # i18n: user-facing
     display_name = "CDP 新建页面"
+    # i18n: user-facing
     description = "通过 CDP HTTP 接口打开新页面 (tab)"
     icon = "➕"
+    # i18n: user-facing
     default_label = "CDP 新建页面"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -540,24 +593,28 @@ class CDPNewPageNode(_CDPNodeBase):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"target": target, "target_id": target.get("id", "")},
-                summary=f"新页面: {url}",
+                summary=f"New page: {url}",
             )
         except Exception as e:
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 新建页面失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP new page failed")
 
 
 @register_node
 class CDPClosePageNode(_CDPNodeBase):
     name = "cdp_close_page"
+    # i18n: user-facing
     display_name = "CDP 关闭页面"
+    # i18n: user-facing
     description = "通过 target_id 关闭指定页面 (tab)"
     icon = "✖️"
+    # i18n: user-facing
     default_label = "CDP 关闭页面"
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "target_id": {"type": "string", "description": "页面 target id"},
                 "host": {"type": "string", "default": "127.0.0.1"},
                 "port": {"type": "integer", "default": 9222},
@@ -569,25 +626,28 @@ class CDPClosePageNode(_CDPNodeBase):
         params = coerce_params(self.config.params, self.get_params_schema())
         target_id = inputs.get("target_id", params.get("target_id", ""))
         if not target_id:
-            return NodeResult(status=NodeStatus.FAILED, error="未指定 target_id")
+            return NodeResult(status=NodeStatus.FAILED, error="No target_id specified")
         client = self._get_client(inputs, params)
         try:
             ok = await client.close_page(target_id)
             if ok:
                 return NodeResult(
-                    status=NodeStatus.SUCCESS, data={"closed": target_id}, summary=f"已关闭页面: {target_id}"
+                    status=NodeStatus.SUCCESS, data={"closed": target_id}, summary=f"Page closed: {target_id}"
                 )
-            return NodeResult(status=NodeStatus.FAILED, error="关闭失败", summary="CDP 关闭页面失败")
+            return NodeResult(status=NodeStatus.FAILED, error="Close failed", summary="CDP close page failed")
         except Exception as e:
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 关闭页面失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP close page failed")
 
 
 @register_node
 class CDPResizePageNode(_CDPNodeBase):
     name = "cdp_resize_page"
+    # i18n: user-facing
     display_name = "CDP 调整窗口"
+    # i18n: user-facing
     description = "调整页面视口尺寸 (width x height)"
     icon = "📐"
+    # i18n: user-facing
     default_label = "CDP 调整窗口"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -611,25 +671,29 @@ class CDPResizePageNode(_CDPNodeBase):
             await client.resize_page(width, height)
             await client.disconnect()
             return NodeResult(
-                status=NodeStatus.SUCCESS, data={"width": width, "height": height}, summary=f"窗口: {width}x{height}"
+                status=NodeStatus.SUCCESS, data={"width": width, "height": height}, summary=f"Window: {width}x{height}"
             )
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 调整窗口失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP resize page failed")
 
 
 @register_node
 class CDPHoverNode(_CDPNodeBase):
     name = "cdp_hover"
+    # i18n: user-facing
     display_name = "CDP 悬停"
+    # i18n: user-facing
     description = "通过 CDP 悬停在指定元素上 (backendNodeId)"
     icon = "🖱️"
+    # i18n: user-facing
     default_label = "CDP 悬停"
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "backend_node_id": {"type": "integer", "description": "a11y tree backendNodeId"},
                 "host": {"type": "string", "default": "127.0.0.1"},
                 "port": {"type": "integer", "default": 9222},
@@ -641,26 +705,29 @@ class CDPHoverNode(_CDPNodeBase):
         params = coerce_params(self.config.params, self.get_params_schema())
         node_id = inputs.get("backend_node_id", params.get("backend_node_id", 0))
         if not node_id:
-            return NodeResult(status=NodeStatus.FAILED, error="未指定 backend_node_id")
+            return NodeResult(status=NodeStatus.FAILED, error="No backend_node_id specified")
         client = self._get_client(inputs, params)
         try:
             await client.connect()
             ok = await client.hover(int(node_id))
             await client.disconnect()
             if ok:
-                return NodeResult(status=NodeStatus.SUCCESS, data={"hovered": True}, summary="悬停成功")
-            return NodeResult(status=NodeStatus.FAILED, error="悬停失败", summary="CDP 悬停失败")
+                return NodeResult(status=NodeStatus.SUCCESS, data={"hovered": True}, summary="Hover succeeded")
+            return NodeResult(status=NodeStatus.FAILED, error="Hover failed", summary="CDP hover failed")
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 悬停失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP hover failed")
 
 
 @register_node
 class CDPDragNode(_CDPNodeBase):
     name = "cdp_drag"
+    # i18n: user-facing
     display_name = "CDP 拖拽"
+    # i18n: user-facing
     description = "通过 CDP 从起始坐标拖拽到目标坐标"
     icon = "🫳"
+    # i18n: user-facing
     default_label = "CDP 拖拽"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -689,19 +756,22 @@ class CDPDragNode(_CDPNodeBase):
             await client.drag(sx, sy, ex, ey)
             await client.disconnect()
             return NodeResult(
-                status=NodeStatus.SUCCESS, data={"dragged": True}, summary=f"拖拽: ({sx},{sy})->({ex},{ey})"
+                status=NodeStatus.SUCCESS, data={"dragged": True}, summary=f"Drag: ({sx},{sy})->({ex},{ey})"
             )
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 拖拽失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP drag failed")
 
 
 @register_node
 class CDPTypeTextNode(_CDPNodeBase):
     name = "cdp_type_text"
+    # i18n: user-facing
     display_name = "CDP 输入文本"
+    # i18n: user-facing
     description = "向当前聚焦元素输入文本 (insertText)"
     icon = "⌨️"
+    # i18n: user-facing
     default_label = "CDP 输入文本"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -719,24 +789,27 @@ class CDPTypeTextNode(_CDPNodeBase):
         params = coerce_params(self.config.params, self.get_params_schema())
         text = inputs.get("text", params.get("text", ""))
         if not text:
-            return NodeResult(status=NodeStatus.FAILED, error="未指定 text")
+            return NodeResult(status=NodeStatus.FAILED, error="No text specified")
         client = self._get_client(inputs, params)
         try:
             await client.connect()
             await client.type_text(text)
             await client.disconnect()
-            return NodeResult(status=NodeStatus.SUCCESS, data={"typed": True}, summary=f"已输入: {text[:30]}")
+            return NodeResult(status=NodeStatus.SUCCESS, data={"typed": True}, summary=f"Typed: {text[:30]}")
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 输入文本失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP type text failed")
 
 
 @register_node
 class CDPPressKeyNode(_CDPNodeBase):
     name = "cdp_press_key"
+    # i18n: user-facing
     display_name = "CDP 按键"
+    # i18n: user-facing
     description = "通过 CDP 发送按键事件 (key, 如 Enter/Tab/Escape)"
     icon = "🔑"
+    # i18n: user-facing
     default_label = "CDP 按键"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -754,30 +827,34 @@ class CDPPressKeyNode(_CDPNodeBase):
         params = coerce_params(self.config.params, self.get_params_schema())
         key = inputs.get("key", params.get("key", ""))
         if not key:
-            return NodeResult(status=NodeStatus.FAILED, error="未指定 key")
+            return NodeResult(status=NodeStatus.FAILED, error="No key specified")
         client = self._get_client(inputs, params)
         try:
             await client.connect()
             await client.press_key(key)
             await client.disconnect()
-            return NodeResult(status=NodeStatus.SUCCESS, data={"pressed": key}, summary=f"按键: {key}")
+            return NodeResult(status=NodeStatus.SUCCESS, data={"pressed": key}, summary=f"Key pressed: {key}")
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 按键失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP press key failed")
 
 
 @register_node
 class CDPWaitForNode(_CDPNodeBase):
     name = "cdp_wait_for"
+    # i18n: user-facing
     display_name = "CDP 等待条件"
+    # i18n: user-facing
     description = "等待页面 JS 表达式为真 (轮询, 超时返回失败)"
     icon = "⏳"
+    # i18n: user-facing
     default_label = "CDP 等待条件"
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "expression": {"type": "string", "description": "JS 表达式, 为真时停止等待"},
                 "timeout": {"type": "number", "default": 30.0},
                 "host": {"type": "string", "default": "127.0.0.1"},
@@ -785,6 +862,7 @@ class CDPWaitForNode(_CDPNodeBase):
                 "allow_js": {
                     "type": "boolean",
                     "default": False,
+                    # i18n: user-facing
                     "description": "E-10: 显式确认放行任意 JS 注入 (高危, 同 cdp_evaluate)",
                 },
             },
@@ -796,15 +874,15 @@ class CDPWaitForNode(_CDPNodeBase):
         expression = inputs.get("expression", params.get("expression", ""))
         timeout = float(inputs.get("timeout", params.get("timeout", 30.0)))
         if not expression:
-            return NodeResult(status=NodeStatus.FAILED, error="未指定 expression")
-        # E-10: wait_for_function 在页面执行任意 JS, 同 cdp_evaluate 高危,
-        # 须显式 allow_js 确认 + 权限放行 (cdp_wait_for 已入 HIGH_RISK_NODES)
+            return NodeResult(status=NodeStatus.FAILED, error="No expression specified")
+        # E-10: wait_for_function executes arbitrary JS on the page, high risk like cdp_evaluate,
+        # requires explicit allow_js confirmation + permission allow (cdp_wait_for is already in HIGH_RISK_NODES)
         if not params.get("allow_js", False):
-            logger.error("cdp_wait_for 拒绝: 未设 allow_js=true (任意 JS 注入高危, 须显式确认)")
+            logger.error("cdp_wait_for rejected: allow_js=true not set (arbitrary JS injection is high risk, explicit confirmation required)")
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="CDP 等待条件被拒绝: 须显式确认 (allow_js=true) + 权限放行",
-                summary="CDP 等待条件未授权",
+                error="CDP wait-for rejected: requires explicit confirmation (allow_js=true) + permission allow",
+                summary="CDP wait-for unauthorized",
             )
         client = self._get_client(inputs, params)
         client.confirm_js_eval()
@@ -813,19 +891,22 @@ class CDPWaitForNode(_CDPNodeBase):
             result = await client.wait_for_function(expression, timeout=timeout)
             await client.disconnect()
             if result.get("success"):
-                return NodeResult(status=NodeStatus.SUCCESS, data=result, summary="条件满足")
-            return NodeResult(status=NodeStatus.FAILED, error="等待超时, 条件未满足", summary="CDP 等待超时")
+                return NodeResult(status=NodeStatus.SUCCESS, data=result, summary="Condition met")
+            return NodeResult(status=NodeStatus.FAILED, error="Wait timed out, condition not met", summary="CDP wait timed out")
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 等待失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP wait failed")
 
 
 @register_node
 class CDPHandleDialogNode(_CDPNodeBase):
     name = "cdp_handle_dialog"
+    # i18n: user-facing
     display_name = "CDP 处理对话框"
+    # i18n: user-facing
     description = "接受或拒绝 JS 弹窗 (alert/confirm/prompt)"
     icon = "💬"
+    # i18n: user-facing
     default_label = "CDP 处理对话框"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -848,18 +929,21 @@ class CDPHandleDialogNode(_CDPNodeBase):
             await client.connect()
             await client.handle_dialog(accept, prompt_text)
             await client.disconnect()
-            return NodeResult(status=NodeStatus.SUCCESS, data={"accept": accept}, summary="对话框已处理")
+            return NodeResult(status=NodeStatus.SUCCESS, data={"accept": accept}, summary="Dialog handled")
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 处理对话框失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP handle dialog failed")
 
 
 @register_node
 class CDPUploadFileNode(_CDPNodeBase):
     name = "cdp_upload_file"
+    # i18n: user-facing
     display_name = "CDP 上传文件"
+    # i18n: user-facing
     description = "通过 CSS 选择器定位 file input 并上传本地文件"
     icon = "📤"
+    # i18n: user-facing
     default_label = "CDP 上传文件"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -879,7 +963,7 @@ class CDPUploadFileNode(_CDPNodeBase):
         selector = inputs.get("selector", params.get("selector", ""))
         file_path = inputs.get("file_path", params.get("file_path", ""))
         if not selector or not file_path:
-            return NodeResult(status=NodeStatus.FAILED, error="未指定 selector 或 file_path")
+            return NodeResult(status=NodeStatus.FAILED, error="No selector or file_path specified")
         client = self._get_client(inputs, params)
         try:
             await client.connect()
@@ -887,20 +971,23 @@ class CDPUploadFileNode(_CDPNodeBase):
             await client.disconnect()
             if ok:
                 return NodeResult(
-                    status=NodeStatus.SUCCESS, data={"uploaded": file_path}, summary=f"已上传: {file_path}"
+                    status=NodeStatus.SUCCESS, data={"uploaded": file_path}, summary=f"Uploaded: {file_path}"
                 )
-            return NodeResult(status=NodeStatus.FAILED, error="上传失败", summary="CDP 上传失败")
+            return NodeResult(status=NodeStatus.FAILED, error="Upload failed", summary="CDP upload failed")
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 上传失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP upload failed")
 
 
 @register_node
 class CDPHeapSnapshotNode(_CDPNodeBase):
     name = "cdp_heapsnapshot"
+    # i18n: user-facing
     display_name = "CDP 堆快照"
+    # i18n: user-facing
     description = "采集 V8 堆快照 (HeapProfiler)"
     icon = "🧠"
+    # i18n: user-facing
     default_label = "CDP 堆快照"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -919,18 +1006,21 @@ class CDPHeapSnapshotNode(_CDPNodeBase):
             await client.connect()
             snapshot = await client.take_heapsnapshot()
             await client.disconnect()
-            return NodeResult(status=NodeStatus.SUCCESS, data={"snapshot_size": len(snapshot)}, summary="堆快照已采集")
+            return NodeResult(status=NodeStatus.SUCCESS, data={"snapshot_size": len(snapshot)}, summary="Heap snapshot captured")
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 堆快照失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP heap snapshot failed")
 
 
 @register_node
 class CDPPerformanceTraceNode(_CDPNodeBase):
     name = "cdp_performance_trace"
+    # i18n: user-facing
     display_name = "CDP 性能追踪"
+    # i18n: user-facing
     description = "启动性能追踪, 执行动作后获取性能指标 (Tracing + Performance)"
     icon = "📊"
+    # i18n: user-facing
     default_label = "CDP 性能追踪"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -952,18 +1042,21 @@ class CDPPerformanceTraceNode(_CDPNodeBase):
             await client.performance_trace_start(categories)
             await client.performance_trace_stop()
             await client.disconnect()
-            return NodeResult(status=NodeStatus.SUCCESS, data={"traced": True}, summary="性能追踪完成")
+            return NodeResult(status=NodeStatus.SUCCESS, data={"traced": True}, summary="Performance trace done")
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP 性能追踪失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP performance trace failed")
 
 
 @register_node
 class CDPLighthouseNode(_CDPNodeBase):
     name = "cdp_lighthouse"
+    # i18n: user-facing
     display_name = "CDP Lighthouse 审计"
+    # i18n: user-facing
     description = "采集页面性能指标 (Lighthouse 替代; 需独立 lighthouse 进程做完整审计)"
     icon = "🚦"
+    # i18n: user-facing
     default_label = "CDP Lighthouse 审计"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -985,8 +1078,8 @@ class CDPLighthouseNode(_CDPNodeBase):
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"metrics": metrics},
-                summary=f"性能指标: {len(metrics.get('metrics', []))} 项",
+                summary=f"Performance metrics: {len(metrics.get('metrics', []))}",
             )
         except Exception as e:
             await client.disconnect()
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP Lighthouse 失败")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="CDP Lighthouse failed")

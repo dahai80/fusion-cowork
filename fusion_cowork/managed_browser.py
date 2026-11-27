@@ -58,7 +58,7 @@ def find_chromium_binary() -> str:
     if override:
         if Path(override).is_file():
             return override
-        raise ManagedBrowserError(f"{CHROMIUM_ENV} 指向的文件不存在: {override}")
+        raise ManagedBrowserError(f"{CHROMIUM_ENV} points to a non-existent file: {override}")
     for candidate in _MAC_CANDIDATES:
         if Path(candidate).is_file():
             return candidate
@@ -67,8 +67,8 @@ def find_chromium_binary() -> str:
         if found:
             return found
     raise ManagedBrowserError(
-        "未找到 Chromium/Chrome 可执行文件 — 安装 Chrome 或设置 "
-        f"{CHROMIUM_ENV}=<binary path> (例: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')"
+        "Chromium/Chrome executable not found — install Chrome or set "
+        f"{CHROMIUM_ENV}=<binary path> (e.g. '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')"
     )
 
 
@@ -137,7 +137,7 @@ class ManagedBrowser:
         import_cookies: str = "",
     ) -> Dict[str, Any]:
         if self.status().get("running"):
-            logger.info(f"托管浏览器已在运行: port={self._state.port}")
+            logger.info(f"managed browser already running: port={self._state.port}")
             return self._state.to_dict()
         binary = self.binary or find_chromium_binary()
         port = port or _free_port()
@@ -154,7 +154,7 @@ class ManagedBrowser:
             args.append("--headless=new")
         if url:
             args.append(url)
-        logger.info(f"启动托管浏览器: port={port} headless={headless} profile={self.profile_dir}")
+        logger.info(f"launching managed browser: port={port} headless={headless} profile={self.profile_dir}")
         self._proc = subprocess.Popen(
             args,
             stdout=subprocess.DEVNULL,
@@ -175,7 +175,7 @@ class ManagedBrowser:
             headless=headless,
         )
         os.environ["FUSION_BROWSER_CDP"] = str(port)
-        logger.info(f"托管浏览器就绪: pid={self._proc.pid} CDP=127.0.0.1:{port}")
+        logger.info(f"managed browser ready: pid={self._proc.pid} CDP=127.0.0.1:{port}")
         if import_cookies:
             imported = await self.import_cookies(import_cookies)
             self._state.cookies_imported = imported
@@ -188,7 +188,7 @@ class ManagedBrowser:
         last_error = ""
         while time.time() < deadline:
             if self._proc is not None and self._proc.poll() is not None:
-                raise ManagedBrowserError(f"浏览器进程提前退出 (code={self._proc.returncode})")
+                raise ManagedBrowserError(f"browser process exited early (code={self._proc.returncode})")
             try:
                 async with httpx.AsyncClient(timeout=1.0, trust_env=False) as client:
                     resp = await client.get(f"http://127.0.0.1:{port}/json/version")
@@ -198,17 +198,17 @@ class ManagedBrowser:
             except Exception as e:
                 last_error = str(e)
             await asyncio.sleep(self.poll_interval)
-        raise ManagedBrowserError(f"浏览器 CDP 端口 {port} 未就绪 ({self.launch_timeout}s): {last_error}")
+        raise ManagedBrowserError(f"browser CDP port {port} not ready ({self.launch_timeout}s): {last_error}")
 
     async def import_cookies(self, cookies_path: str) -> int:
         from .nodes.browser.cdp_client import CDPClient
 
         path = Path(cookies_path).expanduser()
         if not path.is_file():
-            raise ManagedBrowserError(f"cookie 文件不存在: {path}")
+            raise ManagedBrowserError(f"cookie file not found: {path}")
         cookies = parse_cookie_file(path)
         if not cookies:
-            logger.warning(f"cookie 文件无可导入项: {path}")
+            logger.warning(f"cookie file has no importable entries: {path}")
             return 0
         client = CDPClient(port=self._state.port if self._state else int(os.environ.get("FUSION_BROWSER_CDP", "0")))
         await client.connect()
@@ -216,19 +216,19 @@ class ManagedBrowser:
             await client.send("Network.setCookies", {"cookies": cookies})
         finally:
             await client.disconnect()
-        logger.info(f"已导入 {len(cookies)} 条 cookie: {path}")
+        logger.info(f"imported {len(cookies)} cookies: {path}")
         return len(cookies)
 
     async def close(self) -> bool:
         if self._proc is None:
             return False
         if self._proc.poll() is None:
-            logger.info(f"关闭托管浏览器: pid={self._proc.pid}")
+            logger.info(f"closing managed browser: pid={self._proc.pid}")
             self._proc.terminate()
             try:
                 self._proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                logger.warning("浏览器未在 5s 内退出, 强杀")
+                logger.warning("browser did not exit within 5s, force killing")
                 self._proc.kill()
                 self._proc.wait(timeout=5)
         self._proc = None

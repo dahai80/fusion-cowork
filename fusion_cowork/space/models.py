@@ -1,12 +1,12 @@
-"""协作空间数据模型 — Space, SpaceMember, SpaceMessage 等。
+"""Collaborative space data models — Space, SpaceMember, SpaceMessage, etc.
 
-核心实体:
-- Space: 协作空间，包含配置、状态、KB 绑定
-- SpaceConfig: 空间配置项（AI 功能开关、成员权限等）
-- SpaceMember: 空间成员，含角色和活跃时间
-- SpaceMessage: 空间消息，支持 user/assistant/system 角色
-- SpaceSnapshot: 空间快照，用于克隆与回溯
-- PeerInfo: P2P 节点信息，用于 Bonjour 发现
+Core entities:
+- Space: a collaborative space with config, status, and KB binding
+- SpaceConfig: space settings (AI feature toggles, member permissions, etc.)
+- SpaceMember: a space member with role and activity time
+- SpaceMessage: a space message supporting user/assistant/system roles
+- SpaceSnapshot: a space snapshot for cloning and rollback
+- PeerInfo: P2P node info for Bonjour discovery
 """
 
 from __future__ import annotations

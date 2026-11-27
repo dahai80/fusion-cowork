@@ -1,7 +1,7 @@
-"""MCP HTTP+SSE 传输层 — 远程访问 Fusion-Cowork MCP 服务。
+"""MCP HTTP+SSE transport — remote access to the Fusion-Cowork MCP service.
 
-基于 FastAPI + SSE (Server-Sent Events)。
-客户端通过 POST /mcp 发送 JSON-RPC 请求，通过 GET /sse 接收推送通知。
+Built on FastAPI + SSE (Server-Sent Events).
+Clients send JSON-RPC requests via POST /mcp and receive push notifications via GET /sse.
 """
 
 import asyncio
@@ -21,14 +21,14 @@ logger = logging.getLogger(__name__)
 MCP_PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "fusion-cowork"
 
-# MD-1: 请求体上限 1MiB, 防无界 body OOM (uvicorn.Config 无此参, 用 ASGI 中间件实现)
+# MD-1: request body cap 1MiB, prevents unbounded body OOM (uvicorn.Config lacks this param, implemented as ASGI middleware)
 _MAX_BODY_BYTES = 1024 * 1024
 
 
 class _BodySizeLimitMiddleware:
-    """ASGI 中间件: 超过 _MAX_BODY_BYTES 的请求返 413 (Content Too Large)。
+    """ASGI middleware: requests over _MAX_BODY_BYTES get 413 (Content Too Large).
 
-    透明代理属性到内层 app (FastAPI), 使外部仍可访问 app.title / app.routes 等。
+    Transparently proxies attributes to the inner app (FastAPI), so external callers can still access app.title / app.routes etc.
     """
 
     def __init__(self, app, max_bytes: int = _MAX_BODY_BYTES):
@@ -60,9 +60,9 @@ class _BodySizeLimitMiddleware:
 
 
 def _apply_security_middleware(app):
-    """Stage 6: 组合安全中间件 — 先注 tenant_id (JWT), 再限流, 再 body 上限。
+    """Stage 6: combined security middleware — inject tenant_id (JWT) first, then rate limiting, then body size cap.
 
-    无 FUSION_RATE_LIMIT 配置 → 限流 unlimited 透传 (现有行为不变)。
+    No FUSION_RATE_LIMIT configured → unlimited rate limiter passthrough (existing behavior unchanged).
     """
     from ..security.rate_limit import FastAPIRateLimitMiddleware, get_default_rate_limiter
 
@@ -72,10 +72,10 @@ def _apply_security_middleware(app):
 
 
 def _apply_identity_middleware(app, exempt_paths: frozenset[str]) -> None:
-    """issue #88: fusion-identity 启用 → 装 fusion_core tenant middleware + cowork 桥接。
+    """issue #88: fusion-identity enabled → install fusion_core tenant middleware + cowork bridge.
 
-    在 _apply_security_middleware 之前调 (add_middleware 需 FastAPI 对象)。
-    禁用 → 无操作 (零行为变化)。require_jwt=False: MCP initialize 无 token, 实际 token 由 _auth_denied 强制。
+    Called before _apply_security_middleware (add_middleware needs the FastAPI object).
+    Disabled → no-op (zero behavior change). require_jwt=False: MCP initialize carries no token; actual tokens are enforced by _auth_denied.
     """
     try:
         from fusion_cowork.auth.identity import get_identity_client, is_identity_enabled
@@ -86,7 +86,7 @@ def _apply_identity_middleware(app, exempt_paths: frozenset[str]) -> None:
         if client is None:
             return
     except Exception as e:
-        logger.warning(f"mcp http identity middleware 装载失败, 跳过: {e}")
+        logger.warning(f"mcp http identity middleware install failed, skipping: {e}")
         return
     from fusion_cowork.auth.identity import make_verify_jwt_callback
     from fusion_cowork.tenant import (
@@ -100,7 +100,7 @@ def _apply_identity_middleware(app, exempt_paths: frozenset[str]) -> None:
     try:
         from fusion_core.tenant import current, install_tenant_middleware
     except ImportError as e:
-        logger.warning(f"fusion_core.tenant 不可用, mcp identity middleware 跳过: {e}")
+        logger.warning(f"fusion_core.tenant unavailable, skipping mcp identity middleware: {e}")
         return
 
     install_tenant_middleware(
@@ -121,11 +121,11 @@ def _apply_identity_middleware(app, exempt_paths: frozenset[str]) -> None:
             reset_current_tenant(t_tok)
             reset_current_user(u_tok)
 
-    logger.info("mcp http 已装 fusion-identity tenant middleware + cowork 桥接")
+    logger.info("mcp http installed fusion-identity tenant middleware + cowork bridge")
 
 
 def _load_mcp_auth_token() -> Optional[str]:
-    """读取 config mcp.auth_token; 未配则 None (不启用认证)。"""
+    """Read config mcp.auth_token; returns None if unset (auth disabled)."""
     from ..config_center import ConfigCenter
 
     token = ConfigCenter.get_instance().get("mcp.auth_token")
@@ -135,14 +135,14 @@ def _load_mcp_auth_token() -> Optional[str]:
 
 
 def _auth_denied(request, token: Optional[str]):
-    """校验 Authorization: Bearer <token>; 配了 token 则缺/错返 401 响应, 未配返 None。
+    """Validate Authorization: Bearer <token>; with a token configured, missing/wrong returns a 401 response, without one returns None.
 
-    Stage 2: JWT active (env FUSION_JWT_SECRET/FUSION_JWKS_URL) → 有效 JWT 也放行。
+    Stage 2: JWT active (env FUSION_JWT_SECRET/FUSION_JWKS_URL) → valid JWT also passes.
     """
     auth = request.headers.get("authorization", "")
     parts = auth.split(" ", 1)
     bearer = parts[1].strip() if len(parts) == 2 and parts[0].lower() == "bearer" else ""
-    # Stage 2: JWT 优先 — active 且有效即放行 (无需静态 token)
+    # Stage 2: JWT takes priority — active and valid passes (no static token needed)
     if bearer:
         try:
             from fusion_cowork.auth import get_default_verifier
@@ -151,18 +151,18 @@ def _auth_denied(request, token: Optional[str]):
             if verifier.active:
                 principal = verifier.verify_token(bearer)
                 if principal is not None:
-                    # Stage 6: 注 tenant_id 到 request.state, 供限流中间件 per-tenant 计量。
+                    # Stage 6: inject tenant_id into request.state for per-tenant metering by the rate limit middleware.
                     try:
                         request.state.tenant_id = getattr(principal, "tenant_id", "") or "anonymous"
                     except Exception:
                         pass
                     return None
         except Exception as e:
-            logger.warning(f"MCP HTTP JWT 校验异常: {e}")
+            logger.warning(f"MCP HTTP JWT verification error: {e}")
     if not token:
         return None
     if not bearer or bearer != token:
-        logger.warning(f"MCP HTTP 认证失败: {request.client.host if request.client else '?'}")
+        logger.warning(f"MCP HTTP auth failed: {request.client.host if request.client else '?'}")
         from fastapi.responses import JSONResponse
 
         return JSONResponse(
@@ -173,11 +173,11 @@ def _auth_denied(request, token: Optional[str]):
 
 
 def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
-    """创建 FastAPI 应用 (MCP HTTP+SSE)。
+    """Create the FastAPI app (MCP HTTP+SSE).
 
     Args:
-        tool_registry: MCPToolRegistry 实例
-        event_emitter: EventEmitter 实例 (可选，用于 SSE 事件推送)
+        tool_registry: MCPToolRegistry instance
+        event_emitter: EventEmitter instance (optional, for SSE event push)
 
     Returns:
         FastAPI app
@@ -192,12 +192,12 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
     _event_emitter = event_emitter
     _auth_token = _load_mcp_auth_token()
     if _auth_token:
-        logger.info("MCP HTTP 认证已启用: mcp.auth_token Bearer 校验")
+        logger.info("MCP HTTP auth enabled: mcp.auth_token Bearer verification")
 
     async def _handle_initialize(params: Dict[str, Any]) -> Dict[str, Any]:
         nonlocal _initialized
         client_info = params.get("clientInfo", {})
-        logger.info(f"MCP HTTP 客户端: {client_info.get('name', 'unknown')}")
+        logger.info(f"MCP HTTP client: {client_info.get('name', 'unknown')}")
         return {
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": {"tools": {"listChanged": True}},
@@ -207,7 +207,7 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
     async def _handle_initialized(params: Dict[str, Any]) -> Dict[str, Any]:
         nonlocal _initialized
         _initialized = True
-        logger.info("MCP HTTP 会话已初始化")
+        logger.info("MCP HTTP session initialized")
         return {}
 
     async def _handle_tools_list(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -232,7 +232,7 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
 
     @app.post("/mcp")
     async def mcp_endpoint(request: Request):
-        """MCP JSON-RPC 2.0 端点。"""
+        """MCP JSON-RPC 2.0 endpoint."""
         denied = _auth_denied(request, _auth_token)
         if denied is not None:
             return denied
@@ -244,9 +244,9 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
                 status_code=400,
             )
 
-        # MD-1: JSON-RPC batch (数组) 显式拒 -32600
+        # MD-1: JSON-RPC batch (array) explicitly rejected with -32600
         if isinstance(body, list):
-            logger.warning("MCP HTTP 拒绝 batch 请求 (%d 元素)", len(body))
+            logger.warning("MCP HTTP rejected batch request (%d items)", len(body))
             return JSONResponse(
                 {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Batch requests not supported"}},
                 status_code=400,
@@ -283,10 +283,10 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
                 return JSONResponse({"jsonrpc": "2.0", "id": req_id, "result": result})
             return JSONResponse({"jsonrpc": "2.0", "result": result})
         except Exception as e:
-            # HI-5: trace_id 入响应, 栈仅日志, 不泄 str(e) 给客户端
+            # HI-5: trace_id goes into the response, stack only logged, str(e) not leaked to client
             trace_id = get_trace_id()
             logger.error(
-                "MCP HTTP 处理异常 trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc()
+                "MCP HTTP handler exception trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc()
             )
             if req_id is not None:
                 return JSONResponse(
@@ -307,10 +307,10 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
 
     @app.post("/rpc")
     async def rpc_endpoint(request: Request):
-        """JSON-RPC 2.0 端点 — 托管 plugins/* 方法 (issue #48)。
+        """JSON-RPC 2.0 endpoint — hosts plugins/* methods (issue #48).
 
-        委托给 fusion-plugins-ecosystem.MCPHandler, 供 fusion-studio 插件生态面板调用。
-        仅路由 plugins/* 方法, 其余返回 -32601。
+        Delegates to fusion-plugins-ecosystem.MCPHandler for the fusion-studio plugin ecosystem panel.
+        Only routes plugins/* methods, others return -32601.
         """
         denied = _auth_denied(request, _auth_token)
         if denied is not None:
@@ -325,9 +325,9 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
                 status_code=400,
             )
 
-        # MD-1: JSON-RPC batch 显式拒 -32600 (plugins/* 不支持 batch)
+        # MD-1: JSON-RPC batch explicitly rejected with -32600 (plugins/* does not support batch)
         if isinstance(body, list):
-            logger.warning("MCP /rpc 拒绝 batch 请求 (%d 元素)", len(body))
+            logger.warning("MCP /rpc rejected batch request (%d items)", len(body))
             return JSONResponse(
                 {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Batch requests not supported"}},
                 status_code=400,
@@ -341,7 +341,7 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
 
     @app.get("/sse")
     async def sse_endpoint(request: Request):
-        """SSE 推送通道 — 订阅 EventEmitter 事件流。"""
+        """SSE push channel — subscribes to the EventEmitter event stream."""
         denied = _auth_denied(request, _auth_token)
         if denied is not None:
             return denied
@@ -384,19 +384,19 @@ def create_http_app(tool_registry: MCPToolRegistry, event_emitter=None):
 
 
 # ---- P2-9: MCP Streamable HTTP (2025-03-26 spec) ----
-# 单一端点 POST/DELETE/GET /mcp: 响应可为 JSON 或 SSE 流 (服务器决定)。
-# 会话由 Mcp-Session-Id 头标识; 客户端 Accept: application/json, text/event-stream。
+# Single endpoint POST/DELETE/GET /mcp: response can be JSON or an SSE stream (server decides).
+# Sessions identified by the Mcp-Session-Id header; client Accept: application/json, text/event-stream.
 
 STREAMABLE_PROTOCOL_VERSION = "2025-03-26"
 
 
 def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
-    """创建 FastAPI 应用 (MCP Streamable HTTP, 2025-03-26)。
+    """Create the FastAPI app (MCP Streamable HTTP, 2025-03-26).
 
-    单一 /mcp 端点:
-    - POST: 客户端发 JSON-RPC 请求; 响应可为 application/json 或 text/event-stream (SSE)。
-    - DELETE: 终止会话 (Mcp-Session-Id)。
-    - GET:  服务端推送流 (可选, 保持兼容)。
+    Single /mcp endpoint:
+    - POST: client sends a JSON-RPC request; response can be application/json or text/event-stream (SSE).
+    - DELETE: terminate the session (Mcp-Session-Id).
+    - GET:  server push stream (optional, kept for compatibility).
     """
     from fastapi import FastAPI, Request
     from fastapi.responses import JSONResponse, StreamingResponse
@@ -407,27 +407,27 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
     _event_emitter = event_emitter
     _auth_token = _load_mcp_auth_token()
     if _auth_token:
-        logger.info("MCP Streamable 认证已启用: mcp.auth_token Bearer 校验")
-    # R-1: 会话上限 + TTL, 防 _sessions 只增不删 (客户端不 DELETE 则永驻, 内存泄漏)
+        logger.info("MCP Streamable auth enabled: mcp.auth_token Bearer verification")
+    # R-1: session cap + TTL, prevents _sessions growing without deletion (sessions linger forever if clients never DELETE, memory leak)
     _MAX_SESSIONS = 200
-    _SESSION_TTL = 3600  # 秒; 超时未活动会话被清扫
+    _SESSION_TTL = 3600  # seconds; sessions idle past the timeout are swept
 
     def _sweep_sessions() -> None:
-        """R-1: 清扫超时会话 + 超上限淘汰最旧, 防 _sessions 无界增长。"""
+        """R-1: sweep timed-out sessions + evict oldest over the cap, prevents unbounded _sessions growth."""
         now = time.time()
         expired = [sid for sid, s in _sessions.items() if now - s.get("last_seen", now) > _SESSION_TTL]
         for sid in expired:
             _sessions.pop(sid, None)
-            logger.info(f"MCP Streamable 会话超时回收: {sid}")
+            logger.info(f"MCP Streamable session expired, reclaimed: {sid}")
         if len(_sessions) > _MAX_SESSIONS:
             oldest = sorted(_sessions.items(), key=lambda kv: kv[1].get("last_seen", 0))
             for sid, _ in oldest[: len(_sessions) - _MAX_SESSIONS]:
                 _sessions.pop(sid, None)
-                logger.info(f"MCP Streamable 会话超上限淘汰: {sid}")
+                logger.info(f"MCP Streamable session evicted over cap: {sid}")
 
     async def _handle_initialize(params: Dict[str, Any]) -> Dict[str, Any]:
         client_info = params.get("clientInfo", {})
-        logger.info(f"MCP Streamable 客户端: {client_info.get('name', 'unknown')}")
+        logger.info(f"MCP Streamable client: {client_info.get('name', 'unknown')}")
         return {
             "protocolVersion": STREAMABLE_PROTOCOL_VERSION,
             "capabilities": {"tools": {"listChanged": True}},
@@ -477,18 +477,18 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
                 status_code=400,
             )
 
-        # MD-1: JSON-RPC batch 显式拒 -32600 (streamable 单请求语义)
+        # MD-1: JSON-RPC batch explicitly rejected with -32600 (streamable single-request semantics)
         if isinstance(body, list):
-            logger.warning("MCP Streamable 拒绝 batch 请求 (%d 元素)", len(body))
+            logger.warning("MCP Streamable rejected batch request (%d items)", len(body))
             return JSONResponse(
                 {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Batch requests not supported"}},
                 status_code=400,
             )
 
-        # R-1: 每请求清扫超时/超上限会话, 防只增不删
+        # R-1: sweep timed-out/over-cap sessions per request, prevents grow-without-delete
         _sweep_sessions()
 
-        # initialize 必须建会话
+        # initialize must create a session
         if body.get("method") == "initialize":
             session_id = _new_session_id()
             _sessions[session_id] = {"initialized": False, "last_seen": time.time()}
@@ -510,8 +510,8 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
 
         if method == "notifications/initialized":
             sess["initialized"] = True
-            logger.info(f"MCP Streamable 会话初始化完成: {session_id}")
-            # notification 无 id → 202
+            logger.info(f"MCP Streamable session initialization complete: {session_id}")
+            # notification has no id → 202
             return JSONResponse({"jsonrpc": "2.0", "result": {}}, status_code=202)
 
         handler = _handlers.get(method)
@@ -540,7 +540,7 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
             result = await handler(params)
             headers = {"mcp-session-id": session_id}
 
-            # 服务器决定: tools/call 若客户端接受 text/event-stream 则走 SSE 流
+            # Server decides: tools/call uses the SSE stream if the client accepts text/event-stream
             if method == "tools/call" and _is_stream_requested(request):
                 return _stream_response(req_id, result, session_id, headers)
 
@@ -548,10 +548,10 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
                 return JSONResponse({"jsonrpc": "2.0", "id": req_id, "result": result}, headers=headers)
             return JSONResponse({"jsonrpc": "2.0", "result": {}}, headers=headers, status_code=202)
         except Exception as e:
-            # HI-5: trace_id 入响应, 栈仅日志
+            # HI-5: trace_id goes into the response, stack only logged
             trace_id = get_trace_id()
             logger.error(
-                "MCP Streamable 处理异常 trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc()
+                "MCP Streamable handler exception trace_id=%s method=%s err=%s\n%s", trace_id, method, e, traceback.format_exc()
             )
             return JSONResponse(
                 {
@@ -563,7 +563,7 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
             )
 
     def _stream_response(req_id, result, session_id, headers):
-        """构造 SSE 流响应 — 先吐最终 JSON-RPC 结果, 再 (可选) 追加事件。"""
+        """Build the SSE stream response — emit the final JSON-RPC result first, then (optionally) append events."""
 
         async def gen():
             payload = json.dumps({"jsonrpc": "2.0", "id": req_id, "result": result}, ensure_ascii=False)
@@ -579,13 +579,13 @@ def create_streamable_app(tool_registry: MCPToolRegistry, event_emitter=None):
         session_id = request.headers.get("mcp-session-id", "")
         if session_id in _sessions:
             del _sessions[session_id]
-            logger.info(f"MCP Streamable 会话终止: {session_id}")
+            logger.info(f"MCP Streamable session terminated: {session_id}")
             return JSONResponse({"status": "terminated"}, status_code=200)
         return JSONResponse({"error": "session not found"}, status_code=404)
 
     @app.get("/mcp")
     async def streamable_get(request: Request):
-        """GET /mcp — 服务端推送流 (需有效会话)。"""
+        """GET /mcp — server push stream (requires a valid session)."""
         denied = _auth_denied(request, _auth_token)
         if denied is not None:
             return denied

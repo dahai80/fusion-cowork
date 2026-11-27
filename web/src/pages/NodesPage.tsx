@@ -42,6 +42,7 @@ export function NodesPage() {
             <div className="flex items-center justify-between gap-2 pb-3">
                 <input
                     className="w-64 rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
+                    // i18n: user-facing
                     placeholder={t('搜索节点 / 分类 / 描述', 'Search nodes / category / description')}
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
@@ -51,6 +52,7 @@ export function NodesPage() {
                 </div>
             </div>
             {nodes.length === 0 ? (
+                // i18n: user-facing
                 <EmptyState title={t('没有匹配的节点', 'No matching nodes')} />
             ) : (
                 <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
@@ -75,6 +77,7 @@ export function NodesPage() {
                             {n.params_schema && Object.keys(n.params_schema).length > 0 ? (
                                 <details className="mt-1">
                                     <summary className="cursor-pointer text-[10px] text-text-muted">
+                                        {/* i18n: user-facing */}
                                         {t('参数 schema', 'Params schema')}
                                     </summary>
                                     <pre className="mt-1 overflow-x-auto rounded bg-bg p-1 font-mono text-[10px] text-text-secondary">

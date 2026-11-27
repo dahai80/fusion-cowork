@@ -60,10 +60,12 @@ export function GovernancePage() {
             // launch with schema defaults; owner fills real values via the
             // TemplatesPage #294 form when defaults do not apply
             const res = await api.launchTemplate(tplId, params);
+            // i18n: user-facing
             sdk.toast.show({ level: 'success', message: t(`已启动: ${res.run_id}`, `Launched: ${res.run_id}`) });
             window.location.hash = `#/runs/${res.run_id}`;
         } catch (e) {
             console.error('[cowork-web] governance launch failed', e);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('启动失败', 'Launch failed') });
         }
     }
@@ -85,9 +87,11 @@ export function GovernancePage() {
 
     return (
         <div className="mx-auto max-w-5xl space-y-6 p-4">
+            {/* i18n: user-facing */}
             <h1 className="text-lg font-semibold">{t('治理', 'Governance')}</h1>
 
             <section className="space-y-2">
+                {/* i18n: user-facing */}
                 <h2 className="text-sm font-medium text-text-secondary">{t('启动', 'Launch')}</h2>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                     {LAUNCH_IDS.map((id) => (
@@ -98,12 +102,14 @@ export function GovernancePage() {
                                 className="mt-3 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
                                 onClick={() => launch(id)}
                             >
+                                {/* i18n: user-facing */}
                                 {t('启动模板', 'Launch template')}
                             </button>
                         </div>
                     ))}
                 </div>
                 <p className="text-xs text-text-secondary">
+                    {/* i18n: user-facing */}
                     {t('带参数启动请到模板页', 'For parameterized launch use the Templates page')}{' '}
                     <a className="text-indigo-500 underline" href="#/templates">
                         #/templates
@@ -112,8 +118,10 @@ export function GovernancePage() {
             </section>
 
             <section className="space-y-2">
+                {/* i18n: user-facing */}
                 <h2 className="text-sm font-medium text-text-secondary">{t('我的治理运行', 'My governance runs')}</h2>
                 {runs.length === 0 ? (
+                    // i18n: user-facing
                     <EmptyState title={t('暂无治理运行', 'No governance runs yet')} />
                 ) : (
                     <div className="space-y-2">
@@ -149,6 +157,7 @@ export function GovernancePage() {
                                     </span>
                                     {d?.hitl_pending ? (
                                         <a className="text-xs text-indigo-500 underline" href="#/approvals">
+                                            {/* i18n: user-facing */}
                                             {t('去批 ↗', 'Approve ↗')}
                                         </a>
                                     ) : null}
@@ -157,9 +166,11 @@ export function GovernancePage() {
                                         className="text-xs text-indigo-500 underline"
                                         onClick={() => downloadTrajectory(r.run_id)}
                                     >
+                                        {/* i18n: user-facing */}
                                         {t('轨迹↓', 'Trajectory↓')}
                                     </button>
                                     <a className="text-xs text-indigo-500 underline" href={`#/runs/${r.run_id}`}>
+                                        {/* i18n: user-facing */}
                                         {t('详情↗', 'Detail↗')}
                                     </a>
                                 </div>
@@ -171,6 +182,7 @@ export function GovernancePage() {
 
             {terminal.length > 0 ? (
                 <section className="space-y-2">
+                    {/* i18n: user-facing */}
                     <h2 className="text-sm font-medium text-text-secondary">{t('已完成', 'Completed')}</h2>
                     {terminal.slice(0, 5).map((r) => {
                         const d = details[r.run_id];
@@ -187,9 +199,11 @@ export function GovernancePage() {
                                     {r.status}
                                 </span>
                                 <span className="text-xs text-text-secondary">
+                                    {/* i18n: user-facing */}
                                     {t('审批台账', 'Approval ledger')} × {attr.length}
                                 </span>
                                 <a className="text-xs text-indigo-500 underline" href={`#/runs/${r.run_id}`}>
+                                    {/* i18n: user-facing */}
                                     {t('详情↗', 'Detail↗')}
                                 </a>
                                 <button
@@ -197,6 +211,7 @@ export function GovernancePage() {
                                     className="text-xs text-indigo-500 underline"
                                     onClick={() => downloadTrajectory(r.run_id)}
                                 >
+                                    {/* i18n: user-facing */}
                                     {t('轨迹↓', 'Trajectory↓')}
                                 </button>
                             </div>
@@ -206,9 +221,11 @@ export function GovernancePage() {
             ) : null}
 
             <section className="space-y-2">
+                {/* i18n: user-facing */}
                 <h2 className="text-sm font-medium text-text-secondary">{t('审计摘要', 'Audit summary')}</h2>
                 <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-bg px-4 py-3 text-sm shadow-sm">
                     <span>
+                        {/* i18n: user-facing */}
                         {t('决定数', 'Decisions')}: <span className="font-mono">{audit.decisions}</span>
                     </span>
                     {Object.entries(audit.byDecidedBy).map(([who, n]) => (
@@ -217,6 +234,7 @@ export function GovernancePage() {
                         </span>
                     ))}
                     <a className="text-xs text-indigo-500 underline" href="#/governance?tab=audit">
+                        {/* i18n: user-facing */}
                         {t('审批台账 ↗', 'Approval ledger ↗')}
                     </a>
                 </div>

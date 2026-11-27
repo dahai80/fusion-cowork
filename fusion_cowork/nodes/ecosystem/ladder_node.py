@@ -92,26 +92,33 @@ def _stage_fanout_warnings(workers: list) -> List[str]:
 
 @register_node
 class WorkflowLadderNode(BaseNode):
-    """阶梯编排 — 多阶段 worker 梯队 (fusion-harness ParallelTeam 原语)。
+    """Ladder orchestration — multi-stage worker ladders (fusion-harness ParallelTeam primitive).
 
-    stages: [{name, workers: [...]}] — 逐阶段串行推进, 每阶段 worker 并行
-    (ParallelTeam), 阶段产出摘要注入下一阶段 prompt (阶梯传播), 阶段失败
-    即 FAILED (allow_partial=true 放行继续)。
+    stages: [{name, workers: [...]}] — stages advance strictly serially, workers
+    run in parallel per stage (ParallelTeam), each stage's summaries feed the next
+    stage's prompts (ladder propagation), a failed stage is FAILED
+    (allow_partial=true lets it continue).
     """
 
     name = "workflow_ladder"
+    # i18n: user-facing
     display_name = "阶梯编排"
     category = NodeCategory.FUSION_ECOSYSTEM
     description = "Run staged worker ladders via harness ParallelTeam; stage summaries feed the next stage"
     icon = "🪜"
+    # i18n: user-facing
     default_label = "阶梯编排"
 
     inputs = [
+        # i18n: user-facing
         {"key": "stages", "label": "阶段规格列表", "type": "array"},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "stages", "label": "各阶段结果", "type": "array"},
+        # i18n: user-facing
         {"key": "total", "label": "worker 总数", "type": "number"},
+        # i18n: user-facing
         {"key": "failed", "label": "失败数", "type": "number"},
     ]
 
@@ -121,19 +128,25 @@ class WorkflowLadderNode(BaseNode):
             "properties": {
                 "stages": {
                     "type": "array",
+                    # i18n: user-facing
                     "description": "阶段列表 [{name, workers: [{name, prompt, tool_allowlist?, "
                     "permission_mode?, budget_tokens?, max_turns?, worker_node?, worker_params?, "
+                    # i18n: user-facing
                     "model_tier? (cheap|strong|空)}]}] — 单阶段 worker 数 >20 拒绝派发, >15 附 token 倍增警告",
                 },
+                # i18n: user-facing
                 "allow_partial": {"type": "boolean", "description": "阶段内部分失败不整体 FAILED", "default": False},
                 "phase_evaluator": {
                     "type": "boolean",
+                    # i18n: user-facing
                     "description": "阶段评估器 (#558/#133) — 空结果/全失败阶段 fail-safe 拦截, 幸存成员标记 blocked",
                     "default": False,
                 },
+                # i18n: user-facing
                 "propagate_context": {"type": "boolean", "description": "上阶段摘要注入下阶段 prompt", "default": True},
                 "timeout": {
                     "type": "number",
+                    # i18n: user-facing
                     "description": "单阶段超时秒数 (0 = 不限)",
                     "default": _DEFAULT_STAGE_TIMEOUT,
                 },
@@ -145,7 +158,7 @@ class WorkflowLadderNode(BaseNode):
         params = getattr(self.config, "params", {}) or {}
         stages = params.get("stages") or inputs.get("stages")
         if not isinstance(stages, list) or not stages:
-            return NodeResult(status=NodeStatus.FAILED, error="workflow_ladder 参数 stages 必填 (非空数组)")
+            return NodeResult(status=NodeStatus.FAILED, error="workflow_ladder param stages is required (non-empty array)")
         try:
             runner = _load_runner()
         except ImportError as e:
@@ -158,26 +171,26 @@ class WorkflowLadderNode(BaseNode):
         # partial fan-out left behind when a later stage's spec is invalid)
         for idx, stage in enumerate(stages, start=1):
             if not isinstance(stage, dict):
-                return NodeResult(status=NodeStatus.FAILED, error=f"workflow_ladder 第 {idx} 阶段必须是对象")
+                return NodeResult(status=NodeStatus.FAILED, error=f"workflow_ladder stage {idx} must be an object")
             stage_name = str(stage.get("name") or f"stage-{idx}")
             workers = stage.get("workers")
             if not isinstance(workers, list) or not workers:
-                return NodeResult(status=NodeStatus.FAILED, error=f"workflow_ladder 阶段 '{stage_name}' 缺 workers")
+                return NodeResult(status=NodeStatus.FAILED, error=f"workflow_ladder stage '{stage_name}' missing workers")
             for w in workers:
                 if not isinstance(w, dict):
                     return NodeResult(
-                        status=NodeStatus.FAILED, error=f"workflow_ladder 阶段 '{stage_name}' worker 必须是对象"
+                        status=NodeStatus.FAILED, error=f"workflow_ladder stage '{stage_name}' worker must be an object"
                     )
                 try:
                     _validate_model_tier(w.get("model_tier"))
                 except ValueError as e:
                     logger.error(f"workflow_ladder stage '{stage_name}' invalid model_tier: {e}")
-                    return NodeResult(status=NodeStatus.FAILED, error=f"workflow_ladder 阶段 '{stage_name}': {e}")
+                    return NodeResult(status=NodeStatus.FAILED, error=f"workflow_ladder stage '{stage_name}': {e}")
             try:
                 _stage_fanout_warnings(workers)
             except ValueError as e:
                 logger.error(f"workflow_ladder stage '{stage_name}' fan-out bound: {e}")
-                return NodeResult(status=NodeStatus.FAILED, error=f"workflow_ladder 阶段 '{stage_name}': {e}")
+                return NodeResult(status=NodeStatus.FAILED, error=f"workflow_ladder stage '{stage_name}': {e}")
 
         try:
             timeout = float(params.get("timeout", _DEFAULT_STAGE_TIMEOUT) or 0)
@@ -200,27 +213,27 @@ class WorkflowLadderNode(BaseNode):
                     str(worker_node), config=NodeConfig(params=dict(spec.metadata.get("worker_params") or {}))
                 )
                 if node is None:
-                    raise ValueError(f"worker '{spec.name}' 的 worker_node '{worker_node}' 未注册")
+                    raise ValueError(f"worker '{spec.name}' worker_node '{worker_node}' is not registered")
                 res = await node.execute(
                     {"prompt": spec.prompt, "worker": spec.name, "session_id": session.subagent_id}
                 )
                 if _status_str(res.status) != "success":
-                    raise RuntimeError(f"worker_node '{worker_node}' 执行失败: {res.error or '无错误详情'}")
-                return str(res.summary or "worker_node 完成")
+                    raise RuntimeError(f"worker_node '{worker_node}' execution failed: {res.error or 'no error detail'}")
+                return str(res.summary or "worker_node finished")
             return f"worker {spec.name} acknowledged prompt ({len(spec.prompt)} chars)"
 
-        logger.info(f"workflow_ladder 开始: stages={len(stages)} timeout={timeout:g}s propagate={propagate}")
+        logger.info(f"workflow_ladder start: stages={len(stages)} timeout={timeout:g}s propagate={propagate}")
         stage_reports: List[Dict[str, Any]] = []
         prior_summaries = ""
         total = 0
         failed_total = 0
         for idx, stage in enumerate(stages, start=1):
             if not isinstance(stage, dict):
-                return NodeResult(status=NodeStatus.FAILED, error=f"workflow_ladder 第 {idx} 阶段必须是对象")
+                return NodeResult(status=NodeStatus.FAILED, error=f"workflow_ladder stage {idx} must be an object")
             stage_name = str(stage.get("name") or f"stage-{idx}")
             workers = stage.get("workers")
             if not isinstance(workers, list) or not workers:
-                return NodeResult(status=NodeStatus.FAILED, error=f"workflow_ladder 阶段 '{stage_name}' 缺 workers")
+                return NodeResult(status=NodeStatus.FAILED, error=f"workflow_ladder stage '{stage_name}' missing workers")
             total += len(workers)
             # issue #563: pre-dispatch fan-out guidance — validation already ran
             # upfront, so this cannot raise; warnings ride the stage report
@@ -228,21 +241,21 @@ class WorkflowLadderNode(BaseNode):
             for w_text in stage_warnings:
                 logger.warning(f"workflow_ladder stage '{stage_name}': {w_text}")
             logger.info(
-                f"workflow_ladder stage '{stage_name}' 开始: workers={len(workers)} (stage {idx}/{len(stages)})"
+                f"workflow_ladder stage '{stage_name}' start: workers={len(workers)} (stage {idx}/{len(stages)})"
             )
             specs = []
             for w_idx, w in enumerate(workers, start=1):
                 if not isinstance(w, dict):
                     return NodeResult(
                         status=NodeStatus.FAILED,
-                        error=f"workflow_ladder 阶段 '{stage_name}' 第 {w_idx} 个 worker 必须是对象",
+                        error=f"workflow_ladder stage '{stage_name}' worker {w_idx} must be an object",
                     )
                 name = str(w.get("name") or f"{stage_name}-worker-{w_idx}")
                 prompt = str(w.get("prompt") or "")
                 if not prompt:
                     return NodeResult(
                         status=NodeStatus.FAILED,
-                        error=f"workflow_ladder 阶段 '{stage_name}' worker '{name}' 缺 prompt",
+                        error=f"workflow_ladder stage '{stage_name}' worker '{name}' missing prompt",
                     )
                 tier = _validate_model_tier(w.get("model_tier"))
                 if prior_summaries and propagate:
@@ -271,10 +284,10 @@ class WorkflowLadderNode(BaseNode):
                 else:
                     raw = await team.run(specs, agent_fn, parent_tools=["workflow_ladder"], parent_mode="default")
             except TimeoutError:
-                logger.error(f"workflow_ladder stage '{stage_name}' 超时 ({timeout:g}s)")
+                logger.error(f"workflow_ladder stage '{stage_name}' timed out ({timeout:g}s)")
                 return NodeResult(
                     status=NodeStatus.FAILED,
-                    error=f"workflow_ladder 阶段 '{stage_name}' 超时 ({timeout:g}s)",
+                    error=f"workflow_ladder stage '{stage_name}' timed out ({timeout:g}s)",
                     data={"stages": stage_reports, "total": total, "failed": failed_total},
                 )
             except ImportError as e:
@@ -315,30 +328,30 @@ class WorkflowLadderNode(BaseNode):
             )
             if failed and not allow_partial:
                 names = ",".join(r["name"] for r in failed)
-                logger.error(f"workflow_ladder stage '{stage_name}' 失败: {names}")
+                logger.error(f"workflow_ladder stage '{stage_name}' failed: {names}")
                 return NodeResult(
                     status=NodeStatus.FAILED,
-                    error=f"阶段 '{stage_name}' {len(failed)}/{len(raw)} worker 失败: {names}",
+                    error=f"stage '{stage_name}' {len(failed)}/{len(raw)} workers failed: {names}",
                     data={"stages": stage_reports, "total": total, "failed": failed_total},
                 )
-            # 阶梯传播 — 本阶段完成 worker 的摘要喂下一阶段
+            # ladder propagation — completed workers' summaries feed the next stage
             prior_summaries = "\n".join(
                 f"[{r['name']}] {r['summary']}" for r in workers_out if r["status"] == "completed"
             )
-            logger.info(f"workflow_ladder stage '{stage_name}' 完成: {len(raw)} workers, {len(failed)} failed")
+            logger.info(f"workflow_ladder stage '{stage_name}' finished: {len(raw)} workers, {len(failed)} failed")
 
-        logger.info(f"workflow_ladder 完成: total={total} failed={failed_total}")
+        logger.info(f"workflow_ladder finished: total={total} failed={failed_total}")
         data = {"stages": stage_reports, "total": total, "failed": failed_total}
         if failed_total:
-            # allow_partial 放行的失败 — 结果仍然诚实暴露计数
+            # failures let through by allow_partial — the result still exposes the counts honestly
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data=data,
-                error=f"{failed_total}/{total} worker 失败 (allow_partial)",
-                summary=f"{len(stages)} 阶段完成 ({total} worker, {failed_total} 失败)",
+                error=f"{failed_total}/{total} workers failed (allow_partial)",
+                summary=f"{len(stages)} stages finished ({total} workers, {failed_total} failed)",
             )
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data=data,
-            summary=f"{len(stages)} 阶段完成 ({total} worker, 0 失败)",
+            summary=f"{len(stages)} stages finished ({total} workers, 0 failed)",
         )

@@ -128,39 +128,73 @@ TIER1_MIN_COUNT = {
 # Banned words (kept in sync with guidelines/writing-style.md section 4;
 # Chinese core terms live here, English terms in the separate list below)
 FORBIDDEN_ZH = [
+    # i18n: user-facing
     "强大的",
+    # i18n: user-facing
     "十分强大",
+    # i18n: user-facing
     "业界领先",
+    # i18n: user-facing
     "行业领先",
+    # i18n: user-facing
     "领先的",
+    # i18n: user-facing
     "极致的",
+    # i18n: user-facing
     "极致",
+    # i18n: user-facing
     "完美的",
+    # i18n: user-facing
     "完美",
+    # i18n: user-facing
     "顶级",
+    # i18n: user-facing
     "顶尖",
+    # i18n: user-facing
     "最强",
+    # i18n: user-facing
     "首屈一指",
+    # i18n: user-facing
     "革命性",
+    # i18n: user-facing
     "颠覆性",
+    # i18n: user-facing
     "颠覆",
+    # i18n: user-facing
     "划时代",
+    # i18n: user-facing
     "里程碑",
+    # i18n: user-facing
     "黑科技",
+    # i18n: user-facing
     "一站式",
+    # i18n: user-facing
     "全场景",
+    # i18n: user-facing
     "全栈赋能",
+    # i18n: user-facing
     "赋能",
+    # i18n: user-facing
     "闭环打通",
+    # i18n: user-facing
     "打通",
+    # i18n: user-facing
     "无与伦比",
+    # i18n: user-facing
     "卓越",
+    # i18n: user-facing
     "惊艳",
+    # i18n: user-facing
     "灵动",
+    # i18n: user-facing
     "丝滑",
+    # i18n: user-facing
     "无缝",
+    # i18n: user-facing
     "海量",
+    # i18n: user-facing
     "超高",
+    # i18n: user-facing
     "超低",
 ]
 FORBIDDEN_EN = [

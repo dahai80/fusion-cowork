@@ -1,12 +1,12 @@
-"""协作空间知识库服务 — fusion-rag 绑定 + 文档管理。
+"""Collaborative space knowledge base service — fusion-rag binding + document management.
 
-业务逻辑:
-- bind_kb: 绑定/创建空间专属知识库
-- upload_document: 上传文档到空间知识库
-- search: 语义搜索空间知识库
-- query: RAG 问答
-- list_documents: 列出知识库文档
-- unbind_kb: 解绑知识库
+Business logic:
+- bind_kb: bind/create a space-dedicated knowledge base
+- upload_document: upload a document to the space knowledge base
+- search: semantic search over the space knowledge base
+- query: RAG question answering
+- list_documents: list knowledge base documents
+- unbind_kb: unbind the knowledge base
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class SpaceKBService:
-    """空间知识库服务 — 知识库绑定 + 文档管理 + RAG。"""
+    """Space knowledge base service — KB binding + document management + RAG."""
 
     def __init__(
         self,
@@ -41,10 +41,10 @@ class SpaceKBService:
         kb_id: Optional[str] = None,
     ) -> str:
         if not await self._perm.check(space_id, operator_id, "manage_kb"):
-            raise PermissionError(f"用户 {operator_id} 无权管理空间 {space_id} 知识库")
+            raise PermissionError(f"User {operator_id} cannot manage the knowledge base of space {space_id}")
         space = await self._store.get_space(space_id)
         if not space:
-            raise ValueError(f"空间 {space_id} 不存在")
+            raise ValueError(f"space {space_id} not found")
 
         if not self._kb:
             if not kb_id:
@@ -79,12 +79,12 @@ class SpaceKBService:
         file_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not await self._perm.check(space_id, operator_id, "upload_document"):
-            raise PermissionError(f"用户 {operator_id} 无权上传文档到空间 {space_id}")
+            raise PermissionError(f"User {operator_id} cannot upload documents to space {space_id}")
         space = await self._store.get_space(space_id)
         if not space:
-            raise ValueError(f"空间 {space_id} 不存在")
+            raise ValueError(f"space {space_id} not found")
         if not space.kb_id:
-            raise ValueError(f"空间 {space_id} 尚未绑定知识库")
+            raise ValueError(f"space {space_id} has no knowledge base bound yet")
         if not self._kb:
             logger.warning(f"SpaceKB.upload_document no external KB, file={file_name or file_path} recorded only")
             return {"status": "recorded", "file": file_name or file_path, "kb_id": space.kb_id}
@@ -105,7 +105,7 @@ class SpaceKBService:
     ) -> List[Dict[str, Any]]:
         space = await self._store.get_space(space_id)
         if not space:
-            raise ValueError(f"空间 {space_id} 不存在")
+            raise ValueError(f"space {space_id} not found")
         if not space.kb_id:
             return []
         if not self._kb:
@@ -127,7 +127,7 @@ class SpaceKBService:
     ) -> str:
         space = await self._store.get_space(space_id)
         if not space:
-            raise ValueError(f"空间 {space_id} 不存在")
+            raise ValueError(f"space {space_id} not found")
         if not space.kb_id:
             return ""
         if not self._kb:
@@ -147,7 +147,7 @@ class SpaceKBService:
     ) -> List[Dict[str, Any]]:
         space = await self._store.get_space(space_id)
         if not space:
-            raise ValueError(f"空间 {space_id} 不存在")
+            raise ValueError(f"space {space_id} not found")
         if not space.kb_id:
             return []
         if not self._kb:
@@ -161,10 +161,10 @@ class SpaceKBService:
         operator_id: str,
     ) -> bool:
         if not await self._perm.check(space_id, operator_id, "manage_kb"):
-            raise PermissionError(f"用户 {operator_id} 无权管理空间 {space_id} 知识库")
+            raise PermissionError(f"User {operator_id} cannot manage the knowledge base of space {space_id}")
         space = await self._store.get_space(space_id)
         if not space:
-            raise ValueError(f"空间 {space_id} 不存在")
+            raise ValueError(f"space {space_id} not found")
         if not space.kb_id:
             return False
 
@@ -179,7 +179,7 @@ class SpaceKBService:
     ) -> Dict[str, Any]:
         space = await self._store.get_space(space_id)
         if not space:
-            raise ValueError(f"空间 {space_id} 不存在")
+            raise ValueError(f"space {space_id} not found")
         if not space.kb_id:
             return {"bound": False, "kb_id": None}
         if not self._kb:

@@ -3,7 +3,7 @@
 All AI inference requests go through this client to fusion-mlx OpenAI-compatible API.
 No direct MLX or mlx-lm imports; HTTP only.
 
-Default: http://localhost:11432/v1 (fusion-gateway netlayer port, per netlayer-compliance-plan §方案B)
+Default: http://localhost:11432/v1 (fusion-gateway netlayer port, per netlayer-compliance-plan Plan B)
 """
 
 from __future__ import annotations
@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MLX_PORT = 11432
 # env override for local single-machine direct-mlx (bypass gateway netlayer), issue #83.
-# 优先级: FUSION_MLX_URL (整 URL) > FUSION_MLX_HOST + FUSION_MLX_PORT > 默认 localhost:11432。
-# 默认不变 → 多节点/gateway 部署字节级无影响; 本地单机 export FUSION_MLX_HOST=127.0.0.1 FUSION_MLX_PORT=11434 直连 mlx。
+# Priority: FUSION_MLX_URL (full URL) > FUSION_MLX_HOST + FUSION_MLX_PORT > default localhost:11432.
+# Default unchanged → byte-level no-op for multi-node/gateway deployments; on a local single machine,
+# export FUSION_MLX_HOST=127.0.0.1 FUSION_MLX_PORT=11434 to hit mlx directly.
 _env_mlx_url = os.environ.get("FUSION_MLX_URL", "").strip()
 if _env_mlx_url:
     DEFAULT_MLX_BASE_URL = _env_mlx_url
@@ -36,8 +37,8 @@ else:
 MAX_RETRIES = 2
 RETRY_DELAY = 1.0
 
-# fusion-core 基础设施采纳 (路径B, issue #58): 借 with_retry+连接池, 保自建客户端业务层。
-# in-tree 包本地装了就用 (重试统一+指标上报+LRU池), CI 未装则 fallback 原手写重试 (零功能退化)。
+# fusion-core infrastructure adoption (path B, issue #58): borrow with_retry + connection pool, keep the self-built client business layer.
+# Use it when the in-tree package is installed locally (unified retry + metrics reporting + LRU pool); when CI lacks it, fall back to the original hand-written retry (zero functional regression).
 _HAS_FUSION_CORE = False
 _with_retry = None
 _get_async_client = None
@@ -46,9 +47,9 @@ try:
     from fusion_core.http_client import with_retry as _with_retry
 
     _HAS_FUSION_CORE = True
-    logger.info("fusion_core.http_client available, FusionMLXClient 借 with_retry+连接池 (路径B)")
+    logger.info("fusion_core.http_client available, FusionMLXClient uses with_retry+connection pool (path B)")
 except ImportError:
-    logger.info("fusion_core 不可用, FusionMLXClient 回退手写重试 (path B fallback)")
+    logger.info("fusion_core unavailable, FusionMLXClient falls back to hand-written retry (path B fallback)")
 
 
 def _safe_json(resp: httpx.Response) -> Any:
@@ -61,9 +62,11 @@ def _safe_json(resp: httpx.Response) -> Any:
 
 
 def _client_api_key() -> str:
-    # issue #204: 单点配置解析走 fusion_core.config.client_key (规范名 FUSION_CLIENT_KEY,
-    # legacy 别名链 + prod 缺失 RuntimeError 都在 fusion-core 内收敛)。裸装无 fusion-core
-    # 时回退只认规范名 — 别名兼容是 fusion-core 的职责, 不在业务仓重复。
+    # issue #204: single-point config resolution goes through fusion_core.config.client_key
+    # (canonical name FUSION_CLIENT_KEY; legacy alias chain + prod-missing RuntimeError are
+    # all consolidated inside fusion-core). When running bare without fusion-core, fall back
+    # to accepting only the canonical name — alias compatibility is fusion-core's job, not
+    # duplicated in the business repo.
     try:
         from fusion_core.config import client_key
 
@@ -72,7 +75,7 @@ def _client_api_key() -> str:
         key = os.environ.get("FUSION_CLIENT_KEY", "")
         if not key:
             logger.warning(
-                "FUSION_CLIENT_KEY 未设置: MLX 调用将无鉴权, 可能被上游 401 拒绝 (请 export FUSION_CLIENT_KEY=<key>)"
+                "FUSION_CLIENT_KEY not set: MLX calls will be unauthenticated and may be rejected with 401 upstream (export FUSION_CLIENT_KEY=<key>)"
             )
         return key
 
@@ -116,7 +119,7 @@ class FusionMLXClient:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self._client: httpx.AsyncClient | None = None
-        # Stage 6: 上游熔断 (env FUSION_CB_MLX_THRESHOLD 设了启用, 否则无熔断直调)。
+        # Stage 6: upstream circuit breaker (enabled when env FUSION_CB_MLX_THRESHOLD is set, otherwise direct calls without breaker).
         self._breaker = None
         cb_threshold = os.environ.get("FUSION_CB_MLX_THRESHOLD", "").strip()
         if cb_threshold:
@@ -127,9 +130,9 @@ class FusionMLXClient:
                 self._breaker = CircuitBreaker(
                     name="mlx", failure_threshold=int(cb_threshold), recovery_timeout=float(rec)
                 )
-                logger.info(f"MLX 熔断启用 threshold={cb_threshold} recovery={rec}s")
+                logger.info(f"MLX circuit breaker enabled threshold={cb_threshold} recovery={rec}s")
             except (ValueError, ImportError):
-                logger.warning("FUSION_CB_MLX_THRESHOLD 格式错或 security 缺, MLX 熔断未启")
+                logger.warning("FUSION_CB_MLX_THRESHOLD malformed or security module missing, MLX circuit breaker not enabled")
 
     @property
     def client(self) -> httpx.AsyncClient:
@@ -142,8 +145,8 @@ class FusionMLXClient:
         return self._client
 
     def _core_client(self) -> httpx.AsyncClient:
-        # 路径B: fusion-core 连接池 (per-loop+base_url LRU, 上限8, 自动驱逐).
-        # fallback: 自建单实例 client (保向后兼容, CI 无 fusion-core 时走此).
+        # Path B: fusion-core connection pool (per-loop+base_url LRU, cap 8, auto eviction).
+        # fallback: self-built single-instance client (kept for backward compatibility, used when CI has no fusion-core).
         if _HAS_FUSION_CORE:
             return _get_async_client(
                 self.base_url,
@@ -187,7 +190,7 @@ class FusionMLXClient:
         if _HAS_FUSION_CORE:
             return await self._chat_core(payload, model)
 
-        # Stage 6: 熔断开启 → 拒调 (调用方捕 CircuitOpenError 降级, 不重试不挂下游)。
+        # Stage 6: breaker open → reject call (caller catches CircuitOpenError and degrades, no retry, no hanging downstream).
         if self._breaker is not None and not self._breaker.is_call_allowed():
             from fusion_cowork.security.circuit_breaker import CircuitOpenError
 
@@ -205,11 +208,11 @@ class FusionMLXClient:
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                # E-12: choices 缺失/空 → 防御, 旧版 data["choices"][0] 直接 IndexError
+                # E-12: missing/empty choices → defensive, old code did data["choices"][0] and hit IndexError directly
                 choices = data.get("choices") or []
                 if not choices:
-                    logger.error(f"chat() 响应无 choices (model={model}, keys={list(data.keys())})")
-                    raise RuntimeError(f"模型响应无 choices: {data.get('error', data)}")
+                    logger.error(f"chat() response has no choices (model={model}, keys={list(data.keys())})")
+                    raise RuntimeError(f"Model response has no choices: {data.get('error', data)}")
                 choice = choices[0]
                 message = choice.get("message", {})
                 if self._breaker is not None:
@@ -235,23 +238,23 @@ class FusionMLXClient:
                 else:
                     if e.response.status_code in (401, 403):
                         logger.error(
-                            f"chat() 鉴权失败 HTTP {e.response.status_code}: "
-                            "FUSION_CLIENT_KEY 应为 fusion-gateway 的 client api key "
-                            "(config.yaml 中 auth.api_keys[].key), 而非 fusion-mlx "
-                            "settings.json 的 auth.api_key; 两者是独立鉴权"
+                            f"chat() auth failed HTTP {e.response.status_code}: "
+                            "FUSION_CLIENT_KEY should be a fusion-gateway client api key "
+                            "(auth.api_keys[].key in config.yaml), not the fusion-mlx "
+                            "auth.api_key in settings.json; the two are independent auth"
                         )
                     raise
-        # Stage 6: 重试耗尽 → 记熔断失败 (5xx/超时类, 401/403 鉴权不记 — 上游没坏是 key 错)。
+        # Stage 6: retries exhausted → record breaker failure (5xx/timeout class; 401/403 auth errors not recorded — upstream is fine, the key is wrong).
         if self._breaker is not None and isinstance(
             last_exc, (httpx.ConnectError, httpx.ReadTimeout, httpx.PoolTimeout)
         ):
             self._breaker.on_failure()
-        # E-12: last_exc 可能为 None (max_retries<0 零迭代, 或未来分支遗漏设值) → raise None 抛 TypeError
-        raise last_exc if last_exc is not None else RuntimeError("请求无有效响应且无异常记录")
+        # E-12: last_exc may be None (max_retries<0 zero iterations, or a future branch missing the assignment) → raise None would throw TypeError
+        raise last_exc if last_exc is not None else RuntimeError("Request produced no valid response and no exception was recorded")
 
     async def _chat_core(self, payload: dict, model: str) -> LLMResponse:
-        # 路径B: fusion-core with_retry 统一重试 (429/500/502/503/504 + 瞬态异常, jitter退避)
-        # + 指标上报 (gateway /metrics 可聚合). 鉴权401/403 hint 保留.
+        # Path B: fusion-core with_retry unified retry (429/500/502/503/504 + transient exceptions, jitter backoff)
+        # + metrics reporting (aggregatable at gateway /metrics). Auth 401/403 hint kept.
         client = self._core_client()
 
         async def _do_post() -> httpx.Response:
@@ -273,12 +276,12 @@ class FusionMLXClient:
                 raise RuntimeError(quota_msg) from e
             if e.response.status_code in (401, 403):
                 logger.error(
-                    f"chat() 鉴权失败 HTTP {e.response.status_code}: "
-                    "FUSION_CLIENT_KEY 应为 fusion-gateway 的 client api key "
-                    "(config.yaml 中 auth.api_keys[].key), 而非 fusion-mlx "
-                    "settings.json 的 auth.api_key; 两者是独立鉴权"
+                    f"chat() auth failed HTTP {e.response.status_code}: "
+                    "FUSION_CLIENT_KEY should be a fusion-gateway client api key "
+                    "(auth.api_keys[].key in config.yaml), not the fusion-mlx "
+                    "auth.api_key in settings.json; the two are independent auth"
                 )
-            # Stage 6: 5xx 记熔断失败 (上游坏), 4xx 鉴权不记 (key 错非上游坏)。
+            # Stage 6: 5xx records breaker failure (upstream broken), 4xx auth errors not recorded (wrong key, not broken upstream).
             if self._breaker is not None and e.response.status_code >= 500:
                 self._breaker.on_failure()
             raise
@@ -287,11 +290,11 @@ class FusionMLXClient:
                 self._breaker.on_failure()
             raise
         data = resp.json()
-        # E-12: choices 缺失/空 → 防御
+        # E-12: missing/empty choices → defensive
         choices = data.get("choices") or []
         if not choices:
-            logger.error(f"chat() 响应无 choices (model={model}, keys={list(data.keys())})")
-            raise RuntimeError(f"模型响应无 choices: {data.get('error', data)}")
+            logger.error(f"chat() response has no choices (model={model}, keys={list(data.keys())})")
+            raise RuntimeError(f"Model response has no choices: {data.get('error', data)}")
         choice = choices[0]
         message = choice.get("message", {})
         if self._breaker is not None:
@@ -299,11 +302,11 @@ class FusionMLXClient:
         return self._build_llm_response(message, choice, data, model)
 
     def _build_llm_response(self, message: dict, choice: dict, data: dict, model: str) -> LLMResponse:
-        # D-H3 静默失败守卫: 成功路径 content 空 → 显式标记 (非抛错, 保调用方字段判定语义, 18调用方零改).
+        # D-H3 silent-failure guard: empty content on success path → explicit marker (no raise, keeps caller field-check semantics, zero changes for 18 callers).
         content = message.get("content", "")
         finish_reason = choice.get("finish_reason", "stop")
         if not content.strip() and not message.get("tool_calls"):
-            logger.warning(f"chat() 模型返回空 content (model={model}, finish_reason={finish_reason})")
+            logger.warning(f"chat() model returned empty content (model={model}, finish_reason={finish_reason})")
             finish_reason = "empty_content"
         return LLMResponse(
             content=content,
@@ -369,8 +372,8 @@ class FusionMLXClient:
                     await asyncio.sleep(self.retry_delay)
                 else:
                     raise
-        # E-12: last_exc 可能为 None (max_retries<0 零迭代, 或未来分支遗漏设值) → raise None 抛 TypeError
-        raise last_exc if last_exc is not None else RuntimeError("请求无有效响应且无异常记录")
+        # E-12: last_exc may be None (max_retries<0 zero iterations, or a future branch missing the assignment) → raise None would throw TypeError
+        raise last_exc if last_exc is not None else RuntimeError("Request produced no valid response and no exception was recorded")
 
     async def embed(
         self,
@@ -432,7 +435,7 @@ class KBClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._client: httpx.AsyncClient | None = None
-        # Stage 6: KB 上游熔断 (env FUSION_CB_KB_THRESHOLD 设了启用)。
+        # Stage 6: KB upstream circuit breaker (enabled when env FUSION_CB_KB_THRESHOLD is set).
         self._breaker = None
         cb_threshold = os.environ.get("FUSION_CB_KB_THRESHOLD", "").strip()
         if cb_threshold:
@@ -443,9 +446,9 @@ class KBClient:
                 self._breaker = CircuitBreaker(
                     name="kb", failure_threshold=int(cb_threshold), recovery_timeout=float(rec)
                 )
-                logger.info(f"KB 熔断启用 threshold={cb_threshold} recovery={rec}s")
+                logger.info(f"KB circuit breaker enabled threshold={cb_threshold} recovery={rec}s")
             except (ValueError, ImportError):
-                logger.warning("FUSION_CB_KB_THRESHOLD 格式错或 security 缺, KB 熔断未启")
+                logger.warning("FUSION_CB_KB_THRESHOLD malformed or security module missing, KB circuit breaker not enabled")
 
     @property
     def client(self) -> httpx.AsyncClient:
@@ -489,7 +492,7 @@ class KBClient:
         question: str,
         top_k: int = 5,
     ) -> str:
-        # Stage 6: 熔断开启 → 拒调 (调用方降级, 不挂下游)。
+        # Stage 6: breaker open → reject call (caller degrades, no hanging downstream).
         if self._breaker is not None and not self._breaker.is_call_allowed():
             from fusion_cowork.security.circuit_breaker import CircuitOpenError
 

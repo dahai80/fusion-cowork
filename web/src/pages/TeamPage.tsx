@@ -83,6 +83,7 @@ export default function TeamPage() {
 
     return (
         <div className="mx-auto max-w-4xl space-y-4 p-4">
+            {/* i18n: user-facing */}
             <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">团队控制台</h1>
             {error && (
                 <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
@@ -93,8 +94,10 @@ export default function TeamPage() {
             <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
                 <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                        {/* i18n: user-facing */}
                         消费池:{' '}
                         <span className={running ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400'}>
+                            {/* i18n: user-facing */}
                             {running ? '运行中' : '停止'}
                         </span>
                     </span>
@@ -105,6 +108,7 @@ export default function TeamPage() {
                             onClick={() => void togglePool()}
                             className="rounded-xl bg-indigo-600 px-3 py-1.5 text-sm text-white shadow-sm disabled:opacity-50"
                         >
+                            {/* i18n: user-facing */}
                             {running ? '停止' : '启动'}
                         </button>
                         <button
@@ -113,6 +117,7 @@ export default function TeamPage() {
                             onClick={() => void register()}
                             className="rounded-xl border border-zinc-200/80 px-3 py-1.5 text-sm shadow-sm dark:border-zinc-700"
                         >
+                            {/* i18n: user-facing */}
                             登记 Agent
                         </button>
                     </div>
@@ -135,6 +140,7 @@ export default function TeamPage() {
                                     }}
                                     className="text-xs text-indigo-500"
                                 >
+                                    {/* i18n: user-facing */}
                                     收件箱
                                 </button>
                                 <button
@@ -146,16 +152,19 @@ export default function TeamPage() {
                                     }}
                                     className="text-xs text-zinc-400 hover:text-red-500"
                                 >
+                                    {/* i18n: user-facing */}
                                     移除
                                 </button>
                             </span>
                         </li>
                     ))}
+                    {/* i18n: user-facing */}
                     {agents.length === 0 && <li className="py-2 text-xs text-zinc-400">花名册为空 — 先登记 agent</li>}
                 </ul>
             </div>
 
             <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+                {/* i18n: user-facing */}
                 <div className="mb-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">发消息</div>
                 <div className="flex flex-wrap gap-2 text-sm">
                     <input
@@ -173,6 +182,7 @@ export default function TeamPage() {
                     <input
                         value={body}
                         onChange={(e) => setBody(e.target.value)}
+                        // i18n: user-facing
                         placeholder="消息内容"
                         className="flex-1 rounded-xl border border-zinc-200/80 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
                     />
@@ -182,6 +192,7 @@ export default function TeamPage() {
                         onClick={() => void send()}
                         className="rounded-xl bg-indigo-600 px-4 py-2 font-medium text-white shadow-sm disabled:opacity-50"
                     >
+                        {/* i18n: user-facing */}
                         发送
                     </button>
                 </div>
@@ -190,6 +201,7 @@ export default function TeamPage() {
             {inboxAgent && (
                 <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
                     <div className="mb-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                        {/* i18n: user-facing */}
                         收件箱: {inboxAgent}
                     </div>
                     <ul className="space-y-1 text-xs dark:text-zinc-300">
@@ -201,6 +213,7 @@ export default function TeamPage() {
                                 {m.body}
                             </li>
                         ))}
+                        {/* i18n: user-facing */}
                         {messages.length === 0 && <li className="text-zinc-400">空</li>}
                     </ul>
                 </div>

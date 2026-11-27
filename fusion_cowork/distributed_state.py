@@ -1,23 +1,26 @@
-"""分布式状态层 — 跨进程共享存储 + 集群感知句柄包装 (issue #79)。
+"""Distributed state layer — cross-process shared storage + cluster-aware handle wrappers (issue #79).
 
-fusion-cowork 持有的分布式基础设施: 把 DeskRuntime 注入的 node_registry /
-task_scheduler 句柄从单进程只读 passthrough 升级为集群感知包装, 使插件生态
-跨节点可见 + 任务跨节点派发/故障转移。
+Distributed infrastructure owned by fusion-cowork: upgrades the DeskRuntime-injected
+node_registry / task_scheduler handles from single-process read-only passthrough to
+cluster-aware wrappers, making the plugin ecosystem visible across nodes and enabling
+cross-node task dispatch/failover.
 
-分层:
-- DistributedStateStore: 原子文件 (JSON) 后端的跨进程共享状态。节点注册表、
-  vRAM 占用账本、插件 enable/installed 集、MCP 会话均序列化于此。线程 + 协程
-  安全 (threading.Lock + asyncio.Lock), 原子 temp+rename 落盘。
-- ClusterNodeRegistry / ClusterTaskScheduler: 包装本机 NodeRegistry /
-  TaskScheduler, 合并共享存储中的 peer 节点/任务, 提供跨节点故障转移派发。
-- is_cluster_enabled / get_cluster_state_store: opt-in 开关 (env
-  FUSION_CLUSTER_ENABLED + 本机 node_id), 默认 OFF = 零行为变化。
+Layers:
+- DistributedStateStore: cross-process shared state backed by an atomic file (JSON).
+  Node registry, vRAM usage ledger, plugin enable/installed sets, MCP sessions are all
+  serialized here. Thread + coroutine safe (threading.Lock + asyncio.Lock), atomic
+  temp+rename persistence.
+- ClusterNodeRegistry / ClusterTaskScheduler: wrap the local NodeRegistry /
+  TaskScheduler, merging peer nodes/tasks from the shared store, providing cross-node
+  failover dispatch.
+- is_cluster_enabled / get_cluster_state_store: opt-in switch (env
+  FUSION_CLUSTER_ENABLED + local node_id), default OFF = zero behavior change.
 
-设计约束:
-- 纯本地/LAN, 不出站云 (复用 cluster_sync SSRF helper)。
-- opt-in, 默认 OFF: 测试/CI 无集群 → 走现有本地逻辑不变。
-- 仅 cowork 侧; DeskRuntime 内部状态 (vram_allocations/_mcp_sessions/
-  registered_plugin_ids) 无法经注入句柄触达 → 上游 issue 单独处理。
+Design constraints:
+- Pure local/LAN, no outbound cloud (reuses cluster_sync SSRF helper).
+- opt-in, default OFF: tests/CI without a cluster keep the existing local logic unchanged.
+- cowork side only; DeskRuntime internal state (vram_allocations/_mcp_sessions/
+  registered_plugin_ids) is unreachable via the injected handles -> handled in a separate upstream issue.
 """
 
 from __future__ import annotations
@@ -180,10 +183,11 @@ class ClusterState:
 
 
 class DistributedStateStore:
-    """跨进程共享状态存储 — 原子文件后端 (JSON)。
+    """Cross-process shared state store — atomic file backend (JSON).
 
-    线程 + 协程安全: 同进程内 threading.Lock 串行化同步路径, asyncio.Lock
-    串行化协程路径。落盘走 temp+os.replace 原子替换, 跨进程读多写少一致。
+    Thread + coroutine safe: within a process, threading.Lock serializes the sync path
+    and asyncio.Lock serializes the coroutine path. Persistence uses temp+os.replace
+    atomic replacement, giving read-mostly consistency across processes.
     """
 
     def __init__(
@@ -199,7 +203,7 @@ class DistributedStateStore:
         self._async_lock = asyncio.Lock()
         self._cache: Optional[ClusterState] = None
         logger.info(
-            "distributed_state: store 初始化 node_id=%s path=%s",
+            "distributed_state: store initialized node_id=%s path=%s",
             self.node_id,
             self.state_path,
         )
@@ -212,7 +216,7 @@ class DistributedStateStore:
         except FileNotFoundError:
             return ClusterState()
         except (json.JSONDecodeError, ValueError, TypeError) as e:
-            logger.warning("distributed_state: 状态文件损坏, 重建空状态: %s", e)
+            logger.warning("distributed_state: state file corrupted, rebuilding empty state: %s", e)
             return ClusterState()
 
     def _save_to_disk(self, state: ClusterState) -> None:
@@ -363,7 +367,7 @@ class DistributedStateStore:
             state.plugin_states = [s for s in state.plugin_states if s.node_id != node_id]
 
         self._write(_mut)
-        logger.info("distributed_state: 移除节点 %s", node_id)
+        logger.info("distributed_state: removed node %s", node_id)
 
     def get_state_snapshot(self) -> ClusterState:
         return self._read()
@@ -395,10 +399,11 @@ def reset_cluster_state_store() -> None:
 
 
 class ClusterNodeRegistry:
-    """集群感知节点注册表包装 — 合并本机 NodeRegistry + 共享存储 peer 节点。
+    """Cluster-aware node registry wrapper — merges local NodeRegistry with shared-store peer nodes.
 
-    注入 DeskRuntime 时替代裸 NodeRegistry: list() 返回本机已注册节点 + 集群
-    peer 节点的合并视图, resolve_node() 先查本机再查 peer。
+    Injected into DeskRuntime in place of the bare NodeRegistry: list() returns a merged
+    view of locally registered nodes + cluster peer nodes, resolve_node() checks local
+    first then peers.
     """
 
     def __init__(self, local_registry: Any, store: DistributedStateStore):
@@ -442,10 +447,11 @@ class ClusterNodeRegistry:
 
 
 class ClusterTaskScheduler:
-    """集群感知任务调度包装 — 跨节点故障转移派发。
+    """Cluster-aware task scheduling wrapper — cross-node failover dispatch.
 
-    list_scheduled_tasks() 合并本机 + peer 节点的活跃任务; dispatch_with_failover()
-    选最优节点派发, 失败则转移下一节点。
+    list_scheduled_tasks() merges active tasks from local + peer nodes;
+    dispatch_with_failover() picks the best node to dispatch to and fails over to the
+    next node on failure.
     """
 
     def __init__(self, local_scheduler: Any, store: DistributedStateStore):
@@ -493,12 +499,12 @@ class ClusterTaskScheduler:
         for node_id in candidates:
             try:
                 result = executor(node_id)
-                logger.info("distributed_state: 派发成功 node=%s", node_id)
+                logger.info("distributed_state: dispatch succeeded node=%s", node_id)
                 return {"dispatched_to": node_id, "result": result, "errors": errors}
             except Exception as e:
-                logger.warning("distributed_state: 派发失败 node=%s err=%s, 转移下一节点", node_id, e)
+                logger.warning("distributed_state: dispatch failed node=%s err=%s, failing over to next node", node_id, e)
                 errors.append({"node_id": node_id, "error": str(e)})
-        logger.error("distributed_state: 所有节点派发失败, 无可用故障转移目标")
+        logger.error("distributed_state: dispatch failed on all nodes, no failover target available")
         return {"dispatched_to": None, "result": None, "errors": errors}
 
     def __getattr__(self, item: str) -> Any:

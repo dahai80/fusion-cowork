@@ -1,6 +1,6 @@
-"""通用工具节点 — 吸纳自 Squish 内置工具集（13 个内置工具模式）。
+"""Generic tool nodes — adapted from the Squish built-in toolset (13 built-in tool patterns).
 
-所有工具节点通过 fusion-mlx 或本地能力执行，不依赖外部服务。
+All tool nodes execute via fusion-mlx or local capabilities, no external service dependency.
 """
 
 from __future__ import annotations
@@ -40,16 +40,16 @@ _SANDBOXABLE_REPL_TOOLS = frozenset({"python_repl", "code_execute", "python"})
 
 
 def _kill_process_group(proc: subprocess.Popen) -> None:
-    """R-2: 杀整个进程组 (start_new_session 创建的组), 杜绝孙进程孤儿。
+    """R-2: kill the whole process group (the one start_new_session created), no orphaned grandchildren.
 
-    proc.kill() 仅杀直子, 子进程派生的孙进程继续跑成孤儿。killpg SIGKILL 整组。
+    proc.kill() only kills the direct child; grandchildren spawned by the child keep running as orphans. killpg SIGKILLs the whole group.
     """
     try:
         pgid = os.getpgid(proc.pid)
         os.killpg(pgid, signal.SIGKILL)
-        logger.debug(f"已 killpg 进程组 pgid={pgid} (pid={proc.pid})")
+        logger.debug(f"killpg done on process group pgid={pgid} (pid={proc.pid})")
     except (ProcessLookupError, PermissionError, OSError) as e:
-        logger.debug(f"killpg 失败, 退化 proc.kill: {e}")
+        logger.debug(f"killpg failed, falling back to proc.kill: {e}")
         try:
             proc.kill()
         except OSError:
@@ -57,8 +57,8 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
-    # E-4: 原子写 — tmp 文件写完再 os.replace, 防中途崩溃留半写文件。
-    # 同目录写 tmp (保证同文件系统, replace 原子), 失败清理 tmp。
+    # E-4: atomic write — write the tmp file fully then os.replace, prevents a half-written file on mid-write crash.
+    # tmp is written in the same directory (same filesystem, atomic replace); cleaned up on failure.
     import tempfile
 
     tmp = None
@@ -83,7 +83,7 @@ def _atomic_write_text(path: Path, content: str) -> None:
         raise
 
 
-# 命令沙箱 — 黑名单/白名单
+# Command sandbox — blacklist/allowlist
 _SHELL_BLACKLIST = frozenset(
     {
         "rm -rf /",
@@ -126,10 +126,10 @@ def _check_shell_command(command: str) -> Optional[str]:
     cmd_lower = command.strip().lower()
     for blocked in _SHELL_BLACKLIST:
         if blocked in cmd_lower:
-            return f"命令被沙箱阻止: 含有禁止模式 '{blocked}'"
+            return f"Command blocked by sandbox: contains forbidden pattern '{blocked}'"
     for prefix in _SHELL_BLACKLIST_PREFIXES:
         if cmd_lower.startswith(prefix):
-            return f"命令被沙箱阻止: 匹配禁止前缀 '{prefix}'"
+            return f"Command blocked by sandbox: matches forbidden prefix '{prefix}'"
     return None
 
 
@@ -173,7 +173,7 @@ def _confine_workdir(workdir: str) -> tuple[Optional[str], Optional[str]]:
             wd.relative_to(root)
         except ValueError:
             return None, f"workdir escapes workspace root: {workdir} (root: {root})"
-    # 子目录允许自动创建 — 已确保在 root 围栏内
+    # Subdirectories may be auto-created — already guaranteed inside the root fence
     if not wd.exists():
         try:
             wd.mkdir(parents=True, exist_ok=True)
@@ -182,23 +182,23 @@ def _confine_workdir(workdir: str) -> tuple[Optional[str], Optional[str]]:
     return str(wd), None
 
 
-# E-11: SSRF 防御 — 拒私有/环回/链路本地/云元数据地址
+# E-11: SSRF defense — reject private/loopback/link-local/cloud-metadata addresses
 _SSRF_BANNED_HOSTS = frozenset(
     {
         "localhost",
         "ip6-localhost",
         "ip6-loopback",
-        "metadata.google.internal",  # GCP 元数据
-        "169.254.169.254",  # AWS/Azure 元数据
+        "metadata.google.internal",  # GCP metadata
+        "169.254.169.254",  # AWS/Azure metadata
         "fd00.169.254.169.254",
     }
 )
 
 
 def _check_ssrf_url(url: str) -> Optional[str]:
-    """解析 URL 主机, 解析所有 A/AAAA, 任一落在内网/环回/链路本地 → 拒。
+    """Resolve the URL host, resolve all A/AAAA records, reject if any lands in private/loopback/link-local ranges.
 
-    返回拒绝原因 str, 通过则 None。解析失败 (畸形 host) → 拒 (保守)。
+    Returns the rejection reason as str, or None when allowed. Resolution failure (malformed host) -> reject (conservative).
     """
     import ipaddress
     import socket
@@ -207,25 +207,25 @@ def _check_ssrf_url(url: str) -> Optional[str]:
     parsed = urlparse(url)
     host = parsed.hostname or ""
     if not host:
-        return "URL 无主机名"
+        return "URL has no hostname"
     host_lower = host.lower().rstrip(".")
     if host_lower in _SSRF_BANNED_HOSTS:
-        return f"主机 '{host}' 在 SSRF 黑名单 (内网/元数据)"
+        return f"Host '{host}' is on the SSRF blacklist (internal/metadata)"
 
-    # 字面量 IP 直接判
+    # Literal IPs are judged directly
     try:
         ip = ipaddress.ip_address(host_lower)
     except ValueError:
         ip = None
     if ip is not None and _is_private_ip(ip):
-        return f"URL 主机 {ip} 属内网/环回/链路本地地址"
+        return f"URL host {ip} is a private/loopback/link-local address"
 
-    # 域名: 解析所有地址, 任一内网 → 拒 (防 DNS rebinding + split-horizon)
+    # Domains: resolve all addresses, reject if any is internal (prevents DNS rebinding + split-horizon)
     if ip is None:
         try:
             infos = socket.getaddrinfo(host_lower, None)
         except OSError as e:
-            return f"主机 '{host}' DNS 解析失败: {e}"
+            return f"Host '{host}' DNS resolution failed: {e}"
         seen = set()
         for info in infos:
             addr = info[4][0]
@@ -237,7 +237,7 @@ def _check_ssrf_url(url: str) -> Optional[str]:
             except ValueError:
                 continue
             if _is_private_ip(resolved):
-                return f"主机 '{host}' 解析到内网地址 {resolved} (SSRF 拒绝)"
+                return f"Host '{host}' resolves to internal address {resolved} (SSRF rejected)"
     return None
 
 
@@ -248,9 +248,9 @@ def _is_private_ip(ip) -> bool:
 
 
 def _check_python_code(code: str) -> Optional[str]:
-    # MD-18: AST 遍历替代正则黑名单 (正则可被注释/字符串/unicode 绕过)
-    # parse 失败 (语法错误) 仍放行交子进程报错; 仅拒危险结构
-    # A-4 补强: __import__/importlib/getattr(__builtins__)/eval/exec 等动态导入/执行绕过拦截
+    # MD-18: AST walk replaces the regex blacklist (regex can be bypassed via comments/strings/unicode)
+    # parse failure (syntax error) still passes through for the subprocess to report; only dangerous constructs are rejected
+    # A-4 hardening: dynamic import/exec bypasses such as __import__/importlib/getattr(__builtins__)/eval/exec are intercepted
     import ast
 
     _DANGEROUS_IMPORTS = _PYTHON_BLACKLIST_IMPORTS
@@ -259,8 +259,8 @@ def _check_python_code(code: str) -> Optional[str]:
         ("os", "popen"),
     }
     _DANGEROUS_ATTR_SUBSTR = ("subprocess",)
-    # A-4: 危险内置名 — __import__ 动态导入 / importlib 动态加载 / eval·exec 动态执行 /
-    # getattr(__builtins__, ...) 取危险内置 / __builtins__ 直访
+    # A-4: dangerous builtin names — __import__ dynamic import / importlib dynamic loading / eval·exec dynamic execution /
+    # getattr(__builtins__, ...) fetching dangerous builtins / direct __builtins__ access
     _DANGEROUS_BUILTIN_CALLS = frozenset(
         {"__import__", "eval", "exec", "compile", "breakpoint", "globals", "locals", "vars"}
     )
@@ -269,43 +269,43 @@ def _check_python_code(code: str) -> Optional[str]:
     try:
         tree = ast.parse(code)
     except SyntaxError:
-        # 语法错误交子进程报错, 不在此拦截 (避免误伤)
+        # Syntax errors are reported by the subprocess, not intercepted here (avoids false positives)
         return None
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if any(alias.name == m or alias.name.startswith(m + ".") for m in _DANGEROUS_IMPORTS):
-                    return f"代码被沙箱阻止: 禁止导入 '{alias.name}'"
+                    return f"Code blocked by sandbox: import of '{alias.name}' is forbidden"
         elif isinstance(node, ast.ImportFrom):
             mod = node.module or ""
             if any(mod == m or mod.startswith(m + ".") for m in _DANGEROUS_IMPORTS):
-                return f"代码被沙箱阻止: 禁止 from '{mod}' 导入"
+                return f"Code blocked by sandbox: import from '{mod}' is forbidden"
         elif isinstance(node, ast.Call):
             func = node.func
-            # A-4: __import__("subprocess") — Name 直接调危险内置
+            # A-4: __import__("subprocess") — Name calling a dangerous builtin directly
             if isinstance(func, ast.Name) and func.id in _DANGEROUS_BUILTIN_CALLS:
-                return f"代码被沙箱阻止: 禁止调用内置 '{func.id}()' (可绕过静态导入拦截)"
+                return f"Code blocked by sandbox: calling builtin '{func.id}()' is forbidden (can bypass static-import interception)"
             if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
                 attr_pair = (func.value.id, func.attr)
                 if attr_pair in _DANGEROUS_ATTRS:
-                    return f"代码被沙箱阻止: 禁止调用 {attr_pair[0]}.{attr_pair[1]}()"
+                    return f"Code blocked by sandbox: calling {attr_pair[0]}.{attr_pair[1]}() is forbidden"
                 if func.value.id in _DANGEROUS_ATTR_SUBSTR:
-                    return f"代码被沙箱阻止: 禁止使用 {func.value.id}.{func.attr}"
+                    return f"Code blocked by sandbox: using {func.value.id}.{func.attr} is forbidden"
                 # A-4: importlib.import_module(...) / builtins.__import__(...)
                 if func.value.id in _DANGEROUS_NAMES or func.attr in _DANGEROUS_ATTR_NAMES:
-                    return f"代码被沙箱阻止: 禁止动态导入/执行 {func.value.id}.{func.attr}()"
-        # A-4: 裸引用 __import__ / importlib / __builtins__ 作值 (如赋给变量再调) 也拒
+                    return f"Code blocked by sandbox: dynamic import/exec via {func.value.id}.{func.attr}() is forbidden"
+        # A-4: bare references to __import__ / importlib / __builtins__ as values (e.g. assigned to a variable then called) are also rejected
         if isinstance(node, ast.Name) and node.id in _DANGEROUS_NAMES:
             ctx_is_load = isinstance(node.ctx, ast.Load)
             if ctx_is_load:
-                return f"代码被沙箱阻止: 禁止引用 '{node.id}' (动态导入/执行逃逸面)"
-        # A-4: getattr(__builtins__, "eval") / getattr(builtins, "system") — 经 getattr 取危险对象
+                return f"Code blocked by sandbox: referencing '{node.id}' is forbidden (dynamic import/exec escape surface)"
+        # A-4: getattr(__builtins__, "eval") / getattr(builtins, "system") — fetching dangerous objects via getattr
         if isinstance(node, ast.Call):
             f2 = node.func
             if isinstance(f2, ast.Name) and f2.id == "getattr" and node.args:
                 first = node.args[0]
                 if isinstance(first, ast.Name) and first.id in _DANGEROUS_NAMES:
-                    return f"代码被沙箱阻止: 禁止 getattr({first.id}, ...) 取动态对象"
+                    return f"Code blocked by sandbox: getattr({first.id}, ...) to fetch dynamic objects is forbidden"
     return None
 
 
@@ -313,28 +313,31 @@ _IDENT_RE = __import__("re").compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _validate_repl_variables(variables: Dict[str, Any]) -> Optional[str]:
-    # CR-13c: 注入变量名必须合法 Python 标识符, 拒特殊字符 (防脚本注入)
+    # CR-13c: injected variable names must be valid Python identifiers, special characters rejected (anti script injection)
     for key in variables:
         if not isinstance(key, str) or not _IDENT_RE.match(key):
-            return f"变量名非法 (非合法标识符): {key!r}"
+            return f"Invalid variable name (not a legal identifier): {key!r}"
         if key.startswith("__"):
-            return f"变量名非法 (dunder 前缀): {key!r}"
+            return f"Invalid variable name (dunder prefix): {key!r}"
     return None
 
 
 @register_node
 class ShellExecNode(BaseNode):
-    """Shell 命令执行节点 — 执行本地 shell 命令并获取输出。
+    """Shell command execution node — runs local shell commands and captures output.
 
-    吸纳自 Squish 的 squish_run_shell 工具。
-    通过 subprocess 安全执行，支持超时和输出捕获。
+    Adapted from Squish's squish_run_shell tool.
+    Executes safely via subprocess, with timeout and output capture.
     """
 
     name = "shell_exec"
+    # i18n: user-facing
     display_name = "Shell 命令执行"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "执行本地 shell 命令并获取输出"
     icon = "💻"
+    # i18n: user-facing
     default_label = "Shell 命令"
 
     # issue #524: honest tier — subprocess + static danger checks +
@@ -364,7 +367,7 @@ class ShellExecNode(BaseNode):
         if not isinstance(command, str) or not command.strip():
             return blocked_result(tool_name, self.name, "missing non-empty 'command' string arg")
         result = await self.execute({"command": command})
-        blocked = result.summary in ("沙箱拦截", "shell 元字符拒绝", "workspace root 围栏拦截", "沙箱拦截 workdir")
+        blocked = result.summary in ("Sandbox blocked", "shell metachar rejected", "workspace root fence blocked", "Sandbox blocked workdir")
         data = result.data or {}
         return sandbox_result(
             success=result.status == NodeStatus.SUCCESS,
@@ -377,11 +380,15 @@ class ShellExecNode(BaseNode):
         )
 
     inputs = [
+        # i18n: user-facing
         {"key": "command", "label": "命令", "type": "string"},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "stdout", "label": "标准输出", "type": "string"},
+        # i18n: user-facing
         {"key": "stderr", "label": "错误输出", "type": "string"},
+        # i18n: user-facing
         {"key": "return_code", "label": "返回码", "type": "integer"},
     ]
 
@@ -391,25 +398,30 @@ class ShellExecNode(BaseNode):
             "properties": {
                 "command": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "要执行的 shell 命令",
                 },
                 "timeout": {
                     "type": "integer",
+                    # i18n: user-facing
                     "description": "超时时间（秒）",
                     "default": 30,
                 },
                 "workdir": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "工作目录",
                     "default": "",
                 },
                 "capture_output": {
                     "type": "boolean",
+                    # i18n: user-facing
                     "description": "是否捕获输出",
                     "default": True,
                 },
                 "shell": {
                     "type": "boolean",
+                    # i18n: user-facing
                     "description": "是否通过 shell 执行 (默认 False, 仅显式开启走 shell=True + WARNING)",
                     "default": False,
                 },
@@ -419,7 +431,7 @@ class ShellExecNode(BaseNode):
 
     async def execute(self, inputs: Dict[str, Any]) -> NodeResult:
         params = self.config.params
-        # 参数强制转换（吸纳自 Squish _coerce_* 机制）
+        # Parameter coercion (adapted from Squish's _coerce_* mechanism)
         schema = self.get_params_schema()
         params = coerce_params(params, schema)
 
@@ -427,98 +439,98 @@ class ShellExecNode(BaseNode):
         if not command:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="未指定命令",
-                summary="未指定命令",
+                error="Command not specified",
+                summary="Command not specified",
             )
 
         sandbox_error = _check_shell_command(command)
         if sandbox_error:
-            logger.warning(f"ShellExec 沙箱拦截: {command[:60]}")
+            logger.warning(f"ShellExec sandbox blocked: {command[:60]}")
             return NodeResult(
                 status=NodeStatus.FAILED,
                 error=sandbox_error,
-                summary="沙箱拦截",
+                summary="Sandbox blocked",
             )
 
         timeout = params.get("timeout", 30)
-        # issue #319: LLM 生成的工作流常用 working_directory 命名 — 收编为 workdir 别名
+        # issue #319: LLM-generated workflows often use working_directory naming — adopted as a workdir alias
         workdir = params.get("workdir") or params.get("working_directory", "")
         capture = params.get("capture_output", True)
         use_shell = params.get("shell", False)
 
-        # issue #319: workspace root 围栏 — 默认落到 root, 越界直接拒 (fail-closed)
+        # issue #319: workspace root fence — defaults to the root, out-of-bounds is rejected outright (fail-closed)
         workdir, confine_error = _confine_workdir(workdir)
         if confine_error:
-            logger.error(f"ShellExec workdir 越出 workspace root: {confine_error}")
+            logger.error(f"ShellExec workdir escaped the workspace root: {confine_error}")
             return NodeResult(
                 status=NodeStatus.FAILED,
                 error=confine_error,
-                summary="workspace root 围栏拦截",
+                summary="workspace root fence blocked",
             )
 
-        # issue #319: shell 元字符在 shell=False 下变字面 argv — 静默假成功, 提前响亮拒绝
+        # issue #319: shell metachars become literal argv under shell=False — silently fakes success, rejected loudly up front
         if not use_shell:
             meta_error = _check_shell_metachars(command)
             if meta_error:
-                logger.warning(f"ShellExec 元字符拒绝 (shell=false): {command[:80]}")
+                logger.warning(f"ShellExec metachars rejected (shell=false): {command[:80]}")
                 return NodeResult(
                     status=NodeStatus.FAILED,
                     error=meta_error,
-                    summary="shell 元字符拒绝",
+                    summary="shell metachar rejected",
                 )
 
         from ...security import get_scoped_folder_manager
 
         scope = get_scoped_folder_manager()
         if workdir and not scope.ensure_allowed(workdir):
-            logger.warning(f"ShellExec workdir 越界被沙箱拒绝: {workdir}")
+            logger.warning(f"ShellExec out-of-bounds workdir rejected by sandbox: {workdir}")
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"沙箱拒绝越界工作目录: {workdir}",
-                summary="沙箱拦截 workdir",
+                error=f"Sandbox rejected out-of-bounds workdir: {workdir}",
+                summary="Sandbox blocked workdir",
             )
 
         try:
             if use_shell:
-                logger.warning(f"ShellExec shell=True (纵深防御黑名单已过): {command[:80]}")
+                logger.warning(f"ShellExec shell=True (passed the defense-in-depth blacklist): {command[:80]}")
                 proc = await asyncio.create_subprocess_shell(
                     command,
                     stdout=subprocess.PIPE if capture else None,
                     stderr=subprocess.PIPE if capture else None,
                     cwd=workdir or None,
-                    # R-2: 新会话 leader, 子进程自成进程组, 超时可 killpg 杀整组 (含孙进程)
+                    # R-2: new session leader, the child forms its own process group, timeout can killpg the whole group (grandchildren included)
                     start_new_session=True,
                 )
             else:
-                # CR-6/7: use_shell=False 走 exec 列表 (不起 /bin/sh), 消除 shell 注入
+                # CR-6/7: use_shell=False uses an exec list (no /bin/sh), eliminating shell injection
                 argv = shlex.split(command)
                 if not argv:
                     return NodeResult(
                         status=NodeStatus.FAILED,
-                        error="命令解析为空",
-                        summary="空命令",
+                        error="Command parsed to empty argv",
+                        summary="Empty command",
                     )
                 proc = await asyncio.create_subprocess_exec(
                     *argv,
                     stdout=subprocess.PIPE if capture else None,
                     stderr=subprocess.PIPE if capture else None,
                     cwd=workdir or None,
-                    # R-2: 新会话 leader, 超时可 killpg 杀整组 (旧版 proc.kill 只杀直子, 孙进程成孤儿)
+                    # R-2: new session leader, timeout can killpg the whole group (old proc.kill only killed the direct child, grandchildren orphaned)
                     start_new_session=True,
                 )
 
             try:
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             except TimeoutError:
-                # R-2: killpg 杀整个进程组 (start_new_session 自成组), 杜绝孙进程孤儿
+                # R-2: killpg kills the whole process group (start_new_session forms its own group), no orphaned grandchildren
                 _kill_process_group(proc)
                 await proc.wait()
-                logger.warning(f"ShellExec 超时杀进程组: {command[:80]} ({timeout}s)")
+                logger.warning(f"ShellExec killed the process group on timeout: {command[:80]} ({timeout}s)")
                 return NodeResult(
                     status=NodeStatus.FAILED,
-                    error=f"命令执行超时 ({timeout}s)",
+                    error=f"Command execution timed out ({timeout}s)",
                     data={"command": command, "timeout": timeout},
-                    summary="执行超时",
+                    summary="Execution timed out",
                 )
 
             stdout_str = stdout.decode("utf-8", errors="replace") if stdout else ""
@@ -534,36 +546,38 @@ class ShellExecNode(BaseNode):
                     "return_code": return_code,
                     "command": command,
                 },
-                summary=f"命令 {'成功' if return_code == 0 else '失败'} (返回码: {return_code})",
+                summary=f"Command {'succeeded' if return_code == 0 else 'failed'} (return code: {return_code})",
             )
 
         except FileNotFoundError as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"命令未找到: {e}",
-                summary="命令未找到",
+                error=f"Command not found: {e}",
+                summary="Command not found",
             )
         except Exception as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"执行异常: {e}",
-                summary="执行异常",
+                error=f"Execution error: {e}",
+                summary="Execution error",
             )
 
 
 @register_node
 class PythonREPLNode(BaseNode):
-    """Python REPL 执行节点 — 执行 Python 代码片段。
+    """Python REPL execution node — runs Python code snippets.
 
-    吸纳自 Squish 的 squish_python_repl 工具。
-    在隔离的子进程中执行，限制资源使用。
+    Adapted from Squish's squish_python_repl tool.
+    Executes in an isolated subprocess with resource limits.
     """
 
     name = "python_repl"
     display_name = "Python REPL"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "执行 Python 代码片段并返回结果"
     icon = "🐍"
+    # i18n: user-facing
     default_label = "Python 执行"
 
     # issue #524: honest tier — isolated subprocess + AST danger checks,
@@ -592,7 +606,7 @@ class PythonREPLNode(BaseNode):
             return blocked_result(tool_name, self.name, "missing non-empty 'code' string arg")
         result = await self.execute({"code": code})
         data = result.data or {}
-        blocked = result.summary == "沙箱拦截"
+        blocked = result.summary == "Sandbox blocked"
         return sandbox_result(
             success=result.status == NodeStatus.SUCCESS,
             stdout=str(data.get("result", "")),
@@ -604,10 +618,13 @@ class PythonREPLNode(BaseNode):
         )
 
     inputs = [
+        # i18n: user-facing
         {"key": "code", "label": "Python 代码", "type": "string"},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "result", "label": "执行结果", "type": "string"},
+        # i18n: user-facing
         {"key": "error", "label": "错误信息", "type": "string"},
     ]
 
@@ -617,15 +634,18 @@ class PythonREPLNode(BaseNode):
             "properties": {
                 "code": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "要执行的 Python 代码",
                 },
                 "timeout": {
                     "type": "integer",
+                    # i18n: user-facing
                     "description": "超时时间（秒）",
                     "default": 15,
                 },
                 "variables": {
                     "type": "object",
+                    # i18n: user-facing
                     "description": "注入的变量（JSON 对象）",
                     "default": {},
                 },
@@ -642,45 +662,45 @@ class PythonREPLNode(BaseNode):
         if not code:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="未指定 Python 代码",
-                summary="未指定代码",
+                error="Python code not specified",
+                summary="Code not specified",
             )
 
         sandbox_error = _check_python_code(code)
         if sandbox_error:
-            logger.warning(f"PythonREPL 沙箱拦截: {code[:60]}")
+            logger.warning(f"PythonREPL sandbox blocked: {code[:60]}")
             return NodeResult(
                 status=NodeStatus.FAILED,
                 error=sandbox_error,
-                summary="沙箱拦截",
+                summary="Sandbox blocked",
             )
 
         timeout = params.get("timeout", 15)
         variables = params.get("variables", {})
 
-        # CR-13c: 变量名合法性校验, 拒脚本注入
+        # CR-13c: variable name validation, rejects script injection
         var_error = _validate_repl_variables(variables)
         if var_error:
-            logger.warning(f"PythonREPL 变量名校验拦截: {var_error}")
+            logger.warning(f"PythonREPL variable name validation blocked: {var_error}")
             return NodeResult(
                 status=NodeStatus.FAILED,
                 error=var_error,
-                summary="沙箱拦截",
+                summary="Sandbox blocked",
             )
 
-        # 构建执行脚本
+        # Build the execution script
         script_lines = [
             "import json, sys, math, os, datetime, collections, itertools, random, re, pathlib",
             "",
         ]
-        # 注入变量
+        # Inject variables
         for key, value in variables.items():
             script_lines.append(f"{key} = {json.dumps(value)}")
         if variables:
             script_lines.append("")
 
-        # issue #180: stdin 只读一次存变量 — 旧版 eval(sys.stdin.read()) 先耗尽管道,
-        # SyntaxError 分支再读 stdin 得到空串, 多语句代码静默不执行还报 success
+        # issue #180: stdin is read once and stored in a variable — the old eval(sys.stdin.read()) drained the pipe first,
+        # then the SyntaxError branch read stdin again and got an empty string, so multi-statement code silently did not run yet reported success
         script_lines.extend(
             [
                 "_src = sys.stdin.read()",
@@ -708,7 +728,7 @@ class PythonREPLNode(BaseNode):
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                # R-2: 新会话 leader, 超时 killpg 杀整组 (旧版 proc.kill 只杀直子, 孤儿孙进程)
+                # R-2: new session leader, timeout killpg kills the whole group (old proc.kill only killed the direct child, orphaned grandchildren)
                 start_new_session=True,
             )
 
@@ -720,17 +740,17 @@ class PythonREPLNode(BaseNode):
             except TimeoutError:
                 _kill_process_group(proc)
                 await proc.wait()
-                logger.warning(f"PythonREPL 超时杀进程组 ({timeout}s)")
+                logger.warning(f"PythonREPL killed the process group on timeout ({timeout}s)")
                 return NodeResult(
                     status=NodeStatus.FAILED,
-                    error=f"Python 执行超时 ({timeout}s)",
-                    summary="执行超时",
+                    error=f"Python execution timed out ({timeout}s)",
+                    summary="Execution timed out",
                 )
 
             stdout_str = stdout.decode("utf-8", errors="replace").strip()
             stderr_str = stderr.decode("utf-8", errors="replace").strip()
 
-            # 解析结果
+            # Parse the result
             try:
                 result_data = json.loads(stdout_str) if stdout_str else {}
             except json.JSONDecodeError:
@@ -741,7 +761,7 @@ class PythonREPLNode(BaseNode):
                     status=NodeStatus.FAILED,
                     error=result_data["error"],
                     data={"result": "", "error": result_data["error"], "stderr": stderr_str},
-                    summary="执行错误",
+                    summary="Execution error",
                 )
 
             return NodeResult(
@@ -751,14 +771,14 @@ class PythonREPLNode(BaseNode):
                     "type": result_data.get("type", "str"),
                     "stderr": stderr_str,
                 },
-                summary=f"执行成功: {result_data.get('result', '')[:100]}",
+                summary=f"Executed: {result_data.get('result', '')[:100]}",
             )
 
         except Exception as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"Python REPL 异常: {e}",
-                summary="执行异常",
+                error=f"Python REPL error: {e}",
+                summary="Execution error",
             )
 
 
@@ -839,24 +859,30 @@ class PythonREPLCodeExecutor:
 
 @register_node
 class WebSearchNode(BaseNode):
-    """Web 搜索节点 — 搜索网页内容。
+    """Web search node — searches web content.
 
-    吸纳自 Squish 的 squish_web_search 工具。
-    通过 DuckDuckGo Lite 接口实现，无需 API Key。
+    Adapted from Squish's squish_web_search tool.
+    Implemented via the DuckDuckGo Lite endpoint, no API key needed.
     """
 
     name = "web_search"
+    # i18n: user-facing
     display_name = "Web 搜索"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "搜索网页内容（通过 DuckDuckGo）"
     icon = "🌐"
+    # i18n: user-facing
     default_label = "Web 搜索"
 
     inputs = [
+        # i18n: user-facing
         {"key": "query", "label": "搜索关键词", "type": "string"},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "results", "label": "搜索结果", "type": "list[dict]"},
+        # i18n: user-facing
         {"key": "result_count", "label": "结果数", "type": "integer"},
     ]
 
@@ -864,8 +890,11 @@ class WebSearchNode(BaseNode):
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "query": {"type": "string", "description": "搜索关键词"},
+                # i18n: user-facing
                 "max_results": {"type": "integer", "default": 5, "description": "最大结果数"},
+                # i18n: user-facing
                 "timeout": {"type": "integer", "default": 10, "description": "超时秒数"},
             },
             "required": ["query"],
@@ -880,8 +909,8 @@ class WebSearchNode(BaseNode):
         if not query:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="未指定搜索关键词",
-                summary="未指定搜索词",
+                error="Search query not specified",
+                summary="Query not specified",
             )
 
         max_results = params.get("max_results", 5)
@@ -890,7 +919,7 @@ class WebSearchNode(BaseNode):
         import html as html_mod
 
         async def _ddg_search(client) -> list:
-            # 使用 DuckDuckGo Lite API (原始路径)
+            # Uses the DuckDuckGo Lite API (primary path)
             resp = await client.get(
                 "https://lite.duckduckgo.com/lite/",
                 params={"q": query},
@@ -927,7 +956,7 @@ class WebSearchNode(BaseNode):
             return results
 
         async def _bing_search(client) -> list:
-            """Bing 网页结果回退 — DDG 在部分网络环境不可达。"""
+            """Bing web-results fallback — DDG is unreachable in some network environments."""
             import re
 
             resp = await client.get(
@@ -978,8 +1007,8 @@ class WebSearchNode(BaseNode):
             if not results and last_error:
                 return NodeResult(
                     status=NodeStatus.FAILED,
-                    error=f"搜索失败: {last_error}",
-                    summary="搜索失败",
+                    error=f"Search failed: {last_error}",
+                    summary="Search failed",
                 )
 
             return NodeResult(
@@ -989,43 +1018,48 @@ class WebSearchNode(BaseNode):
                     "result_count": len(results),
                     "query": query,
                 },
-                summary=f"找到 {len(results)} 条结果",
+                summary=f"Found {len(results)} results",
             )
 
         except ImportError:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="需要 httpx 库: pip install httpx",
-                summary="依赖缺失",
+                error="httpx required: pip install httpx",
+                summary="Dependency missing",
             )
         except Exception as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"搜索失败: {e}",
-                summary="搜索失败",
+                error=f"Search failed: {e}",
+                summary="Search failed",
             )
 
 
 @register_node
 class FetchURLNode(BaseNode):
-    """网页获取节点 — 获取 URL 内容并返回文本。
+    """URL fetch node — fetches URL content and returns text.
 
-    吸纳自 Squish 的 squish_fetch_url 工具。
-    支持 HTTP/HTTPS，自动转换 HTML 为文本。
+    Adapted from Squish's squish_fetch_url tool.
+    Supports HTTP/HTTPS, converts HTML to text automatically.
     """
 
     name = "fetch_url"
+    # i18n: user-facing
     display_name = "获取网页"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "获取 URL 内容并返回文本"
     icon = "📄"
+    # i18n: user-facing
     default_label = "获取网页"
 
     inputs = [
         {"key": "url", "label": "URL", "type": "string"},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "content", "label": "内容", "type": "string"},
+        # i18n: user-facing
         {"key": "status_code", "label": "状态码", "type": "integer"},
     ]
 
@@ -1033,9 +1067,13 @@ class FetchURLNode(BaseNode):
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "url": {"type": "string", "description": "要获取的 URL"},
+                # i18n: user-facing
                 "timeout": {"type": "integer", "default": 15, "description": "超时秒数"},
+                # i18n: user-facing
                 "max_chars": {"type": "integer", "default": 100000, "description": "最大字符数"},
+                # i18n: user-facing
                 "extract_text": {"type": "boolean", "default": True, "description": "提取纯文本"},
             },
             "required": ["url"],
@@ -1050,25 +1088,25 @@ class FetchURLNode(BaseNode):
         if not url:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="未指定 URL",
-                summary="未指定 URL",
+                error="URL not specified",
+                summary="URL not specified",
             )
 
-        # 安全检查（吸纳自 Squish 的 URL 验证）
+        # Safety check (adapted from Squish's URL validation)
         if not url.startswith(("http://", "https://")):
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"不安全的 URL 协议: {url.split('://')[0] if '://' in url else 'unknown'}://",
-                summary="URL 协议不安全",
+                error=f"Unsafe URL scheme: {url.split('://')[0] if '://' in url else 'unknown'}://",
+                summary="URL scheme unsafe",
             )
 
-        # E-11: SSRF 防御 — 解析主机, 拒私有/环回/链路本地/元数据地址
+        # E-11: SSRF defense — resolve the host, reject private/loopback/link-local/metadata addresses
         ssrf_err = _check_ssrf_url(url)
         if ssrf_err:
             return NodeResult(
                 status=NodeStatus.FAILED,
                 error=ssrf_err,
-                summary="URL 指向内网/元数据地址, 已拒 (SSRF 防御)",
+                summary="URL points to an internal/metadata address, rejected (SSRF defense)",
             )
 
         timeout = params.get("timeout", 15)
@@ -1078,7 +1116,7 @@ class FetchURLNode(BaseNode):
         try:
             import httpx
 
-            # E-11: follow_redirects=False — 防重定向绕过主机校验 (重定向目标未经 SSRF 检查)
+            # E-11: follow_redirects=False — prevents redirects bypassing host validation (redirect targets skip the SSRF check)
             async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
                 resp = await client.get(
                     url,
@@ -1091,12 +1129,12 @@ class FetchURLNode(BaseNode):
 
                 content_type = resp.headers.get("content-type", "")
 
-                # 根据内容类型处理
+                # Handle by content type
                 if "text/html" in content_type and extract_text:
                     import re
 
                     html = resp.text
-                    # 简单的 HTML 转文本
+                    # Simple HTML-to-text
                     text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL)
                     text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
                     text = re.sub(r"<[^>]+>", " ", text)
@@ -1115,46 +1153,55 @@ class FetchURLNode(BaseNode):
                     "content_type": content_type,
                     "url": url,
                 },
-                summary=f"获取成功 ({len(content)} 字符)",
+                summary=f"Fetched ({len(content)} chars)",
             )
 
         except ImportError:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="需要 httpx 库: pip install httpx",
-                summary="依赖缺失",
+                error="httpx required: pip install httpx",
+                summary="Dependency missing",
             )
         except Exception as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"获取失败: {e}",
-                summary="获取失败",
+                error=f"Fetch failed: {e}",
+                summary="Fetch failed",
             )
 
 
 @register_node
 class ApplyEditNode(BaseNode):
-    """文件编辑节点 — 对文件应用编辑操作（查找替换）。
+    """File edit node — applies edit operations to files (find and replace).
 
-    吸纳自 Squish 的 squish_apply_edit 工具。
-    支持精确查找替换和正则替换。
+    Adapted from Squish's squish_apply_edit tool.
+    Supports exact find-replace and regex replacement.
     """
 
     name = "apply_edit"
+    # i18n: user-facing
     display_name = "文件编辑"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "对文件应用编辑操作（查找替换）"
     icon = "✏️"
+    # i18n: user-facing
     default_label = "文件编辑"
 
     inputs = [
+        # i18n: user-facing
         {"key": "file_path", "label": "文件路径", "type": "string"},
+        # i18n: user-facing
         {"key": "old_text", "label": "查找文本", "type": "string"},
+        # i18n: user-facing
         {"key": "new_text", "label": "替换文本", "type": "string"},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "success", "label": "是否成功", "type": "boolean"},
+        # i18n: user-facing
         {"key": "changes", "label": "变更数", "type": "integer"},
+        # i18n: user-facing
         {"key": "file_path", "label": "文件路径", "type": "string"},
     ]
 
@@ -1162,11 +1209,17 @@ class ApplyEditNode(BaseNode):
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "file_path": {"type": "string", "description": "要编辑的文件路径"},
+                # i18n: user-facing
                 "old_text": {"type": "string", "description": "要查找的文本"},
+                # i18n: user-facing
                 "new_text": {"type": "string", "description": "替换后的文本"},
+                # i18n: user-facing
                 "use_regex": {"type": "boolean", "default": False, "description": "使用正则匹配"},
+                # i18n: user-facing
                 "create_backup": {"type": "boolean", "default": True, "description": "创建备份"},
+                # i18n: user-facing
                 "dry_run": {"type": "boolean", "default": True, "description": "预览模式"},
             },
             "required": ["file_path", "old_text", "new_text"],
@@ -1187,27 +1240,27 @@ class ApplyEditNode(BaseNode):
         if not file_path or not old_text:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="缺少文件路径或查找文本",
-                summary="参数不完整",
+                error="Missing file path or search text",
+                summary="Incomplete params",
             )
 
         path = Path(file_path).expanduser()
-        # CR-19: 文件写节点须经 scoped_folder 校验, 拒越界写入 (备份与写入同路径)
+        # CR-19: file-write nodes must pass scoped_folder validation, out-of-bounds writes rejected (backup and write share the path)
         from ...security import get_scoped_folder_manager
 
         scope = get_scoped_folder_manager()
         if not scope.ensure_allowed(path):
-            logger.warning(f"apply_edit 沙箱拒绝越界路径: {path}")
+            logger.warning(f"apply_edit sandbox rejected out-of-bounds path: {path}")
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"路径越界, 不在允许范围: {path}",
-                summary="沙箱拒绝",
+                error=f"Path out of bounds, not in the allowed scope: {path}",
+                summary="Sandbox rejected",
             )
         if not path.exists():
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"文件不存在: {file_path}",
-                summary="文件不存在",
+                error=f"File not found: {file_path}",
+                summary="File not found",
             )
 
         try:
@@ -1225,7 +1278,7 @@ class ApplyEditNode(BaseNode):
                 return NodeResult(
                     status=NodeStatus.SUCCESS,
                     data={"success": True, "changes": 0, "file_path": str(path)},
-                    summary="未找到匹配内容",
+                    summary="No matching content found",
                 )
 
             if dry_run:
@@ -1237,16 +1290,16 @@ class ApplyEditNode(BaseNode):
                         "file_path": str(path),
                         "preview": new_content[:500] if len(new_content) > 500 else new_content,
                     },
-                    summary=f"预览: 将修改 {count} 处",
+                    summary=f"Preview: would modify {count} place(s)",
                 )
 
-            # 创建备份 (E-4: 原子写, tmp+os.replace, 防半写损坏)
+            # Create backup (E-4: atomic write, tmp+os.replace, prevents half-write corruption)
             backup_path = None
             if create_backup:
                 backup_path = path.with_suffix(f"{path.suffix}.bak")
                 _atomic_write_text(backup_path, content)
 
-            # 写入修改 (E-4: 原子写)
+            # Write the modification (E-4: atomic write)
             _atomic_write_text(path, new_content)
 
             return NodeResult(
@@ -1257,36 +1310,40 @@ class ApplyEditNode(BaseNode):
                     "file_path": str(path),
                     "backup_path": str(backup_path) if create_backup else "",
                 },
-                summary=f"已修改 {count} 处",
+                summary=f"Modified {count} place(s)",
             )
 
         except Exception as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"编辑失败: {e}",
-                summary="编辑失败",
+                error=f"Edit failed: {e}",
+                summary="Edit failed",
             )
 
 
 @register_node
 class WorktreeNode(BaseNode):
-    """Git Worktree 隔离节点 — P2-1。
+    """Git worktree isolation node — P2-1.
 
-    在独立 git worktree 中执行命令, 不污染主工作区。
-    支持 create/exec/remove 三种 action。
+    Runs commands inside an isolated git worktree without polluting the main workspace.
+    Supports the create/exec/remove actions.
     """
 
     name = "worktree"
+    # i18n: user-facing
     display_name = "Worktree 隔离"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "git worktree 隔离工作树: 创建/执行/删除/合并回基线"
     icon = "🌿"
     default_label = "Worktree"
 
     inputs = [
+        # i18n: user-facing
         {"key": "command", "label": "命令", "type": "string"},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "result", "label": "结果", "type": "object"},
     ]
 
@@ -1297,50 +1354,60 @@ class WorktreeNode(BaseNode):
                 "action": {
                     "type": "string",
                     "enum": ["create", "exec", "remove", "list", "merge_back"],
+                    # i18n: user-facing
                     "description": "操作类型",
                     "default": "exec",
                 },
                 "name": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "worktree 名称",
                 },
                 "branch": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "checkout 已有分支 (空则新建 worktree/<name>)",
                     "default": "",
                 },
                 "command": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "exec 动作: 在 worktree 内执行的命令",
                     "default": "",
                 },
                 "repo_root": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "git 仓库根 (空则自动检测)",
                     "default": "",
                 },
                 "timeout": {
                     "type": "integer",
+                    # i18n: user-facing
                     "description": "exec 超时 (秒)",
                     "default": 30,
                 },
                 "source_repo": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "create 动作: 来源仓库 URL; 与本仓 origin 不同则标记不可信, exec 被门禁阻止",
                     "default": "",
                 },
                 "trust_source": {
                     "type": "boolean",
+                    # i18n: user-facing
                     "description": "显式信任该 worktree 的外部来源 (解除 exec 门禁)",
                     "default": False,
                 },
                 "target_branch": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "merge_back 动作: 目标分支 (空则当前分支)",
                     "default": "",
                 },
                 "message": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "merge_back 动作: 合并提交信息",
                     "default": "",
                 },
@@ -1362,7 +1429,7 @@ class WorktreeNode(BaseNode):
 
         if action == "create":
             if not name:
-                return NodeResult(status=NodeStatus.FAILED, error="缺少 worktree name", summary="参数缺失")
+                return NodeResult(status=NodeStatus.FAILED, error="Missing worktree name", summary="Missing params")
             wt = mgr.create(
                 name,
                 branch=params.get("branch", ""),
@@ -1370,83 +1437,90 @@ class WorktreeNode(BaseNode):
                 trusted=bool(params.get("trust_source", False)),
             )
             if not wt:
-                return NodeResult(status=NodeStatus.FAILED, error="worktree 创建失败", summary="创建失败")
+                return NodeResult(status=NodeStatus.FAILED, error="worktree creation failed", summary="Creation failed")
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data=wt.to_dict(),
-                summary=f"worktree 已创建: {name} ({wt.branch})",
+                summary=f"worktree created: {name} ({wt.branch})",
             )
         elif action == "list":
             wts = mgr.list_worktrees()
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data={"worktrees": [w.to_dict() for w in wts], "count": len(wts)},
-                summary=f"共 {len(wts)} 个 worktree",
+                summary=f"{len(wts)} worktree(s) total",
             )
         elif action == "remove":
-            # issue #580: 所有权证明删除 — 不再路径尾段匹配; marker + porcelain 交叉校验
+            # issue #580: ownership-proof removal — no longer tail-path matching; marker + porcelain cross-validation
             if not name:
-                return NodeResult(status=NodeStatus.FAILED, error="缺少 worktree name", summary="参数缺失")
+                return NodeResult(status=NodeStatus.FAILED, error="Missing worktree name", summary="Missing params")
             ok = mgr.remove(name, force=True)
             return NodeResult(
                 status=NodeStatus.SUCCESS if ok else NodeStatus.FAILED,
                 data={"removed": ok, "name": name},
-                summary=f"worktree 删除: {name} ({'成功' if ok else '失败'})",
+                summary=f"worktree removed: {name} ({'ok' if ok else 'failed'})",
             )
         elif action == "exec":
             if not name:
-                return NodeResult(status=NodeStatus.FAILED, error="缺少 worktree name", summary="参数缺失")
+                return NodeResult(status=NodeStatus.FAILED, error="Missing worktree name", summary="Missing params")
             if params.get("trust_source") and mgr.is_untrusted(name):
                 if not mgr.mark_trusted(name):
-                    return NodeResult(status=NodeStatus.FAILED, error="信任标记失败", summary="门禁错误")
+                    return NodeResult(status=NodeStatus.FAILED, error="Trust marking failed", summary="Gate error")
             command = inputs.get("command", params.get("command", ""))
             if not command:
-                return NodeResult(status=NodeStatus.FAILED, error="缺少 command", summary="参数缺失")
+                return NodeResult(status=NodeStatus.FAILED, error="Missing command", summary="Missing params")
             result = await mgr.exec_in(name, command, timeout=params.get("timeout", 30))
             if "error" in result:
-                return NodeResult(status=NodeStatus.FAILED, error=result["error"], data=result, summary="执行失败")
+                return NodeResult(status=NodeStatus.FAILED, error=result["error"], data=result, summary="Execution failed")
             return NodeResult(
                 status=NodeStatus.SUCCESS if result.get("return_code", 1) == 0 else NodeStatus.FAILED,
                 data=result,
                 summary=f"worktree exec rc={result.get('return_code')}",
             )
         elif action == "merge_back":
-            # issue #580: 合并在基线工作树执行, 绝不占用 agent worktree
+            # issue #580: merge runs in the baseline worktree, never occupies the agent worktree
             if not name:
-                return NodeResult(status=NodeStatus.FAILED, error="缺少 worktree name", summary="参数缺失")
+                return NodeResult(status=NodeStatus.FAILED, error="Missing worktree name", summary="Missing params")
             result = mgr.merge_back(
                 name, target_branch=params.get("target_branch", ""), message=params.get("message", "")
             )
             if "error" in result:
-                return NodeResult(status=NodeStatus.FAILED, error=result["error"], data=result, summary="合并失败")
+                return NodeResult(status=NodeStatus.FAILED, error=result["error"], data=result, summary="Merge failed")
             return NodeResult(
                 status=NodeStatus.SUCCESS,
                 data=result,
-                summary=f"已合并 {name} ({result.get('branch')}) -> {result.get('target')}",
+                summary=f"Merged {name} ({result.get('branch')}) -> {result.get('target')}",
             )
-        return NodeResult(status=NodeStatus.FAILED, error=f"未知 action: {action}", summary="参数错误")
+        return NodeResult(status=NodeStatus.FAILED, error=f"Unknown action: {action}", summary="Bad params")
 
 
 @register_node
 class LSPNode(BaseNode):
-    """LSP 代码智能节点 — P2-3。
+    """LSP code-intelligence node — P2-3.
 
-    经 LSP 客户端查询 definition/references/hover/completion。
+    Queries definition/references/hover/completion via the LSP client.
     """
 
     name = "lsp"
+    # i18n: user-facing
     display_name = "LSP 代码智能"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "LSP 查询: 定义/引用/悬停/补全"
     icon = "🔍"
+    # i18n: user-facing
     default_label = "LSP 查询"
 
     inputs = [
+        # i18n: user-facing
         {"key": "path", "label": "文件路径", "type": "string"},
+        # i18n: user-facing
         {"key": "line", "label": "行 (0-based)", "type": "integer"},
+        # i18n: user-facing
         {"key": "character", "label": "列 (0-based)", "type": "integer"},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "result", "label": "结果", "type": "object"},
     ]
 
@@ -1457,25 +1531,30 @@ class LSPNode(BaseNode):
                 "action": {
                     "type": "string",
                     "enum": ["definition", "references", "hover", "completion"],
+                    # i18n: user-facing
                     "description": "查询类型",
                     "default": "hover",
                 },
                 "path": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "目标文件绝对路径",
                 },
                 "line": {
                     "type": "integer",
+                    # i18n: user-facing
                     "description": "行 (0-based)",
                     "default": 0,
                 },
                 "character": {
                     "type": "integer",
+                    # i18n: user-facing
                     "description": "列 (0-based)",
                     "default": 0,
                 },
                 "root": {
                     "type": "string",
+                    # i18n: user-facing
                     "description": "LSP workspace 根 (空则取文件所在目录)",
                     "default": "",
                 },
@@ -1493,35 +1572,41 @@ class LSPNode(BaseNode):
         action = params.get("action", "hover")
         path = inputs.get("path", params.get("path", ""))
         if not path:
-            return NodeResult(status=NodeStatus.FAILED, error="缺少 path", summary="参数缺失")
+            return NodeResult(status=NodeStatus.FAILED, error="Missing path", summary="Missing params")
         line = int(inputs.get("line", params.get("line", 0)))
         character = int(inputs.get("character", params.get("character", 0)))
         root = params.get("root", "")
         result = await lsp_query(action, path, line, character, root=root)
         if "error" in result:
-            return NodeResult(status=NodeStatus.FAILED, error=result["error"], data=result, summary="LSP 查询失败")
+            return NodeResult(status=NodeStatus.FAILED, error=result["error"], data=result, summary="LSP query failed")
         return NodeResult(status=NodeStatus.SUCCESS, data=result, summary=f"LSP {action} OK")
 
 
 @register_node
 class PushNode(BaseNode):
-    """移动推送通知节点 — P2-5。
+    """Mobile push notification node — P2-5.
 
-    跨平台移动推送 (Bark/ntfy), 未配置时降级本地 macOS 通知。
+    Cross-platform mobile push (Bark/ntfy), degrades to local macOS notification when unconfigured.
     """
 
     name = "push"
+    # i18n: user-facing
     display_name = "移动推送"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "移动推送通知 (Bark/ntfy/本地降级)"
     icon = "📱"
+    # i18n: user-facing
     default_label = "移动推送"
 
     inputs = [
+        # i18n: user-facing
         {"key": "title", "label": "标题", "type": "string"},
+        # i18n: user-facing
         {"key": "message", "label": "内容", "type": "string"},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "result", "label": "推送结果", "type": "object"},
     ]
 
@@ -1533,12 +1618,16 @@ class PushNode(BaseNode):
                     "type": "string",
                     "enum": ["auto", "bark", "ntfy", "local"],
                     "default": "auto",
+                    # i18n: user-facing
                     "description": "推送渠道 (auto 按 url 自动判定)",
                 },
                 "url": {"type": "string", "default": "", "description": "Bark/ntfy server URL"},
                 "token": {"type": "string", "default": "", "description": "Bark device key / ntfy topic"},
+                # i18n: user-facing
                 "sound": {"type": "string", "default": "", "description": "提示音 (Bark)"},
+                # i18n: user-facing
                 "priority": {"type": "string", "default": "", "description": "优先级 (ntfy: 1-5)"},
+                # i18n: user-facing
                 "group": {"type": "string", "default": "", "description": "分组"},
             },
         }
@@ -1553,7 +1642,7 @@ class PushNode(BaseNode):
         title = inputs.get("title", "Fusion-Cowork")
         message = inputs.get("message", "")
         if not message:
-            return NodeResult(status=NodeStatus.FAILED, error="推送内容不能为空", summary="未指定内容")
+            return NodeResult(status=NodeStatus.FAILED, error="Push message must not be empty", summary="Message not specified")
 
         result = await push_send(
             title,
@@ -1573,6 +1662,6 @@ class PushNode(BaseNode):
             "error": result.error,
         }
         if result.success:
-            tag = " (降级本地)" if result.degraded else ""
-            return NodeResult(status=NodeStatus.SUCCESS, data=data, summary=f"推送成功 via {result.provider}{tag}")
-        return NodeResult(status=NodeStatus.FAILED, error=result.error, data=data, summary="推送失败")
+            tag = " (degraded to local)" if result.degraded else ""
+            return NodeResult(status=NodeStatus.SUCCESS, data=data, summary=f"Push sent via {result.provider}{tag}")
+        return NodeResult(status=NodeStatus.FAILED, error=result.error, data=data, summary="Push failed")

@@ -81,7 +81,7 @@ def make_capability_gate(
         try:
             return _decide(store, tool_name, params or {}, workspace_id, connector_dir, rag_wired_path)
         except Exception as e:
-            logger.warning(f"能力闸门判定异常, 放行 (由既有权限层兜底) {tool_name}: {e}")
+            logger.warning(f"capability gate decision error, allowing (existing permission layer as fallback) {tool_name}: {e}")
             return ALLOW, ""
 
     return gate
@@ -101,8 +101,10 @@ def _decide(
             return ALLOW, ""
         entry = store.get(ws, "skill", tool_name)
         if entry is None:
+            # i18n: user-facing
             return DENY, f"技能未安装到本工作区: {tool_name}"
         if not entry.enabled:
+            # i18n: user-facing
             return DENY, f"技能已在工作区停用: {tool_name}"
         return ALLOW, ""
     if tool_name != "mcp_client":
@@ -115,13 +117,17 @@ def _decide(
         return ALLOW, ""
     entry = store.get(ws, "connector", connector["id"])
     if entry is None:
+        # i18n: user-facing
         return DENY, f"连接器未安装到本工作区: {connector['id']}"
     if not entry.enabled:
+        # i18n: user-facing
         return DENY, f"连接器已在工作区停用: {connector['id']}"
     pending = _sensitive_ungranted(connector, entry.granted_scopes, _node_tool(params))
     if pending:
+        # i18n: user-facing
         return APPROVAL, f"敏感 scope 待审批: {connector['id']} {pending}"
     if (connector.get("auth") or {}).get("kind") == "oauth" and not entry.credentials:
+        # i18n: user-facing
         return APPROVAL, f"连接器未完成 OAuth 授权: {connector['id']}"
     return ALLOW, ""
 
@@ -185,5 +191,5 @@ def record_run_usage(
         if ok:
             written += 1
     if written:
-        logger.info(f"能力用量入账: ws={ws} run={run_id} entries={written}")
+        logger.info(f"capability usage recorded: ws={ws} run={run_id} entries={written}")
     return written

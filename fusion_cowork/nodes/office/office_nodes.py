@@ -107,9 +107,11 @@ class OfficeSpreadsheetNode(OfficeBaseNode):
     # office.spreadsheet — xlsx parse via /v1/xlsx/parse; parse validity is the
     # validator leg (invalid workbooks 422 from office-api -> FAILED + error outcome)
     name = "office_spreadsheet"
+    # i18n: user-facing
     display_name = "办公表格"
     description = "Parse an xlsx workbook via office-api /v1/xlsx/parse; invalid files fail visibly"
     icon = "sheet"
+    # i18n: user-facing
     default_label = "表格解析"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -166,9 +168,11 @@ class OfficeDocumentNode(OfficeBaseNode):
     # office.document — docx operations: write (markdown -> docx), fill
     # (template + values), parse (docx -> blocks)
     name = "office_document"
+    # i18n: user-facing
     display_name = "办公文档"
     description = "docx via office-api: write (markdown->docx), fill (template+values), parse"
     icon = "doc"
+    # i18n: user-facing
     default_label = "文档处理"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -261,9 +265,11 @@ class OfficeSlidesNode(OfficeBaseNode):
     # office.slides — pptx operations: parse (deck -> slides) and write
     # (markdown or ops JSON -> deck, optional base file for ops mode)
     name = "office_slides"
+    # i18n: user-facing
     display_name = "办公幻灯片"
     description = "pptx via office-api: parse deck, or write deck from markdown/ops JSON"
     icon = "slides"
+    # i18n: user-facing
     default_label = "幻灯片处理"
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -351,9 +357,11 @@ class OfficeArtifactNode(OfficeBaseNode):
     # artifact.create for a new chain, artifact.update (new version) when
     # artifact_id is given. Content comes inline or from a produced file.
     name = "office_artifact"
+    # i18n: user-facing
     display_name = "成果入库"
     description = "Register/append content into artifacts-engine version chain (JSON-RPC artifact.create/update)"
     icon = "archive"
+    # i18n: user-facing
     default_label = "成果入库"
 
     def get_params_schema(self) -> Dict[str, Any]:

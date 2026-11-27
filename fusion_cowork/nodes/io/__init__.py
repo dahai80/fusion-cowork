@@ -1,4 +1,4 @@
-"""Fusion-Cowork IO 节点。"""
+"""Fusion-Cowork IO nodes."""
 
 from .deliverables import PptxWriteNode, XlsxWriteNode
 from .file_io import FileInputNode, FileOutputNode

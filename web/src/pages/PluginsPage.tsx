@@ -18,6 +18,7 @@ export function PluginsPage() {
         return (
             <ErrorState
                 message={t(
+                    // i18n: user-facing
                     '插件服务不可用 (需 fusion-plugins-ecosystem)',
                     'Plugins unavailable (fusion-plugins-ecosystem required)'
                 )}
@@ -32,10 +33,12 @@ export function PluginsPage() {
         setBusyId(id);
         try {
             await api.rpc<{ ok: boolean }>('plugins/uninstall', { plugin_id: id });
+            // i18n: user-facing
             sdk.toast.show({ level: 'success', message: t('已卸载', 'Uninstalled') });
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] plugin uninstall failed', e);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('卸载失败', 'Uninstall failed') });
         } finally {
             setBusyId('');
@@ -47,10 +50,12 @@ export function PluginsPage() {
         setBusyId(id);
         try {
             await api.rpc<{ ok: boolean }>('plugins/install', { plugin_id: id });
+            // i18n: user-facing
             sdk.toast.show({ level: 'success', message: t('已安装并启用', 'Installed and enabled') });
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] plugin install failed', e);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('安装失败', 'Install failed') });
         } finally {
             setBusyId('');
@@ -60,13 +65,16 @@ export function PluginsPage() {
     return (
         <div className="mx-auto max-w-3xl">
             <div className="flex items-end justify-between pb-2">
+                {/* i18n: user-facing */}
                 <div className="text-sm font-medium text-text-primary">{t('插件', 'Plugins')}</div>
                 <div className="text-xs text-text-muted">{plugins.length}</div>
             </div>
             {plugins.length === 0 ? (
                 <EmptyState
+                    // i18n: user-facing
                     title={t('暂无插件', 'No plugins')}
                     description={t(
+                        // i18n: user-facing
                         '安装 fusion-plugins-ecosystem 后此处展示插件目录',
                         'Install fusion-plugins-ecosystem to populate the catalog'
                     )}
@@ -89,9 +97,12 @@ export function PluginsPage() {
                                         label={
                                             p.installed
                                                 ? p.enabled
-                                                    ? t('已启用', 'enabled')
-                                                    : t('已停用', 'disabled')
-                                                : t('未安装', 'not installed')
+                                                    ? // i18n: user-facing
+                                                      t('已启用', 'enabled')
+                                                    : // i18n: user-facing
+                                                      t('已停用', 'disabled')
+                                                : // i18n: user-facing
+                                                  t('未安装', 'not installed')
                                         }
                                     />
                                 </div>
@@ -109,6 +120,7 @@ export function PluginsPage() {
                                     disabled={busyId === p.id}
                                     onClick={() => void uninstall(p.id)}
                                 >
+                                    {/* i18n: user-facing */}
                                     {t('卸载', 'Uninstall')}
                                 </button>
                             ) : (
@@ -118,6 +130,7 @@ export function PluginsPage() {
                                     disabled={busyId === p.id}
                                     onClick={() => void install(p.id)}
                                 >
+                                    {/* i18n: user-facing */}
                                     {t('安装', 'Install')}
                                 </button>
                             )}

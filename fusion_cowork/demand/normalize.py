@@ -44,10 +44,12 @@ _DOMAIN_RULES: List[tuple] = [
 ]
 _SPAM_MARKERS = (
     "unsubscribe",
+    # i18n: user-facing
     "退订",
     "promotion",
     "newsletter",
     "lottery",
+    # i18n: user-facing
     "中奖",
     "bitcoin",
     "crypto profit",

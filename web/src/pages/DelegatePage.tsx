@@ -9,10 +9,10 @@ import { sdk } from '../sdk';
 // W7: NL delegation entry — prompt → NLWorkflowGenerator (/api/ai/generate-workflow)
 // → preview → save as workflow (+ optional run). Real generation needs fusion-mlx
 // live; errors surface as 502 toasts.
-// #144: 输入防抖 (800ms) 即时生成预览; 预览卡内可就地编辑节点 (标签/参数/删除)
-// 与边 (删除/新增), 确认后才提交落库。
-// #148: chat-first 默认模式 — 一句话直接执行/出交付物; 复杂任务返回内部计划
-// (DAG 仍在幕后), 批准即跑; DAG 编辑留在"高级"模式可选。
+// #144: input debounce (800ms) generates the preview immediately; nodes (label/params/delete)
+// and edges (delete/add) are editable in place in the preview card; only persisted after confirmation.
+// #148: chat-first default mode — one line runs directly / produces a deliverable; complex tasks return an internal plan
+// (DAG still behind the scenes) that runs once approved; DAG editing stays optional in the "advanced" mode.
 
 const CATEGORY_COLOR: Record<string, string> = {
     tool: '#3b82f6',
@@ -32,8 +32,8 @@ interface GeneratedWorkflow {
     edges: CanvasEdgeDef[];
 }
 
-// #148: chat-first 执行卡 — auto 模式轮询 run 进度, 终态展示结果 + 产物;
-// plan 模式展示内部计划, 一键批准执行 (工作流已落库, 画布编辑可选)。
+// #148: chat-first result card — auto mode polls run progress, terminal state shows result + artifacts;
+// plan mode shows the internal plan with one-click approve-and-run (workflow persisted, canvas editing optional).
 function ChatResultCard({
     result,
     memory,
@@ -77,6 +77,7 @@ function ChatResultCard({
             setRun(await api.run(started.run_id));
         } catch (e) {
             console.error('[cowork-web] chat-delegate approve failed', e);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('执行启动失败', 'Failed to start run') });
         } finally {
             setStarting(false);
@@ -89,6 +90,7 @@ function ChatResultCard({
             <div className="flex items-center justify-between">
                 <div className="text-sm font-medium text-text-primary">{result.plan.name}</div>
                 <span className="rounded bg-bg-muted px-1.5 py-0.5 text-[10px] text-text-muted">
+                    {/* i18n: user-facing */}
                     {result.mode === 'auto' ? t('直接执行', 'Auto-run') : t('待批准计划', 'Plan')}
                 </span>
             </div>
@@ -119,6 +121,7 @@ function ChatResultCard({
                             window.location.hash = `#/canvas/${result.workflow_id}`;
                         }}
                     >
+                        {/* i18n: user-facing */}
                         {t('在画布查看', 'Open in canvas')}
                     </button>
                     <button
@@ -127,6 +130,7 @@ function ChatResultCard({
                         disabled={starting}
                         onClick={() => void approve()}
                     >
+                        {/* i18n: user-facing */}
                         {starting ? t('启动中…', 'Starting…') : t('批准并执行', 'Approve & run')}
                     </button>
                 </div>
@@ -136,9 +140,11 @@ function ChatResultCard({
                     <div className="flex items-center gap-2 text-xs text-text-secondary">
                         <StatusBadge status={run.status as never} />
                         <span>
+                            {/* i18n: user-facing */}
                             {t('步骤', 'Steps')} {run.steps?.length ?? 0}
                         </span>
                         {running ? (
+                            // i18n: user-facing
                             <span className="animate-pulse text-text-muted">{t('执行中…', 'Running…')}</span>
                         ) : null}
                     </div>
@@ -152,6 +158,7 @@ function ChatResultCard({
                             className="mt-2 rounded-md border border-border px-3 py-1 text-sm text-text-primary hover:bg-bg-muted"
                             onClick={onGoRuns}
                         >
+                            {/* i18n: user-facing */}
                             {t('查看运行详情', 'View run')}
                         </button>
                     ) : (
@@ -160,6 +167,7 @@ function ChatResultCard({
                             className="mt-2 rounded-md border border-border px-3 py-1 text-sm text-text-primary hover:bg-bg-muted"
                             onClick={onGoRuns}
                         >
+                            {/* i18n: user-facing */}
                             {t('查看运行详情', 'View run')}
                         </button>
                     )}
@@ -177,22 +185,22 @@ export function DelegatePage() {
     const [wf, setWf] = useState<GeneratedWorkflow | null>(null);
     const [saving, setSaving] = useState(false);
     const [model, setModel] = useState(preferredModel);
-    // #148: chat-first 默认; advanced 保留 #144 DAG 预览编辑路径
+    // #148: chat-first default; advanced keeps the #144 DAG preview-edit path
     const [mode, setMode] = useState<'chat' | 'advanced'>('chat');
     const [chatResult, setChatResult] = useState<ChatDelegateResult | null>(null);
     const models = useAutoRetry(() => api.models(), []);
-    // #144: 防抖即时预览 — 序号守卫丢弃过期响应; 编辑器开关与参数草稿
+    // #144: debounced instant preview — sequence guard drops stale responses; editor toggle and params draft
     const genSeq = useRef(0);
     const [editNode, setEditNode] = useState('');
     const [paramsDraft, setParamsDraft] = useState('');
     const [edgeFrom, setEdgeFrom] = useState('');
     const [edgeTo, setEdgeTo] = useState('');
-    // issue #157: per-run 记忆开关 (默认开)
+    // issue #157: per-run memory toggle (default on)
     const [memoryEnabled, setMemoryEnabled] = useState(true);
 
     useEffect(() => onPreferredModelChange(setModel), []);
-    // #147: 模型列表失败后 30s 慢速自动重试直到恢复 (服务恢复后自动回填),
-    // 替代旧行为的失败即死; 手动重试按钮在下拉旁。
+    // #147: after model-list failure, retry slowly every 30s until recovery (auto backfill once the service recovers),
+    // replacing the old fail-forever behavior; manual retry button sits next to the dropdown.
     const modelsRetryRef = useRef(models.manualRetry);
     modelsRetryRef.current = models.manualRetry;
     useEffect(() => {
@@ -221,7 +229,7 @@ export function DelegatePage() {
         }
     }
 
-    // #148: chat-first 提交 — 服务端确定性分流 (简单直接执行 / 复杂返回计划)
+    // #148: chat-first submit — server-side deterministic routing (simple runs directly / complex returns a plan)
     async function chatSubmit() {
         const text = prompt.trim();
         if (busy || !text) return;
@@ -241,10 +249,10 @@ export function DelegatePage() {
         }
     }
 
-    // #144: 输入停顿 800ms 即自动生成预览 (最短 6 字符), 手动按钮仍可用。
-    // chat 模式同样防抖直接提交。
-    // generate 是每次渲染重建的闭包, 读到的恒为最新 prompt/model — 无需进 deps。
-    // biome-ignore lint/correctness/useExhaustiveDependencies: debounce 只随 prompt/model 触发
+    // #144: an 800ms typing pause auto-generates the preview (min 6 chars); the manual button still works.
+    // chat mode debounces and submits directly the same way.
+    // generate is a closure rebuilt on every render, always reading the latest prompt/model — no need in deps.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: debounce only triggers on prompt/model
     useEffect(() => {
         const text = prompt.trim();
         if (text.length < 6) return;
@@ -257,27 +265,31 @@ export function DelegatePage() {
         setSaving(true);
         try {
             const created = await api.createWorkflow({
+                // i18n: user-facing
                 name: wf.name || t('未命名委托', 'Untitled delegation'),
                 description: wf.description || '',
                 workflow: { name: wf.name || '', nodes: wf.nodes, edges: wf.edges },
             });
             if (alsoRun) {
                 await api.startRun({ workflow_id: created.id, name: created.name, memory: memoryEnabled });
+                // i18n: user-facing
                 sdk.toast.show({ level: 'success', message: t('已保存并开始运行', 'Saved and run started') });
                 window.location.hash = '#/runs';
             } else {
+                // i18n: user-facing
                 sdk.toast.show({ level: 'success', message: t('已保存, 可在画布中调整', 'Saved — refine in canvas') });
                 window.location.hash = `#/canvas/${created.id}`;
             }
         } catch (e) {
             console.error('[cowork-web] delegate save failed', e);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('保存失败', 'Save failed') });
         } finally {
             setSaving(false);
         }
     }
 
-    // #144: 就地编辑 helpers — 节点标签/参数/删除, 边删除/新增 (确认前不落库)
+    // #144: in-place edit helpers — node label/params/delete, edge delete/add (nothing persisted before confirmation)
     function patchWf(patch: Partial<GeneratedWorkflow>) {
         setWf((prev) => (prev ? { ...prev, ...patch } : prev));
     }
@@ -309,10 +321,12 @@ export function DelegatePage() {
     function addEdge() {
         if (!wf || !edgeFrom || !edgeTo) return;
         if (edgeFrom === edgeTo) {
+            // i18n: user-facing
             sdk.toast.show({ level: 'warning', message: t('不能连接节点自身', 'Cannot connect a node to itself') });
             return;
         }
         if (wf.edges.some((e) => e.source_id === edgeFrom && e.target_id === edgeTo)) {
+            // i18n: user-facing
             sdk.toast.show({ level: 'warning', message: t('该边已存在', 'Edge already exists') });
             return;
         }
@@ -333,6 +347,7 @@ export function DelegatePage() {
         try {
             parsed = JSON.parse(paramsDraft || '{}') as Record<string, unknown>;
         } catch {
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('参数 JSON 解析失败', 'Invalid params JSON') });
             return;
         }
@@ -347,6 +362,7 @@ export function DelegatePage() {
                 : prev
         );
         setEditNode('');
+        // i18n: user-facing
         sdk.toast.show({ level: 'success', message: t('参数已更新 (尚未保存)', 'Params updated (not saved yet)') });
     }
 
@@ -362,6 +378,7 @@ export function DelegatePage() {
                             setWf(null);
                         }}
                     >
+                        {/* i18n: user-facing */}
                         {t('对话委托', 'Chat')}
                     </button>
                     <button
@@ -372,9 +389,11 @@ export function DelegatePage() {
                             setChatResult(null);
                         }}
                     >
+                        {/* i18n: user-facing */}
                         {t('高级·DAG预览', 'Advanced')}
                     </button>
                 </div>
+                {/* i18n: user-facing */}
                 <span className="text-xs text-text-secondary">{t('模型', 'Model')}</span>
                 <select
                     className="rounded-md border border-border bg-bg px-2 py-1 text-xs text-text-primary"
@@ -384,6 +403,7 @@ export function DelegatePage() {
                         setPreferredModel(e.target.value);
                     }}
                 >
+                    {/* i18n: user-facing */}
                     <option value="">{t('自动选择', 'Auto')}</option>
                     {(models.data?.models ?? []).map((m) => (
                         <option key={m.id} value={m.id}>
@@ -392,24 +412,29 @@ export function DelegatePage() {
                     ))}
                 </select>
                 {models.loading && !models.data ? (
+                    {/* i18n: user-facing */}
                     <span className="text-xs text-text-muted">{t('加载中…', 'Loading…')}</span>
                 ) : null}
                 {models.data?.stale ? (
                     <span
                         className="text-xs text-text-muted"
+                        // i18n: user-facing
                         title={t('模型服务暂时不可用, 显示缓存列表', 'Model service unavailable — cached list shown')}
                     >
+                        {/* i18n: user-facing */}
                         {t('缓存', 'Cached')}
                     </span>
                 ) : null}
                 {models.error ? (
                     <span className="flex items-center gap-1 text-xs text-text-muted">
+                        {/* i18n: user-facing */}
                         {t('模型列表不可用', 'Models unavailable')}
                         <button
                             type="button"
                             className="rounded border border-border px-1 hover:bg-bg-muted"
                             onClick={() => models.manualRetry()}
                         >
+                            {/* i18n: user-facing */}
                             {t('重试', 'Retry')}
                         </button>
                     </span>
@@ -419,6 +444,7 @@ export function DelegatePage() {
                 <textarea
                     className="min-h-16 flex-1 rounded-md border border-border bg-bg px-2 py-1.5 text-sm text-text-primary"
                     placeholder={t(
+                        // i18n: user-facing
                         '用自然语言描述任务, 例如: 每天整理下载文件夹并汇报',
                         'Describe the task in natural language, e.g.: tidy the Downloads folder daily and report'
                     )}
@@ -432,9 +458,12 @@ export function DelegatePage() {
                     onClick={() => void (mode === 'chat' ? chatSubmit() : generate())}
                 >
                     {busy
+                        // i18n: user-facing
                         ? t('处理中…', 'Working…')
                         : mode === 'chat'
+                          // i18n: user-facing
                           ? t('发送任务', 'Send task')
+                          // i18n: user-facing
                           : t('生成工作流', 'Generate')}
                 </button>
             </div>
@@ -447,8 +476,10 @@ export function DelegatePage() {
                 <>
                     {!chatResult && !error && !busy ? (
                         <EmptyState
+                            // i18n: user-facing
                             title={t('一句话交差', 'One line, one deliverable')}
                             description={t(
+                                // i18n: user-facing
                                 '描述目标: 简单任务直接执行交付, 复杂任务先给执行计划',
                                 'Simple tasks run directly; complex ones show a plan first'
                             )}
@@ -469,7 +500,9 @@ export function DelegatePage() {
                 <>
                     {!wf && !error && !busy ? (
                         <EmptyState
+                            // i18n: user-facing
                             title={t('还没有委托', 'No delegation yet')}
+                            // i18n: user-facing
                             description={t('描述目标, AI 生成工作流草稿', 'Describe a goal — AI drafts the workflow')}
                         />
                     ) : null}
@@ -478,17 +511,20 @@ export function DelegatePage() {
                     {wf ? (
                         <div className="rounded-lg border border-border bg-bg-elevated p-3">
                             <div className="text-[10px] text-text-muted">
+                                {/* i18n: user-facing */}
                                 {t('预览可就地编辑, 确认后提交', 'Preview is editable — confirm to submit')}
                             </div>
                             <input
                                 className="mt-1 w-full rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm font-medium text-text-primary hover:border-border focus:border-accent focus:outline-none"
                                 value={wf.name ?? ''}
+                                // i18n: user-facing
                                 placeholder={t('未命名', 'Untitled')}
                                 onChange={(e) => patchWf({ name: e.target.value })}
                             />
                             <input
                                 className="mt-0.5 w-full rounded-md border border-transparent bg-transparent px-1 py-0.5 text-xs text-text-secondary hover:border-border focus:border-accent focus:outline-none"
                                 value={wf.description ?? ''}
+                                // i18n: user-facing
                                 placeholder={t('描述 (可选)', 'Description (optional)')}
                                 onChange={(e) => patchWf({ description: e.target.value })}
                             />
@@ -512,17 +548,21 @@ export function DelegatePage() {
                                             <button
                                                 type="button"
                                                 className={`shrink-0 rounded px-1 text-[10px] ${editNode === n.id ? 'bg-brand/15 text-brand' : 'text-text-muted hover:bg-bg-muted'}`}
+                                                // i18n: user-facing
                                                 title={t('编辑参数', 'Edit params')}
                                                 onClick={() => openParams(n)}
                                             >
+                                                {/* i18n: user-facing */}
                                                 {t('参数', 'params')}
                                             </button>
                                             <button
                                                 type="button"
                                                 className="shrink-0 rounded px-1 text-[10px] text-error hover:bg-error/10"
+                                                // i18n: user-facing
                                                 title={t('删除节点', 'Delete node')}
                                                 onClick={() => removeNode(n.id)}
                                             >
+                                                {/* i18n: user-facing */}
                                                 {t('删除', 'del')}
                                             </button>
                                         </div>
@@ -539,6 +579,7 @@ export function DelegatePage() {
                                                         className="rounded border border-border px-1.5 py-0.5 text-[10px] text-text-primary hover:bg-bg-muted"
                                                         onClick={() => setEditNode('')}
                                                     >
+                                                        {/* i18n: user-facing */}
                                                         {t('取消', 'Cancel')}
                                                     </button>
                                                     <button
@@ -546,6 +587,7 @@ export function DelegatePage() {
                                                         className="rounded bg-brand px-1.5 py-0.5 text-[10px] text-white hover:opacity-90"
                                                         onClick={() => applyParams(n.id)}
                                                     >
+                                                        {/* i18n: user-facing */}
                                                         {t('应用', 'Apply')}
                                                     </button>
                                                 </div>
@@ -566,6 +608,7 @@ export function DelegatePage() {
                                             className="shrink-0 rounded px-1 text-[10px] text-error hover:bg-error/10"
                                             onClick={() => removeEdge(i)}
                                         >
+                                            {/* i18n: user-facing */}
                                             {t('删除', 'del')}
                                         </button>
                                     </div>
@@ -576,6 +619,7 @@ export function DelegatePage() {
                                         value={edgeFrom}
                                         onChange={(e) => setEdgeFrom(e.target.value)}
                                     >
+                                        {/* i18n: user-facing */}
                                         <option value="">{t('源节点', 'Source')}</option>
                                         {(wf.nodes ?? []).map((n) => (
                                             <option key={n.id} value={n.id}>
@@ -589,6 +633,7 @@ export function DelegatePage() {
                                         value={edgeTo}
                                         onChange={(e) => setEdgeTo(e.target.value)}
                                     >
+                                        {/* i18n: user-facing */}
                                         <option value="">{t('目标节点', 'Target')}</option>
                                         {(wf.nodes ?? []).map((n) => (
                                             <option key={n.id} value={n.id}>
@@ -602,6 +647,7 @@ export function DelegatePage() {
                                         disabled={!edgeFrom || !edgeTo}
                                         onClick={addEdge}
                                     >
+                                        {/* i18n: user-facing */}
                                         {t('加边', 'Add')}
                                     </button>
                                 </div>
@@ -610,6 +656,7 @@ export function DelegatePage() {
                                 <label
                                     className="mr-auto flex items-center gap-1 text-sm text-text-secondary"
                                     title={t(
+                                        // i18n: user-facing
                                         '运行结束后把产出写入 fusion-memory 长期记忆',
                                         'Write run outcomes to fusion-memory after the run ends'
                                     )}
@@ -620,6 +667,7 @@ export function DelegatePage() {
                                         onChange={(e) => setMemoryEnabled(e.target.checked)}
                                         disabled={saving}
                                     />
+                                    {/* i18n: user-facing */}
                                     {t('记忆', 'Memory')}
                                 </label>
                                 <button
@@ -628,6 +676,7 @@ export function DelegatePage() {
                                     disabled={saving}
                                     onClick={() => void save(false)}
                                 >
+                                    {/* i18n: user-facing */}
                                     {t('保存到画布', 'Save to canvas')}
                                 </button>
                                 <button
@@ -636,6 +685,7 @@ export function DelegatePage() {
                                     disabled={saving}
                                     onClick={() => void save(true)}
                                 >
+                                    {/* i18n: user-facing */}
                                     {t('保存并运行', 'Save & run')}
                                 </button>
                             </div>

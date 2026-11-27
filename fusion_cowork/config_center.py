@@ -17,7 +17,7 @@ _instance_lock = threading.Lock()
 _CONFIG_DIR = os.environ.get("FUSION_CONFIG_DIR") or os.path.expanduser("~/.fusion-cowork")
 _CONFIG_FILE = os.path.join(_CONFIG_DIR, "config.json")
 
-# Stage 2: secret key 识别 — 日志/导出脱敏 (明文 value 不进日志, 防 secret 泄漏)
+# Stage 2: secret key detection — redact in logs/exports (plaintext values never enter logs, prevents secret leaks)
 _SECRET_KEY_SUBSTR = ("token", "secret", "api_key", "apikey", "password", "passwd", "credential")
 _REDACTED = "[REDACTED]"
 
@@ -30,7 +30,7 @@ def _is_secret_key(key: str) -> bool:
 
 
 def _redact_value(key: str, value: Any) -> Any:
-    """secret key 值脱敏 — 返 REDACTED 占位 (仅日志/导出用, 不改 _store 原值)。"""
+    """Redact secret key values — return REDACTED placeholder (logs/exports only, never mutates _store)."""
     if _is_secret_key(key) and value not in (None, "", 0, False):
         return _REDACTED
     return value
@@ -108,9 +108,9 @@ class ConfigCenter:
         with _instance_lock:
             if cls._instance is None:
                 inst = cls()
-                # A-7: 单例首次构造即从磁盘加载, 重启不丢配置
-                # (scoped_folder/auth_token/trusted 白名单/权限 level 等)。
-                # 测试用 reset_instance 置空后重建仍走此路径。
+                # A-7: singleton loads from disk on first construction so config survives restart
+                # (scoped_folder/auth_token/trusted allowlist/permission level etc.).
+                # Tests calling reset_instance then rebuilding go through this path too.
                 inst._load_silent()
                 cls._instance = inst
             return cls._instance
@@ -120,18 +120,18 @@ class ConfigCenter:
         cls._instance = None
 
     def _load_silent(self) -> None:
-        # A-7: 加载失败不影响启动 (首次运行无文件属正常), 仅日志。
+        # A-7: load failure does not block startup (missing file on first run is normal), log only.
         try:
             self.load()
         except Exception as e:
-            logger.warning(f"ConfigCenter 启动加载失败 (忽略, 走默认): {e}")
+            logger.warning(f"ConfigCenter startup load failed (ignored, using defaults): {e}")
 
     def _persist_silent(self) -> None:
-        # A-7: set/delete/reset 后自动落盘, 失败仅日志不抛 (内存值已生效)。
+        # A-7: auto-persist after set/delete/reset, failure logs only without raising (in-memory value already in effect).
         try:
             self.save()
         except Exception as e:
-            logger.warning(f"ConfigCenter 自动持久化失败 (内存值已生效): {e}")
+            logger.warning(f"ConfigCenter auto-persist failed (in-memory value already in effect): {e}")
 
     def get(self, key: str, default: Any = None) -> Any:
         if key in self._store:
@@ -146,13 +146,13 @@ class ConfigCenter:
             entry = ConfigEntry(key=key, value=value, source=source)
             self._store[key] = entry
             change = ConfigChange(key=key, old_value=old_value, new_value=value)
-            # Stage 2: secret key 日志脱敏 — 不泄明文 value
+            # Stage 2: redact secret keys in logs — plaintext values never leak
             logger.info(
                 f"ConfigCenter.set key={key} old={_redact_value(key, old_value)} "
                 f"new={_redact_value(key, value)} source={source}"
             )
         self._notify_observers(change)
-        # A-7: 接线 — 写即落盘, 重启不丢
+        # A-7: wiring — persist on write so config survives restart
         self._persist_silent()
         return change
 
@@ -165,7 +165,7 @@ class ConfigCenter:
             change = ConfigChange(key=key, old_value=old_value, new_value=None)
             logger.info(f"ConfigCenter.delete key={key}")
         self._notify_observers(change)
-        # A-7: 接线 — 删即落盘
+        # A-7: wiring — persist on delete
         self._persist_silent()
         return True
 
@@ -204,7 +204,7 @@ class ConfigCenter:
         return removed > 0
 
     def _notify_observers(self, change: ConfigChange) -> None:
-        # MD-11: 迭代快照, 防 callback 内 observe/unobserve 改 _observers 致 RuntimeError
+        # MD-11: iterate over a snapshot so observe/unobserve inside a callback cannot mutate _observers and raise RuntimeError
         for observer in list(self._observers):
             if not observer.matches(change.key):
                 continue
@@ -221,8 +221,8 @@ class ConfigCenter:
                 logger.error(f"ConfigCenter observer error key={change.key}: {e}")
 
     def save(self, path: str = "") -> None:
-        # MD-12: 原子写 — temp + os.replace + 0o600 + flock, 防并发写撕裂/泄漏
-        # Stage 6: secret 值加密落盘 (FUSION_ENCRYPTION_KEY 设了), 非密保明文。
+        # MD-12: atomic write — temp + os.replace + 0o600 + flock, prevents concurrent write tearing/leaks
+        # Stage 6: secret values encrypted at rest (when FUSION_ENCRYPTION_KEY is set), non-secrets stay plaintext.
         target = path or self._config_file
         os.makedirs(os.path.dirname(target), exist_ok=True)
         with self._lock:
@@ -253,7 +253,7 @@ class ConfigCenter:
         logger.info(f"ConfigCenter.save path={target} entries={len(self._store)}")
 
     def _encrypt_entry(self, key: str, entry: ConfigEntry) -> Dict[str, Any]:
-        """Stage 6: secret key 的 value 加密; 非密保明文。无 key 则明文 + WARN。"""
+        """Stage 6: encrypt secret key values; non-secrets stay plaintext. Without a key, plaintext + WARN."""
         raw = asdict(entry)
         value = raw.get("value")
         if _is_secret_key(key) and isinstance(value, str) and value:
@@ -262,22 +262,22 @@ class ConfigCenter:
 
                 raw["value"] = encrypt_at_rest(value)
             except ImportError:
-                logger.warning("security.encryption 不可用, secret 明文落盘")
+                logger.warning("security.encryption unavailable, secret stored as plaintext")
         return raw
 
     def _decrypt_entry(self, key: str, value: Any) -> Any:
-        """Stage 6: 加密值解密; 非密文 (无 fernet: 前缀) 原样返 (向后兼容明文)。"""
+        """Stage 6: decrypt encrypted values; non-ciphertext (no fernet: prefix) returned as-is (backward-compatible with plaintext)."""
         if _is_secret_key(key) and isinstance(value, str) and value.startswith("fernet:"):
             try:
                 from fusion_cowork.security.encryption import decrypt_at_rest
 
                 return decrypt_at_rest(value)
             except ImportError:
-                logger.warning("security.encryption 不可用, 密文无法解")
+                logger.warning("security.encryption unavailable, ciphertext cannot be decrypted")
         return value
 
     def load(self, path: str = "") -> int:
-        # LO-4: load 与 set/delete 互斥, 防并发改 _store
+        # LO-4: load is mutually exclusive with set/delete, preventing concurrent _store mutation
         target = path or self._config_file
         if not os.path.exists(target):
             logger.debug(f"ConfigCenter.load file not found: {target}")
@@ -313,12 +313,12 @@ class ConfigCenter:
         count = len(self._store)
         self._store.clear()
         logger.info(f"ConfigCenter.reset all entries={count}")
-        # A-7: 全清也落盘, 防重启复活已删配置
+        # A-7: persist on full clear too, so deleted config cannot resurrect after restart
         self._persist_silent()
         return count
 
     def to_dict(self) -> Dict[str, Any]:
-        # Stage 2: secret key 值脱敏 (导出/展示不泄明文)
+        # Stage 2: redact secret key values (exports/display never leak plaintext)
         def _redact_entry(k: str, v: ConfigEntry) -> Dict[str, Any]:
             d = asdict(v)
             d["value"] = _redact_value(k, d.get("value"))

@@ -4,8 +4,8 @@ import { type AdminMember, type AdminUsage, adminApi, adminKey, api, saveAdminKe
 import { useT } from '../i18n';
 import { sdk } from '../sdk';
 
-// issue #156: 管理台 — 成员 / 用量 / 审计导出 (OTLP JSON) / 推送测试。
-// 服务器未配 FUSION_COWORK_ADMIN_KEY 时所有请求 503 admin_disabled。
+// issue #156: Admin console — members / usage / audit export (OTLP JSON) / push test.
+// When the server has no FUSION_COWORK_ADMIN_KEY configured, all requests return 503 admin_disabled.
 
 export function AdminPage() {
     const t = useT();
@@ -54,6 +54,7 @@ export function AdminPage() {
         setError('');
         try {
             const resp = await api.dbBackup({});
+            // i18n: user-facing
             setNote(t(`备份完成: ${resp.path}`, `Backup complete: ${resp.path}`));
         } catch (e) {
             setError(e instanceof Error ? e.message : String(e));
@@ -73,9 +74,11 @@ export function AdminPage() {
             link.download = `fusion-cowork-audit-${Date.now()}.json`;
             link.click();
             URL.revokeObjectURL(url);
+            // i18n: user-facing
             sdk.toast.show({ level: 'success', message: t('审计已导出', 'Audit exported') });
         } catch (e) {
             console.error('[cowork-web] audit export failed', e);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('导出失败', 'Export failed') });
         } finally {
             setBusy('');
@@ -89,11 +92,14 @@ export function AdminPage() {
             sdk.toast.show({
                 level: res.delivered ? 'success' : 'warning',
                 message: res.enabled
+                    // i18n: user-facing
                     ? t('推送已发送', 'Push sent')
+                    // i18n: user-facing
                     : t('推送未配置 (FUSION_COWORK_PUSH_WEBHOOK_URL)', 'Push not configured'),
             });
         } catch (e) {
             console.error('[cowork-web] push test failed', e);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('推送测试失败', 'Push test failed') });
         } finally {
             setBusy('');
@@ -103,8 +109,10 @@ export function AdminPage() {
     return (
         <div className="mx-auto max-w-3xl space-y-4">
             <div className="flex items-end justify-between">
+                {/* i18n: user-facing */}
                 <div className="text-sm font-medium text-text-primary">{t('管理台', 'Admin console')}</div>
                 <span className="rounded bg-bg-muted px-1.5 py-0.5 text-[10px] text-text-secondary">
+                    {/* i18n: user-facing */}
                     {mode === 'identity' ? t('身份服务', 'identity') : t('本地', 'local')}
                 </span>
             </div>
@@ -113,6 +121,7 @@ export function AdminPage() {
                 <input
                     type="password"
                     className="min-w-0 flex-1 rounded-md border border-border bg-bg-elevated px-2 py-1 font-mono text-xs text-text-primary"
+                    // i18n: user-facing
                     placeholder={t('管理密钥 (x-admin-key)', 'Admin key (x-admin-key)')}
                     value={keyInput}
                     onChange={(e) => setKeyInput(e.target.value)}
@@ -122,6 +131,7 @@ export function AdminPage() {
                     className="rounded-md border border-border px-3 py-1 text-xs text-text-secondary hover:bg-bg-muted"
                     onClick={applyKey}
                 >
+                    {/* i18n: user-facing */}
                     {t('保存并加载', 'Save & load')}
                 </button>
             </div>
@@ -132,9 +142,13 @@ export function AdminPage() {
             {usage ? (
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                     {[
+                        // i18n: user-facing
                         { label: t('空间', 'Spaces'), value: usage.spaces.spaces },
+                        // i18n: user-facing
                         { label: t('消息', 'Messages'), value: usage.spaces.messages },
+                        // i18n: user-facing
                         { label: t('产物', 'Artifacts'), value: usage.spaces.artifacts },
+                        // i18n: user-facing
                         { label: t('智能体', 'Agents'), value: usage.spaces.agents },
                     ].map((card) => (
                         <div key={card.label} className="rounded-lg border border-border bg-bg-elevated p-3">
@@ -143,10 +157,12 @@ export function AdminPage() {
                         </div>
                     ))}
                     <div className="rounded-lg border border-border bg-bg-elevated p-3">
+                        {/* i18n: user-facing */}
                         <div className="text-[10px] text-text-muted">{t('运行', 'Runs')}</div>
                         <div className="font-mono text-lg text-text-primary">{usage.runs.total}</div>
                     </div>
                     <div className="rounded-lg border border-border bg-bg-elevated p-3">
+                        {/* i18n: user-facing */}
                         <div className="text-[10px] text-text-muted">{t('令牌', 'Tokens')}</div>
                         <div className="font-mono text-lg text-text-primary">{usage.tokens}</div>
                     </div>
@@ -154,6 +170,7 @@ export function AdminPage() {
             ) : null}
 
             {members.length === 0 && !loading && !error ? (
+                {/* i18n: user-facing */}
                 <EmptyState title={t('无成员', 'No members')} />
             ) : (
                 <div className="space-y-1">
@@ -183,6 +200,7 @@ export function AdminPage() {
                     disabled={busy !== ''}
                     onClick={() => void exportAudit()}
                 >
+                    {/* i18n: user-facing */}
                     {t('导出审计 (OTLP)', 'Export audit (OTLP)')}
                 </button>
                 <button
@@ -191,6 +209,7 @@ export function AdminPage() {
                     disabled={busy !== ''}
                     onClick={() => void pushTest()}
                 >
+                    {/* i18n: user-facing */}
                     {t('推送测试', 'Push test')}
                 </button>
                 <button
@@ -199,6 +218,7 @@ export function AdminPage() {
                     disabled={busy !== ''}
                     onClick={() => void backupDb()}
                 >
+                    {/* i18n: user-facing */}
                     {busy === 'dbbackup' ? t('备份中…', 'Backing up…') : t('数据库备份', 'DB backup')}
                 </button>
             </div>

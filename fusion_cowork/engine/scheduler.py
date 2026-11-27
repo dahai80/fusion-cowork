@@ -1,11 +1,11 @@
-"""任务调度器 — 基于 APScheduler 的定时任务管理。
+"""Task scheduler — APScheduler-based scheduled task management.
 
-支持：
-- Cron 表达式调度（类 Unix crontab）
-- 一次性延迟执行
-- 间隔执行
-- 任务持久化
-- 任务状态管理
+Supports:
+- Cron expression scheduling (Unix crontab style)
+- One-shot delayed execution
+- Interval execution
+- Task persistence
+- Task status management
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ _DEFAULT_STORE_PATH = str(Path.home() / ".fusion-cowork" / "scheduled_tasks.json
 
 
 class TaskStatus(Enum):
-    """任务状态。"""
+    """Task status."""
 
     ACTIVE = "active"
     PAUSED = "paused"
@@ -44,7 +44,7 @@ class TaskStatus(Enum):
 
 @dataclass
 class ScheduledTask:
-    """定时任务定义。"""
+    """Scheduled task definition."""
 
     id: str
     name: str
@@ -63,14 +63,14 @@ class ScheduledTask:
 
 
 class TaskScheduler:
-    """任务调度器 — 管理和执行定时自动化任务。
+    """Task scheduler — manages and executes scheduled automation tasks.
 
-    基于 APScheduler 实现，提供：
-    - Cron 定时任务
-    - 间隔执行任务
-    - 一次性任务
-    - 任务持久化（JSON 文件）
-    - 启用/禁用任务
+    Built on APScheduler, provides:
+    - Cron scheduled tasks
+    - Interval tasks
+    - One-shot tasks
+    - Task persistence (JSON file)
+    - Enable/disable tasks
     """
 
     def __init__(self, task_store_path: str = ""):
@@ -78,33 +78,34 @@ class TaskScheduler:
         self._tasks: Dict[str, ScheduledTask] = {}
         self._job_map: Dict[str, str] = {}  # task_id -> job_id
         self._executors: Dict[str, Callable] = {}
-        # A-1: task_store_path 接线 — 空则用默认路径。persist_tasks/load_tasks 落地任务定义,
-        # restart 不再丢全部定时任务 (旧版 _task_store_path 字段存了却零 save/load, 死配置)。
+        # A-1: task_store_path wiring — empty means default path. persist_tasks/load_tasks
+        # persist task definitions so restart no longer loses all scheduled tasks
+        # (old version stored _task_store_path but never saved/loaded, dead config).
         self._task_store_path = task_store_path or _DEFAULT_STORE_PATH
-        # R-5: 连续失败上限, 超过才 FAILED+pause (避免一次瞬态失败永久停摆)。
+        # R-5: consecutive failure cap, only FAILED+pause beyond it (avoids one transient failure stalling the task forever).
         self._max_fail = 5
         # P1-12 (audit 0912): task_ids restored without an executor — paused
         # until register_executor() re-binds and resumes them.
         self._executors_paused: Dict[str, bool] = {}
 
     def start(self) -> None:
-        """启动调度器。"""
+        """Start the scheduler."""
         self._scheduler.start()
-        # A-1: 启动时从磁盘恢复任务定义 (executor 需应用重新注册 — callable 不可序列化)。
+        # A-1: restore task definitions from disk at startup (executors must be re-registered by the app — callables are not serializable).
         restored = self.load_tasks()
         if restored:
-            logger.info(f"调度器启动恢复 {restored} 个持久化任务 (executor 待应用重新注册)")
-        logger.info("任务调度器已启动")
+            logger.info(f"Scheduler startup restored {restored} persisted tasks (executors pending app re-registration)")
+        logger.info("Task scheduler started")
 
     def shutdown(self, wait: bool = True) -> None:
-        """关闭调度器。"""
+        """Shut down the scheduler."""
         self._scheduler.shutdown(wait=wait)
-        logger.info("任务调度器已关闭")
+        logger.info("Task scheduler shut down")
 
     def register_executor(self, task_id: str, executor: Callable) -> None:
-        """注册任务执行器。"""
+        """Register a task executor."""
         self._executors[task_id] = executor
-        # A-1: 恢复的任务此前无 executor (load_tasks 记 WARN); 重注册后记 INFO 可用。
+        # A-1: restored tasks had no executor before (load_tasks logs WARN); log INFO once re-registered and usable.
         task = self._tasks.get(task_id)
         # P1-12 (audit 0912): re-binding an executor resumes a task that was
         # auto-paused at restore time (marker True). User-paused tasks have no
@@ -113,9 +114,9 @@ class TaskScheduler:
             task.status = TaskStatus.ACTIVE
             # auto-paused tasks skipped job rebuild at restore time — rebuild now
             self._rebuild_job(task)
-            logger.info(f"任务 '{task.name}' ({task_id}) executor 已注册, 自动恢复执行")
+            logger.info(f"Task '{task.name}' ({task_id}) executor registered, auto-resumed")
         elif task:
-            logger.info(f"任务 '{task.name}' ({task_id}) executor 已注册, 可执行")
+            logger.info(f"Task '{task.name}' ({task_id}) executor registered, ready to run")
 
     def add_cron_task(
         self,
@@ -127,19 +128,19 @@ class TaskScheduler:
         tags: List[str] = None,
         tenant_id: Optional[str] = None,
     ) -> str:
-        """添加 Cron 定时任务。
+        """Add a Cron scheduled task.
 
         Args:
-            name: 任务名称
-            workflow_id: 关联的工作流 ID
-            cron_expression: Cron 表达式，如 "0 21 * * *"（每天 21:00）
-            executor: 执行回调函数
-            description: 任务描述
-            tags: 标签列表
-            tenant_id: 租户 ID (v0.4.0 多租户隔离, 缺则取 contextvar)
+            name: Task name
+            workflow_id: Associated workflow ID
+            cron_expression: Cron expression, e.g. "0 21 * * *" (daily at 21:00)
+            executor: Execution callback function
+            description: Task description
+            tags: List of tags
+            tenant_id: Tenant ID (v0.4.0 multi-tenant isolation, falls back to contextvar when omitted)
 
         Returns:
-            str: 任务 ID
+            str: Task ID
         """
         task_id = f"task_{uuid.uuid4().hex[:8]}"
         task = ScheduledTask(
@@ -156,7 +157,7 @@ class TaskScheduler:
         self._tasks[task_id] = task
         self._executors[task_id] = executor
 
-        # 注册到 APScheduler
+        # Register with APScheduler
         trigger = CronTrigger.from_crontab(cron_expression)
         job = self._scheduler.add_job(
             self._run_task,
@@ -168,13 +169,13 @@ class TaskScheduler:
         )
         self._job_map[task_id] = job.id
 
-        # 计算下次运行时间 (调度器未 start 时 job 无 next_run_time — getattr 容错)
+        # Compute next run time (job has no next_run_time before scheduler start — getattr fallback)
         nrt = getattr(job, "next_run_time", None)
         if nrt:
             task.next_run = nrt.timestamp()
 
-        logger.info(f"已添加定时任务 '{name}' ({cron_expression}): {task_id}")
-        # A-1: 落地任务定义 (restart 不丢)
+        logger.info(f"Added cron task '{name}' ({cron_expression}): {task_id}")
+        # A-1: persist task definition (survives restart)
         self._persist_tasks()
         return task_id
 
@@ -189,7 +190,7 @@ class TaskScheduler:
         description: str = "",
         tenant_id: Optional[str] = None,
     ) -> str:
-        """添加间隔任务。"""
+        """Add an interval task."""
         task_id = f"task_{uuid.uuid4().hex[:8]}"
         task = ScheduledTask(
             id=task_id,
@@ -219,28 +220,28 @@ class TaskScheduler:
         if nrt:
             task.next_run = nrt.timestamp()
 
-        logger.info(f"已添加间隔任务 '{name}' (每{minutes}分钟): {task_id}")
-        # A-1: 落地任务定义 (restart 不丢)
+        logger.info(f"Added interval task '{name}' (every {minutes} minutes): {task_id}")
+        # A-1: persist task definition (survives restart)
         self._persist_tasks()
         return task_id
 
     async def _run_task(self, task_id: str) -> None:
-        """运行任务（内部回调）。"""
+        """Run a task (internal callback)."""
         task = self._tasks.get(task_id)
         if not task:
-            logger.error(f"任务 {task_id} 不存在")
+            logger.error(f"Task {task_id} does not exist")
             return
 
         if task.status != TaskStatus.ACTIVE:
-            logger.warning(f"任务 {task.name} 状态不是 active，跳过")
+            logger.warning(f"Task {task.name} is not active, skipping")
             return
 
         executor = self._executors.get(task_id)
         if not executor:
-            logger.error(f"任务 {task_id} 没有注册执行器")
+            logger.error(f"Task {task_id} has no registered executor")
             return
 
-        logger.info(f"开始执行定时任务: {task.name}")
+        logger.info(f"Starting scheduled task: {task.name}")
         task.run_count += 1
         task.last_run = time.time()
 
@@ -249,31 +250,33 @@ class TaskScheduler:
                 await executor()
             else:
                 executor()
-            logger.info(f"定时任务执行完成: {task.name}")
+            logger.info(f"Scheduled task completed: {task.name}")
             task.fail_count = 0
         except Exception as e:
-            # R-5: 旧版直接 FAILED → APScheduler job 仍 active, 下次触发因 status!=ACTIVE 静默 skip,
-            # 用户不知任务已停摆 (审计: 永久停摆)。改为: 计失败次数, 未超阈值则恢复 ACTIVE 下次重试;
-            # 超阈值才 FAILED + pause job (显式停, 不静默 skip)。
+            # R-5: old version set FAILED directly while the APScheduler job stayed active,
+            # so the next fire silently skipped on status!=ACTIVE and the user never knew the
+            # task had stalled (audit: permanent stall). Now: count failures, restore ACTIVE
+            # for a retry below the threshold; only FAILED + pause job past it (explicit stop,
+            # no silent skip).
             task.fail_count = getattr(task, "fail_count", 0) + 1
-            logger.error(f"定时任务执行失败 '{task.name}' (第{task.fail_count}次): {e}")
+            logger.error(f"Scheduled task failed '{task.name}' (attempt {task.fail_count}): {e}")
             if task.fail_count >= self._max_fail:
                 task.status = TaskStatus.FAILED
                 logger.warning(
-                    f"定时任务 '{task.name}' 连续失败 {task.fail_count} 次, 置 FAILED 并暂停 (需手动 resume_task 恢复)"
+                    f"Scheduled task '{task.name}' failed {task.fail_count} times in a row, set to FAILED and paused (manual resume_task required)"
                 )
                 job_id = self._job_map.get(task_id)
                 if job_id:
                     try:
                         self._scheduler.pause_job(job_id)
                     except Exception as pe:
-                        logger.error(f"FAILED 后暂停 job 失败 '{task.name}': {pe}")
+                        logger.error(f"Failed to pause job after FAILED '{task.name}': {pe}")
             else:
-                logger.info(f"定时任务 '{task.name}' 瞬态失败, 保持 ACTIVE 下次触发重试")
-            # A-1: 状态/计数变更落地
+                logger.info(f"Scheduled task '{task.name}' transient failure, stays ACTIVE for retry on next trigger")
+            # A-1: persist status/count changes
             self._persist_tasks()
 
-        # 更新下次运行时间
+        # Update next run time
         job = self._scheduler.get_job(f"job_{task_id}")
         if job:
             nrt = getattr(job, "next_run_time", None)
@@ -281,57 +284,57 @@ class TaskScheduler:
                 task.next_run = nrt.timestamp()
 
     def pause_task(self, task_id: str) -> bool:
-        """暂停任务。"""
+        """Pause a task."""
         job_id = self._job_map.get(task_id)
         if not job_id:
             return False
-        # R-5: job 可能已被 (FAILED 时) 暂停或移除 → JobLookupError 容错。
+        # R-5: job may already be paused (on FAILED) or removed → tolerate JobLookupError.
         try:
             self._scheduler.pause_job(job_id)
         except Exception as e:
-            logger.warning(f"pause_job '{task_id}' 失败 (job 可能已移除): {e}")
+            logger.warning(f"pause_job '{task_id}' failed (job may already be removed): {e}")
         if task_id in self._tasks:
             self._tasks[task_id].status = TaskStatus.PAUSED
-        # A-1: 状态变更落地
+        # A-1: persist status change
         self._persist_tasks()
         return True
 
     def resume_task(self, task_id: str) -> bool:
-        """恢复任务。"""
+        """Resume a task."""
         job_id = self._job_map.get(task_id)
         if not job_id:
             return False
         try:
             self._scheduler.resume_job(job_id)
         except Exception as e:
-            logger.warning(f"resume_job '{task_id}' 失败 (job 可能已移除): {e}")
+            logger.warning(f"resume_job '{task_id}' failed (job may already be removed): {e}")
             return False
         if task_id in self._tasks:
             self._tasks[task_id].status = TaskStatus.ACTIVE
-            # 恢复时重置失败计数, 允许重新尝试。
+            # Reset failure count on resume to allow retries again.
             self._tasks[task_id].fail_count = 0
-        # A-1: 状态变更落地
+        # A-1: persist status change
         self._persist_tasks()
         return True
 
     def remove_task(self, task_id: str) -> bool:
-        """删除任务。"""
+        """Remove a task."""
         job_id = self._job_map.get(task_id)
         if job_id:
             try:
                 self._scheduler.remove_job(job_id)
             except Exception as e:
-                logger.warning(f"remove_job '{task_id}' 失败 (job 可能已移除): {e}")
+                logger.warning(f"remove_job '{task_id}' failed (job may already be removed): {e}")
         self._job_map.pop(task_id, None)
         task = self._tasks.pop(task_id, None)
         if task:
             task.status = TaskStatus.REMOVED
-        # A-1: 移除落地
+        # A-1: persist removal
         self._persist_tasks()
         return task is not None
 
     def get_task(self, task_id: str) -> Optional[ScheduledTask]:
-        """获取任务信息。"""
+        """Get task info."""
         return self._tasks.get(task_id)
 
     async def run_task_now(self, task_id: str) -> bool:
@@ -352,7 +355,7 @@ class TaskScheduler:
         status: Optional[TaskStatus] = None,
         tenant_id: Optional[str] = None,
     ) -> List[ScheduledTask]:
-        """列出所有任务 (v0.4.0: 按 tenant_id 过滤防跨租户泄漏)。"""
+        """List all tasks (v0.4.0: filtered by tenant_id to prevent cross-tenant leakage)."""
         tid = resolve_tenant_id(tenant_id)
         tasks = [t for t in self._tasks.values() if t.tenant_id == tid]
         if status:
@@ -360,10 +363,10 @@ class TaskScheduler:
         return tasks
 
     def list_active_tasks(self) -> List[ScheduledTask]:
-        """列出所有活跃任务。"""
+        """List all active tasks."""
         return self.list_tasks(TaskStatus.ACTIVE)
 
-    # ── A-1 任务持久化 ──
+    # ── A-1 task persistence ──
 
     def _task_to_dict(self, task: ScheduledTask) -> Dict[str, Any]:
         return {
@@ -384,8 +387,8 @@ class TaskScheduler:
         }
 
     def _persist_tasks(self) -> None:
-        # A-1: 落地任务定义 (executor 不序列化 — callable, 应用重启后重新注册)。
-        # E-4 原子写: tmp+os.replace, 避免写一半崩溃留半截 JSON 致 load 解析失败。
+        # A-1: persist task definitions (executors not serialized — callables, re-registered after app restart).
+        # E-4 atomic write: tmp+os.replace, avoids a half-written JSON on crash breaking load parsing.
         path = Path(self._task_store_path)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -403,19 +406,19 @@ class TaskScheduler:
                     tmp.unlink()
                 except OSError:
                     pass
-            logger.exception(f"调度任务持久化失败: {self._task_store_path}")
+            logger.exception(f"Failed to persist scheduled tasks: {self._task_store_path}")
             raise
 
     def load_tasks(self) -> int:
-        # A-1: 启动恢复任务定义 + 重建 APScheduler job。executor 缺则记 WARN (应用重注册后可用)。
-        # 仅恢复 ACTIVE/PAUSED (REMOVED/COMPLETED/FAILED 不重建 job, 留记录供查询)。
+        # A-1: restore task definitions at startup + rebuild APScheduler jobs. Missing executors log WARN (usable after app re-registration).
+        # Only ACTIVE/PAUSED are restored (REMOVED/COMPLETED/FAILED do not rebuild jobs, records kept for querying).
         path = Path(self._task_store_path)
         if not path.exists():
             return 0
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"加载调度任务失败 (忽略, 从空开始): {e}")
+            logger.warning(f"Failed to load scheduled tasks (ignoring, starting empty): {e}")
             return 0
         restored = 0
         for item in data:
@@ -447,7 +450,7 @@ class TaskScheduler:
                 self._tasks[task_id] = task
                 # P1-12 (audit 0912): a restored task without a registered
                 # executor can never run — previously it stayed ACTIVE, its
-                # APScheduler job fired and silently returned ("没有注册执行器"),
+                # APScheduler job fired and silently returned ("no registered executor"),
                 # so the business automation died silently after a restart.
                 # Now it is paused until the app re-registers the executor,
                 # and register_executor() resumes it.
@@ -456,12 +459,12 @@ class TaskScheduler:
                     # marker; user-paused tasks (status == PAUSED on disk) keep
                     # their pause without a marker and are never auto-resumed.
                     if status == TaskStatus.ACTIVE:
-                        logger.warning(f"恢复任务 '{task.name}' ({task_id}) 暂无 executor, 已暂停待重新注册")
+                        logger.warning(f"Restored task '{task.name}' ({task_id}) has no executor yet, paused pending re-registration")
                         task.status = TaskStatus.PAUSED
                         self._executors_paused[task_id] = True
                     restored += 1
                     continue
-                # 仅 ACTIVE/PAUSED 重建 APScheduler job (COMPLETED/FAILED/REMOVED 不重建)。
+                # Only ACTIVE/PAUSED rebuild the APScheduler job (COMPLETED/FAILED/REMOVED do not).
                 if status in (TaskStatus.ACTIVE, TaskStatus.PAUSED):
                     self._rebuild_job(task)
                     if status == TaskStatus.PAUSED:
@@ -473,11 +476,11 @@ class TaskScheduler:
                                 pass
                 restored += 1
             except Exception as e:
-                logger.warning(f"恢复调度任务项失败 (跳过): {e}")
+                logger.warning(f"Failed to restore scheduled task item (skipping): {e}")
         return restored
 
     def _rebuild_job(self, task: ScheduledTask) -> None:
-        # A-1: 按 trigger_type 重建 APScheduler job (load_tasks 用)。
+        # A-1: rebuild APScheduler job by trigger_type (used by load_tasks).
         try:
             if task.trigger_type == "cron":
                 trigger = CronTrigger.from_crontab(task.trigger_config.get("cron", "* * * * *"))
@@ -488,7 +491,7 @@ class TaskScheduler:
                     days=int(task.trigger_config.get("days", 0) or 0),
                 )
             else:
-                logger.warning(f"恢复任务 '{task.name}' trigger_type={task.trigger_type} 不支持, 跳过")
+                logger.warning(f"Restored task '{task.name}' trigger_type={task.trigger_type} unsupported, skipping")
                 return
             job = self._scheduler.add_job(
                 self._run_task,
@@ -503,4 +506,4 @@ class TaskScheduler:
             if nrt:
                 task.next_run = nrt.timestamp()
         except Exception as e:
-            logger.warning(f"重建任务 job 失败 '{task.name}': {e}")
+            logger.warning(f"Failed to rebuild task job '{task.name}': {e}")

@@ -1,26 +1,26 @@
-"""协作空间 REST API — FastAPI 路由 + SSE 事件流。
+"""Collaborative Space REST API — FastAPI routes + SSE event stream.
 
-端点:
-- POST   /spaces                     创建空间
-- GET    /spaces                     列出空间
-- GET    /spaces/{space_id}          获取空间
-- PUT    /spaces/{space_id}          更新空间
-- DELETE /spaces/{space_id}          删除空间
-- POST   /spaces/{id}/members        添加成员
-- GET    /spaces/{id}/members        列出成员
-- POST   /spaces/{id}/messages       发送消息
-- GET    /spaces/{id}/messages       列出消息
-- GET    /spaces/{id}/stream         SSE 事件流
-- POST   /spaces/{id}/kb/bind        绑定知识库
-- POST   /spaces/{id}/kb/upload      上传文档
-- GET    /spaces/{id}/kb/search      搜索知识库
-- GET    /spaces/{id}/kb/status      知识库状态
-- GET    /spaces/{id}/agents         列出 Agent
-- POST   /spaces/{id}/agents         添加 Agent
-- GET    /spaces/{id}/agents/{aid}   获取 Agent
-- DELETE /spaces/{id}/agents/{aid}   删除 Agent
-- POST   /spaces/{id}/agents/call    调用 Agent
-- POST   /spaces/{id}/agents/relay   多 Agent 接力
+Endpoints:
+- POST   /spaces                     Create space
+- GET    /spaces                     List spaces
+- GET    /spaces/{space_id}          Get space
+- PUT    /spaces/{space_id}          Update space
+- DELETE /spaces/{space_id}          Delete space
+- POST   /spaces/{id}/members        Add member
+- GET    /spaces/{id}/members        List members
+- POST   /spaces/{id}/messages       Send message
+- GET    /spaces/{id}/messages       List messages
+- GET    /spaces/{id}/stream         SSE event stream
+- POST   /spaces/{id}/kb/bind        Bind knowledge base
+- POST   /spaces/{id}/kb/upload      Upload document
+- GET    /spaces/{id}/kb/search      Search knowledge base
+- GET    /spaces/{id}/kb/status      Knowledge base status
+- GET    /spaces/{id}/agents         List agents
+- POST   /spaces/{id}/agents         Add agent
+- GET    /spaces/{id}/agents/{aid}   Get agent
+- DELETE /spaces/{id}/agents/{aid}   Delete agent
+- POST   /spaces/{id}/agents/call    Call agent
+- POST   /spaces/{id}/agents/relay   Multi-agent relay
 """
 
 import asyncio
@@ -60,24 +60,27 @@ def create_space_api(
     principal_resolver=None,
     collab_hub=None,
 ):
-    """协作空间 REST API。
+    """Collaborative Space REST API.
 
-    A-5 (0825 审计): 身份字段不再信请求体 — owner_id/user_id/operator_id 一律取
-    principal_resolver(request) 返回的连接级可信身份 (默认 local_user)。body 里的
-    身份字段被忽略, 防 CR-5 式冒充/IDOR。配 auth_token 则所有端点校验
-    `Authorization: Bearer <token>`。list_messages / get_space 等读端点加
-    SpacePermission.check (view_artifact / send_message), 非成员拒。
+    A-5 (0825 audit): identity fields are no longer trusted from the request body —
+    owner_id/user_id/operator_id always come from the connection-level trusted
+    identity returned by principal_resolver(request) (default local_user). Identity
+    fields in the body are ignored, preventing CR-5-style spoofing/IDOR. When
+    auth_token is configured, all endpoints verify `Authorization: Bearer <token>`.
+    Read endpoints such as list_messages / get_space add SpacePermission.check
+    (view_artifact / send_message); non-members are rejected.
 
-    A-9 (0825 审计): CollabHub (WS 传输层) 由调用方 (server/cli) 注入 collab_hub,
-    space 域不再反向 import ..server.collab_ws — 分层边界保持单向 (server 消费 space)。
+    A-9 (0825 audit): CollabHub (WS transport layer) is injected by the caller
+    (server/cli) via collab_hub; the space domain no longer reverse-imports
+    ..server.collab_ws — the layering boundary stays one-way (server consumes space).
     """
 
     app = FastAPI(title="Fusion-Cowork Space API", version="0.8.0")
     _event_emitter = event_emitter
     app.state.event_emitter = event_emitter
 
-    # Stage 1: 每请求注入 tenant_id 到 contextvar, 下游 store.resolve_tenant_id(None) 自动取。
-    # Stage 2 接通 JWT 后 _resolve_principal 返 JWT claim tenant_id。
+    # Stage 1: inject tenant_id into a contextvar per request; downstream store.resolve_tenant_id(None) picks it up automatically.
+    # Stage 2: once JWT is wired, _resolve_principal returns the JWT claim tenant_id.
     @app.middleware("http")
     async def _tenant_middleware(request: Request, call_next):
         tid = _resolve_tenant(request)
@@ -91,20 +94,21 @@ def create_space_api(
     from .presence import PresenceManager
 
     _presence = presence_manager or PresenceManager(event_emitter=event_emitter)
-    # A-5: space_store 优先显式注入; 缺则回退 member_svc._store (服务均持有同一 store)
+    # A-5: space_store prefers explicit injection; falls back to member_svc._store (services share one store)
     _space_store = space_store or getattr(member_svc, "_store", None)
     _auth_token = auth_token
     _principal_resolver = principal_resolver
 
     def _resolve_principal(request: Request) -> TenantPrincipal:
-        """A-5: 提取可信 principal — 不读请求体身份字段。返 TenantPrincipal (含 tenant_id)。
+        """A-5: extract a trusted principal — never read identity fields from the request body. Returns a TenantPrincipal (with tenant_id).
 
-        - 配了 principal_resolver → 调用方自定义 (如解析 JWT/header)。
-        - Stage 2: 否则若 JWT verifier active (env FUSION_JWT_SECRET/FUSION_JWKS_URL) →
-          从 `Authorization: Bearer <jwt>` 校验, 提取 tenant_id/user_id claim。
-        - 否则: 若配 auth_token 则从 `X-Principal` header 取 (经 token 校验可信);
-          无 token 本地单用户 → local_user / default tenant。
-        body 里的 owner_id/user_id 一律不信 (CR-5 反 IDOR)。
+        - principal_resolver configured → caller-defined (e.g. parse JWT/header).
+        - Stage 2: otherwise, if a JWT verifier is active (env FUSION_JWT_SECRET/FUSION_JWKS_URL) →
+          verify from `Authorization: Bearer <jwt>` and extract tenant_id/user_id claims.
+        - Otherwise: if auth_token is configured, take it from the `X-Principal` header
+          (trusted after token verification); no token in local single-user mode →
+          local_user / default tenant.
+        owner_id/user_id in the body are never trusted (CR-5 anti-IDOR).
         """
         if _principal_resolver:
             resolved = _principal_resolver(request)
@@ -113,7 +117,7 @@ def create_space_api(
             if isinstance(resolved, str):
                 return TenantPrincipal(tenant_id=DEFAULT_TENANT, user_id=resolved or LOCAL_USER)
             return TenantPrincipal()
-        # Stage 2: JWT (env 配了 active) — 从 Authorization Bearer 校验
+        # Stage 2: JWT (env-configured active) — verify from Authorization Bearer
         try:
             from fusion_cowork.auth import get_default_verifier
 
@@ -126,19 +130,19 @@ def create_space_api(
                     if jwt_principal is not None:
                         return jwt_principal
         except Exception as e:
-            logger.warning(f"Space API JWT 校验异常, 回退静态身份: {e}")
+            logger.warning(f"Space API JWT verification error, falling back to static identity: {e}")
         if _auth_token:
             uid = request.headers.get("X-Principal", "") or LOCAL_USER
             return TenantPrincipal(tenant_id=DEFAULT_TENANT, user_id=uid)
         return TenantPrincipal()
 
     def _resolve_tenant(request: Request) -> str:
-        """Stage 1: 提取 tenant_id (Stage 2 JWT 完整接通, 本阶段默认 default)。"""
+        """Stage 1: extract tenant_id (Stage 2 fully wires JWT; this stage defaults to default)."""
         return _resolve_principal(request).tenant_id
 
     async def _check_auth(request: Request) -> Optional[JSONResponse]:
-        """A-5: auth_token 配了则校验 Bearer; 缺/错返 401。Stage 2: JWT 也可通过。"""
-        # Stage 2: JWT active → 校验通过即放行 (tenant_id 由 _resolve_principal 提取)
+        """A-5: if auth_token is configured, verify Bearer; missing/wrong returns 401. Stage 2: JWT also passes."""
+        # Stage 2: JWT active → pass on successful verification (tenant_id extracted by _resolve_principal)
         try:
             from fusion_cowork.auth import get_default_verifier
 
@@ -148,43 +152,43 @@ def create_space_api(
                 token = authz[len("Bearer ") :] if authz.startswith("Bearer ") else ""
                 if token and verifier.verify_token(token) is not None:
                     return None
-                # JWT active 但无/错 token: 若同时配了静态 token 则继续走静态校验, 否则 401
+                # JWT active but token missing/invalid: if a static token is also configured, continue with static verification, otherwise 401
                 if not _auth_token:
-                    logger.warning("Space API 认证失败: JWT 无效或缺失")
-                    return JSONResponse({"error": "认证失败: token 无效"}, status_code=401)
+                    logger.warning("Space API auth failed: JWT invalid or missing")
+                    return JSONResponse({"error": "auth failed: invalid token"}, status_code=401)
         except Exception as e:
-            logger.warning(f"Space API JWT 校验异常: {e}")
+            logger.warning(f"Space API JWT verification error: {e}")
         if not _auth_token:
             return None
         authz = request.headers.get("Authorization", "")
         token = authz[len("Bearer ") :] if authz.startswith("Bearer ") else ""
         if token != _auth_token:
-            logger.warning("Space API 认证失败: Bearer token 无效")
-            return JSONResponse({"error": "认证失败: token 无效"}, status_code=401)
+            logger.warning("Space API auth failed: invalid Bearer token")
+            return JSONResponse({"error": "auth failed: invalid token"}, status_code=401)
         return None
 
     async def _require_access(
         space_id: str, principal: str, action: str, tenant_id: Optional[str] = None
     ) -> Optional[JSONResponse]:
-        """A-5: IDOR 守卫 — 校验 principal 对 space 的成员资格 + 权限。
-        owner 全放行; 非成员 403; 成员查角色矩阵 action。Stage 1: 传 tenant_id 给 store。"""
+        """A-5: IDOR guard — verify the principal's membership in the space + permissions.
+        Owner passes fully; non-member gets 403; members are checked against the role matrix for action. Stage 1: pass tenant_id to the store."""
         if not _space_store or not space_id:
             return None
         tid = tenant_id or DEFAULT_TENANT
         space = await _space_store.get_space(space_id, tenant_id=tid)
         if not space:
-            return JSONResponse({"error": "空间不存在"}, status_code=404)
+            return JSONResponse({"error": "space not found"}, status_code=404)
         owner_id = getattr(space, "owner_id", "") if space else ""
         if principal and principal == owner_id:
             return None
         member = await _space_store.get_member(space_id, principal, tenant_id=tid)
         if member is None:
-            logger.warning(f"Space API IDOR 拒: principal={principal} 非空间 {space_id} 成员 tenant={tid}")
-            return JSONResponse({"error": "无权访问该空间"}, status_code=403)
+            logger.warning(f"Space API IDOR rejected: principal={principal} is not a member of space {space_id} tenant={tid}")
+            return JSONResponse({"error": "no access to this space"}, status_code=403)
         if action:
             perm = SpacePermission(_space_store)
             if not await perm.check(space_id, principal, action):
-                return JSONResponse({"error": f"权限不足: 缺 {action}"}, status_code=403)
+                return JSONResponse({"error": f"insufficient permission: missing {action}"}, status_code=403)
         return None
 
     # ── Space CRUD ──
@@ -195,7 +199,7 @@ def create_space_api(
         if auth_err:
             return auth_err
         body = await request.json()
-        # A-5: owner_id 取可信 principal, 不信 body (CR-5 反 IDOR)
+        # A-5: owner_id comes from the trusted principal, not from body (CR-5 anti-IDOR)
         principal = _resolve_principal(request)
         sp = await space_svc.create(
             name=body.get("name", ""),
@@ -234,8 +238,8 @@ def create_space_api(
 
     @app.post("/spaces/{space_id}/members")
     async def add_member(space_id: str, request: Request):
-        # A-5: operator 取可信 principal, 不信 body.operator_id (CR-5 反冒充)。
-        # body.user_id 是被加成员 (非身份断言), role 是角色 — 均为操作对象非主体。
+        # A-5: operator comes from the trusted principal, not body.operator_id (CR-5 anti-spoofing).
+        # body.user_id is the member being added (not an identity assertion) and role is a role — both are operation targets, not subjects.
         auth_err = await _check_auth(request)
         if auth_err:
             return auth_err
@@ -262,7 +266,7 @@ def create_space_api(
 
     @app.delete("/spaces/{space_id}/members/{user_id}")
     async def remove_member(space_id: str, user_id: str, request: Request):
-        # A-5: operator 取可信 principal (不信 query/body 身份字段, CR-5 反冒充)。
+        # A-5: operator comes from the trusted principal (not query/body identity fields, CR-5 anti-spoofing).
         auth_err = await _check_auth(request)
         if auth_err:
             return auth_err
@@ -330,8 +334,8 @@ def create_space_api(
 
     @app.get("/spaces/{space_id}/messages")
     async def list_messages(space_id: str, request: Request, limit: int = 100, offset: int = 0):
-        # A-5: list_messages 无 user_id/permission.check → IDOR, 任意用户读任意空间消息。
-        # 校验连接级 principal 成员资格 (read → 空字符串 action 仅查成员, 任意角色可读)。
+        # A-5: list_messages has no user_id/permission.check → IDOR, any user could read any space's messages.
+        # Verify the connection-level principal's membership (read → empty-string action only checks membership, any role may read).
         auth_err = await _check_auth(request)
         if auth_err:
             return auth_err
@@ -351,7 +355,7 @@ def create_space_api(
                 sub_id, queue = _event_emitter.subscribe()
                 prefix = f"space:{space_id}:"
                 try:
-                    # B2: 立即 ready 帧 — 前端据此关闭轮询降级
+                    # B2: immediate ready frame — frontend uses it to turn off polling fallback
                     yield f"event: ready\ndata: {json.dumps({'space_id': space_id}, ensure_ascii=False)}\n\n"
                     while True:
                         if await request.is_disconnected():
@@ -527,7 +531,7 @@ def create_space_api(
         )
         return JSONResponse({"results": results})
 
-    # ── Artifacts (P2 W10/W12: web 面暴露 — list/create/get) ──
+    # ── Artifacts (P2 W10/W12: exposed on the web surface — list/create/get) ──
 
     @app.get("/spaces/{space_id}/artifacts")
     async def list_artifacts(space_id: str, request: Request, artifact_type: str = ""):
@@ -588,7 +592,7 @@ def create_space_api(
 
     @app.post("/spaces/{space_id}/artifacts/{artifact_id}/review")
     async def review_artifact(space_id: str, artifact_id: str, request: Request):
-        # W9 交付审查: approved=true→通过 / false→退回 (owner/admin, 状态存 metadata.review)
+        # W9 delivery review: approved=true→approve / false→reject (owner/admin, state stored in metadata.review)
         if not artifact_svc:
             return JSONResponse({"error": "artifact service not available"}, status_code=503)
         auth_err = await _check_auth(request)
@@ -611,7 +615,7 @@ def create_space_api(
             return JSONResponse({"error": str(e)}, status_code=404)
         return JSONResponse(res)
 
-    # ── issue #149: 产物就地 AI 修订 — 选区 → AI 改写 → block 级接受/拒绝 → 写回 ──
+    # ── issue #149: in-place AI revision of artifacts — selection → AI rewrite → block-level accept/reject → write back ──
     @app.post("/spaces/{space_id}/artifacts/{artifact_id}/ai_revise")
     async def ai_revise_artifact(space_id: str, artifact_id: str, request: Request):
         if not artifact_svc:
@@ -624,7 +628,7 @@ def create_space_api(
         selection = str(body.get("selection") or "").strip()
         instruction = str(body.get("instruction") or "").strip()
         if not selection:
-            return JSONResponse({"error": "selection 必填"}, status_code=400)
+            return JSONResponse({"error": "selection is required"}, status_code=400)
         mlx = getattr(chat_svc, "mlx", None) if chat_svc else None
         if mlx is None:
             return JSONResponse({"error": "model client not available"}, status_code=503)
@@ -638,7 +642,7 @@ def create_space_api(
             return JSONResponse({"error": "not found"}, status_code=404)
         content = str(art.get("content") or "")
         if selection not in content:
-            return JSONResponse({"error": "选区与产物内容不一致, 请重新选择"}, status_code=400)
+            return JSONResponse({"error": "selection does not match artifact content, please re-select"}, status_code=400)
 
         model = str(body.get("model") or "").strip()
         if not model:
@@ -647,24 +651,24 @@ def create_space_api(
 
                 model = _pick_chat_model(await mlx.list_models())
             except Exception as e:
-                logger.warning(f"ai_revise 模型自动选择失败: {e}")
+                logger.warning(f"ai_revise automatic model selection failed: {e}")
         if not model:
-            return JSONResponse({"error": "无可用 chat 模型"}, status_code=503)
+            return JSONResponse({"error": "no chat model available"}, status_code=503)
 
         messages = [
-            {"role": "system", "content": "你是文本修订助手。只输出修订后的文本本身, 不要解释、不要包裹代码块。"},
+            {"role": "system", "content": "You are a text revision assistant. Output only the revised text itself; no explanations, no code block wrapping."},
             {
                 "role": "user",
-                "content": f"请按以下要求修订选中文本:\n要求: {instruction or '改进表达, 保持原意'}\n\n原文:\n{selection}",
+                "content": f"Revise the selected text per these requirements:\nRequirement: {instruction or 'improve wording while preserving the original meaning'}\n\nOriginal text:\n{selection}",
             },
         ]
         try:
             resp = await mlx.chat(model=model, messages=messages, temperature=0.2, max_tokens=2048)
         except Exception as e:
-            logger.error(f"ai_revise 模型调用失败: {e}")
-            return JSONResponse({"error": f"模型调用失败: {e}"}, status_code=502)
+            logger.error(f"ai_revise model call failed: {e}")
+            return JSONResponse({"error": f"model call failed: {e}"}, status_code=502)
         revised = str(resp.content or "").strip()
-        # 模型偶发用 ``` 包裹 — 确定性剥壳, 不走模型
+        # The model occasionally wraps output in ``` — deterministic unwrapping, not model-driven
         if revised.startswith("```"):
             revised = revised.split("\n", 1)[-1]
             if revised.endswith("```"):
@@ -688,13 +692,13 @@ def create_space_api(
         revised = str(body.get("revised") or "")
         model = str(body.get("model") or "")
         accepted = body.get("accepted_blocks")
-        # #142 对齐: 可选 block 级部分接受 — 仅保留被接受的块重建 revised
+        # #142 alignment: optional block-level partial acceptance — rebuild revised keeping only accepted blocks
         if isinstance(accepted, list):
             from ..engine.ast_diff import apply_block_selection
 
             revised = apply_block_selection(selection, revised, accepted)
         if not selection or not revised:
-            return JSONResponse({"error": "selection/revised 必填"}, status_code=400)
+            return JSONResponse({"error": "selection/revised are required"}, status_code=400)
         try:
             art = await artifact_svc.get_artifact(
                 space_id, artifact_id, principal.user_id, tenant_id=principal.tenant_id
@@ -705,7 +709,7 @@ def create_space_api(
             return JSONResponse({"error": "not found"}, status_code=404)
         content = str(art.get("content") or "")
         if selection not in content:
-            return JSONResponse({"error": "选区与产物内容不一致, 请刷新后重试"}, status_code=400)
+            return JSONResponse({"error": "selection does not match artifact content, please refresh and retry"}, status_code=400)
         new_content = content.replace(selection, revised, 1)
         metadata = art.get("metadata") if isinstance(art.get("metadata"), dict) else {}
         history = list(metadata.get("revision_history") or [])
@@ -766,7 +770,7 @@ def create_space_api(
     async def health():
         return {"status": "ok", "service": "fusion-cowork-space"}
 
-    # ── WebSocket 双向协作通道 (A-9: CollabHub 由调用方注入, 不反向 import server) ──
+    # ── WebSocket bidirectional collaboration channel (A-9: CollabHub injected by caller, no reverse import of server) ──
 
     _collab_hub = collab_hub
 
@@ -788,26 +792,26 @@ def create_space_api(
             except WebSocketDisconnect:
                 await _collab_hub.leave(websocket)
             except Exception as e:
-                logger.warning(f"WS 异常: {e}")
+                logger.warning(f"WS error: {e}")
                 await _collab_hub.leave(websocket)
     else:
-        # A-9: 未注入 CollabHub (如独立测试 space 域) → WS 端点降级拒连, 不崩 app 启动。
+        # A-9: CollabHub not injected (e.g. standalone tests of the space domain) → WS endpoint degrades to refuse connection, app startup does not crash.
         @app.websocket("/spaces/{space_id}/ws")
         async def collab_ws(websocket: WebSocket, space_id: str):
             await websocket.accept()
-            await websocket.close(code=1011, reason="WS 协作通道未配置 (collab_hub 未注入)")
+            await websocket.close(code=1011, reason="WS collaboration channel not configured (collab_hub not injected)")
 
-    # issue #88: fusion-identity 启用 → install_tenant_middleware (fusion_core) + cowork 桥接。
-    # 桥接把 fusion_core.tenant.current() → cowork contextvar (双 ContextVar, 28+ 下游读 cowork)。
-    # WS 路径不经 HTTP middleware, 仍走 fallback.verify_any_token (identity-aware seam)。
+    # issue #88: fusion-identity enabled → install_tenant_middleware (fusion_core) + cowork bridge.
+    # The bridge maps fusion_core.tenant.current() → cowork contextvar (dual ContextVars, 28+ downstream readers use cowork).
+    # WS paths bypass HTTP middleware and still go through fallback.verify_any_token (identity-aware seam).
     _install_identity_middleware(app)
     return app
 
 
 def _install_identity_middleware(app) -> None:
-    """issue #88: identity 启用时装 fusion_core tenant middleware + cowork contextvar 桥接。
+    """issue #88: when identity is enabled, install the fusion_core tenant middleware + cowork contextvar bridge.
 
-    禁用 → 无操作 (保留原 _tenant_middleware, 零行为变化)。
+    Disabled → no-op (keeps the original _tenant_middleware, zero behavior change).
     """
     try:
         from fusion_cowork.auth.identity import get_identity_client, is_identity_enabled
@@ -818,7 +822,7 @@ def _install_identity_middleware(app) -> None:
         if client is None:
             return
     except Exception as e:
-        logger.warning(f"space api identity middleware 装载失败, 跳过: {e}")
+        logger.warning(f"space api identity middleware install failed, skipping: {e}")
         return
     from fusion_cowork.auth.identity import make_verify_jwt_callback
     from fusion_cowork.tenant import (
@@ -831,7 +835,7 @@ def _install_identity_middleware(app) -> None:
     try:
         from fusion_core.tenant import current, install_tenant_middleware
     except ImportError as e:
-        logger.warning(f"fusion_core.tenant 不可用, identity middleware 跳过: {e}")
+        logger.warning(f"fusion_core.tenant unavailable, skipping identity middleware: {e}")
         return
 
     install_tenant_middleware(
@@ -852,4 +856,4 @@ def _install_identity_middleware(app) -> None:
             reset_current_tenant(t_tok)
             reset_current_user(u_tok)
 
-    logger.info("space api 已装 fusion-identity tenant middleware + cowork 桥接")
+    logger.info("space api installed fusion-identity tenant middleware + cowork bridge")

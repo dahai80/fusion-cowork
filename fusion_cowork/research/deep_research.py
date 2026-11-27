@@ -1,11 +1,11 @@
-"""深度研究 — P2-6。
+"""Deep research - P2-6.
 
-多 Agent 编排:
-  1. 规划: LLM 将问题分解为 N 个子问题
-  2. 搜索: 对每个子问题并行 web 搜索 (DuckDuckGo Lite) + 抓取摘要
-  3. 合成: LLM 汇总为带引用的 Markdown 报告
+Multi-agent orchestration:
+  1. Planning: LLM decomposes the question into N sub-questions
+  2. Search: parallel web search per sub-question (DuckDuckGo Lite) + fetch summaries
+  3. Synthesis: LLM summarizes into a cited Markdown report
 
-LLM 不可用时降级: 跳过规划 (原问题直接搜索) + 跳过合成 (返回原始发现)。
+Degradation when LLM unavailable: skip planning (search the original question directly) + skip synthesis (return raw findings).
 """
 
 from __future__ import annotations
@@ -62,9 +62,9 @@ async def run_deep_research(
     model: str = "",
     mlx_client: Any = None,
 ) -> ResearchReport:
-    """运行深度研究, 返回带引用的报告。"""
+    """Run deep research, return a cited report."""
     if not question:
-        return ResearchReport(question="", error="研究问题不能为空")
+        return ResearchReport(question="", error="Research question must not be empty")
 
     report = ResearchReport(question=question)
     client = mlx_client
@@ -74,32 +74,32 @@ async def run_deep_research(
         client = FusionMLXClient()
 
     resolved_model = await _resolve_model(client, model)
-    logger.info(f"深度研究启动: question={question!r} model={resolved_model} depth={depth}")
+    logger.info(f"Deep research started: question={question!r} model={resolved_model} depth={depth}")
 
-    # 1. 规划: 分解子问题
+    # 1. Planning: decompose sub-questions
     sub_qs = await _plan(client, resolved_model, question, depth)
     if not sub_qs:
         report.degraded = True
-        logger.warning("规划失败/无 LLM, 退化为单问题搜索")
-        sub_qs = [ResearchSubQuestion(question=question, rationale="降级: 原问题直接搜索")]
+        logger.warning("Planning failed/no LLM, degrading to single-question search")
+        sub_qs = [ResearchSubQuestion(question=question, rationale="Degraded: search the original question directly")]
     report.sub_questions = sub_qs
 
-    # 2. 搜索: 并行搜索每个子问题
+    # 2. Search: parallel search per sub-question
     findings = await _search_all(sub_qs, max_sources)
     report.findings = findings
     report.sources_used = len(findings)
-    logger.info(f"搜索完成: {len(findings)} 条发现")
+    logger.info(f"Search complete: {len(findings)} findings")
 
     if not findings:
-        report.error = "未找到任何搜索结果"
+        report.error = "No search results found"
         return report
 
-    # 3. 合成: LLM 汇总报告
+    # 3. Synthesis: LLM summarizes the report
     synthesis = await _synthesize(client, resolved_model, question, findings)
     if not synthesis:
         report.degraded = True
         report.synthesis = _fallback_synthesis(question, findings)
-        logger.warning("合成失败/无 LLM, 使用降级汇总")
+        logger.warning("Synthesis failed/no LLM, using degraded summary")
     else:
         report.synthesis = synthesis
 
@@ -116,15 +116,15 @@ async def _resolve_model(client: Any, model: str) -> str:
             if mid:
                 return mid
     except Exception as e:
-        logger.debug(f"list_models 失败: {e}")
+        logger.debug(f"list_models failed: {e}")
     return "qwen3.5-9b"
 
 
 async def _plan(client: Any, model: str, question: str, depth: int) -> List[ResearchSubQuestion]:
-    """LLM 分解问题为子问题列表。"""
+    """LLM decomposes the question into a list of sub-questions."""
     prompt = (
-        f"将以下研究问题分解为 {depth} 个可独立搜索的子问题, 输出 JSON 数组, "
-        f'每个元素为 {{"question": "...", "rationale": "..."}}。只输出 JSON。\n\n问题: {question}'
+        f"Decompose the following research question into {depth} independently searchable sub-questions, output a JSON array, "
+        f'each element being {{"question": "...", "rationale": "..."}}. Output JSON only.\n\nQuestion: {question}'
     )
     try:
         resp = await client.chat(
@@ -136,15 +136,15 @@ async def _plan(client: Any, model: str, question: str, depth: int) -> List[Rese
         raw = resp.content.strip()
         subs = _parse_subquestions(raw)
         if subs:
-            logger.info(f"规划出 {len(subs)} 个子问题")
+            logger.info(f"Planned {len(subs)} sub-questions")
         return subs
     except Exception as e:
-        logger.warning(f"规划 LLM 调用失败: {e}")
+        logger.warning(f"Planning LLM call failed: {e}")
         return []
 
 
 def _parse_subquestions(raw: str) -> List[ResearchSubQuestion]:
-    """从 LLM 输出解析子问题 JSON, 容错去除 markdown 包裹。"""
+    """Parse sub-question JSON from LLM output, tolerantly stripping markdown wrapping."""
     text = raw.strip()
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
@@ -171,7 +171,7 @@ def _parse_subquestions(raw: str) -> List[ResearchSubQuestion]:
 
 
 async def _search_all(sub_qs: List[ResearchSubQuestion], max_sources: int) -> List[ResearchFinding]:
-    """并行搜索所有子问题。"""
+    """Search all sub-questions in parallel."""
     tasks = [_search_one(sq, max_sources) for sq in sub_qs]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     findings: List[ResearchFinding] = []
@@ -182,7 +182,7 @@ async def _search_all(sub_qs: List[ResearchSubQuestion], max_sources: int) -> Li
 
 
 async def _search_one(sq: ResearchSubQuestion, max_sources: int) -> List[ResearchFinding]:
-    """单个子问题: 搜索 + 抓取 top 结果摘要。"""
+    """Single sub-question: search + fetch top result summaries."""
     results = await _ddg_search(sq.question, max_sources)
     findings = []
     for r in results:
@@ -198,7 +198,7 @@ async def _search_one(sq: ResearchSubQuestion, max_sources: int) -> List[Researc
 
 
 async def _ddg_search(query: str, max_results: int) -> List[Dict[str, str]]:
-    """DuckDuckGo Lite 搜索, 返回 [{title,url,snippet}]。"""
+    """DuckDuckGo Lite search, returns [{title,url,snippet}]."""
     try:
         async with httpx.AsyncClient(timeout=_SEARCH_TIMEOUT) as client:
             resp = await client.get(
@@ -224,12 +224,12 @@ async def _ddg_search(query: str, max_results: int) -> List[Dict[str, str]]:
                 )
             return out
     except Exception as e:
-        logger.warning(f"搜索失败 query={query!r}: {e}")
+        logger.warning(f"Search failed query={query!r}: {e}")
         return []
 
 
 async def _fetch_text(url: str) -> str:
-    """抓取 URL 并提取纯文本。"""
+    """Fetch a URL and extract plain text."""
     if not url.startswith(("http://", "https://")):
         return ""
     try:
@@ -244,19 +244,19 @@ async def _fetch_text(url: str) -> str:
             text = re.sub(r"\s+", " ", text).strip()
             return text
     except Exception as e:
-        logger.debug(f"抓取失败 url={url}: {e}")
+        logger.debug(f"Fetch failed url={url}: {e}")
         return ""
 
 
 async def _synthesize(client: Any, model: str, question: str, findings: List[ResearchFinding]) -> str:
-    """LLM 合成带引用的研究报告。"""
+    """LLM synthesizes a cited research report."""
     context_parts = []
     for i, f in enumerate(findings, 1):
         context_parts.append(f"[{i}] ({f.sub_question}) {f.title}\nURL: {f.url}\n{f.snippet[:800]}")
     context = "\n\n".join(context_parts)
     prompt = (
-        f"基于以下搜索发现, 撰写关于「{question}」的研究报告。\n"
-        f"要求: 结构化 (要点 + 结论), 关键论断用 [n] 标注引用编号。\n\n{context}"
+        f"Based on the following search findings, write a research report on \"{question}\".\n"
+        f"Requirements: structured (key points + conclusion), mark citations with [n] for key claims.\n\n{context}"
     )
     try:
         resp = await client.chat(
@@ -267,12 +267,13 @@ async def _synthesize(client: Any, model: str, question: str, findings: List[Res
         )
         return resp.content.strip()
     except Exception as e:
-        logger.warning(f"合成 LLM 调用失败: {e}")
+        logger.warning(f"Synthesis LLM call failed: {e}")
         return ""
 
 
 def _fallback_synthesis(question: str, findings: List[ResearchFinding]) -> str:
-    """无 LLM 时的降级汇总: 按子问题罗列发现。"""
+    """Degraded summary without LLM: list findings by sub-question."""
+    # i18n: user-facing
     lines = [f"# 研究报告: {question}", "", ">(降级模式: LLM 不可用, 仅汇总原始搜索发现)", ""]
     by_sq: Dict[str, List[ResearchFinding]] = {}
     for f in findings:

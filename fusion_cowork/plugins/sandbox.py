@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # runners (nodes/tools/tool_nodes.py).
 _SANDBOXABLE_PLUGIN_TOOLS = frozenset({"plugin_run", "sandbox_exec", "run_terminal", "plugin"})
 
-# CR-23: 子进程仅继承安全环境变量子集, 不泄漏父进程敏感 (API key/token/凭据等)
+# CR-23: subprocess inherits only a safe env var subset, no leaking of parent secrets (API keys/tokens/credentials etc.)
 _SAFE_ENV_KEYS = frozenset(
     {
         "PATH",
@@ -38,12 +38,12 @@ _SAFE_ENV_KEYS = frozenset(
     }
 )
 
-# CR-23: darwin seatbelt profile — 限制 fs 写 + 拒绝原始网络, 仅允许写 /tmp 与插件目录
-# A-2 修复: process-exec 仅放行被 exec 命令所在框架目录 (EXEC_DIR, 已 resolve 真实路径),
-# 不再无约束放行任意 exec — 沙箱内 os.exec("/bin/sh") / "/usr/bin/python" 逃逸被拒。
-# 解释器 (venv python 是 symlink → framework) 自身 dylib 须在该目录内 exec 才能启动,
-# 故放行整个框架目录而非单一 binary; fork 仍允许 (子进程再 exec 须命中该目录规则)。
-# 注: 此为最小防御层, 与 rlimit (CPU/内存/文件数/进程数) 叠加
+# CR-23: darwin seatbelt profile — restrict fs writes + deny raw network, allow writes only to /tmp and the plugin dir
+# A-2 fix: process-exec only allows the framework directory of the exec'd command (EXEC_DIR, resolved real path),
+# no longer unconstrained exec — os.exec("/bin/sh") / "/usr/bin/python" escapes from the sandbox are refused.
+# The interpreter (venv python is a symlink -> framework) must exec its own dylibs inside that directory to start,
+# so the whole framework directory is allowed instead of a single binary; fork is still allowed (child re-exec must hit that dir rule).
+# Note: this is a minimal defense layer, stacked with rlimits (CPU/memory/files/processes)
 _SEATBELT_PROFILE = """(version 1)
 (deny default)
 (allow process-fork)
@@ -210,7 +210,7 @@ class PluginSandbox:
         stdin_data: str = "",
         limits: Optional[ResourceLimits] = None,
     ) -> SandboxResult:
-        # LO-7: 支持按调用覆盖 ResourceLimits (manifest.timeout_seconds 覆盖默认 120s)
+        # LO-7: support per-call ResourceLimits override (manifest.timeout_seconds overrides the default 120s)
         active_limits = limits if limits is not None else self._limits
         sandbox_id = f"sbx_{uuid.uuid4().hex[:8]}"
         result = SandboxResult(
@@ -229,13 +229,13 @@ class PluginSandbox:
         )
 
         try:
-            # CR-23: 仅继承安全 env 子集, 不泄漏父进程敏感变量 (API key/token 等)
+            # CR-23: inherit only a safe env subset, no leaking of parent secret vars (API keys/tokens etc.)
             proc_env = {k: v for k, v in os.environ.items() if k in _SAFE_ENV_KEYS}
             proc_env.update(env or {})
             proc_env["FUSION_SANDBOX_ID"] = sandbox_id
             proc_env["FUSION_SANDBOX_LIMITS"] = json.dumps(active_limits.to_dict())
 
-            # CR-23: darwin seatbelt — sandbox-exec 包装限制 fs 写 + 拒网络
+            # CR-23: darwin seatbelt — sandbox-exec wrapper restricts fs writes + denies network
             real_cmd, real_args = self._wrap_seatbelt(command, args or [])
 
             proc = await asyncio.create_subprocess_exec(
@@ -246,7 +246,7 @@ class PluginSandbox:
                 stderr=asyncio.subprocess.PIPE,
                 env=proc_env,
                 preexec_fn=self._make_preexec_fn(active_limits),
-                # A-2: 子进程已在 preexec 建 session (setsid), start_new_session 冗余但显式
+                # A-2: child already creates a session in preexec (setsid); start_new_session is redundant but explicit
                 start_new_session=True,
             )
             self._subprocesses[sandbox_id] = proc
@@ -257,7 +257,7 @@ class PluginSandbox:
                     timeout=active_limits.timeout_seconds,
                 )
             except TimeoutError:
-                # A-2: kill 整进程组 (子进程 setsid 建独立组), 杜绝 fork 出孤儿逃过超时
+                # A-2: kill the whole process group (child setsid made its own group) so forked orphans cannot survive the timeout
                 await self._kill_process_group(proc)
                 result.status = SandboxStatus.TIMEOUT
                 result.error = f"Execution timed out after {active_limits.timeout_seconds}s"
@@ -296,21 +296,21 @@ class PluginSandbox:
         return result
 
     async def _bounded_communicate(self, proc: asyncio.subprocess.Process, stdin_data: str, max_bytes: int) -> tuple:
-        """A-2: 流式有界读 stdout/stderr — 边读边累计, 超 max_bytes 立即停读截断,
-        避免 100GB 输出先全量进内存再截 (OOM)。communicate 的 input 仍写一次。
+        """A-2: streaming bounded read of stdout/stderr — accumulate while reading, stop and truncate as soon as max_bytes is exceeded,
+        avoiding loading 100GB of output fully into memory before truncating (OOM). communicate's input is still written once.
         """
         encoded_stdin = stdin_data.encode() if stdin_data else None
 
         async def _read_bounded(stream: asyncio.StreamReader) -> bytes:
             chunks = bytearray()
             while True:
-                # 分块读, 超上限即停 (不 await 整条到 EOF)
+                # read in chunks, stop as soon as the cap is exceeded (do not await the whole stream to EOF)
                 chunk = await stream.read(64 * 1024)
                 if not chunk:
                     break
                 remaining = max_bytes - len(chunks)
                 if remaining <= 0:
-                    # 已满: 排空余量避免管道阻塞, 但不再保留
+                    # full: drain the remainder to keep the pipe from blocking, but keep nothing
                     while stream.read(64 * 1024):
                         pass
                     break
@@ -331,15 +331,15 @@ class PluginSandbox:
         return stdout_bytes, stderr_bytes
 
     async def _kill_process_group(self, proc: asyncio.subprocess.Process) -> None:
-        """A-2: 杀整进程组 — proc setsid 建独立 session, killpg(-pgid) 清子孙。
-        回退: 组杀失败则 proc.kill() + wait。
+        """A-2: kill the whole process group — proc setsid created an independent session, killpg(-pgid) clears descendants.
+        Fallback: if the group kill fails, proc.kill() + wait.
         """
         try:
             pgid = os.getpgid(proc.pid)
             os.killpg(pgid, signal.SIGKILL)
             logger.debug(f"PluginSandbox killpg pgid={pgid}")
         except (ProcessLookupError, OSError) as e:
-            logger.debug(f"PluginSandbox killpg 回退 proc.kill: {e}")
+            logger.debug(f"PluginSandbox killpg fallback proc.kill: {e}")
             try:
                 proc.kill()
             except ProcessLookupError:
@@ -350,38 +350,38 @@ class PluginSandbox:
             pass
 
     def _wrap_seatbelt(self, command: str, args: List[str]) -> tuple:
-        """CR-23: darwin 用 sandbox-exec 包裹真实命令, 限制 fs 写 + 拒网络。
+        """CR-23: on darwin wrap the real command with sandbox-exec, restricting fs writes + denying network.
 
-        sandbox-exec 不可用时回退原命令 (仅靠 rlimit 隔离, 记 WARNING)。
-        A-2 修复: profile 写到 per-sandbox 唯一文件 (O_EXCL|0600), 杜绝固定路径 TOCTOU;
-        且 process-exec 仅放行被 exec 的命令二进制绝对路径, 不再无约束允许 exec。
+        Falls back to the original command when sandbox-exec is unavailable (rlimit-only isolation, logs WARNING).
+        A-2 fix: the profile is written to a per-sandbox unique file (O_EXCL|0600), eliminating fixed-path TOCTOU;
+        and process-exec only allows the absolute path of the exec'd command binary, no longer unconstrained exec.
         """
         import shutil as _shutil
         from pathlib import Path as _Path
 
         if not _shutil.which("sandbox-exec"):
-            logger.warning("sandbox-exec 不可用, 回退 rlimit-only 隔离 (无 fs/network 限制)")
+            logger.warning("sandbox-exec unavailable, falling back to rlimit-only isolation (no fs/network restrictions)")
             return command, args
-        # 解析命令二进制真实绝对路径 (resolve 跨 symlink): venv python → framework 真体
+        # resolve the command binary's real absolute path (resolving across symlinks): venv python -> framework real body
         cmd_abs = _shutil.which(command) or str(_Path(command).resolve())
         cmd_real = str(_Path(cmd_abs).resolve())
-        # exec 放行目录 = 真实二进制所在 framework 版本目录 (python 须 exec 同目录 dylib 启动)
-        # 目录取 framework/Versions/3.14 这一级 (二进制在 .../Versions/3.14/bin/python3.14)
+        # exec allow dir = the framework version directory containing the real binary (python must exec same-dir dylibs to start)
+        # the dir taken is the framework/Versions/3.14 level (binary at .../Versions/3.14/bin/python3.14)
         exec_dir = str(_Path(cmd_real).parents[1])
         profile_path = f"/tmp/fusion_sandbox_profile_{uuid.uuid4().hex[:8]}.sb"
         try:
-            # sandbox-exec 不展开 shell 变量, ${HOME}/${EXEC_DIR} 写入前用真实值替换
+            # sandbox-exec does not expand shell vars, substitute real values for ${HOME}/${EXEC_DIR} before writing
             profile = _SEATBELT_PROFILE.replace("${HOME}", str(_Path.home())).replace("${EXEC_DIR}", exec_dir)
-            # O_EXCL: 文件已存在则拒 (防覆盖/TOCTOU); 0600: 仅属主读写
+            # O_EXCL: refuse if the file already exists (prevents overwrite/TOCTOU); 0600: owner read/write only
             fd = os.open(profile_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             try:
                 os.write(fd, profile.encode("utf-8"))
             finally:
                 os.close(fd)
         except OSError as e:
-            logger.warning(f"seatbelt profile 写入失败, 回退 rlimit-only: {e}")
+            logger.warning(f"failed to write seatbelt profile, falling back to rlimit-only: {e}")
             return command, args
-        logger.info(f"PluginSandbox seatbelt 包装: sandbox-exec -f {profile_path} exec={cmd_abs}")
+        logger.info(f"PluginSandbox seatbelt wrap: sandbox-exec -f {profile_path} exec={cmd_abs}")
         return "sandbox-exec", ["-f", profile_path, "--", cmd_abs, *args]
 
     def _make_preexec_fn(self, limits: Optional[ResourceLimits] = None):
@@ -390,12 +390,12 @@ class PluginSandbox:
         active_limits = limits if limits is not None else self._limits
 
         def _set_limits():
-            # A-2: 子进程建独立进程组 — 超时父进程 killpg 杀整组, 杜绝孤儿
+            # A-2: child creates its own process group — parent killpg kills the whole group on timeout, no orphans
             try:
                 os.setsid()
             except OSError as e:
                 logger.debug(f"PluginSandbox setsid skipped: {e}")
-            # CR-23: setrlimit 失败 fail-closed — 限制设不上则拒执行 (防逃逸)
+            # CR-23: setrlimit failure is fail-closed — if a limit cannot be set, refuse execution (prevents escape)
             try:
                 cpu_limit = int(active_limits.max_cpu_seconds)
                 resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit, cpu_limit))
@@ -403,10 +403,10 @@ class PluginSandbox:
                 logger.error(f"PluginSandbox setrlimit CPU fail-closed: {e}")
                 os._exit(127)
             mem_bytes = active_limits.max_memory_mb * 1024 * 1024
-            # darwin: RLIMIT_AS/RLIMIT_DATA 在 Python 子进程均不可用 — 解释器启动即
-            # 预留数十 GB 虚拟内存, fork 后 setrlimit 必超当前预留而失败。darwin 的
-            # 内存隔离改由 seatbelt profile 承担 (见 _wrap_seatbelt); rlimit 内存
-            # 限仅在 Linux (VM 预留小) 生效, 设不上 fail-closed。
+            # darwin: RLIMIT_AS/RLIMIT_DATA are unusable in Python child processes — the interpreter reserves
+            # tens of GB of virtual memory at startup, so post-fork setrlimit always exceeds the current
+            # reservation and fails. On darwin memory isolation is handled by the seatbelt profile (see
+            # _wrap_seatbelt); the rlimit memory cap only takes effect on Linux (small VM reservation), fail-closed if unset.
             if _sys.platform != "darwin":
                 try:
                     resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
@@ -414,9 +414,9 @@ class PluginSandbox:
                     logger.error(f"PluginSandbox setrlimit AS fail-closed: {e}")
                     os._exit(127)
             else:
-                logger.debug("PluginSandbox darwin: 内存隔离由 seatbelt 承担, 跳过 RLIMIT_AS")
-            # A-2: NPROC/FSIZE 失败须 fail-closed (与 CPU/AS 一致),
-            # 否则限制静默失效 = 沙箱逃逸面
+                logger.debug("PluginSandbox darwin: memory isolation handled by seatbelt, skipping RLIMIT_AS")
+            # A-2: NPROC/FSIZE failures must be fail-closed (consistent with CPU/AS),
+            # otherwise limits silently stop applying = sandbox escape surface
             try:
                 resource.setrlimit(
                     resource.RLIMIT_NPROC,
@@ -484,7 +484,7 @@ class PluginSandbox:
         if not proc or proc.returncode is not None:
             return False
         try:
-            # A-2: 杀进程组而非仅直接子进程, 防 fork 孤儿
+            # A-2: kill the process group, not just the direct child, to prevent forked orphans
             await self._kill_process_group(proc)
             logger.info(f"PluginSandbox._kill_sandbox id={sandbox_id}")
             return True

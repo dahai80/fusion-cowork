@@ -1,16 +1,19 @@
-"""Fusion 生态互通节点 — 通过 agent-studio teams.* RPC 驱动团队成员 (issue #488)。
+"""Fusion ecosystem interop node — drive team members via agent-studio teams.* RPC (issue #488).
 
-设计边界 (fusion-team-architecture-2026-11-14.md §5.4): DAG 编排留在 cowork,
-节点 handler 只是"一次 team 调用" — 调 agent-studio 的 teams.add_task /
-teams.run_member / teams.status (JSON-RPC 2.0, POST /v1/rpc, 与 subagent.*
-同级鉴权), 不把 team 逻辑搬进 cowork 引擎。T3 (agent-studio teams.* dispatcher)
-未部署时节点响亮失败并给出提示, 不静默降级。
+Design boundary (fusion-team-architecture-2026-11-14.md §5.4): DAG orchestration
+stays in cowork; the node handler is just "one team call" — invoking agent-studio's
+teams.add_task / teams.run_member / teams.status (JSON-RPC 2.0, POST /v1/rpc,
+same-tier auth as subagent.*), never moving team logic into the cowork engine.
+When T3 (agent-studio teams.* dispatcher) is not deployed the node fails loudly
+with a hint, no silent degradation.
 
-镜像路径 (单向 DAG→任务板): params/inputs.blocked_by 随 teams.add_task 透传;
-DAG 工件引用经 artifact_refs 透传挂到任务 (artifact_channel ref, 不走全文)。
+Mirror path (one-way DAG -> task board): params/inputs.blocked_by passes through
+with teams.add_task; DAG artifact references pass through via artifact_refs and
+attach to the task (artifact_channel ref, never full text).
 
-失败语义: 节点失败不回写任务板 — 板上状态由内核状态机维护, DAG 失败不污染
-team 状态; 超时保留 task_id 供人工查询 (与 studio_run detach 语义一致)。
+Failure semantics: node failure never writes back to the task board — board state
+is maintained by the kernel state machine, DAG failure does not pollute team state;
+on timeout the task_id is kept for manual lookup (same detach semantics as studio_run).
 """
 
 from __future__ import annotations
@@ -41,14 +44,14 @@ logger = logging.getLogger(__name__)
 # orchestrator/runner_pool.py (issue #494 Part B).
 _DEFAULT_BASE_URL = "http://127.0.0.1:11442"
 
-# 对齐 studio_run 的终态语义 (任务板 done/failed 即终态)
+# aligned with studio_run's terminal-state semantics (board done/failed are terminal)
 _TASK_TERMINAL_STATUSES = frozenset({"done", "failed"})
 
 _POLL_INTERVAL = 2.0
 _POLL_INTERVAL_MIN = 0.05
 _POLL_INTERVAL_MAX = 30.0
 
-# T3 缺失特征: JSON-RPC -32601 (deny-by-default allowlist 未含 teams.*)
+# T3-missing signature: JSON-RPC -32601 (deny-by-default allowlist without teams.*)
 _METHOD_NOT_FOUND = -32601
 
 
@@ -57,7 +60,7 @@ def _get_base_url() -> str:
 
 
 def _build_headers() -> Dict[str, str]:
-    # 上游鉴权可选: 未配置 key 时本地受信放行, 有则 x-api-key 携带 (与 studio_node 一致)
+    # upstream auth optional: locally trusted when no key configured, x-api-key header when set (same as studio_node)
     key = os.environ.get("FUSION_AGENT_STUDIO_API_KEY", "").strip()
     headers = {"Content-Type": "application/json"}
     if key:
@@ -74,7 +77,7 @@ def _clamp_poll_interval(value: float) -> float:
 
 
 async def _rpc_call(client: httpx.AsyncClient, method: str, params: Dict[str, Any]) -> Any:
-    # agent-studio rpc_bridge: POST /v1/rpc, JSON-RPC 2.0 信封, deny-by-default allowlist
+    # agent-studio rpc_bridge: POST /v1/rpc, JSON-RPC 2.0 envelope, deny-by-default allowlist
     payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
     resp = await client.post("/v1/rpc", json=payload)
     resp.raise_for_status()
@@ -99,14 +102,16 @@ class _TeamsMethodUnavailable(Exception):
 
 @register_node
 class TeamCallNode(BaseNode):
-    """团队调用节点 — cowork DAG 内驱动 agent-studio team 成员执行任务。
+    """Team call node — drive an agent-studio team member from within a cowork DAG.
 
-    run 模式 (缺省): teams.add_task 建任务 → teams.run_member 跑成员 →
-    轮询 teams.status 至任务终态; add_task 模式只写任务板 (DAG→板镜像);
-    run_member 模式跑既有 task_id 不建新任务。
+    run mode (default): teams.add_task creates the task -> teams.run_member runs
+    the member -> poll teams.status until the task reaches a terminal state;
+    add_task mode only writes the task board (DAG->board mirror); run_member mode
+    runs an existing task_id without creating a new task.
     """
 
     name = "team_call"
+    # i18n: user-facing
     display_name = "团队调用"
     category = NodeCategory.FUSION_ECOSYSTEM
     description = (
@@ -115,17 +120,25 @@ class TeamCallNode(BaseNode):
         " awaited on the board, DAG failure never mutates team state"
     )
     icon = "👥"
+    # i18n: user-facing
     default_label = "团队调用"
 
     inputs = [
+        # i18n: user-facing
         {"key": "team", "label": "团队名", "type": "string"},
+        # i18n: user-facing
         {"key": "member", "label": "成员", "type": "string"},
+        # i18n: user-facing
         {"key": "task_id", "label": "任务 ID", "type": "string"},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "task_id", "label": "任务 ID", "type": "string"},
+        # i18n: user-facing
         {"key": "status", "label": "任务状态", "type": "string"},
+        # i18n: user-facing
         {"key": "summary", "label": "结果摘要", "type": "string"},
+        # i18n: user-facing
         {"key": "artifact_ref", "label": "工件引用", "type": "string"},
     ]
 
@@ -133,36 +146,49 @@ class TeamCallNode(BaseNode):
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "team": {"type": "string", "description": "团队名 (已 teams.register 的编制)"},
+                # i18n: user-facing
                 "member": {"type": "string", "description": "要驱动的成员名 (run/run_member 模式必填)"},
                 "mode": {
                     "type": "string",
                     "enum": ["run", "add_task", "run_member"],
+                    # i18n: user-facing
                     "description": (
+                        # i18n: user-facing
                         "run = 建任务+跑成员+等终态 (缺省); add_task = 只在任务板建任务 "
+                        # i18n: user-facing
                         "(DAG→板镜像); run_member = 跑既有 task_id 不建新任务"
                     ),
                     "default": "run",
                 },
+                # i18n: user-facing
                 "task_id": {"type": "string", "description": "run_member 模式必填 — 既有任务 ID"},
+                # i18n: user-facing
                 "task_title": {"type": "string", "description": "run/add_task 模式的任务标题"},
+                # i18n: user-facing
                 "task_desc": {"type": "string", "description": "任务描述 (写入任务板)"},
+                # i18n: user-facing
                 "brief": {"type": "string", "description": "成员执行 brief (spawn_protocol 7 字段由上游补全)"},
                 "blocked_by": {
                     "type": "array",
                     "items": {"type": "string"},
+                    # i18n: user-facing
                     "description": "DAG→任务板镜像: 上游任务 ID 列表随 add_task 透传 (blocked_by)",
                 },
                 "artifact_refs": {
                     "type": "array",
                     "items": {"type": "string"},
+                    # i18n: user-facing
                     "description": "挂到任务的工件引用列表 (artifact_channel ref, 不走全文)",
                 },
                 "timeout": {
                     "type": "number",
+                    # i18n: user-facing
                     "description": "等待任务终态的总超时秒数 (缺省 1800)",
                     "default": 1800.0,
                 },
+                # i18n: user-facing
                 "poll_interval": {"type": "number", "description": "状态轮询间隔秒数", "default": 2.0},
             },
             "required": ["team"],
@@ -185,16 +211,16 @@ class TeamCallNode(BaseNode):
         poll_interval = _clamp_poll_interval(float(params.get("poll_interval", _POLL_INTERVAL) or _POLL_INTERVAL))
 
         if not team:
-            return NodeResult(status=NodeStatus.FAILED, error="缺少必填参数 team", summary="参数不完整")
+            return NodeResult(status=NodeStatus.FAILED, error="missing required param team", summary="incomplete params")
         if mode in ("run", "run_member") and not member:
-            return NodeResult(status=NodeStatus.FAILED, error=f"mode={mode} 缺少必填参数 member", summary="参数不完整")
+            return NodeResult(status=NodeStatus.FAILED, error=f"mode={mode} missing required param member", summary="incomplete params")
         if mode == "run_member" and not task_id:
             return NodeResult(
-                status=NodeStatus.FAILED, error="mode=run_member 缺少必填参数 task_id", summary="参数不完整"
+                status=NodeStatus.FAILED, error="mode=run_member missing required param task_id", summary="incomplete params"
             )
         if mode in ("run", "add_task") and not task_title:
             return NodeResult(
-                status=NodeStatus.FAILED, error=f"mode={mode} 缺少必填参数 task_title", summary="参数不完整"
+                status=NodeStatus.FAILED, error=f"mode={mode} missing required param task_title", summary="incomplete params"
             )
 
         logger.info(
@@ -210,13 +236,13 @@ class TeamCallNode(BaseNode):
                 headers=_build_headers(),
                 timeout=60.0,
             ) as client:
-                # 生命周期守卫: 非活跃团队 (paused/disbanded) 直接拒绝, 零板写入
+                # lifecycle guard: reject inactive teams (paused/disbanded) outright, zero board writes
                 state = await self._team_state(client, team)
                 if state and str(state).lower() not in ("active", "", "unknown"):
                     return NodeResult(
                         status=NodeStatus.FAILED,
-                        error=f"团队 {team} 状态为 {state} (非活跃), 拒绝执行且未改动任务板",
-                        summary="团队非活跃",
+                        error=f"team {team} is {state} (inactive), execution refused and task board untouched",
+                        summary="team inactive",
                     )
 
                 if mode == "add_task":
@@ -233,7 +259,7 @@ class TeamCallNode(BaseNode):
                             "summary": "",
                             "artifact_ref": "",
                         },
-                        summary=f"任务板已建任务 {new_id}",
+                        summary=f"task board created task {new_id}",
                     )
 
                 if mode == "run_member":
@@ -246,8 +272,8 @@ class TeamCallNode(BaseNode):
                     if not target_id:
                         return NodeResult(
                             status=NodeStatus.FAILED,
-                            error=f"teams.add_task 未返回 task_id: {created}",
-                            summary="建任务失败",
+                            error=f"teams.add_task returned no task_id: {created}",
+                            summary="task creation failed",
                         )
 
                 await self._run_member(client, team, member, target_id, brief, artifact_refs)
@@ -256,12 +282,12 @@ class TeamCallNode(BaseNode):
             logger.error("TeamCallNode teams.* dispatcher unavailable: %s", e)
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=(f"{e} — teams.* dispatcher 未部署 (需 agent-studio T3 / 0.16.0), 任务板未被改动"),
-                summary="teams.* 不可用",
+                error=(f"{e} — teams.* dispatcher not deployed (requires agent-studio T3 / 0.16.0), task board untouched"),
+                summary="teams.* unavailable",
             )
         except _TeamsRpcError as e:
             logger.error("TeamCallNode teams RPC error: %s", e)
-            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="teams RPC 错误")
+            return NodeResult(status=NodeStatus.FAILED, error=str(e), summary="teams RPC error")
         except httpx.HTTPStatusError as e:
             code = e.response.status_code if e.response is not None else "?"
             body = e.response.text[:200] if e.response is not None else ""
@@ -269,11 +295,11 @@ class TeamCallNode(BaseNode):
             return NodeResult(
                 status=NodeStatus.FAILED,
                 error=f"agent-studio HTTP {code}: {body}",
-                summary="上游 HTTP 错误",
+                summary="upstream HTTP error",
             )
         except Exception as e:
-            logger.exception("TeamCallNode 执行异常")
-            return NodeResult(status=NodeStatus.FAILED, error=f"团队调用异常: {e}", summary="执行异常")
+            logger.exception("TeamCallNode execution exception")
+            return NodeResult(status=NodeStatus.FAILED, error=f"team call exception: {e}", summary="execution exception")
 
     @staticmethod
     def _str_list(value: Any) -> List[str]:
@@ -287,7 +313,7 @@ class TeamCallNode(BaseNode):
         except _TeamsMethodUnavailable:
             raise
         except _TeamsRpcError:
-            # 团队不存在等业务错误留给后续调用报 — 这里只关心运行态
+            # business errors like a missing team are surfaced by later calls — here we only care about run state
             return "unknown"
         if isinstance(status, dict):
             return str(status.get("state", "") or "")
@@ -308,7 +334,7 @@ class TeamCallNode(BaseNode):
             payload["description"] = desc
         if member:
             payload["assignee"] = member
-        # 单向镜像: DAG 依赖 → 任务板 blocked_by (设计文档 §5.4)
+        # one-way mirror: DAG dependencies -> task board blocked_by (design doc §5.4)
         if blocked_by:
             payload["blocked_by"] = blocked_by
         if artifact_refs:
@@ -346,12 +372,12 @@ class TeamCallNode(BaseNode):
             status = await _rpc_call(client, "teams.status", {"team": team})
             state = str((status or {}).get("state", "") or "")
             if state and state.lower() not in ("active", "unknown"):
-                # 运行中团队转非活跃 (paused/disbanded) — 保留任务, 不回写
+                # running team turned inactive (paused/disbanded) — keep the task, no write-back
                 return NodeResult(
                     status=NodeStatus.FAILED,
-                    error=f"团队 {team} 运行中转为 {state}, 任务 {task_id} 保留在任务板",
+                    error=f"team {team} turned {state} while running, task {task_id} kept on the task board",
                     data={"task_id": task_id, "status": state, "summary": "", "artifact_ref": ""},
-                    summary="团队非活跃",
+                    summary="team inactive",
                 )
             tasks = (status or {}).get("tasks") if isinstance(status, dict) else None
             task = (tasks or {}).get(task_id) if isinstance(tasks, dict) else None
@@ -371,24 +397,24 @@ class TeamCallNode(BaseNode):
                             "summary": summary,
                             "artifact_ref": artifact_ref,
                         },
-                        summary=f"任务 {task_id} 已完成 ({summary[:60]})" if summary else f"任务 {task_id} 已完成",
+                        summary=f"task {task_id} completed ({summary[:60]})" if summary else f"task {task_id} completed",
                     )
                 logger.warning("TeamCallNode task %s failed on team %r", task_id, team)
                 return NodeResult(
                     status=NodeStatus.FAILED,
-                    error=f"任务 {task_id} 在任务板终态 failed: {summary or '无详情'}",
+                    error=f"task {task_id} reached terminal failed on the task board: {summary or 'no detail'}",
                     data={"task_id": task_id, "status": task_status, "summary": summary, "artifact_ref": artifact_ref},
-                    summary="任务失败",
+                    summary="task failed",
                 )
             if time.monotonic() >= deadline:
-                # 与 studio_run detach 语义一致: 超时不撤任务 — 板上任务保留,
-                # 凭 task_id 可人工查询/回收
-                logger.warning("TeamCallNode task %s 等待终态超时 (%.0fs), 保留在任务板", task_id, timeout)
+                # same detach semantics as studio_run: do NOT withdraw the task on timeout — the
+                # board task is kept and can be looked up / recovered manually by task_id
+                logger.warning("TeamCallNode task %s terminal-state wait timed out (%.0fs), kept on the task board", task_id, timeout)
                 return NodeResult(
                     status=NodeStatus.FAILED,
                     error=(
-                        f"等待任务 {task_id} 终态超时 ({timeout:.0f}s), 任务已保留在任务板 "
-                        f"(team={team}), 可凭 task_id 查询/回收"
+                        f"timed out waiting for task {task_id} terminal state ({timeout:.0f}s), task kept on the "
+                        f"task board (team={team}); query/recover by task_id"
                     ),
                     data={
                         "task_id": task_id,
@@ -397,6 +423,6 @@ class TeamCallNode(BaseNode):
                         "artifact_ref": "",
                         "detached": True,
                     },
-                    summary="等待任务终态超时 (任务保留)",
+                    summary="terminal-state wait timed out (task kept)",
                 )
             await asyncio.sleep(poll_interval)

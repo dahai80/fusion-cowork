@@ -1,4 +1,4 @@
-"""Fusion-Cowork AI 节点 — 调用 fusion-mlx 本地推理引擎。"""
+"""Fusion-Cowork AI nodes — call the fusion-mlx local inference engine."""
 
 from .classify import AIClassifyNode, AIGenerateNameNode, AISummarizeNode
 

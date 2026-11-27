@@ -1,4 +1,4 @@
-"""Fusion-Cowork 报表生成模块。"""
+"""Fusion-Cowork report generation module."""
 
 from .report_generator import ReportConfig, ReportGenerator
 

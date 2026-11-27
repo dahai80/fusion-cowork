@@ -1,11 +1,11 @@
-"""Fusion-Cowork — macOS 原生、纯本地离线、零代码桌面智能自动化平台。
+"""Fusion-Cowork — macOS-native, fully local offline, zero-code desktop intelligent automation platform.
 
-产品定位：让 Mac 自己干活，本地 AI 全自动桌面办公。
+Product positioning: let the Mac do the work itself — local AI fully automated desktop office.
 
-架构模式吸纳自 Squish 的 Lazy Import 机制（__getattr__ 延迟导入）：
-- import fusion_cowork 保持快速，不加载任何节点模块
-- 首次访问属性时自动加载对应模块
-- 同时保留显式 import 的兼容性
+Architecture pattern adopted from Squish's lazy import mechanism (__getattr__ deferred imports):
+- import fusion_cowork stays fast, loads no node modules
+- modules are loaded automatically on first attribute access
+- explicit imports remain compatible
 """
 
 from __future__ import annotations
@@ -13,166 +13,285 @@ from __future__ import annotations
 __version__ = "0.5.150"
 __app_name__ = "Fusion-Cowork"
 
-# ── 节点工具名称映射表（吸纳自 Squish tool_name_map.py） ──
-# 用户友好的中文名称 → 后端节点名称
-# 用于 AI 生成工作流时的节点名称解析
+# ── Node tool name mapping table (adopted from Squish tool_name_map.py) ──
+# User-friendly Chinese aliases -> backend node names
+# Used to resolve node names when AI generates workflows
 NODE_NAME_ALIASES: dict[str, str] = {
-    # 桌面清理
+    # Desktop clean
+    # i18n: user-facing
     "桌面清理": "desktop_clean",
+    # i18n: user-facing
     "整理桌面": "desktop_clean",
+    # i18n: user-facing
     "桌面规整": "desktop_clean",
-    # 下载整理
+    # Download organizer
+    # i18n: user-facing
     "下载整理": "download_organizer",
+    # i18n: user-facing
     "下载归档": "download_organizer",
+    # i18n: user-facing
     "整理下载": "download_organizer",
-    # 文件分类
+    # File classification
+    # i18n: user-facing
     "文件分类": "file_classifier",
+    # i18n: user-facing
     "分类文件": "file_classifier",
+    # i18n: user-facing
     "按类型分类": "file_classifier",
-    # AI 分类
+    # AI classification
+    # i18n: user-facing
     "AI分类": "ai_classify",
+    # i18n: user-facing
     "智能分类": "ai_classify",
+    # i18n: user-facing
     "AI文件分类": "ai_classify",
-    # AI 摘要
+    # AI summarize
+    # i18n: user-facing
     "AI摘要": "ai_summarize",
+    # i18n: user-facing
     "文档摘要": "ai_summarize",
+    # i18n: user-facing
     "批量总结": "ai_summarize",
-    # AI 重命名
+    # AI rename
+    # i18n: user-facing
     "AI重命名": "ai_generate_name",
+    # i18n: user-facing
     "智能重命名": "ai_generate_name",
+    # i18n: user-facing
     "批量重命名": "file_batch_rename",
-    # fusion-browser 引擎 (issue #162)
+    # fusion-browser engine (issue #162)
+    # i18n: user-facing
     "融合浏览器": "fusion_browser",
+    # i18n: user-facing
     "fusion浏览器": "fusion_browser",
-    # 磁盘清理
+    # Disk cleaner
+    # i18n: user-facing
     "磁盘清理": "disk_cleaner",
+    # i18n: user-facing
     "清理磁盘": "disk_cleaner",
+    # i18n: user-facing
     "垃圾清理": "disk_cleaner",
-    # 文件监听
+    # File watcher
+    # i18n: user-facing
     "文件监听": "file_watcher",
+    # i18n: user-facing
     "监听目录": "file_watcher",
-    # 文件操作
+    # File operations
+    # i18n: user-facing
     "复制文件": "file_copy",
+    # i18n: user-facing
     "备份文件": "file_copy",
+    # i18n: user-facing
     "移动文件": "file_move",
+    # i18n: user-facing
     "删除文件": "file_delete",
+    # i18n: user-facing
     "查找文件": "file_find",
+    # i18n: user-facing
     "搜索文件": "file_find",
-    # 输入输出
+    # Input/output
+    # i18n: user-facing
     "读取文件": "file_input",
+    # i18n: user-facing
     "文件输入": "file_input",
+    # i18n: user-facing
     "写入文件": "file_output",
+    # i18n: user-facing
     "文件输出": "file_output",
+    # i18n: user-facing
     "写入Excel": "xlsx_write",
+    # i18n: user-facing
     "Excel写入": "xlsx_write",
+    # i18n: user-facing
     "生成Excel": "xlsx_write",
+    # i18n: user-facing
     "写入PPT": "pptx_write",
+    # i18n: user-facing
     "PPT写入": "pptx_write",
+    # i18n: user-facing
     "生成PPT": "pptx_write",
-    # 逻辑
+    # Logic
+    # i18n: user-facing
     "条件过滤": "filter",
+    # i18n: user-facing
     "过滤": "filter",
+    # i18n: user-facing
     "循环处理": "loop",
+    # i18n: user-facing
     "循环": "loop",
+    # i18n: user-facing
     "合并数据": "merge",
+    # i18n: user-facing
     "数据合并": "merge",
+    # i18n: user-facing
     "等待事件": "wait_for_event",
+    # i18n: user-facing
     "事件等待": "wait_for_event",
-    # 工具（新增）
+    # Tools (new)
+    # i18n: user-facing
     "运行命令": "shell_exec",
+    # i18n: user-facing
     "执行命令": "shell_exec",
+    # i18n: user-facing
     "终端命令": "shell_exec",
+    # i18n: user-facing
     "运行Python": "python_repl",
+    # i18n: user-facing
     "执行Python": "python_repl",
+    # i18n: user-facing
     "搜索网页": "web_search",
+    # i18n: user-facing
     "联网搜索": "web_search",
+    # i18n: user-facing
     "获取网页": "fetch_url",
+    # i18n: user-facing
     "下载网页": "fetch_url",
+    # i18n: user-facing
     "应用编辑": "apply_edit",
+    # i18n: user-facing
     "编辑文件": "apply_edit",
-    # 浏览器
+    # Browser
+    # i18n: user-facing
     "打开浏览器": "browser_open",
+    # i18n: user-facing
     "浏览器打开": "browser_open",
+    # i18n: user-facing
     "提取网页": "browser_extract",
+    # i18n: user-facing
     "网页提取": "browser_extract",
+    # i18n: user-facing
     "网页自动化": "browser_automate",
+    # i18n: user-facing
     "浏览器自动化": "browser_automate",
     # Chrome CDP
+    # i18n: user-facing
     "CDP导航": "cdp_navigate",
+    # i18n: user-facing
     "CDP快照": "cdp_snapshot",
+    # i18n: user-facing
     "CDP点击": "cdp_click",
+    # i18n: user-facing
     "CDP填写": "cdp_fill",
+    # i18n: user-facing
     "CDP批量填写": "cdp_fill_form",
+    # i18n: user-facing
     "CDP截图": "cdp_screenshot",
+    # i18n: user-facing
     "CDP执行JS": "cdp_evaluate",
+    # i18n: user-facing
     "CDP设备模拟": "cdp_emulate",
+    # i18n: user-facing
     "CDP网络监控": "cdp_network",
+    # i18n: user-facing
     "CDP控制台": "cdp_console",
     # M4 Computer Use
+    # i18n: user-facing
     "鼠标移动": "mouse_move",
+    # i18n: user-facing
     "鼠标点击": "mouse_click",
+    # i18n: user-facing
     "键盘输入": "keyboard_type",
+    # i18n: user-facing
     "键盘快捷键": "keyboard_shortcut",
     "Computer Use": "computer_use_loop",
-    # Fusion 生态互通
+    # Fusion ecosystem interop
+    # i18n: user-facing
     "微调": "fusion_trainer",
+    # i18n: user-facing
     "模型微调": "fusion_trainer",
+    # i18n: user-facing
     "训练模型": "fusion_trainer",
-    # 记忆互通 (fusion-memory)
+    # Memory interop (fusion-memory)
+    # i18n: user-facing
     "记忆提交": "memory_commit",
+    # i18n: user-facing
     "提交记忆": "memory_commit",
+    # i18n: user-facing
     "记忆检索": "memory_retrieve",
+    # i18n: user-facing
     "召回记忆": "memory_retrieve",
-    # Studio 互通 (fusion-agent-studio, issue #133)
+    # Studio interop (fusion-agent-studio, issue #133)
+    # i18n: user-facing
     "运行Studio": "studio_run",
+    # i18n: user-facing
     "Studio运行": "studio_run",
     # Agentic Office (fusion-office office-api + artifacts-engine, issue #614)
+    # i18n: user-facing
     "办公文档": "office_document",
+    # i18n: user-facing
     "文档生成": "office_document",
+    # i18n: user-facing
     "文档解析": "office_document",
+    # i18n: user-facing
     "办公表格": "office_spreadsheet",
+    # i18n: user-facing
     "表格解析": "office_spreadsheet",
+    # i18n: user-facing
     "办公幻灯片": "office_slides",
+    # i18n: user-facing
     "幻灯片生成": "office_slides",
+    # i18n: user-facing
     "成果入库": "office_artifact",
+    # i18n: user-facing
     "工件入库": "office_artifact",
-    # 团队互通 (agent-studio teams.*, issue #488)
+    # Team interop (agent-studio teams.*, issue #488)
+    # i18n: user-facing
     "团队调用": "team_call",
-    # 决策门 (fusion-mlx laya 决策头, issue #517)
+    # Decision gate (fusion-mlx laya decision head, issue #517)
+    # i18n: user-facing
     "决策门": "decision_gate",
+    # i18n: user-facing
     "智能决策": "decision_gate",
+    # i18n: user-facing
     "团队任务": "team_call",
-    # 部署执行 (issue #489)
+    # Deployment execution (issue #489)
+    # i18n: user-facing
     "应用部署": "deploy_service",
+    # i18n: user-facing
     "部署服务": "deploy_service",
-    # 子工作流 (issue #462)
+    # Sub-workflow (issue #462)
+    # i18n: user-facing
     "子工作流": "sub_workflow",
+    # i18n: user-facing
     "工作流嵌套": "sub_workflow",
-    # MCP 客户端 (外部 MCP 工具服务器, issue #185)
+    # MCP client (external MCP tool servers, issue #185)
+    # i18n: user-facing
     "MCP工具": "mcp_client",
+    # i18n: user-facing
     "MCP调用": "mcp_client",
+    # i18n: user-facing
     "调用MCP": "mcp_client",
-    # 演示契约门 (issue #452)
+    # Demo contract gate (issue #452)
+    # i18n: user-facing
     "演示契约": "demo_contract",
+    # i18n: user-facing
     "演示验收": "demo_contract",
-    # 协调分发 / 会话分叉 (issue #467)
+    # Coordinator fanout / session fork (issue #467)
+    # i18n: user-facing
     "协调分发": "coordinator_fanout",
+    # i18n: user-facing
     "子代理分发": "coordinator_fanout",
+    # i18n: user-facing
     "会话分叉": "session_fork",
+    # i18n: user-facing
     "会话分叉并行": "session_fork",
-    # 阶梯编排 (issue #470)
+    # Ladder orchestration (issue #470)
+    # i18n: user-facing
     "阶梯编排": "workflow_ladder",
+    # i18n: user-facing
     "工作流阶梯": "workflow_ladder",
-    # 目标校验 (issue #480)
+    # Objective verification (issue #480)
+    # i18n: user-facing
     "目标校验": "verify_objective",
+    # i18n: user-facing
     "交付验证": "verify_objective",
 }
 
-# ── Lazy Import 注册表（吸纳自 Squish 的 __getattr__ 机制） ──
-# 键：公开属性名，值：模块路径
-# 首次访问时自动导入对应模块，保持 import 快速
+# ── Lazy import registry (adopted from Squish's __getattr__ mechanism) ──
+# Key: public attribute name, value: module path
+# Modules are imported automatically on first access, keeping import fast
 _LAZY_IMPORTS: dict[str, str] = {
-    # 引擎核心
+    # Engine core
     "Workflow": "fusion_cowork.engine.workflow",
     "WorkflowEngine": "fusion_cowork.engine.workflow",
     "WorkflowStatus": "fusion_cowork.engine.workflow",
@@ -194,7 +313,7 @@ _LAZY_IMPORTS: dict[str, str] = {
     "RunStateStore": "fusion_cowork.engine.run_persistence",
     "ScheduledTask": "fusion_cowork.engine.scheduler",
     "TaskStatus": "fusion_cowork.engine.scheduler",
-    # macOS 节点
+    # macOS nodes
     "DesktopCleanNode": "fusion_cowork.nodes.macos",
     "DownloadOrganizerNode": "fusion_cowork.nodes.macos",
     "FileClassifierNode": "fusion_cowork.nodes.macos",
@@ -205,51 +324,51 @@ _LAZY_IMPORTS: dict[str, str] = {
     "FileMoveNode": "fusion_cowork.nodes.macos",
     "FileDeleteNode": "fusion_cowork.nodes.macos",
     "FileFindNode": "fusion_cowork.nodes.macos",
-    # AI 节点
+    # AI nodes
     "AIClassifyNode": "fusion_cowork.nodes.ai",
     "AISummarizeNode": "fusion_cowork.nodes.ai",
     "AIGenerateNameNode": "fusion_cowork.nodes.ai",
-    # IO 节点
+    # IO nodes
     "FileInputNode": "fusion_cowork.nodes.io",
     "FileOutputNode": "fusion_cowork.nodes.io",
-    # 逻辑节点
+    # Logic nodes
     "FilterNode": "fusion_cowork.nodes.logic",
     "LoopNode": "fusion_cowork.nodes.logic",
     "MergeNode": "fusion_cowork.nodes.logic",
-    # 工具节点（新增）
+    # Tool nodes (new)
     "ShellExecNode": "fusion_cowork.nodes.tools",
     "PythonREPLNode": "fusion_cowork.nodes.tools",
     "PythonREPLCodeExecutor": "fusion_cowork.nodes.tools",
     "WebSearchNode": "fusion_cowork.nodes.tools",
     "FetchURLNode": "fusion_cowork.nodes.tools",
     "ApplyEditNode": "fusion_cowork.nodes.tools",
-    # 浏览器节点（新增）
+    # Browser nodes (new)
     "BrowserOpenNode": "fusion_cowork.nodes.browser",
     "BrowserExtractNode": "fusion_cowork.nodes.browser",
     "BrowserAutomateNode": "fusion_cowork.nodes.browser",
     "BrowserClient": "fusion_cowork.nodes.browser",
     "BrowserManager": "fusion_cowork.nodes.browser",
-    # V0.2 增强调度
+    # V0.2 enhanced scheduling
     "EnhancedScheduler": "fusion_cowork.engine.enhanced_scheduler",
     "TaskExecution": "fusion_cowork.engine.enhanced_scheduler",
     "TaskDependency": "fusion_cowork.engine.enhanced_scheduler",
-    # V0.2 AI 优化
+    # V0.2 AI optimization
     "WorkflowOptimizer": "fusion_cowork.engine.optimizer",
     "OptimizationSuggestion": "fusion_cowork.engine.optimizer",
     "WorkflowAnalysis": "fusion_cowork.engine.optimizer",
-    # V0.2 报告生成
+    # V0.2 report generation
     "ReportGenerator": "fusion_cowork.report.report_generator",
     "ReportConfig": "fusion_cowork.report.report_generator",
-    # V0.3 多智能体
+    # V0.3 multi-agent
     "AgentOrchestrator": "fusion_cowork.orchestrator.orchestrator",
     "Agent": "fusion_cowork.orchestrator.orchestrator",
     "AgentRole": "fusion_cowork.orchestrator.orchestrator",
     "AgentTask": "fusion_cowork.orchestrator.orchestrator",
-    # V0.3 跨设备协同
+    # V0.3 cross-device collaboration
     "CrossDeviceSync": "fusion_cowork.server.sync",
     "Device": "fusion_cowork.server.sync",
     "SyncMessage": "fusion_cowork.server.sync",
-    # Claude Cowork 对标节点
+    # Claude Cowork parity nodes
     "ScreenCaptureNode": "fusion_cowork.nodes.macos",
     "ClipboardNode": "fusion_cowork.nodes.macos",
     "NotificationNode": "fusion_cowork.nodes.macos",
@@ -257,18 +376,18 @@ _LAZY_IMPORTS: dict[str, str] = {
     "OCRNode": "fusion_cowork.nodes.macos",
     # MCP Server
     "MCPServer": "fusion_cowork.server.mcp_server",
-    # AI 客户端
+    # AI clients
     "FusionMLXClient": "fusion_cowork.ai",
     "KBClient": "fusion_cowork.ai",
     "NLWorkflowGenerator": "fusion_cowork.ai",
-    # 模板
+    # Templates
     "TemplateManager": "fusion_cowork.templates",
-    # M3 插件系统
+    # M3 plugin system
     "PluginManifest": "fusion_cowork.plugins.manifest",
     "PluginLoader": "fusion_cowork.plugins.loader",
     "SandboxedNode": "fusion_cowork.plugins.loader",
     "make_sandboxed_node_class": "fusion_cowork.plugins.loader",
-    # M3 技能机制
+    # M3 skill mechanism
     "Skill": "fusion_cowork.skills.registry",
     "SkillRegistry": "fusion_cowork.skills.registry",
     "register_builtin_skills": "fusion_cowork.skills.builtin",
@@ -285,28 +404,28 @@ _LAZY_IMPORTS: dict[str, str] = {
     "CDPEmulateNode": "fusion_cowork.nodes.browser",
     "CDPNetworkNode": "fusion_cowork.nodes.browser",
     "CDPConsoleNode": "fusion_cowork.nodes.browser",
-    # M4 Computer Use 节点
+    # M4 Computer Use nodes
     "MouseMoveNode": "fusion_cowork.nodes.macos",
     "MouseClickNode": "fusion_cowork.nodes.macos",
     "KeyboardTypeNode": "fusion_cowork.nodes.macos",
     "KeyboardShortcutNode": "fusion_cowork.nodes.macos",
     "ComputerUseLoopNode": "fusion_cowork.nodes.macos",
-    # M4 远程控制
+    # M4 remote control
     "RemoteControlServer": "fusion_cowork.server.remote",
     "RemoteControlClient": "fusion_cowork.server.remote",
-    # M4 结构化输出
+    # M4 structured output
     "OutputSchema": "fusion_cowork.engine.schema",
     # M5 Agent Runtime
     "AgentRuntime": "fusion_cowork.orchestrator.agent_runtime",
     "CoordinatorExecutor": "fusion_cowork.orchestrator.executors",
-    # issue #190 团队消息 durable 信箱 + 常驻消费池
+    # issue #190 team message durable mailbox + resident consumer pool
     "TeamMailbox": "fusion_cowork.orchestrator.team_mailbox",
     "CoworkRoster": "fusion_cowork.orchestrator.team_mailbox",
     "RunnerPool": "fusion_cowork.orchestrator.runner_pool",
     # M5 SDK/Headless
     "FusionCoworkSDK": "fusion_cowork.sdk",
     "HeadlessRunner": "fusion_cowork.sdk.headless",
-    # M6 Space 协作空间
+    # M6 Space collaboration workspace
     "Space": "fusion_cowork.space",
     "SpaceConfig": "fusion_cowork.space",
     "SpaceMember": "fusion_cowork.space",
@@ -319,7 +438,7 @@ _LAZY_IMPORTS: dict[str, str] = {
     "SpaceService": "fusion_cowork.space",
     "SpaceMemberService": "fusion_cowork.space",
     "SpacePermission": "fusion_cowork.space",
-    # M7 共享对话 + 知识库绑定
+    # M7 shared chat + knowledge base binding
     "SpaceChatService": "fusion_cowork.space",
     "SpaceKBService": "fusion_cowork.space",
     "create_space_api": "fusion_cowork.space",
@@ -342,12 +461,12 @@ _LAZY_IMPORTS: dict[str, str] = {
     "ResourceLimits": "fusion_cowork.plugins.sandbox",
     "SandboxResult": "fusion_cowork.plugins.sandbox",
     "SandboxStatus": "fusion_cowork.plugins.sandbox",
-    # D1 轨迹飞轮
+    # D1 trajectory flywheel
     "TrajectoryRecorder": "fusion_cowork.trajectory",
     "TrajectoryWriter": "fusion_cowork.trajectory",
     "SpaceTrajectoryExporter": "fusion_cowork.trajectory",
     "SpaceMessageTrajectory": "fusion_cowork.trajectory",
-    # V0.2.13 移动推送通知
+    # V0.2.13 mobile push notification
     "PushConfig": "fusion_cowork.notification",
     "PushResult": "fusion_cowork.notification",
     "push": "fusion_cowork.notification",
@@ -362,24 +481,24 @@ _LAZY_IMPORTS: dict[str, str] = {
     "ReviewReport": "fusion_cowork.review",
     "LENS_DEFINITIONS": "fusion_cowork.review",
     "run_ultra_review": "fusion_cowork.review",
-    # V0.2.14 交互式 Agent Loop
+    # V0.2.14 interactive agent loop
     "AgentLoop": "fusion_cowork.agent_loop",
     "AgentAction": "fusion_cowork.agent_loop",
     "AgentTurn": "fusion_cowork.agent_loop",
     "AgentLoopResult": "fusion_cowork.agent_loop",
     "run_agent_loop": "fusion_cowork.agent_loop",
-    # V0.2.14 实时 presence + 光标
+    # V0.2.14 real-time presence + cursor
     "PresenceManager": "fusion_cowork.space",
     "PresenceState": "fusion_cowork.space",
-    # V0.2.14 协作层 WS 双向
+    # V0.2.14 collaboration WS bidirectional
     "CollabHub": "fusion_cowork.server.collab_ws",
-    # V0.4.0 多租户云 — 租户/认证/持久化
+    # V0.4.0 multi-tenant cloud — tenant/auth/persistence
     "TenantPrincipal": "fusion_cowork.tenant",
     "get_current_tenant": "fusion_cowork.tenant",
     "set_current_tenant": "fusion_cowork.tenant",
     "tenant_context": "fusion_cowork.tenant",
     "JWTVerifier": "fusion_cowork.auth",
-    # V0.5.3 fusion-identity 集成 (issue #88, 统一 JWT 签发 + 租户注册中心)
+    # V0.5.3 fusion-identity integration (issue #88, unified JWT issuance + tenant registry)
     "IdentityClient": "fusion_cowork.auth.identity",
     "IdentityVerifyResult": "fusion_cowork.auth.identity",
     "is_identity_enabled": "fusion_cowork.auth.identity",
@@ -389,14 +508,14 @@ _LAZY_IMPORTS: dict[str, str] = {
     "MigrationRunner": "fusion_cowork.db",
     "Migration": "fusion_cowork.db",
     "BackupManager": "fusion_cowork.db",
-    # V0.4.0 可观测性
+    # V0.4.0 observability
     "trace_context": "fusion_cowork.observability",
     "get_trace_id": "fusion_cowork.observability",
     "new_trace_id": "fusion_cowork.observability",
     "HealthCheck": "fusion_cowork.observability",
     "get_meter": "fusion_cowork.observability.metrics",
     "get_tracer": "fusion_cowork.observability.tracing",
-    # V0.4.0 安全规模化
+    # V0.4.0 security at scale
     "RateLimiter": "fusion_cowork.security",
     "TokenBucket": "fusion_cowork.security",
     "encrypt_at_rest": "fusion_cowork.security",
@@ -407,19 +526,19 @@ _LAZY_IMPORTS: dict[str, str] = {
     "TenantQuotas": "fusion_cowork.security",
     "QuotaEnforcer": "fusion_cowork.security",
     "QuotaExceededError": "fusion_cowork.security",
-    # V0.4.5 fusion-guard 集成 (issue #73, HIGH_RISK_NODES→guard.evaluate)
+    # V0.4.5 fusion-guard integration (issue #73, HIGH_RISK_NODES -> guard.evaluate)
     "GuardClient": "fusion_cowork.security.guard",
     "GuardVerdict": "fusion_cowork.security.guard",
     "guard_enabled": "fusion_cowork.security.guard",
     "get_guard_client": "fusion_cowork.security.guard",
     "close_guard_client": "fusion_cowork.security.guard",
     "node_to_guard_content": "fusion_cowork.security.guard",
-    # V0.4.0 插件签名/registry
+    # V0.4.0 plugin signing/registry
     "PluginRegistry": "fusion_cowork.plugins.registry",
     "sign_manifest": "fusion_cowork.plugins.signing",
     "verify_manifest": "fusion_cowork.plugins.signing",
     "verify_any_key": "fusion_cowork.plugins.signing",
-    # V0.4.0 集群同步 (issue #61, 迁移自 fusion-multi-node)
+    # V0.4.0 cluster sync (issue #61, migrated from fusion-multi-node)
     "ClusterSyncManager": "fusion_cowork.cluster_sync",
     "ModelManifest": "fusion_cowork.cluster_sync",
     "FileEntry": "fusion_cowork.cluster_sync",
@@ -433,7 +552,7 @@ _LAZY_IMPORTS: dict[str, str] = {
     "is_safe_peer_host": "fusion_cowork.cluster_sync",
     "is_safe_path_segment": "fusion_cowork.cluster_sync",
     "build_safe_url": "fusion_cowork.cluster_sync",
-    # V0.5.0 分布式状态层 (issue #79, 集群感知句柄包装)
+    # V0.5.0 distributed state layer (issue #79, cluster-aware handle wrappers)
     "DistributedStateStore": "fusion_cowork.distributed_state",
     "ClusterState": "fusion_cowork.distributed_state",
     "ClusterNode": "fusion_cowork.distributed_state",
@@ -452,9 +571,9 @@ _lazy_cache: dict[str, object] = {}
 
 
 def __getattr__(name: str) -> object:
-    """延迟加载模块（吸纳自 Squish 的 __getattr__ 模式）。
+    """Lazy-load a module (adopted from Squish's __getattr__ pattern).
 
-    仅在首次访问时导入对应模块，之后缓存结果。
+    Imports the target module only on first access, caching the result afterwards.
     """
     if name in _lazy_cache:
         return _lazy_cache[name]
@@ -475,7 +594,7 @@ def __getattr__(name: str) -> object:
 
 
 def __dir__() -> list[str]:
-    """列出所有可访问的属性。"""
+    """List all accessible attributes."""
     return sorted(set([*dir(type("", (), {})), *__all__, *_LAZY_IMPORTS.keys()]))
 
 

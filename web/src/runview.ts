@@ -145,7 +145,7 @@ export function capabilitiesInUse(
     return order;
 }
 
-// issue #225: 审批卡 "编辑参数" 草稿解析 — 只接受 JSON 对象。
+// issue #225: approval card "Edit params" draft parsing — only accepts a JSON object.
 export type ParamsDraftResult =
     | { ok: true; params: Record<string, unknown> }
     | { ok: false; error: 'invalid_json' | 'not_object' };
@@ -163,7 +163,7 @@ export function parseParamsDraft(text: string): ParamsDraftResult {
     return { ok: true, params: parsed as Record<string, unknown> };
 }
 
-// issue #233: artifact 轻量引用提取 — 引擎 ref_text 格式
+// issue #233: artifact lightweight reference extraction — engine ref_text format
 // [Artifact: <name> | ID: <id> | Version: v<n> | Type: <type> | Size: <bytes> | Summary: …]
 const ARTIFACT_REF_RE = /\[Artifact:\s*([^|\]]+?)\s*\|\s*ID:\s*([A-Za-z0-9_-]+)[^\]]*\]/g;
 
@@ -185,7 +185,7 @@ export function findArtifactRefs(text: unknown): ArtifactRef[] {
     return refs;
 }
 
-// issue #233: 步骤产物引用 — summary 优先, 其次输出里的字符串值 (输出保持轻量, 不做全文展开)
+// issue #233: step artifact refs — summary first, then string values in the output (output stays lightweight, no full expansion)
 export function stepArtifactRefs(step: { summary?: string; output_data?: Record<string, unknown> }): ArtifactRef[] {
     const out: ArtifactRef[] = [];
     const seen = new Set<string>();

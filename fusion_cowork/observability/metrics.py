@@ -1,10 +1,10 @@
-"""指标采集 (v0.4.0 Stage 4).
+"""Metrics collection (v0.4.0 Stage 4).
 
-OpenTelemetry MeterProvider + 核心 Counter/Histogram; prometheus exporter 可选。
-metrics_middleware(app): ASGI 中间件 — 计数请求 + 直方图时长 (labels method/status)。
-record_db_error(op): DB 错误计数。
+OpenTelemetry MeterProvider + core Counter/Histogram; prometheus exporter optional.
+metrics_middleware(app): ASGI middleware — counts requests + duration histogram (labels method/status).
+record_db_error(op): DB error counter.
 
-无 OTel SDK 安装 → 退化为 no-op meter (不阻断, 测试/本地兼容)。
+Without the OTel SDK installed -> degrades to a no-op meter (non-blocking, test/local compatible).
 """
 
 from __future__ import annotations
@@ -32,10 +32,10 @@ def get_meter() -> Any:
         provider = MeterProvider()
         otm.set_meter_provider(provider)
         _meter = otm.get_meter("fusion-cowork", "0.4.0")
-        logger.info("OpenTelemetry MeterProvider 已启用")
+        logger.info("OpenTelemetry MeterProvider enabled")
     except ImportError:
         _meter = _NoopMeter()
-        logger.debug("opentelemetry-sdk 未装 — metrics 退化为 no-op")
+        logger.debug("opentelemetry-sdk not installed — metrics degrade to no-op")
     return _meter
 
 
@@ -71,13 +71,13 @@ def _histogram(name: str, **kwargs):
 
 
 def record_db_error(operation: str) -> None:
-    _counter("fusion_db_errors_total", description="DB 错误计数").add(1, {"operation": operation})
+    _counter("fusion_db_errors_total", description="DB error count").add(1, {"operation": operation})
 
 
 def metrics_middleware(app: Any) -> Any:
-    """ASGI 中间件 — 包 app, 计 req count + duration 直方图。"""
-    counter = _counter("fusion_requests_total", description="请求总数")
-    histo = _histogram("fusion_request_duration_seconds", description="请求时长")
+    """ASGI middleware — wraps app, counts req count + duration histogram."""
+    counter = _counter("fusion_requests_total", description="total requests")
+    histo = _histogram("fusion_request_duration_seconds", description="request duration")
 
     async def wrapped(scope, receive, send):
         if scope.get("type") != "http":
@@ -107,8 +107,8 @@ def maybe_start_prometheus_endpoint(port: Optional[int] = None) -> None:
         from prometheus_client import start_http_server
 
         start_http_server(int(p))
-        logger.info(f"prometheus /metrics 端点已启动 :{p}")
+        logger.info(f"prometheus /metrics endpoint started :{p}")
     except ImportError:
-        logger.debug("prometheus-client 未装 — /metrics 端点跳过")
+        logger.debug("prometheus-client not installed — /metrics endpoint skipped")
     except Exception as e:
-        logger.warning(f"prometheus 端点启动失败: {e}")
+        logger.warning(f"prometheus endpoint start failed: {e}")

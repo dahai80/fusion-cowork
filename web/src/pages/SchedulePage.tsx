@@ -33,10 +33,12 @@ export function SchedulePage() {
     async function create() {
         if (busy) return;
         if (!form.name.trim() || !form.workflow_id) {
+            // i18n: user-facing
             sdk.toast.show({ level: 'warning', message: t('名称与工作流必填', 'Name and workflow required') });
             return;
         }
         if (!form.cron.trim() && !form.interval_minutes.trim()) {
+            // i18n: user-facing
             sdk.toast.show({ level: 'warning', message: t('cron 或间隔分钟必填其一', 'cron or interval required') });
             return;
         }
@@ -49,11 +51,13 @@ export function SchedulePage() {
             if (form.cron.trim()) body.cron = form.cron.trim();
             if (form.interval_minutes.trim()) body.interval_minutes = Number(form.interval_minutes);
             await api.createSchedulerTask(body);
+            // i18n: user-facing
             sdk.toast.show({ level: 'success', message: t('已创建定时任务', 'Task created') });
             setForm({ name: '', workflow_id: '', cron: '', interval_minutes: '' });
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] schedule create failed', e);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('创建失败', 'Create failed') });
         } finally {
             setBusy('');
@@ -72,6 +76,7 @@ export function SchedulePage() {
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] schedule toggle failed', e);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('操作失败', 'Operation failed') });
         } finally {
             setBusy('');
@@ -83,11 +88,13 @@ export function SchedulePage() {
         setBusy(confirmId);
         try {
             await api.deleteSchedulerTask(confirmId);
+            // i18n: user-facing
             sdk.toast.show({ level: 'success', message: t('已删除', 'Deleted') });
             setConfirmId('');
             retry.manualRetry();
         } catch (e) {
             console.error('[cowork-web] schedule delete failed', e);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('删除失败', 'Delete failed') });
         } finally {
             setBusy('');
@@ -98,11 +105,13 @@ export function SchedulePage() {
         <div className="mx-auto max-w-4xl">
             <div className="mb-3 rounded-lg border border-border bg-bg-elevated p-3">
                 <div className="pb-2 text-sm font-medium text-text-primary">
+                    {/* i18n: user-facing */}
                     {t('新建定时任务', 'New scheduled task')}
                 </div>
                 <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
                     <input
                         className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
+                        // i18n: user-facing
                         placeholder={t('任务名称', 'Task name')}
                         value={form.name}
                         onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -112,6 +121,7 @@ export function SchedulePage() {
                         value={form.workflow_id}
                         onChange={(e) => setForm({ ...form, workflow_id: e.target.value })}
                     >
+                        {/* i18n: user-facing */}
                         <option value="">{t('选择工作流', 'Pick workflow')}</option>
                         {workflowOptions.map((w) => (
                             <option key={w.id} value={w.id}>
@@ -128,6 +138,7 @@ export function SchedulePage() {
                     <div className="flex gap-2">
                         <input
                             className="min-w-0 flex-1 rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary"
+                            // i18n: user-facing
                             placeholder={t('间隔分钟', 'Interval min')}
                             value={form.interval_minutes}
                             onChange={(e) => setForm({ ...form, interval_minutes: e.target.value })}
@@ -138,6 +149,7 @@ export function SchedulePage() {
                             disabled={!!busy}
                             onClick={() => void create()}
                         >
+                            {/* i18n: user-facing */}
                             {busy === 'create' ? t('创建中…', 'Creating…') : t('创建', 'Create')}
                         </button>
                     </div>
@@ -150,7 +162,9 @@ export function SchedulePage() {
                 <ErrorState message={retry.error.message} onRetry={retry.manualRetry} />
             ) : tasks.length === 0 ? (
                 <EmptyState
+                    // i18n: user-facing
                     title={t('暂无定时任务', 'No scheduled tasks')}
+                    // i18n: user-facing
                     description={t('创建后按 cron/间隔自动运行', 'Runs automatically by cron/interval')}
                 />
             ) : (
@@ -166,7 +180,9 @@ export function SchedulePage() {
                                 <div className="truncate text-xs text-text-muted">
                                     {task.trigger_type === 'cron'
                                         ? `cron ${String(task.trigger_config?.cron ?? '')}`
+                                        // i18n: user-facing
                                         : `${t('每', 'every')} ${String(task.trigger_config?.minutes ?? '')} min`}{' '}
+                                    {/* i18n: user-facing */}
                                     · {t('下次', 'next')} {fmtTime(task.next_run, sdk.i18n.lang())}
                                 </div>
                             </div>
@@ -180,6 +196,7 @@ export function SchedulePage() {
                                     disabled={!!busy}
                                     onClick={() => void toggle(task)}
                                 >
+                                    {/* i18n: user-facing */}
                                     {task.status === 'active' ? t('暂停', 'Pause') : t('恢复', 'Resume')}
                                 </button>
                                 <button
@@ -188,6 +205,7 @@ export function SchedulePage() {
                                     disabled={!!busy}
                                     onClick={() => setConfirmId(task.id)}
                                 >
+                                    {/* i18n: user-facing */}
                                     {t('删除', 'Delete')}
                                 </button>
                             </div>
@@ -197,6 +215,7 @@ export function SchedulePage() {
             )}
             <ConfirmDialog
                 open={!!confirmId}
+                // i18n: user-facing
                 title={t('删除定时任务', 'Delete scheduled task')}
                 description={confirmId ? (tasks.find((x) => x.id === confirmId)?.name ?? confirmId) : ''}
                 danger

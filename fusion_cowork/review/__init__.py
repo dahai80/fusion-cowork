@@ -1,7 +1,7 @@
-"""多 Agent 代码审查包 — P2-7。
+"""Multi-agent code review package - P2-7.
 
-UltraReview: 多视角 (安全/正确性/风格/测试) 并行 LLM 审查 → 聚合排序 → 合成报告。
-LLM 不可用时降级返回文件清单。
+UltraReview: multi-lens (security/correctness/style/tests) parallel LLM review -> aggregate and rank -> synthesize report.
+Degrades to a file listing when LLM is unavailable.
 """
 
 from .ultra_review import (

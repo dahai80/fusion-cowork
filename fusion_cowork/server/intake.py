@@ -97,8 +97,8 @@ class RepoClient:
         self.token = token or os.environ.get("GITHUB_TOKEN", "")
         self.base_url = (base_url or os.environ.get("FUSION_GITHUB_API", "https://api.github.com")).rstrip("/")
         self.client_factory = client_factory
-        # issue #418: owner decision 2026-11-09 — ai-* 商用仓归属 dahai80-business org;
-        # FUSION_BUSINESS_GITHUB_OWNER 覆盖 (兼容旧个人账号部署)
+        # issue #418: owner decision 2026-11-09 — ai-* commercial repos belong to the dahai80-business org;
+        # FUSION_BUSINESS_GITHUB_OWNER overrides (compatible with legacy personal-account deployments)
         self.owner = owner or business_github_owner()
 
     def _client(self, timeout: float = 15.0) -> Any:
@@ -119,8 +119,8 @@ class RepoClient:
         raise RuntimeError(f"GitHub GET /repos/{self.owner}/{name} -> {resp.status_code}")
 
     async def create_repo(self, name: str) -> Dict[str, Any]:
-        # issue #418: owner org 时必须 POST /orgs/{org}/repos — /user/repos 一律落在
-        # 认证账号个人名下, plan["repo"] 与真实 remote 不一致
+        # issue #418: when owner is an org, must POST /orgs/{org}/repos — /user/repos always lands under
+        # the authenticated account's personal namespace, plan["repo"] then mismatches the real remote
         async with self._client() as client:
             login = ""
             try:

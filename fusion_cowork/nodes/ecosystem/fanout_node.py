@@ -50,21 +50,27 @@ def _load_runner() -> Any:
 
 @register_node
 class CoordinatorFanoutNode(BaseNode):
-    """协调分发节点 — coordinator/worker 扇出 (fusion-harness 子代理原语)。"""
+    """Coordinator fan-out node — coordinator/worker fan-out (fusion-harness subagent primitive)."""
 
     name = "coordinator_fanout"
+    # i18n: user-facing
     display_name = "协调分发"
     category = NodeCategory.FUSION_ECOSYSTEM
     description = "Fan out workers as isolated harness subagents, gather summary-only results"
     icon = "🎯"
+    # i18n: user-facing
     default_label = "协调分发"
 
     inputs = [
+        # i18n: user-facing
         {"key": "workers", "label": "worker 规格列表", "type": "array"},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "results", "label": "worker 结果列表", "type": "array"},
+        # i18n: user-facing
         {"key": "total", "label": "worker 总数", "type": "number"},
+        # i18n: user-facing
         {"key": "failed", "label": "失败数", "type": "number"},
     ]
 
@@ -74,11 +80,15 @@ class CoordinatorFanoutNode(BaseNode):
             "properties": {
                 "workers": {
                     "type": "array",
+                    # i18n: user-facing
                     "description": "worker 规格 [{name, prompt, tool_allowlist?, permission_mode?, "
                     "budget_tokens?, max_turns?, worker_node?, worker_params?}]",
                 },
+                # i18n: user-facing
                 "sequential": {"type": "boolean", "description": "顺序执行 (默认并行)", "default": False},
+                # i18n: user-facing
                 "allow_partial": {"type": "boolean", "description": "部分失败不整体 FAILED", "default": False},
+                # i18n: user-facing
                 "timeout": {"type": "number", "description": "扇出超时秒数 (0 = 不限)", "default": _DEFAULT_TIMEOUT},
             },
             "required": ["workers"],
@@ -88,7 +98,7 @@ class CoordinatorFanoutNode(BaseNode):
         params = getattr(self.config, "params", {}) or {}
         workers = params.get("workers") or inputs.get("workers")
         if not isinstance(workers, list) or not workers:
-            return NodeResult(status=NodeStatus.FAILED, error="coordinator_fanout 参数 workers 必填 (非空数组)")
+            return NodeResult(status=NodeStatus.FAILED, error="coordinator_fanout param workers is required (non-empty array)")
         try:
             runner = _load_runner()
         except ImportError as e:
@@ -101,7 +111,7 @@ class CoordinatorFanoutNode(BaseNode):
             try:
                 prompt = str(spec_dict.get("prompt") or "")
                 if not prompt:
-                    raise ValueError(f"worker '{name}' 缺 prompt")
+                    raise ValueError(f"worker '{name}' missing prompt")
                 spec = SubagentSpec(
                     name=name,
                     prompt=prompt,
@@ -123,13 +133,13 @@ class CoordinatorFanoutNode(BaseNode):
                             str(worker_node), config=NodeConfig(params=dict(spec.metadata.get("worker_params") or {}))
                         )
                         if node is None:
-                            raise ValueError(f"worker '{spec.name}' 的 worker_node '{worker_node}' 未注册")
+                            raise ValueError(f"worker '{spec.name}' worker_node '{worker_node}' is not registered")
                         res = await node.execute(
                             {"prompt": spec.prompt, "worker": spec.name, "session_id": session.subagent_id}
                         )
                         if _status_str(res.status) != "success":
-                            raise RuntimeError(f"worker_node '{worker_node}' 执行失败: {res.error or '无错误详情'}")
-                        return str(res.summary or "worker_node 完成")
+                            raise RuntimeError(f"worker_node '{worker_node}' execution failed: {res.error or 'no error detail'}")
+                        return str(res.summary or "worker_node finished")
                     return f"worker {spec.name} acknowledged prompt ({len(spec.prompt)} chars)"
 
                 result = await runner.run(spec, agent_fn, parent_tools=["coordinator_fanout"], parent_mode="default")
@@ -159,7 +169,7 @@ class CoordinatorFanoutNode(BaseNode):
             timeout = float(params.get("timeout", _DEFAULT_TIMEOUT) or 0)
         except (TypeError, ValueError):
             timeout = _DEFAULT_TIMEOUT
-        logger.info(f"coordinator_fanout 开始: workers={len(workers)} sequential={sequential}")
+        logger.info(f"coordinator_fanout start: workers={len(workers)} sequential={sequential}")
         try:
             if sequential:
                 raw = [await run_worker(w) for w in workers]
@@ -168,40 +178,46 @@ class CoordinatorFanoutNode(BaseNode):
             else:
                 raw = list(await asyncio.gather(*(run_worker(w) for w in workers)))
         except TimeoutError:
-            return NodeResult(status=NodeStatus.FAILED, error=f"coordinator_fanout 扇出超时 ({timeout:g}s)")
+            return NodeResult(status=NodeStatus.FAILED, error=f"coordinator_fanout fan-out timed out ({timeout:g}s)")
         except ImportError as e:
             return NodeResult(status=NodeStatus.FAILED, error=str(e))
-        # harness SubagentResult: completed=正常结束, capped=预算/轮次违规, failed=异常
+        # harness SubagentResult: completed=normal finish, capped=budget/turn violation, failed=exception
         failed = [r for r in raw if r["status"] != "completed"]
-        logger.info(f"coordinator_fanout 完成: total={len(raw)} failed={len(failed)}")
+        logger.info(f"coordinator_fanout finished: total={len(raw)} failed={len(failed)}")
         data = {"results": raw, "total": len(raw), "failed": len(failed)}
         if failed and not bool(params.get("allow_partial", False)):
             names = ",".join(r["name"] for r in failed)
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"{len(failed)}/{len(raw)} worker 失败: {names}",
+                error=f"{len(failed)}/{len(raw)} workers failed: {names}",
                 data=data,
             )
-        return NodeResult(status=NodeStatus.SUCCESS, data=data, summary=f"{len(raw)} worker 完成 ({len(failed)} 失败)")
+        return NodeResult(status=NodeStatus.SUCCESS, data=data, summary=f"{len(raw)} workers finished ({len(failed)} failed)")
 
 
 @register_node
 class SessionForkNode(BaseNode):
-    """会话分叉节点 — 波边界 fork 出并行子分支 (各自 session id), 本节点汇聚。"""
+    """Session fork node — fork parallel child branches (own session ids) at a wave boundary, gathered by this node."""
 
     name = "session_fork"
+    # i18n: user-facing
     display_name = "会话分叉"
     category = NodeCategory.FUSION_ECOSYSTEM
     description = "Fork the parent session into parallel child branches (own session ids), gather at this merge node"
     icon = "🍴"
+    # i18n: user-facing
     default_label = "会话分叉"
 
     inputs = [
+        # i18n: user-facing
         {"key": "branches", "label": "分支规格列表", "type": "array"},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "parent_session", "label": "父 session id", "type": "string"},
+        # i18n: user-facing
         {"key": "branches", "label": "分支结果映射", "type": "object"},
+        # i18n: user-facing
         {"key": "gathered", "label": "是否已汇聚", "type": "boolean"},
     ]
 
@@ -211,9 +227,12 @@ class SessionForkNode(BaseNode):
             "properties": {
                 "branches": {
                     "type": "array",
+                    # i18n: user-facing
                     "description": "分支规格 [{name, node, params?}] — node 为已注册节点名",
                 },
+                # i18n: user-facing
                 "allow_partial": {"type": "boolean", "description": "部分分支失败不整体 FAILED", "default": False},
+                # i18n: user-facing
                 "timeout": {"type": "number", "description": "分叉超时秒数 (0 = 不限)", "default": _DEFAULT_TIMEOUT},
             },
             "required": ["branches"],
@@ -223,7 +242,7 @@ class SessionForkNode(BaseNode):
         params = getattr(self.config, "params", {}) or {}
         branches = params.get("branches") or inputs.get("branches")
         if not isinstance(branches, list) or not branches:
-            return NodeResult(status=NodeStatus.FAILED, error="session_fork 参数 branches 必填 (非空数组)")
+            return NodeResult(status=NodeStatus.FAILED, error="session_fork param branches is required (non-empty array)")
         parent = _parent_session_id()
 
         async def run_branch(spec_dict: Dict[str, Any], idx: int) -> tuple:
@@ -232,10 +251,10 @@ class SessionForkNode(BaseNode):
             try:
                 node_name = str(spec_dict.get("node") or "")
                 if not node_name:
-                    raise ValueError(f"分支 '{name}' 缺 node")
+                    raise ValueError(f"branch '{name}' missing node")
                 node = NodeRegistry.create(node_name, config=NodeConfig(params=dict(spec_dict.get("params") or {})))
                 if node is None:
-                    raise ValueError(f"分支 '{name}' 的节点 '{node_name}' 未注册")
+                    raise ValueError(f"branch '{name}' node '{node_name}' is not registered")
                 res = await node.execute({"session_id": child_sid, "parent_session": parent, "branch": name})
                 return name, child_sid, res
             except Exception as e:
@@ -246,7 +265,7 @@ class SessionForkNode(BaseNode):
             timeout = float(params.get("timeout", _DEFAULT_TIMEOUT) or 0)
         except (TypeError, ValueError):
             timeout = _DEFAULT_TIMEOUT
-        logger.info(f"session_fork 开始: parent={parent} branches={len(branches)}")
+        logger.info(f"session_fork start: parent={parent} branches={len(branches)}")
         try:
             if timeout > 0:
                 raw = await asyncio.wait_for(
@@ -255,7 +274,7 @@ class SessionForkNode(BaseNode):
             else:
                 raw = list(await asyncio.gather(*(run_branch(b, i) for i, b in enumerate(branches))))
         except TimeoutError:
-            return NodeResult(status=NodeStatus.FAILED, error=f"session_fork 分叉超时 ({timeout:g}s)")
+            return NodeResult(status=NodeStatus.FAILED, error=f"session_fork fork timed out ({timeout:g}s)")
         branch_out: Dict[str, Any] = {}
         failed_names: List[str] = []
         for name, child_sid, res in raw:
@@ -268,16 +287,16 @@ class SessionForkNode(BaseNode):
             }
             if status != "success":
                 failed_names.append(name)
-        logger.info(f"session_fork 汇聚完成: parent={parent} branches={len(branch_out)} failed={len(failed_names)}")
+        logger.info(f"session_fork gather finished: parent={parent} branches={len(branch_out)} failed={len(failed_names)}")
         data = {"parent_session": parent, "branches": branch_out, "gathered": True}
         if failed_names and not bool(params.get("allow_partial", False)):
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"{len(failed_names)}/{len(branch_out)} 分支失败: {','.join(failed_names)}",
+                error=f"{len(failed_names)}/{len(branch_out)} branches failed: {','.join(failed_names)}",
                 data=data,
             )
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data=data,
-            summary=f"{len(branch_out)} 分支汇聚完成 ({len(failed_names)} 失败)",
+            summary=f"{len(branch_out)} branches gathered ({len(failed_names)} failed)",
         )

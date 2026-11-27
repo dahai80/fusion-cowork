@@ -138,60 +138,88 @@ function parseHash(): { route: Route; arg: string } {
 function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
     switch (r) {
         case 'home':
+            // i18n: user-facing
             return t('首页', 'Home');
         case 'workflows':
+            // i18n: user-facing
             return t('工作流', 'Workflows');
         case 'delegate':
+            // i18n: user-facing
             return t('委托', 'Delegate');
         case 'runs':
+            // i18n: user-facing
             return t('运行', 'Runs');
         case 'sessions':
+            // i18n: user-facing
             return t('会话', 'Sessions');
         case 'spaces':
+            // i18n: user-facing
             return t('空间', 'Spaces');
         case 'schedule':
+            // i18n: user-facing
             return t('调度', 'Schedule');
         case 'templates':
+            // i18n: user-facing
             return t('模板', 'Templates');
         case 'nodes':
+            // i18n: user-facing
             return t('节点', 'Nodes');
         case 'canvas':
+            // i18n: user-facing
             return t('画布', 'Canvas');
         case 'plugins':
+            // i18n: user-facing
             return t('插件', 'Plugins');
         case 'approvals':
+            // i18n: user-facing
             return t('审批', 'Approvals');
         case 'cluster':
+            // i18n: user-facing
             return t('集群', 'Cluster');
         case 'usage':
+            // i18n: user-facing
             return t('用量', 'Usage');
         case 'admin':
+            // i18n: user-facing
             return t('管理', 'Admin');
         case 'skills':
+            // i18n: user-facing
             return t('技能', 'Skills');
         case 'extensions':
+            // i18n: user-facing
             return t('扩展', 'Extensions');
         case 'wizard':
+            // i18n: user-facing
             return t('Onboarding 向导', 'Onboarding Wizard');
         case 'permissions':
+            // i18n: user-facing
             return t('权限规则', 'Permissions');
         case 'benchmark':
+            // i18n: user-facing
             return t('基准测试', 'Benchmark');
         case 'system':
+            // i18n: user-facing
             return t('系统', 'System');
         case 'team':
+            // i18n: user-facing
             return t('团队', 'Team');
         case 'voice':
+            // i18n: user-facing
             return t('语音', 'Voice');
         case 'governance':
+            // i18n: user-facing
             return t('治理', 'Governance');
         case 'pipeline':
+            // i18n: user-facing
             return t('交付管线', 'Pipeline');
         case 'demand':
+            // i18n: user-facing
             return t('需求引擎', 'Demand');
         case 'capabilities':
+            // i18n: user-facing
             return t('能力市场', 'Capabilities');
         case 'm':
+            // i18n: user-facing
             return t('移动端', 'Mobile');
     }
 }
@@ -222,7 +250,9 @@ export function App() {
                     <div className="text-sm font-medium">Fusion Cowork</div>
                     <div className="flex items-center gap-2">
                         <select
+                            // i18n: user-facing
                             aria-label={t('模型', 'Model')}
+                            // i18n: user-facing
                             title={models.error ? t('模型列表不可用', 'Models unavailable') : undefined}
                             className="rounded-md border border-border bg-bg px-2 py-1 text-xs text-text-primary"
                             value={model}
@@ -231,6 +261,7 @@ export function App() {
                                 setPreferredModel(e.target.value);
                             }}
                         >
+                            {/* i18n: user-facing */}
                             <option value="">{t('默认模型', 'Default model')}</option>
                             {model && !(models.data?.models ?? []).some((m) => m.id === model) ? (
                                 <option value={model}>{model}</option>

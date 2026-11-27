@@ -1,10 +1,10 @@
-"""增强任务调度器 — Cron UI 可视化调度面板 + 任务持久化 + 日历视图。
+"""Enhanced task scheduler — Cron UI visual scheduling panel + task persistence + calendar view.
 
-V0.2 特性：
-- 可视化 Cron 调度面板（通过 fusion://automation/ 渲染）
-- 任务日历视图
-- 任务执行历史统计
-- 任务依赖关系编排
+V0.2 features:
+- Visual Cron scheduling panel (rendered via fusion://automation/)
+- Task calendar view
+- Task execution history statistics
+- Task dependency orchestration
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TaskExecution:
-    """任务执行记录。"""
+    """Task execution record."""
 
     task_id: str
     task_name: str
@@ -40,7 +40,7 @@ class TaskExecution:
 
 @dataclass
 class TaskDependency:
-    """任务依赖关系。"""
+    """Task dependency."""
 
     task_id: str
     depends_on: List[str] = field(default_factory=list)
@@ -48,14 +48,14 @@ class TaskDependency:
 
 
 class EnhancedScheduler:
-    """增强调度器 — 在 TaskScheduler 基础上增加可视化和管理能力。
+    """Enhanced scheduler — adds visualization and management on top of TaskScheduler.
 
-    支持：
-    - 任务日历视图数据
-    - 任务执行历史
-    - 任务依赖编排
-    - 统计报表
-    - 持久化到 JSON
+    Supports:
+    - Task calendar view data
+    - Task execution history
+    - Task dependency orchestration
+    - Statistics reports
+    - JSON persistence
     """
 
     def __init__(self, scheduler: TaskScheduler, store_path: str = ""):
@@ -63,11 +63,11 @@ class EnhancedScheduler:
         self._store_path = store_path or str(Path.home() / ".fusion-cowork" / "scheduler_history.json")
         self._executions: List[TaskExecution] = []
         self._dependencies: Dict[str, TaskDependency] = {}
-        # R-1: 执行记录上限, 超出丢最旧 (旧版只 append 不 trim, 内存 + 持久化膨胀)
+        # R-1: execution record cap, drop oldest beyond it (old version only appended without trim, memory + persistence bloat)
         self._max_executions = 500
         self._load_history()
 
-    # ── 任务执行记录 ──
+    # ── Task execution records ──
 
     def record_execution(
         self,
@@ -78,7 +78,7 @@ class EnhancedScheduler:
         error: str = "",
         tokens_used: int = 0,
     ) -> TaskExecution:
-        """记录任务执行。"""
+        """Record a task execution."""
         execution = TaskExecution(
             task_id=task_id,
             task_name=task_name,
@@ -89,24 +89,24 @@ class EnhancedScheduler:
             tokens_used=tokens_used,
         )
         self._executions.append(execution)
-        # R-1: 超上限丢最旧, 防 _executions 无界增长
+        # R-1: drop oldest beyond cap, prevents unbounded _executions growth
         if len(self._executions) > self._max_executions:
             self._executions = self._executions[-self._max_executions :]
-            logger.debug(f"enhanced_scheduler 执行记录超上限, 保留最近 {self._max_executions} 条")
+            logger.debug(f"enhanced_scheduler execution records over cap, keeping latest {self._max_executions}")
         self._save_history()
         return execution
 
     def complete_execution(self, execution: TaskExecution, status: str = "completed") -> None:
-        """完成任务执行记录。"""
+        """Complete a task execution record."""
         execution.completed_at = time.time()
         execution.status = status
         execution.duration_ms = (execution.completed_at - execution.started_at) * 1000
         self._save_history()
 
-    # ── 日历视图数据 ──
+    # ── Calendar view data ──
 
     def get_calendar_data(self, year: int, month: int) -> Dict[str, Any]:
-        """获取日历视图数据。"""
+        """Get calendar view data."""
         start = datetime(year, month, 1)
         if month == 12:
             end = datetime(year + 1, 1, 1)
@@ -118,7 +118,7 @@ class EnhancedScheduler:
 
         month_executions = [e for e in self._executions if start_ts <= e.started_at < end_ts]
 
-        # 按日期分组
+        # Group by day
         days = {}
         for e in month_executions:
             day = datetime.fromtimestamp(e.started_at).day
@@ -146,10 +146,10 @@ class EnhancedScheduler:
             "failed": sum(1 for e in month_executions if e.status == "failed"),
         }
 
-    # ── 统计报表 ──
+    # ── Statistics reports ──
 
     def get_stats(self, days: int = 7) -> Dict[str, Any]:
-        """获取调度统计。"""
+        """Get scheduling statistics."""
         cutoff = time.time() - days * 86400
         recent = [e for e in self._executions if e.started_at > cutoff]
 
@@ -158,7 +158,7 @@ class EnhancedScheduler:
             len([e for e in recent if e.duration_ms > 0]), 1
         )
 
-        # 按任务名分组
+        # Group by task name
         by_task = {}
         for e in recent:
             by_task.setdefault(e.task_name, {"total": 0, "success": 0, "failed": 0})
@@ -180,15 +180,15 @@ class EnhancedScheduler:
             "active_tasks": len(self._scheduler.list_active_tasks()),
         }
 
-    # ── 任务依赖编排 ──
+    # ── Task dependency orchestration ──
 
     def set_dependency(self, task_id: str, depends_on: List[str]) -> None:
-        """设置任务依赖。"""
+        """Set task dependencies."""
         dep = self._dependencies.setdefault(task_id, TaskDependency(task_id=task_id))
         dep.depends_on = depends_on
 
     def get_dependency_graph(self) -> Dict[str, Any]:
-        """获取依赖关系图（用于可视化）。"""
+        """Get dependency graph (for visualization)."""
         nodes = []
         edges = []
 
@@ -206,10 +206,10 @@ class EnhancedScheduler:
 
         return {"nodes": nodes, "edges": edges}
 
-    # ── 持久化 ──
+    # ── Persistence ──
 
     def _save_history(self) -> None:
-        # E-4: 原子写 — tmp+os.replace, 避免写一半崩溃留下半截 JSON 致 _load_history 解析失败。
+        # E-4: atomic write — tmp+os.replace, avoids a half-written JSON on crash breaking _load_history parsing.
         path = Path(self._store_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         data = [
@@ -224,7 +224,7 @@ class EnhancedScheduler:
                 "tokens_used": e.tokens_used,
                 "duration_ms": e.duration_ms,
             }
-            for e in self._executions[-1000:]  # 保留最近 1000 条
+            for e in self._executions[-1000:]  # keep latest 1000
         ]
         payload = json.dumps(data, ensure_ascii=False, indent=2)
         tmp = path.with_suffix(path.suffix + ".tmp")
@@ -237,24 +237,24 @@ class EnhancedScheduler:
                     tmp.unlink()
                 except OSError:
                     pass
-            logger.exception(f"调度历史原子写失败: {path}")
+            logger.exception(f"Failed atomic write of scheduling history: {path}")
             raise
 
     def _load_history(self) -> None:
-        """加载执行历史。"""
+        """Load execution history."""
         path = Path(self._store_path)
         if path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 self._executions = [TaskExecution(**item) for item in data]
             except Exception as e:
-                logger.warning(f"加载调度历史失败: {e}")
+                logger.warning(f"Failed to load scheduling history: {e}")
 
-    # ── Cron 表达式助手 ──
+    # ── Cron expression helpers ──
 
     @staticmethod
     def cron_description(expression: str) -> str:
-        """将 Cron 表达式转换为人类可读描述。"""
+        """Convert a Cron expression into a human-readable description."""
         parts = expression.strip().split()
         if len(parts) != 5:
             return expression
@@ -262,8 +262,8 @@ class EnhancedScheduler:
         minute, hour, day, month, weekday = parts
 
         def _safe_int(field_value: str) -> Optional[int]:
-            # R-5b: 旧版 int(weekday)/int(hour) 遇 */2、1,3、1-5 直接 ValueError 崩。
-            # 只解析纯整数字段, 复杂表达式回退原样 (不崩溃)。
+            # R-5b: old version crashed with ValueError on int(weekday)/int(hour) for */2, 1,3, 1-5.
+            # Parse only plain integer fields; complex expressions fall back verbatim (no crash).
             try:
                 return int(field_value)
             except ValueError:
@@ -271,34 +271,47 @@ class EnhancedScheduler:
 
         desc = []
         if weekday != "*":
+            # i18n: user-facing
             days = ["日", "一", "二", "三", "四", "五", "六"]
             wd = _safe_int(weekday)
             if wd is not None and 0 <= wd <= 6:
+                # i18n: user-facing
                 desc.append(f"每周{days[wd]}")
             else:
+                # i18n: user-facing
                 desc.append(f"每周{weekday}")
         if hour != "*":
             h = _safe_int(hour)
             if h is not None:
+                # i18n: user-facing
                 desc.append(f"每{hour}小时" if hour == "*/1" else f"{h:02d}:{minute.zfill(2)}")
             else:
                 desc.append(f"{hour}:{minute.zfill(2)}")
         if day != "*":
+            # i18n: user-facing
             desc.append(f"每月第{day}天")
         if minute == "0" and hour != "*":
+            # i18n: user-facing
             return " ".join(desc) if desc else "每小时"
 
         return " ".join(desc) if desc else expression
 
     @staticmethod
     def common_cron_expressions() -> List[Dict[str, str]]:
-        """返回常用 Cron 表达式列表。"""
+        """Return a list of common Cron expressions."""
         return [
+            # i18n: user-facing
             {"expr": "0 9 * * *", "label": "每天上午 9 点", "desc": "每日 09:00"},
+            # i18n: user-facing
             {"expr": "0 21 * * *", "label": "每天晚上 9 点", "desc": "每日 21:00"},
+            # i18n: user-facing
             {"expr": "0 */2 * * *", "label": "每 2 小时", "desc": "每 2 小时"},
+            # i18n: user-facing
             {"expr": "0 0 * * 1", "label": "每周一凌晨", "desc": "每周一 00:00"},
+            # i18n: user-facing
             {"expr": "0 0 1 * *", "label": "每月 1 号", "desc": "每月 1 日 00:00"},
+            # i18n: user-facing
             {"expr": "*/30 * * * *", "label": "每 30 分钟", "desc": "每 30 分钟"},
+            # i18n: user-facing
             {"expr": "0 9,21 * * *", "label": "每天早晚 9 点", "desc": "每日 09:00 和 21:00"},
         ]

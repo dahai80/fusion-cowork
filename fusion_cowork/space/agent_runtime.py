@@ -72,7 +72,7 @@ class SpaceAgentRuntime:
         if not await self._perm.check(space_id, operator_id, "manage_agents"):
             raise PermissionError(f"User {operator_id} cannot manage agents in space {space_id}")
         tid = resolve_tenant_id(tenant_id)
-        # A-8: 经 store 串行写事务, 加 tenant_id 守卫防跨租户删 agent。
+        # A-8: serialize the write through a store transaction, with a tenant_id guard to prevent cross-tenant agent deletion.
         async with self._store.write_tx(tid) as h:
             res = await h.exec(
                 "DELETE FROM space_agents WHERE id = ? AND space_id = ? AND tenant_id = ?",
@@ -131,7 +131,7 @@ class SpaceAgentRuntime:
         initial_message: str,
         model: str = "",
     ) -> List[Dict[str, Any]]:
-        """v2 方案二 (P1-6): delegate to the hardened SpaceChatService.relay_agents
+        """v2 plan B (P1-6): delegate to the hardened SpaceChatService.relay_agents
         instead of maintaining a second, weaker relay implementation (the old
         inline loop broke on first failure, had no parallel groups, no context
         trimming, and no optional-agent semantics). Return shape is compatible:

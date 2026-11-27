@@ -1,6 +1,6 @@
-"""移动推送通知包 — P2-5。
+"""Mobile push notification package — P2-5.
 
-跨平台移动推送 (Bark / ntfy), 未配置时降级到本地 macOS 通知。
+Cross-platform mobile push (Bark / ntfy), degrades to local macOS notification when unconfigured.
 """
 
 from .push import (

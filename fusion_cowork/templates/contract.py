@@ -152,7 +152,7 @@ def _seg_allowed(seg: str, producer: str, producer_node: Optional[Dict[str, Any]
             return None
     extra = sorted((entry or {}).get("extra") or ())
     available = sorted(top | set(extra))
-    return f"字段 '{seg}' 不在产出节点 '{producer}' 的输出契约中; 可用字段: {available}"
+    return f"field '{seg}' not in the output contract of producer node '{producer}'; available fields: {available}"
 
 
 def validate_template_placeholders(template: Dict[str, Any]) -> List[str]:
@@ -176,16 +176,16 @@ def validate_template_placeholders(template: Dict[str, Any]) -> List[str]:
                 if kind == "run_id":
                     continue
                 if not rest:
-                    errors.append(f"{where}: 占位符 ${{{kind}}} 缺少字段路径")
+                    errors.append(f"{where}: placeholder ${{{kind}}} is missing a field path")
                     continue
                 seg = rest.split(".")[0].split("[")[0].strip()
                 if kind == "param":
                     if seg not in param_names:
-                        errors.append(f"{where}: ${{param.{seg}}} 不在模板参数中; 可用参数: {sorted(param_names)}")
+                        errors.append(f"{where}: ${{param.{seg}}} not in template params; available params: {sorted(param_names)}")
                 elif kind == "step":
                     nid = rest.split(".")[0].split("[")[0].strip()
                     if nid not in nodes:
-                        errors.append(f"{where}: ${{step.{nid}}} 引用不存在的节点; 已有节点: {sorted(nodes)}")
+                        errors.append(f"{where}: ${{step.{nid}}} references a non-existent node; existing nodes: {sorted(nodes)}")
                         continue
                     sub = rest.split(".", 1)[1] if "." in rest else ""
                     if sub:
@@ -222,7 +222,7 @@ def validate_template_structure(template: Dict[str, Any]) -> List[str]:
 
         import_all_nodes()
     except Exception as e:
-        return [f"节点注册表不可用, 跳过结构校验: {e}"]
+        return [f"node registry unavailable, skipping structural validation: {e}"]
     workflow = template.get("workflow") or {}
     aliases = NODE_NAME_ALIASES or {}
     for n in workflow.get("nodes") or []:
@@ -230,9 +230,9 @@ def validate_template_structure(template: Dict[str, Any]) -> List[str]:
             continue
         name = str(n.get("name") or "")
         if not name:
-            errors.append(f"节点 {n.get('id')} 缺少 name")
+            errors.append(f"node {n.get('id')} is missing name")
             continue
         known = NodeRegistry.get(name) is not None or name in aliases
         if not known:
-            errors.append(f"节点 {n.get('id')} 引用未注册节点 '{name}'")
+            errors.append(f"node {n.get('id')} references unregistered node '{name}'")
     return errors

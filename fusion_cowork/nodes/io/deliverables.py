@@ -1,9 +1,11 @@
-"""Deliverables IO 节点 — Excel/PPT 交付物生成 (issue #151 #152)。
+"""Deliverables IO nodes — Excel/PPT deliverable generation (issue #151 #152).
 
-xlsx_write: openpyxl 多 sheet 工作簿, "=..." 字符串按公式写入, 表头样式 +
-条件格式。pptx_write: python-pptx 从 JSON spec 生成可编辑 deck (标题/内容/
-图表/表格), period_compare 自动生成环比变动页 (>threshold% 打标)。
-依赖 openpyxl / python-pptx (extra [office]), 缺失时显式失败不静默。
+xlsx_write: openpyxl multi-sheet workbook, "=..." strings written as formulas,
+header styling + conditional formatting. pptx_write: python-pptx generates an
+editable deck from a JSON spec (title/content/chart/table); period_compare
+auto-generates a period-over-period change slide (flags >threshold%).
+Depends on openpyxl / python-pptx (extra [office]); fails explicitly, never
+silently, when missing.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ _FLAG_FILL_HEX = "FFFFC7CE"
 def _resolve_output_path(scope_mgr, output_path: str, file_name: str, ext: str, overwrite: bool):
     out_dir = Path(output_path).expanduser()
     if not scope_mgr.ensure_allowed(out_dir):
-        return None, f"沙箱拒绝越界写入: {out_dir}"
+        return None, f"sandbox blocked out-of-scope write: {out_dir}"
     out_dir.mkdir(parents=True, exist_ok=True)
     date_str = time.strftime("%Y%m%d_%H%M%S")
     actual_name = file_name.replace("{date}", date_str)
@@ -39,7 +41,7 @@ def _resolve_output_path(scope_mgr, output_path: str, file_name: str, ext: str, 
     if out_path.exists() and not overwrite:
         out_path = out_dir / f"{actual_name}_{int(time.time())}{ext}"
     if not scope_mgr.ensure_allowed(out_path):
-        return None, f"沙箱拒绝越界写入: {out_path}"
+        return None, f"sandbox blocked out-of-scope write: {out_path}"
     return out_path, ""
 
 
@@ -52,28 +54,36 @@ def _parse_spec(node: BaseNode, inputs: Dict[str, Any], spec_key: str = "spec") 
     try:
         return json.loads(raw)
     except (json.JSONDecodeError, TypeError) as e:
-        logger.warning(f"spec JSON 解析失败: {e}")
+        logger.warning(f"spec JSON parse failed: {e}")
         return None
 
 
 @register_node
 class XlsxWriteNode(BaseNode):
-    """xlsx_write — 生成多 sheet Excel 工作簿 (公式/条件格式/表头样式)。"""
+    """xlsx_write — generate a multi-sheet Excel workbook (formulas/conditional formatting/header styling)."""
 
     name = "xlsx_write"
+    # i18n: user-facing
     display_name = "写入Excel"
     category = NodeCategory.IO
+    # i18n: user-facing
     description = "从 JSON spec 生成 Excel 工作簿: 多 sheet、公式、条件格式、表头样式"
     icon = "📊"
+    # i18n: user-facing
     default_label = "写入Excel"
 
     inputs = [
+        # i18n: user-facing
         {"key": "spec", "label": "工作簿 Spec", "type": "object", "optional": True},
+        # i18n: user-facing
         {"key": "output_path", "label": "输出目录", "type": "string", "optional": True},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "file_path", "label": "输出文件路径", "type": "string"},
+        # i18n: user-facing
         {"key": "sheet_count", "label": "Sheet 数", "type": "integer"},
+        # i18n: user-facing
         {"key": "row_count", "label": "数据行数", "type": "integer"},
     ]
 
@@ -81,9 +91,12 @@ class XlsxWriteNode(BaseNode):
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "output_path": {"type": "string", "default": "~/Desktop/Output", "description": "输出目录"},
+                # i18n: user-facing
                 "file_name": {"type": "string", "default": "workbook_{date}", "description": "文件名（不含扩展名）"},
                 "overwrite": {"type": "boolean", "default": False},
+                # i18n: user-facing
                 "spec": {"type": "string", "description": "工作簿 spec JSON（也可由上游输入）"},
             },
         }
@@ -97,14 +110,14 @@ class XlsxWriteNode(BaseNode):
         except ImportError as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"缺少依赖 openpyxl ({e}) — 安装: pip install -e '.[office]'",
-                summary="xlsx_write 依赖缺失",
+                error=f"missing dependency openpyxl ({e}) — install: pip install -e '.[office]'",
+                summary="xlsx_write dependency missing",
             )
 
         params = self.config.params
         spec = _parse_spec(self, inputs)
         if not isinstance(spec, dict) or not (spec.get("sheets") or []):
-            return NodeResult(status=NodeStatus.FAILED, error="spec 缺失或无 sheets 定义")
+            return NodeResult(status=NodeStatus.FAILED, error="spec missing or has no sheets definition")
 
         from ...security import get_scoped_folder_manager
 
@@ -117,7 +130,7 @@ class XlsxWriteNode(BaseNode):
             params.get("overwrite", False),
         )
         if out_path is None:
-            return NodeResult(status=NodeStatus.FAILED, error=err, summary="授权文件夹外路径被拦截")
+            return NodeResult(status=NodeStatus.FAILED, error=err, summary="path outside authorized folders was blocked")
 
         _OP_MAP = {
             ">": "greaterThan",
@@ -149,7 +162,7 @@ class XlsxWriteNode(BaseNode):
                             cell.alignment = Alignment(horizontal="center")
                         ws.freeze_panes = "A2"
                 for row in rows:
-                    # "=..." 字符串由 openpyxl 原生按公式写入 (打开时重算)
+                    # "=..." strings are written natively as formulas by openpyxl (recalculated on open)
                     ws.append(row)
                 total_rows += len(rows)
                 widths = sheet_spec.get("column_widths") or []
@@ -171,10 +184,10 @@ class XlsxWriteNode(BaseNode):
                 wb.active = wb.sheetnames.index(spec["active_sheet"])
             wb.save(out_path)
         except Exception as e:
-            logger.error(f"xlsx_write 写入失败: {e}")
-            return NodeResult(status=NodeStatus.FAILED, error=f"工作簿写入失败: {e}", summary="写入失败")
+            logger.error(f"xlsx_write write failed: {e}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"workbook write failed: {e}", summary="write failed")
 
-        logger.info(f"xlsx_write 完成: {out_path} ({len(wb.sheetnames)} sheets, {total_rows} rows)")
+        logger.info(f"xlsx_write finished: {out_path} ({len(wb.sheetnames)} sheets, {total_rows} rows)")
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={
@@ -183,7 +196,7 @@ class XlsxWriteNode(BaseNode):
                 "row_count": total_rows,
                 "size": out_path.stat().st_size,
             },
-            summary=f"已生成 {out_path.name} ({len(wb.sheetnames)} sheets, {total_rows} 行)",
+            summary=f"generated {out_path.name} ({len(wb.sheetnames)} sheets, {total_rows} rows)",
         )
 
 
@@ -201,21 +214,28 @@ _PPT_LAYOUT_BLANK = 6
 
 @register_node
 class PptxWriteNode(BaseNode):
-    """pptx_write — 从 JSON spec 生成 PowerPoint deck (标题/内容/图表/表格 + 环比变动页)。"""
+    """pptx_write — generate a PowerPoint deck from a JSON spec (title/content/chart/table + period-over-period change slides)."""
 
     name = "pptx_write"
+    # i18n: user-facing
     display_name = "写入PPT"
     category = NodeCategory.IO
+    # i18n: user-facing
     description = "从 JSON spec 生成可编辑 PPT: 标题/内容/图表/表格版式, 支持环比变动自动打标"
     icon = "📽️"
+    # i18n: user-facing
     default_label = "写入PPT"
 
     inputs = [
+        # i18n: user-facing
         {"key": "spec", "label": "Deck Spec", "type": "object", "optional": True},
+        # i18n: user-facing
         {"key": "output_path", "label": "输出目录", "type": "string", "optional": True},
     ]
     outputs = [
+        # i18n: user-facing
         {"key": "file_path", "label": "输出文件路径", "type": "string"},
+        # i18n: user-facing
         {"key": "slide_count", "label": "页数", "type": "integer"},
     ]
 
@@ -223,20 +243,26 @@ class PptxWriteNode(BaseNode):
         return {
             "type": "object",
             "properties": {
+                # i18n: user-facing
                 "output_path": {"type": "string", "default": "~/Desktop/Output", "description": "输出目录"},
+                # i18n: user-facing
                 "file_name": {"type": "string", "default": "deck_{date}", "description": "文件名（不含扩展名）"},
                 "overwrite": {"type": "boolean", "default": False},
+                # i18n: user-facing
                 "spec": {"type": "string", "description": "Deck spec JSON（也可由上游输入）"},
             },
         }
 
     def _period_compare_slides(self, cmp_spec: Dict[str, Any]) -> List[Dict[str, Any]]:
+        # i18n: user-facing
         metric = str(cmp_spec.get("metric", "指标"))
         categories = cmp_spec.get("categories") or []
         current = cmp_spec.get("current") or []
         previous = cmp_spec.get("previous") or []
         threshold = float(cmp_spec.get("threshold_pct", 10))
+        # i18n: user-facing
         title = str(cmp_spec.get("title", f"环比变动 (>{threshold:g}% 打标)"))
+        # i18n: user-facing
         headers = [metric, "上期", "本期", "变动%", "标记"]
         rows: List[List[Any]] = []
         for idx, cat in enumerate(categories):
@@ -246,6 +272,7 @@ class PptxWriteNode(BaseNode):
                 rows.append([cat, prev, cur, "", ""])
                 continue
             pct = (cur - prev) / abs(prev) * 100
+            # i18n: user-facing
             rows.append([cat, prev, cur, round(pct, 1), "⚠️ 超阈值" if abs(pct) > threshold else ""])
         return [
             {
@@ -267,20 +294,20 @@ class PptxWriteNode(BaseNode):
         except ImportError as e:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"缺少依赖 python-pptx ({e}) — 安装: pip install -e '.[office]'",
-                summary="pptx_write 依赖缺失",
+                error=f"missing dependency python-pptx ({e}) — install: pip install -e '.[office]'",
+                summary="pptx_write dependency missing",
             )
 
         params = self.config.params
         spec = _parse_spec(self, inputs)
         if not isinstance(spec, dict):
-            return NodeResult(status=NodeStatus.FAILED, error="spec 缺失或非法（需 JSON 对象）")
+            return NodeResult(status=NodeStatus.FAILED, error="spec missing or invalid (JSON object required)")
 
         slides: List[Dict[str, Any]] = list(spec.get("slides") or [])
         if isinstance(spec.get("period_compare"), dict):
             slides.extend(self._period_compare_slides(spec["period_compare"]))
         if not slides:
-            return NodeResult(status=NodeStatus.FAILED, error="spec 无 slides 定义")
+            return NodeResult(status=NodeStatus.FAILED, error="spec has no slides definition")
         deck_title = str(spec.get("title") or "")
 
         from ...security import get_scoped_folder_manager
@@ -294,7 +321,7 @@ class PptxWriteNode(BaseNode):
             params.get("overwrite", False),
         )
         if out_path is None:
-            return NodeResult(status=NodeStatus.FAILED, error=err, summary="授权文件夹外路径被拦截")
+            return NodeResult(status=NodeStatus.FAILED, error=err, summary="path outside authorized folders was blocked")
 
         prs = Presentation()
         try:
@@ -358,12 +385,12 @@ class PptxWriteNode(BaseNode):
                         para.font.size = Pt(18)
             prs.save(out_path)
         except Exception as e:
-            logger.error(f"pptx_write 写入失败: {e}")
-            return NodeResult(status=NodeStatus.FAILED, error=f"PPT 写入失败: {e}", summary="写入失败")
+            logger.error(f"pptx_write write failed: {e}")
+            return NodeResult(status=NodeStatus.FAILED, error=f"PPT write failed: {e}", summary="write failed")
 
-        logger.info(f"pptx_write 完成: {out_path} ({len(prs.slides)} slides)")
+        logger.info(f"pptx_write finished: {out_path} ({len(prs.slides)} slides)")
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"file_path": str(out_path), "slide_count": len(prs.slides), "size": out_path.stat().st_size},
-            summary=f"已生成 {out_path.name} ({len(prs.slides)} 页)",
+            summary=f"generated {out_path.name} ({len(prs.slides)} slides)",
         )

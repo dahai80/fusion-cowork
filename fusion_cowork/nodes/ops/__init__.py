@@ -1,3 +1,3 @@
-"""issue #262: 官方通用节点库 (ops) — agent/github/取证/webhook/审批闸门/历史项目比对。"""
+"""issue #262: official generic node library (ops) — agent/github/evidence/webhook/approval gate/historical project match."""
 
 from . import match_node, ops_nodes  # noqa: F401

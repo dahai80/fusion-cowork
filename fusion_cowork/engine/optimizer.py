@@ -1,10 +1,10 @@
-"""AI 工作流优化器 — 通过 fusion-mlx 分析工作流执行数据并自动优化。
+"""AI workflow optimizer — analyzes workflow execution data via fusion-mlx and optimizes automatically.
 
-V0.2 特性：
-- 工作流执行分析（瓶颈检测、耗时分布）
-- 自动参数调优（batch_size、并行度、超时）
-- 节点重新排序优化
-- 优化建议生成
+V0.2 features:
+- Workflow execution analysis (bottleneck detection, duration distribution)
+- Automatic parameter tuning (batch_size, parallelism, timeout)
+- Node reordering optimization
+- Optimization suggestion generation
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class OptimizationSuggestion:
-    """优化建议。"""
+    """Optimization suggestion."""
 
     category: str  # performance | memory | parallelism | configuration
     severity: str  # critical | warning | info
@@ -35,7 +35,7 @@ class OptimizationSuggestion:
 
 @dataclass
 class WorkflowAnalysis:
-    """工作流分析结果。"""
+    """Workflow analysis result."""
 
     workflow_name: str
     total_executions: int
@@ -46,18 +46,18 @@ class WorkflowAnalysis:
 
 
 class WorkflowOptimizer:
-    """工作流优化器 — 分析和优化工作流执行。
+    """Workflow optimizer — analyzes and optimizes workflow execution.
 
-    通过 fusion-mlx 分析执行日志，自动发现瓶颈并生成优化建议。
+    Analyzes execution logs via fusion-mlx to automatically find bottlenecks and generate optimization suggestions.
     """
 
     def __init__(self, mlx_client: Optional[FusionMLXClient] = None):
         self.mlx = mlx_client or FusionMLXClient()
 
-    # ── 工作流分析 ──
+    # ── Workflow analysis ──
 
     def analyze_workflow(self, execution_history: List[Dict]) -> WorkflowAnalysis:
-        """分析工作流执行历史，生成优化建议。"""
+        """Analyze workflow execution history and generate optimization suggestions."""
         if not execution_history:
             return WorkflowAnalysis(
                 workflow_name="unknown",
@@ -68,19 +68,19 @@ class WorkflowOptimizer:
                 score=100.0,
             )
 
-        # 计算基本统计
+        # Compute basic statistics
         total_execs = len(execution_history)
         durations = [e.get("total_time", 0) for e in execution_history]
         avg_duration = sum(durations) / max(len(durations), 1)
 
-        # 分析节点耗时
+        # Analyze node durations
         node_stats = self._analyze_nodes(execution_history)
         bottleneck_nodes = self._find_bottlenecks(node_stats)
 
-        # 生成优化建议
+        # Generate optimization suggestions
         suggestions = self._generate_suggestions(node_stats, avg_duration, total_execs)
 
-        # 综合评分
+        # Overall score
         score = self._calculate_score(node_stats, suggestions)
 
         workflow_name = execution_history[0].get("workflow_name", "unknown")
@@ -95,7 +95,7 @@ class WorkflowOptimizer:
         )
 
     def _analyze_nodes(self, history: List[Dict]) -> Dict[str, Dict[str, float]]:
-        """分析每个节点的执行统计。"""
+        """Analyze per-node execution statistics."""
         node_stats: Dict[str, Dict[str, float]] = {}
 
         for execution in history:
@@ -121,7 +121,7 @@ class WorkflowOptimizer:
                 if status == "failed":
                     stats["failures"] += 1
 
-        # 计算平均值
+        # Compute averages
         for name, stats in node_stats.items():
             stats["avg_time"] = stats["total_time"] / max(stats["count"], 1)
             stats["failure_rate"] = stats["failures"] / max(stats["count"], 1) * 100
@@ -129,11 +129,11 @@ class WorkflowOptimizer:
         return node_stats
 
     def _find_bottlenecks(self, node_stats: Dict[str, Dict]) -> List[Dict[str, Any]]:
-        """找出瓶颈节点。"""
+        """Find bottleneck nodes."""
         if not node_stats:
             return []
 
-        # 按平均耗时排序
+        # Sort by average duration
         sorted_nodes = sorted(
             node_stats.items(),
             key=lambda x: x[1]["avg_time"],
@@ -160,10 +160,10 @@ class WorkflowOptimizer:
         avg_duration: float,
         total_execs: int,
     ) -> List[OptimizationSuggestion]:
-        """生成优化建议。"""
+        """Generate optimization suggestions."""
         suggestions = []
 
-        # 检查瓶颈节点
+        # Check bottleneck nodes
         bottlenecks = self._find_bottlenecks(node_stats)
         for b in bottlenecks:
             if b["avg_time"] > avg_duration * 0.5:
@@ -171,55 +171,73 @@ class WorkflowOptimizer:
                     OptimizationSuggestion(
                         category="performance",
                         severity="warning",
+                        # i18n: user-facing
                         title=f"节点 '{b['name']}' 是性能瓶颈",
+                        # i18n: user-facing
                         description=f"平均耗时 {b['avg_time']:.2f}s，占总执行时间 {b['avg_time'] / max(avg_duration, 0.001) * 100:.0f}%",
                         current_value=f"{b['avg_time']:.2f}s",
+                        # i18n: user-facing
                         suggested_value=f"目标 < {avg_duration * 0.3:.2f}s",
+                        # i18n: user-facing
                         expected_improvement="预计可提升 30-50%",
                         auto_fix=False,
                     )
                 )
 
-        # 检查失败率
+        # Check failure rate
         for name, stats in node_stats.items():
             if stats["failure_rate"] > 10:
                 suggestions.append(
                     OptimizationSuggestion(
                         category="reliability",
                         severity="critical" if stats["failure_rate"] > 30 else "warning",
+                        # i18n: user-facing
                         title=f"节点 '{name}' 失败率过高",
+                        # i18n: user-facing
                         description=f"失败率 {stats['failure_rate']:.0f}% ({stats['failures']}/{stats['count']})",
                         current_value=f"{stats['failure_rate']:.0f}%",
+                        # i18n: user-facing
                         suggested_value="目标 < 5%",
+                        # i18n: user-facing
                         expected_improvement="建议启用 continue_on_error",
                         auto_fix=True,
                     )
                 )
 
-        # 检查并行度
+        # Check parallelism
         if total_execs > 10 and avg_duration > 5:
             suggestions.append(
                 OptimizationSuggestion(
                     category="parallelism",
                     severity="info",
+                    # i18n: user-facing
                     title="考虑增加并行度",
+                    # i18n: user-facing
                     description="工作流包含独立节点，可并行执行减少总耗时",
+                    # i18n: user-facing
                     current_value="串行执行",
+                    # i18n: user-facing
                     suggested_value="并行执行独立节点",
+                    # i18n: user-facing
                     expected_improvement="预计可节省 40-60% 时间",
                     auto_fix=False,
                 )
             )
 
-        # 通用优化
+        # Generic optimization
         suggestions.append(
             OptimizationSuggestion(
                 category="configuration",
                 severity="info",
+                # i18n: user-facing
                 title="启用 dry_run 预览模式",
+                # i18n: user-facing
                 description="执行前使用 dry_run 预览可避免误操作",
+                # i18n: user-facing
                 current_value="直接执行",
+                # i18n: user-facing
                 suggested_value="先 dry_run 预览",
+                # i18n: user-facing
                 expected_improvement="提高操作安全性",
                 auto_fix=True,
             )
@@ -228,10 +246,10 @@ class WorkflowOptimizer:
         return suggestions
 
     def _calculate_score(self, node_stats: Dict[str, Dict], suggestions: List) -> float:
-        """计算综合评分 (0-100)。"""
+        """Compute overall score (0-100)."""
         score = 100.0
 
-        # 根据建议扣分
+        # Deduct per suggestion
         for s in suggestions:
             if s.severity == "critical":
                 score -= 20
@@ -240,45 +258,45 @@ class WorkflowOptimizer:
             elif s.severity == "info":
                 score -= 3
 
-        # 根据失败率扣分
+        # Deduct per failure rate
         for name, stats in node_stats.items():
             if stats["failure_rate"] > 0:
                 score -= stats["failure_rate"] * 0.3
 
         return max(0, min(100, score))
 
-    # ── AI 优化建议（通过 fusion-mlx） ──
+    # ── AI optimization suggestions (via fusion-mlx) ──
 
     async def ai_optimize(
         self,
         workflow_config: Dict[str, Any],
         execution_history: List[Dict],
     ) -> str:
-        """使用 fusion-mlx 生成 AI 优化建议。"""
+        """Generate AI optimization suggestions via fusion-mlx."""
         analysis = self.analyze_workflow(execution_history)
 
-        prompt = f"""分析以下工作流配置和执行数据，给出优化建议：
+        prompt = f"""Analyze the following workflow configuration and execution data and provide optimization suggestions:
 
-工作流配置:
+Workflow configuration:
 {json.dumps(workflow_config, ensure_ascii=False, indent=2)}
 
-执行统计:
-- 总执行次数: {analysis.total_executions}
-- 平均耗时: {analysis.avg_duration:.2f}s
-- 综合评分: {analysis.score:.1f}/100
+Execution statistics:
+- Total executions: {analysis.total_executions}
+- Average duration: {analysis.avg_duration:.2f}s
+- Overall score: {analysis.score:.1f}/100
 
-瓶颈节点:
+Bottleneck nodes:
 {json.dumps(analysis.bottleneck_nodes, ensure_ascii=False, indent=2)}
 
-请给出具体的优化建议，包括：
-1. 参数调整建议
-2. 节点顺序优化
-3. 并行度优化
-4. 预期效果
+Please provide concrete optimization suggestions, including:
+1. Parameter tuning suggestions
+2. Node ordering optimization
+3. Parallelism optimization
+4. Expected impact
 """
 
         messages = [
-            {"role": "system", "content": "你是一个工作流优化专家。分析工作流执行数据，给出具体的优化建议。"},
+            {"role": "system", "content": "You are a workflow optimization expert. Analyze workflow execution data and provide concrete optimization suggestions."},
             {"role": "user", "content": prompt},
         ]
 
@@ -291,20 +309,20 @@ class WorkflowOptimizer:
             )
             return response.content
         except Exception as e:
-            logger.error(f"AI 优化失败: {e}")
-            return f"AI 优化不可用: {e}"
+            logger.error(f"AI optimization failed: {e}")
+            return f"AI optimization unavailable: {e}"
 
-    # ── 自动修复 ──
+    # ── Auto-fix ──
 
     def auto_fix(self, workflow_config: Dict[str, Any]) -> Dict[str, Any]:
-        """自动修复可自动修复的问题。"""
+        """Auto-fix issues that can be fixed automatically."""
         fixed = dict(workflow_config)
 
-        # 启用 continue_on_error
+        # Enable continue_on_error
         for node in fixed.get("nodes", []):
             config = node.get("config", {})
             params = config.get("params", {})
-            # 如果有失败率高的节点，自动启用 continue_on_error
+            # Auto-enable continue_on_error for nodes with high failure rates
             if params.get("continue_on_error") is None:
                 params["continue_on_error"] = True
                 config["params"] = params

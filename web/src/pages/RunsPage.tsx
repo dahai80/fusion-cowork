@@ -23,8 +23,8 @@ function fmtTime(ts: number | null | undefined, lang: 'zh' | 'en'): string {
     return new Date(ts * 1000).toLocaleString(lang === 'en' ? 'en-US' : 'zh-CN');
 }
 
-// issue #187: HITL 超时倒计时 (服务端 hitl_deadline, 到点自动拒绝)
-// issue #224: 导出供 RunViewPage 复用
+// issue #187: HITL timeout countdown (server-side hitl_deadline, auto-denies on expiry)
+// issue #224: exported for RunViewPage reuse
 export function HitlCountdown({ deadline }: { deadline: number }) {
     const [now, setNow] = useState(Math.floor(Date.now() / 1000));
     useEffect(() => {
@@ -68,6 +68,7 @@ export function RunsPage() {
             setReloadKey((k) => k + 1);
         } catch (e) {
             console.error('[cowork-web] cancel failed', e);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('取消失败', 'Cancel failed') });
         }
     }
@@ -79,6 +80,7 @@ export function RunsPage() {
             setReloadKey((k) => k + 1);
         } catch (e) {
             console.error('[cowork-web] pause failed', e);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('暂停失败', 'Pause failed') });
         }
     }
@@ -89,6 +91,7 @@ export function RunsPage() {
             setReloadKey((k) => k + 1);
         } catch (e) {
             console.error('[cowork-web] resume failed', e);
+            // i18n: user-facing
             sdk.toast.show({ level: 'error', message: t('恢复失败', 'Resume failed') });
         }
     }
@@ -98,6 +101,7 @@ export function RunsPage() {
         return (
             <ErrorState
                 message={error.message}
+                // i18n: user-facing
                 retryLabel={t('重试', 'Retry')}
                 onRetry={manualRetry}
                 retrying={attempt > 0 ? attempt : undefined}
@@ -110,8 +114,10 @@ export function RunsPage() {
         <div className="flex flex-col gap-4">
             <div className="flex items-end justify-between">
                 <div>
+                    {/* i18n: user-facing */}
                     <div className="text-lg font-medium text-text-primary">{t('运行记录', 'Runs')}</div>
                     <div className="text-xs text-text-muted">
+                        {/* i18n: user-facing */}
                         {t('工作流运行状态与步骤结果', 'Workflow run status and step results')}
                     </div>
                 </div>
@@ -120,6 +126,7 @@ export function RunsPage() {
                     value={statusFilter}
                     onChange={(e) => setStatusFilter(e.target.value)}
                 >
+                    {/* i18n: user-facing */}
                     <option value="">{t('全部状态', 'All statuses')}</option>
                     {['running', 'pending', 'paused', 'completed', 'completed_with_denials', 'failed', 'cancelled'].map(
                         (s) => (
@@ -138,15 +145,18 @@ export function RunsPage() {
                         sortable: true,
                         render: (r) => <span className="font-mono text-xs">{r.run_id}</span>,
                     },
+                    // i18n: user-facing
                     { key: 'workflow_name', header: t('工作流', 'Workflow'), sortable: true },
                     {
                         key: 'status',
+                        // i18n: user-facing
                         header: t('状态', 'Status'),
                         sortable: true,
                         render: (r) => <StatusBadge status={statusKind(r.status) as StatusKind} label={r.status} />,
                     },
                     {
                         key: 'created_at',
+                        // i18n: user-facing
                         header: t('开始时间', 'Started'),
                         sortable: true,
                         render: (r) => <span className="font-mono text-xs">{fmtTime(r.created_at, lang)}</span>,
@@ -162,6 +172,7 @@ export function RunsPage() {
                                         className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
                                         onClick={() => void pauseRun(r)}
                                     >
+                                        {/* i18n: user-facing */}
                                         {t('暂停', 'Pause')}
                                     </button>
                                 ) : null}
@@ -171,6 +182,7 @@ export function RunsPage() {
                                         className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
                                         onClick={() => void resumeRun(r)}
                                     >
+                                        {/* i18n: user-facing */}
                                         {t('恢复', 'Resume')}
                                     </button>
                                 ) : null}
@@ -180,6 +192,7 @@ export function RunsPage() {
                                         className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-error/10"
                                         onClick={() => void cancel(r)}
                                     >
+                                        {/* i18n: user-facing */}
                                         {t('停止', 'Stop')}
                                     </button>
                                 ) : null}
@@ -191,6 +204,7 @@ export function RunsPage() {
                                             window.location.hash = `#/pipeline/${r.run_id}`;
                                         }}
                                     >
+                                        {/* i18n: user-facing */}
                                         {t('管线视图', 'Pipeline view')}
                                     </button>
                                 ) : null}
@@ -201,6 +215,7 @@ export function RunsPage() {
                                         window.location.hash = `#/runs/${r.run_id}`;
                                     }}
                                 >
+                                    {/* i18n: user-facing */}
                                     {t('打开', 'Open')}
                                 </button>
                             </div>
@@ -211,8 +226,10 @@ export function RunsPage() {
                 rowKey={(r) => r.run_id}
                 emptyState={
                     <EmptyState
+                        // i18n: user-facing
                         title={t('暂无运行', 'No runs yet')}
                         description={t(
+                            // i18n: user-facing
                             '在工作流列表或画布中点击「运行」开始一次执行',
                             'Hit "Run" on the workflow list or canvas to start one'
                         )}
@@ -223,8 +240,8 @@ export function RunsPage() {
     );
 }
 
-// #138 G7/C2: 逐节点 waterfall 详情抽屉 — input/output/error 渐进披露
-// issue #224: 导出供 RunViewPage 复用
+// #138 G7/C2: per-node waterfall detail drawer — progressive disclosure of input/output/error
+// issue #224: exported for RunViewPage reuse
 export function StepDrawer({ step }: { step: RunStep }) {
     const t = useT();
     const fmt = (v: Record<string, unknown> | undefined) =>
@@ -235,6 +252,7 @@ export function StepDrawer({ step }: { step: RunStep }) {
         <div className="border-t border-border px-2 py-2">
             {input ? (
                 <div>
+                    {/* i18n: user-facing */}
                     <div className="text-[10px] text-text-muted">{t('输入', 'Input')}</div>
                     <pre className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-text-primary">
                         {input}
@@ -243,6 +261,7 @@ export function StepDrawer({ step }: { step: RunStep }) {
             ) : null}
             {output ? (
                 <div className="mt-1.5">
+                    {/* i18n: user-facing */}
                     <div className="text-[10px] text-text-muted">{t('输出', 'Output')}</div>
                     <pre className="mt-0.5 max-h-60 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-text-primary">
                         {output}
@@ -251,6 +270,7 @@ export function StepDrawer({ step }: { step: RunStep }) {
             ) : null}
             {step.error ? (
                 <div className="mt-1.5">
+                    {/* i18n: user-facing */}
                     <div className="text-[10px] text-error">{t('错误', 'Error')}</div>
                     <pre className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-error">
                         {step.error}
@@ -261,7 +281,7 @@ export function StepDrawer({ step }: { step: RunStep }) {
     );
 }
 
-// #142: unified diff 逐行着色 (+ 绿 / - 红 / @@ 定位 / 头部行灰)
+// #142: unified diff per-line coloring (+ green / - red / @@ locator / header lines gray)
 function DiffView({ content }: { content: string }) {
     const lines = content.split('\n').slice(0, 400);
     return (
@@ -288,7 +308,7 @@ function DiffView({ content }: { content: string }) {
     );
 }
 
-// #150: 引用溯源卡 — 点击 chip 拉取源文件内容 (沙箱内只读)
+// #150: citation provenance cards — clicking a chip fetches source file content (read-only in sandbox)
 function CitationCards({ citations }: { citations: NonNullable<RunArtifact['citations']> }) {
     const t = useT();
     const [openPath, setOpenPath] = useState('');
@@ -316,6 +336,7 @@ function CitationCards({ citations }: { citations: NonNullable<RunArtifact['cita
     return (
         <div className="mt-1 border-t border-border pt-1">
             <div className="mb-1 text-[10px] text-text-muted">
+                {/* i18n: user-facing */}
                 {t('引用来源', 'Citations')} ({citations.length})
             </div>
             <div className="flex flex-wrap gap-1">
@@ -350,7 +371,7 @@ function CitationCards({ citations }: { citations: NonNullable<RunArtifact['cita
     );
 }
 
-// issue #224: 导出供 RunViewPage 复用
+// issue #224: exported for RunViewPage reuse
 export function RunArtifactPane({
     runId,
     active,
@@ -378,6 +399,7 @@ export function RunArtifactPane({
             <div className="rounded-md border border-border p-2">
                 <ErrorState
                     message={error.message}
+                    // i18n: user-facing
                     retryLabel={t('重试', 'Retry')}
                     onRetry={() => setReloadKey((k) => k + 1)}
                 />
@@ -387,18 +409,23 @@ export function RunArtifactPane({
     return (
         <div className="rounded-md border border-border p-2">
             <div className="mb-2 flex items-center justify-between">
+                {/* i18n: user-facing */}
                 <div className="text-xs font-medium text-text-primary">{t('产出预览', 'Artifacts')}</div>
                 {reviewStatus ? (
                     <span className="text-[10px] text-text-muted">
                         {reviewStatus === 'pending_review'
+                            // i18n: user-facing
                             ? t('待审查 — 通过后才算交付', 'Pending review — approve to deliver')
                             : reviewStatus === 'approved'
+                              // i18n: user-facing
                               ? t('已交付', 'Delivered')
+                              // i18n: user-facing
                               : t('已退回', 'Rejected')}
                     </span>
                 ) : null}
             </div>
             {artifacts.length === 0 ? (
+                // i18n: user-facing
                 <EmptyState title={t('暂无产出', 'No artifacts yet')} />
             ) : (
                 <div className="flex flex-col gap-2">
@@ -422,6 +449,7 @@ export function RunArtifactPane({
                         <div className="rounded border border-border bg-bg p-2">
                             <div className="mb-1 flex items-center justify-between text-[10px] text-text-muted">
                                 <span className="font-mono">{selected.path || selected.artifact_id}</span>
+                                {/* i18n: user-facing */}
                                 {selected.truncated ? <span>{t('已截断', 'truncated')}</span> : null}
                             </div>
                             {selected.type === 'markdown' ? (
@@ -430,7 +458,7 @@ export function RunArtifactPane({
                                     className="max-h-72 overflow-auto text-xs text-text-secondary"
                                 />
                             ) : selected.type === 'diff' ? (
-                                // #142: 文件产物 unified diff 卡 — 编辑型步骤 / .diff/.patch 文件
+                                // #142: file-artifact unified diff card — edit-style steps / .diff/.patch files
                                 <DiffView content={selected.content} />
                             ) : (
                                 <pre className="max-h-72 overflow-auto whitespace-pre-wrap font-mono text-xs text-text-secondary">

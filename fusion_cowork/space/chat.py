@@ -1,10 +1,10 @@
-"""协作空间对话服务 — 共享上下文 + Agent 回复 + 流式推理。
+"""Collaborative space chat service — shared context + agent replies + streaming inference.
 
-业务逻辑:
-- send_message: 发送消息 + 事件广播 + 触发 Agent 回复
-- stream_message: 流式推理 + 实时推送
-- _agent_respond: Agent 上下文构建 + RAG 注入 + 推理回复
-- get_context: 获取空间共享对话上下文
+Business logic:
+- send_message: send message + event broadcast + trigger agent reply
+- stream_message: streaming inference + realtime push
+- _agent_respond: agent context building + RAG injection + inference reply
+- get_context: fetch the space's shared conversation context
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 class SpaceChatService:
-    """空间对话服务 — 共享对话上下文 + Agent 流式推理。"""
+    """Space chat service — shared conversation context + agent streaming inference."""
 
     def __init__(
         self,
@@ -60,7 +60,7 @@ class SpaceChatService:
         self._lifecycle_bus = get_lifecycle_bus()
         self._llm_funnel = LLMFunnel(lifecycle_bus=self._lifecycle_bus, compactor=self._compactor)
         self._events.attach_lifecycle_bus(self._lifecycle_bus)
-        # v4 方案②: incremental watermark for task_step reads — relay context
+        # v4 plan B: incremental watermark for task_step reads — relay context
         # assembly previously re-scanned the whole trajectory pool on every
         # group, a latency that grew linearly with history. Same pattern as
         # the v2 retrospective after_ts optimization.
@@ -68,7 +68,7 @@ class SpaceChatService:
 
     @property
     def mlx(self) -> FusionMLXClient:
-        # issue #149: 产物就地 AI 修订复用同一客户端 (只读访问)
+        # issue #149: in-place artifact AI revision reuses the same client (read-only access)
         return self._mlx
 
     def _get_config_model(self, agent_def: dict) -> str:
@@ -94,7 +94,7 @@ class SpaceChatService:
         model: str = "",
     ) -> SpaceMessage:
         if not await self._perm.check(space_id, user_id, "send_message"):
-            raise PermissionError(f"用户 {user_id} 无权在空间 {space_id} 发送消息")
+            raise PermissionError(f"User {user_id} cannot send messages in space {space_id}")
         # issue #496: writes land on the kernel TeamMessage plane (member-
         # validated, inbox-file-confirmed) — no space-internal message row.
         msg = await self._plane.send(
@@ -122,7 +122,7 @@ class SpaceChatService:
         attachments: Optional[list] = None,
     ) -> AsyncIterator[str]:
         if not await self._perm.check(space_id, user_id, "send_message"):
-            raise PermissionError(f"用户 {user_id} 无权在空间 {space_id} 发送消息")
+            raise PermissionError(f"User {user_id} cannot send messages in space {space_id}")
         user_msg = await self._plane.send(
             space_id,
             sender_id=user_id,
@@ -171,10 +171,10 @@ class SpaceChatService:
                 await self._emit(space_id, "stream", {"chunk": chunk})
                 yield chunk
         except Exception as e:
-            # v2 方案三 (P1-4): a mid-stream model failure previously dropped the
+            # v2 plan C (P1-4): a mid-stream model failure previously dropped the
             # partial response silently — no persistence, no error event, the
             # SSE feed just died and the agent's "answer" was untraceable.
-            logger.error(f"stream_message 模型流中断: {e}", exc_info=True)
+            logger.error(f"stream_message model stream interrupted: {e}", exc_info=True)
             await self._emit(space_id, "error", {"agent_id": agent_id, "error": str(e), "partial": len(full_response)})
             partial = "".join(full_response)
             if partial:
@@ -182,6 +182,7 @@ class SpaceChatService:
                     space_id,
                     sender_id=agent_id,
                     sender_is_agent=True,
+                    # i18n: user-facing
                     content=partial + "\n[响应中断]",
                 )
                 await self._emit(space_id, "message_complete", interrupted.to_dict())
@@ -306,18 +307,18 @@ class SpaceChatService:
         return system_head + kept
 
     async def _space_instructions(self, space_id: str) -> str:
-        # issue #138 G10: 空间级 instructions — 注入聊天 system prompt 头部
+        # issue #138 G10: space-level instructions — injected at the head of the chat system prompt
         try:
             space = await self._store.get_space(space_id)
         except Exception as e:
-            logger.warning(f"读取空间 instructions 失败 (跳过注入): {e}")
+            logger.warning(f"failed to read space instructions (skipping injection): {e}")
             return ""
         if not space:
             return ""
         text = str(getattr(space.config, "instructions", "") or "").strip()
         if not text:
             return ""
-        return f"[空间指令]\n{text}"
+        return f"[Space instructions]\n{text}"
 
     def _build_agent_messages(
         self,
@@ -344,7 +345,7 @@ class SpaceChatService:
         rag_context = "\n".join(f"[{i + 1}] {r.get('content', '')}" for i, r in enumerate(rag_results))
         rag_msg = {
             "role": "system",
-            "content": f"以下是相关参考资料，请基于这些内容回答用户问题:\n\n{rag_context}",
+            "content": f"Below is relevant reference material. Answer the user's question based on it:\n\n{rag_context}",
         }
         if messages and messages[0].get("role") == "system":
             return [messages[0], rag_msg] + messages[1:]
@@ -425,7 +426,7 @@ class SpaceChatService:
                         agent_model = models[0]["id"] if models else "default"
                     resp = await self._mlx.chat(model=agent_model, messages=messages)
                     reply = resp.content
-                    # 方案二 (audit v3): persist the intermediate output so the
+                    # Plan B (audit v3): persist the intermediate output so the
                     # collaboration's working history survives restarts.
                     try:
                         from ..orchestrator.trajectory_writer import write_task_step
@@ -445,7 +446,7 @@ class SpaceChatService:
                     # P1-3: per-agent failure is recorded, not raised — a single
                     # agent crash previously propagated and killed the stage.
                     logger.error(f"relay_agents: agent {aid} failed: {e}")
-                    # 方案二 (audit v3): failures are context too — the next
+                    # Plan B (audit v3): failures are context too — the next
                     # stage must see what broke, not just an absent reply.
                     try:
                         from ..orchestrator.trajectory_writer import write_task_step
@@ -457,14 +458,14 @@ class SpaceChatService:
 
             # v2 P2: fetch the group's context once, share across members
             group_context = await self._plane.history(space_id, limit=100)
-            # 方案二 (audit v3): pull recent task_step events (tool outputs,
+            # Plan B (audit v3): pull recent task_step events (tool outputs,
             # per-agent failures from earlier stages) into the shared context —
             # they never go through the chat table, so a restart wiped the
             # collaboration's working history before this.
             try:
                 from ..orchestrator.trajectory_writer import read_task_steps
 
-                # v4 方案②: after_ts watermark — only events newer than the
+                # v4 plan B: after_ts watermark — only events newer than the
                 # last read are scanned; cold files are skipped by mtime.
                 steps = read_task_steps(space_id, limit=10, after_ts=self._step_watermark)
                 if steps:
@@ -474,7 +475,7 @@ class SpaceChatService:
                         space_id=space_id,
                         user_id="",
                         agent_id="",
-                        content="[近期任务中间产出]\n"
+                        content="[Recent task intermediate outputs]\n"
                         + "\n".join(f"- ({s['agent_id']}/{s['step']}) {s['content'][:300]}" for s in steps),
                         role="assistant",
                     )

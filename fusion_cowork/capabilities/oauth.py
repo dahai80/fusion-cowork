@@ -38,16 +38,16 @@ class OAuthFlow:
         for state in stale:
             self._pending.pop(state, None)
         if stale:
-            logger.info(f"OAuth 状态清理: {len(stale)} 条过期")
+            logger.info(f"OAuth state cleanup: {len(stale)} expired entries")
 
     def start(self, connector_id: str, oauth_cfg: Dict[str, Any], *, workspace_id: str) -> Dict[str, Any]:
         client_id_env = str(oauth_cfg.get("client_id_env") or "")
         client_id = os.environ.get(client_id_env, "").strip() if client_id_env else ""
         if not client_id:
-            raise OAuthError(f"oauth_not_configured: {client_id_env or 'client_id_env'} 未设置")
+            raise OAuthError(f"oauth_not_configured: {client_id_env or 'client_id_env'} not set")
         authorize_url = str(oauth_cfg.get("authorize_url") or "")
         if not authorize_url:
-            raise OAuthError("oauth_not_configured: authorize_url 缺失")
+            raise OAuthError("oauth_not_configured: authorize_url missing")
         self._prune()
         state = secrets.token_urlsafe(24)
         scopes = [str(s) for s in oauth_cfg.get("scopes") or []]
@@ -73,7 +73,7 @@ class OAuthFlow:
             "redirect_uri": params["redirect_uri"],
         }
         separator = "&" if "?" in authorize_url else "?"
-        logger.info(f"OAuth 授权开始: connector={connector_id} ws={workspace_id} scopes={scopes}")
+        logger.info(f"OAuth authorization started: connector={connector_id} ws={workspace_id} scopes={scopes}")
         return {
             "authorize_url": f"{authorize_url}{separator}{urlencode(params)}",
             "state": state,
@@ -84,7 +84,7 @@ class OAuthFlow:
         self._prune()
         pending = self._pending.pop(str(state or ""), None)
         if pending is None:
-            logger.warning("OAuth 回调 state 未知或已过期")
+            logger.warning("OAuth callback state unknown or expired")
         return pending
 
     async def exchange(self, pending: Dict[str, Any], code: str, oauth_cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -92,7 +92,7 @@ class OAuthFlow:
 
         token_url = str(oauth_cfg.get("token_url") or "")
         if not token_url:
-            raise OAuthError("oauth_not_configured: token_url 缺失")
+            raise OAuthError("oauth_not_configured: token_url missing")
         client_id_env = str(oauth_cfg.get("client_id_env") or "")
         client_id = os.environ.get(client_id_env, "").strip()
         secret_env = str(oauth_cfg.get("client_secret_env") or "")
@@ -110,11 +110,11 @@ class OAuthFlow:
         async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
             resp = await client.post(token_url, data=data, headers={"Accept": "application/json"})
             if resp.status_code >= 400:
-                logger.warning(f"OAuth token 交换失败: {token_url} status={resp.status_code}")
+                logger.warning(f"OAuth token exchange failed: {token_url} status={resp.status_code}")
                 raise OAuthError(f"token_exchange_failed: {resp.status_code}")
             payload = resp.json()
         if not isinstance(payload, dict) or not payload.get("access_token"):
-            raise OAuthError("token_exchange_failed: access_token 缺失")
+            raise OAuthError("token_exchange_failed: access_token missing")
         tokens = {k: payload[k] for k in _TOKEN_KEYS if k in payload}
-        logger.info(f"OAuth token 已获取: connector={pending.get('connector_id')} keys={sorted(tokens)} (值不落日志)")
+        logger.info(f"OAuth token acquired: connector={pending.get('connector_id')} keys={sorted(tokens)} (values not logged)")
         return tokens

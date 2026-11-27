@@ -1,10 +1,10 @@
-"""Stage 6 — 防篡改审计日志 (tamper-evident hash chain)。
+"""Stage 6 - tamper-evident audit log (hash chain).
 
-AuditLog: 每条记录 prev_hash = sha256(上一条记录的 hash), 删除/重排/篡改任一条 → 链断裂。
-verify_chain(tenant_id): 重算全链, 断裂返首个坏位置。
+AuditLog: each record's prev_hash = sha256(previous record's hash); deleting/reordering/tampering with any record breaks the chain.
+verify_chain(tenant_id): recomputes the whole chain, returns the first bad position on break.
 
-存 audit_log 表 (Stage 6 store._SCHEMA_SQL 加): tenant_id, actor, action, resource,
-detail_hash, prev_hash, created_at。detail 不直存 (存 hash 防泄露), 调用方自行留 detail。
+Stored in the audit_log table (added to Stage 6 store._SCHEMA_SQL): tenant_id, actor, action, resource,
+detail_hash, prev_hash, created_at. detail is not stored directly (hash stored to prevent leakage); callers retain detail themselves.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 def _hash_entry(
     tenant_id: str, actor: str, action: str, resource: str, detail_hash: str, prev_hash: str, created_at: str
 ) -> str:
-    """对单条审计记录算 sha256 — 字段固定顺序防重排。"""
+    """Compute sha256 for a single audit record - fixed field order prevents reordering."""
     payload = json.dumps(
         {
             "tenant_id": tenant_id,
@@ -39,15 +39,15 @@ def _hash_entry(
 
 
 def _hash_detail(detail: Any) -> str:
-    """detail 内容算 hash (不直存, 防泄露)。"""
+    """Hash the detail content (not stored directly, prevents leakage)."""
     payload = json.dumps(detail, sort_keys=True, ensure_ascii=False, default=str, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class AuditLog:
-    """防篡改审计日志 — per-tenant hash chain。
+    """Tamper-evident audit log - per-tenant hash chain.
 
-    依赖 store (SpaceStore 或兼容对象) 提供持久化; 测试可传内存 store (mock _exec/_fetchall)。
+    Relies on store (SpaceStore or a compatible object) for persistence; tests may pass an in-memory store (mock _exec/_fetchall).
     """
 
     def __init__(self, store=None):
@@ -61,9 +61,9 @@ class AuditLog:
         resource: str,
         detail: Any = None,
     ) -> Optional[str]:
-        """记一条审计日志, 返本条 hash (失败返 None)。
+        """Write one audit log entry, returns this entry's hash (None on failure).
 
-        prev_hash = 上一条 (同 tenant 最新一条) 的 hash; 链首 prev_hash=""。
+        prev_hash = hash of the previous (latest same-tenant) entry; chain head uses prev_hash="".
         """
         detail_hash = _hash_detail(detail)
         prev_hash = await self._last_hash(tenant_id)
@@ -73,11 +73,11 @@ class AuditLog:
         if ok:
             logger.info(f"audit log tenant={tenant_id} actor={actor} action={action} hash={entry_hash[:12]}")
             return entry_hash
-        logger.error(f"audit log 写入失败 tenant={tenant_id} action={action}")
+        logger.error(f"audit log write failed tenant={tenant_id} action={action}")
         return None
 
     async def verify_chain(self, tenant_id: str) -> Dict[str, Any]:
-        """校验全链完整性。返 {ok: bool, broken_at: Optional[int], count: int}。"""
+        """Verify full chain integrity. Returns {ok: bool, broken_at: Optional[int], count: int}."""
         rows = await self._fetch_chain(tenant_id)
         prev = ""
         for i, row in enumerate(rows):
@@ -91,7 +91,7 @@ class AuditLog:
                 row["created_at"],
             )
             if expected != row["entry_hash"]:
-                logger.error(f"audit chain 断裂 tenant={tenant_id} at index={i} (prev_hash 不匹配)")
+                logger.error(f"audit chain broken tenant={tenant_id} at index={i} (prev_hash mismatch)")
                 return {"ok": False, "broken_at": i, "count": len(rows)}
             prev = row["entry_hash"]
         return {"ok": True, "broken_at": None, "count": len(rows)}
@@ -106,7 +106,7 @@ class AuditLog:
             )
             return row["entry_hash"] if row else ""
         except Exception as e:
-            logger.warning(f"audit _last_hash 失败 (表可能未建): {e}")
+            logger.warning(f"audit _last_hash failed (table may not exist): {e}")
             return ""
 
     async def _append(
@@ -131,7 +131,7 @@ class AuditLog:
                 )
             return True
         except Exception as e:
-            logger.error(f"audit _append 失败: {e}", exc_info=True)
+            logger.error(f"audit _append failed: {e}", exc_info=True)
             return False
 
     async def _fetch_chain(self, tenant_id: str) -> List[Dict[str, Any]]:
@@ -144,7 +144,7 @@ class AuditLog:
                 (tenant_id,),
             )
         except Exception as e:
-            logger.warning(f"audit _fetch_chain 失败 (表可能未建): {e}")
+            logger.warning(f"audit _fetch_chain failed (table may not exist): {e}")
             return []
 
     async def _now(self) -> str:

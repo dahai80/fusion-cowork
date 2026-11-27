@@ -56,6 +56,7 @@ export function NotificationBell() {
             <button
                 type="button"
                 className="relative rounded-md px-2 py-1 text-sm text-text-secondary hover:bg-bg-muted"
+                // i18n: user-facing
                 aria-label={t('通知', 'Notifications')}
                 onClick={() => setOpen((o) => !o)}
             >
@@ -68,8 +69,10 @@ export function NotificationBell() {
             </button>
             {open ? (
                 <div className="absolute right-0 z-20 mt-1 max-h-80 w-72 overflow-y-auto rounded-md border border-border bg-bg-elevated p-2 shadow-lg">
+                    {/* i18n: user-facing */}
                     <div className="pb-1 text-xs font-medium text-text-primary">{t('通知', 'Notifications')}</div>
                     {items.length === 0 ? (
+                        // i18n: user-facing
                         <div className="py-2 text-xs text-text-muted">{t('暂无通知', 'No notifications')}</div>
                     ) : (
                         <div className="space-y-1">
@@ -90,6 +93,7 @@ export function NotificationBell() {
                                                 className="shrink-0 rounded px-1 text-[10px] text-brand hover:bg-bg-muted"
                                                 onClick={() => void markRead(n.id)}
                                             >
+                                                {/* i18n: user-facing */}
                                                 {t('已读', 'Mark read')}
                                             </button>
                                         )}

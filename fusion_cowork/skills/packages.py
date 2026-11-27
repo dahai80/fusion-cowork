@@ -101,7 +101,7 @@ class SkillPackage:
         for spec in self.params:
             raw = values.get(spec.name, spec.default)
             if raw in (None, "") and spec.required:
-                errors.append(f"缺少必填参数: {spec.name}")
+                errors.append(f"Missing required parameter: {spec.name}")
                 continue
             if raw in (None, ""):
                 clean[spec.name] = "" if spec.type in ("string", "file", "dir", "text") else spec.default
@@ -109,11 +109,11 @@ class SkillPackage:
             try:
                 value = _coerce_value(spec.type, raw)
             except (TypeError, ValueError):
-                errors.append(f"参数类型错误: {spec.name} 应为 {spec.type}")
+                errors.append(f"Parameter type error: {spec.name} should be {spec.type}")
                 continue
-            # issue #167: enum (options) 校验 — 对齐 agent-studio validate_skill_params
+            # issue #167: enum (options) validation - aligned with agent-studio validate_skill_params
             if spec.options and str(value) not in [str(o) for o in spec.options]:
-                errors.append(f"参数取值非法: {spec.name} 应为 {', '.join(spec.options)} 之一")
+                errors.append(f"Invalid parameter value: {spec.name} should be one of {', '.join(spec.options)}")
                 continue
             clean[spec.name] = value
         return clean, errors
@@ -134,7 +134,7 @@ def _coerce_value(kind: str, raw: Any) -> Any:
             return True
         if text in ("0", "false", "no", "off"):
             return False
-        raise ValueError(f"非法布尔值: {raw}")
+        raise ValueError(f"Invalid boolean value: {raw}")
     if kind == "list":
         if isinstance(raw, list):
             return raw
@@ -158,8 +158,8 @@ def _as_list(raw: Any) -> List[str]:
 
 
 def _params_from_schema(schema: Any) -> List[ParamSpec]:
-    # issue #167: 共享格式 parameters (JSON Schema: properties/required) → ParamSpec。
-    # 与 fusion-agent-studio skills_store 同一 schema, 两侧结构化表单同源渲染。
+    # issue #167: shared-format parameters (JSON Schema: properties/required) -> ParamSpec.
+    # Same schema as fusion-agent-studio skills_store; both sides render structured forms from the same source.
     if not isinstance(schema, dict):
         return []
     properties = schema.get("properties")
@@ -188,16 +188,16 @@ def _params_from_schema(schema: Any) -> List[ParamSpec]:
 
 def parse_markdown(text: str, source: str = "") -> SkillPackage:
     if not text.startswith("---"):
-        raise ValueError("markdown skill 包缺少 frontmatter (--- 开头)")
+        raise ValueError("markdown skill package missing frontmatter (must start with ---)")
     parts = text.split("---", 2)
     if len(parts) < 3:
-        raise ValueError("markdown skill 包 frontmatter 未闭合")
+        raise ValueError("markdown skill package frontmatter not closed")
     meta = yaml.safe_load(parts[1]) or {}
     if not isinstance(meta, dict):
-        raise ValueError("markdown skill 包 frontmatter 必须是映射")
+        raise ValueError("markdown skill package frontmatter must be a mapping")
     name = str(_first(meta, "name", "command", "slash") or "").strip()
     if not name:
-        raise ValueError("markdown skill 包缺少 name")
+        raise ValueError("markdown skill package missing name")
     name = name if name.startswith("/") else f"/{name}"
     raw_params = _first(meta, "params")
     if isinstance(raw_params, list) and raw_params:
@@ -252,7 +252,7 @@ class SkillPackageRegistry:
             self._packages[alias if alias.startswith("/") else f"/{alias}"] = pkg
         if pkg.command and pkg.command != pkg.name:
             self._packages[pkg.command] = pkg
-        logger.info(f"注册 markdown skill 包: {pkg.name} (source={pkg.source or '-'})")
+        logger.info(f"Registered markdown skill package: {pkg.name} (source={pkg.source or '-'})")
 
     def get(self, name: str) -> Optional[SkillPackage]:
         key = name if name.startswith("/") else f"/{name}"
@@ -280,7 +280,7 @@ class SkillPackageRegistry:
                 self.register(load_package(path))
                 count += 1
             except (OSError, ValueError, yaml.YAMLError) as e:
-                logger.warning(f"跳过非法 markdown skill 包 {path}: {e}")
+                logger.warning(f"Skipping invalid markdown skill package {path}: {e}")
         return count
 
     def clear(self) -> None:
@@ -289,14 +289,14 @@ class SkillPackageRegistry:
     async def run(self, name: str, values: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         pkg = self.get(name)
         if pkg is None:
-            return {"error": f"未知 skill 包: {name}"}
+            return {"error": f"Unknown skill package: {name}"}
         clean, errors = pkg.coerce(values)
         if errors:
-            return {"error": "参数校验失败", "errors": errors}
+            return {"error": "Parameter validation failed", "errors": errors}
         try:
             return await _dispatch(pkg, clean)
         except Exception as e:
-            logger.error(f"skill 包执行失败 {pkg.name}: {e}")
+            logger.error(f"Skill package execution failed {pkg.name}: {e}")
             return {"error": str(e)}
 
 
@@ -309,7 +309,7 @@ async def _dispatch(pkg: SkillPackage, params: Dict[str, Any]) -> Dict[str, Any]
         registry = SkillRegistry()
         register_builtin_skills(registry)
         args = pkg.argument_template.format(**params) if pkg.argument_template else ""
-        logger.info(f"skill 包 {pkg.name} 委托内置技能 {target} args={args!r}")
+        logger.info(f"Skill package {pkg.name} delegating to builtin skill {target} args={args!r}")
         return await registry.execute(target, args)
     if pkg.workflow:
         return await _run_workflow(pkg, params)
@@ -317,8 +317,8 @@ async def _dispatch(pkg: SkillPackage, params: Dict[str, Any]) -> Dict[str, Any]
 
     handler = get_handler(pkg.handler)
     if handler is None:
-        return {"error": f"skill 包未声明可执行 handler: {pkg.name}"}
-    logger.info(f"skill 包 {pkg.name} 执行 handler {pkg.handler}")
+        return {"error": f"Skill package has no executable handler declared: {pkg.name}"}
+    logger.info(f"Skill package {pkg.name} executing handler {pkg.handler}")
     return await handler(params, pkg)
 
 
@@ -331,7 +331,7 @@ async def _run_workflow(pkg: SkillPackage, params: Dict[str, Any]) -> Dict[str, 
     result = await engine.execute(workflow)
     return {
         "status": result.status.value if hasattr(result.status, "value") else str(result.status),
-        "summary": f"skill 包 {pkg.name} 工作流已完成",
+        "summary": f"Skill package {pkg.name} workflow completed",
         "steps": [s.node_id for s in getattr(result, "steps", [])],
     }
 
@@ -346,12 +346,12 @@ def get_package_registry(reload: bool = False) -> SkillPackageRegistry:
     registry = SkillPackageRegistry()
     registry.discover(BUILTIN_PACKAGES_DIR)
     registry.discover(USER_PACKAGES_DIR)
-    # issue #167: 共享安装目录 (冒号分隔) — 同一包一次安装, cowork / agent-studio 共用
+    # issue #167: shared install directories (colon-separated) - one package install, shared by cowork / agent-studio
     for extra in os.environ.get("FUSION_COWORK_SKILLS_DIRS", "").split(":"):
         if extra.strip():
             registry.discover(Path(extra.strip()))
     _registry = registry
-    logger.info(f"markdown skill 包就绪: {len(registry.list_packages())} 个")
+    logger.info(f"Markdown skill packages ready: {len(registry.list_packages())} loaded")
     return registry
 
 

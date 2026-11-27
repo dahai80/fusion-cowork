@@ -1,7 +1,7 @@
-"""MCP Server — Fusion-Cowork 作为 MCP 服务端。
+"""MCP Server — Fusion-Cowork as an MCP server.
 
-重构: 拆分工具注册 (MCPToolRegistry) 与传输层 (StdioTransport)。
-MCPServer 作为高层门面，支持 stdio/HTTP 两种传输。
+Refactor: split tool registration (MCPToolRegistry) from the transport layer (StdioTransport).
+MCPServer is the high-level facade, supporting both stdio/HTTP transports.
 """
 
 from __future__ import annotations
@@ -16,13 +16,13 @@ logger = logging.getLogger(__name__)
 
 
 class MCPToolRegistry:
-    """MCP 工具注册表 — 管理工具定义与调用。"""
+    """MCP tool registry — manages tool definitions and invocation."""
 
     def __init__(self, permission_manager=None, hook_manager=None):
         self._tools: Dict[str, Dict[str, Any]] = {}
         self._node_map: Dict[str, tuple] = {}
-        # E-9: 默认无注入时启用 CONFIRM 级 PermissionManager — 否则 run_terminal/
-        # file_output/app_lifecycle 等高风险 MCP 工具无 CONFIRM gate 直跑。
+        # E-9: enable a CONFIRM-level PermissionManager by default when none is injected — otherwise run_terminal/
+        # file_output/app_lifecycle and other high-risk MCP tools would run without a CONFIRM gate.
         if permission_manager is None:
             from ..engine.permission import PermissionManager
 
@@ -31,14 +31,16 @@ class MCPToolRegistry:
         self._hook_manager = hook_manager
 
     def register_tools(self) -> None:
-        """注册所有 Fusion-Cowork 工具。"""
+        """Register all Fusion-Cowork tools."""
         self._tools = {
             "read_file": {
                 "name": "read_file",
+                # i18n: user-facing
                 "description": "读取文件内容",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
+                        # i18n: user-facing
                         "path": {"type": "string", "description": "文件路径"},
                     },
                     "required": ["path"],
@@ -46,11 +48,14 @@ class MCPToolRegistry:
             },
             "write_file": {
                 "name": "write_file",
+                # i18n: user-facing
                 "description": "写入文件内容",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
+                        # i18n: user-facing
                         "path": {"type": "string", "description": "文件路径"},
+                        # i18n: user-facing
                         "content": {"type": "string", "description": "文件内容"},
                     },
                     "required": ["path", "content"],
@@ -58,10 +63,12 @@ class MCPToolRegistry:
             },
             "list_directory": {
                 "name": "list_directory",
+                # i18n: user-facing
                 "description": "列出目录内容",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
+                        # i18n: user-facing
                         "path": {"type": "string", "description": "目录路径"},
                     },
                     "required": ["path"],
@@ -69,11 +76,14 @@ class MCPToolRegistry:
             },
             "run_terminal": {
                 "name": "run_terminal",
+                # i18n: user-facing
                 "description": "执行终端命令",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
+                        # i18n: user-facing
                         "command": {"type": "string", "description": "要执行的命令"},
+                        # i18n: user-facing
                         "timeout": {"type": "integer", "description": "超时秒数"},
                     },
                     "required": ["command"],
@@ -81,25 +91,30 @@ class MCPToolRegistry:
             },
             "take_screenshot": {
                 "name": "take_screenshot",
+                # i18n: user-facing
                 "description": "截取桌面屏幕",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
+                        # i18n: user-facing
                         "save_path": {"type": "string", "description": "保存路径"},
                     },
                 },
             },
             "clipboard_read": {
                 "name": "clipboard_read",
+                # i18n: user-facing
                 "description": "读取系统剪贴板",
                 "inputSchema": {"type": "object", "properties": {}},
             },
             "clipboard_write": {
                 "name": "clipboard_write",
+                # i18n: user-facing
                 "description": "写入系统剪贴板",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
+                        # i18n: user-facing
                         "text": {"type": "string", "description": "要写入的文本"},
                     },
                     "required": ["text"],
@@ -107,11 +122,14 @@ class MCPToolRegistry:
             },
             "send_notification": {
                 "name": "send_notification",
+                # i18n: user-facing
                 "description": "发送系统通知",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
+                        # i18n: user-facing
                         "title": {"type": "string", "description": "通知标题"},
+                        # i18n: user-facing
                         "message": {"type": "string", "description": "通知内容"},
                     },
                     "required": ["message"],
@@ -119,10 +137,12 @@ class MCPToolRegistry:
             },
             "launch_app": {
                 "name": "launch_app",
+                # i18n: user-facing
                 "description": "启动 macOS 应用",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
+                        # i18n: user-facing
                         "app_name": {"type": "string", "description": "应用名称"},
                     },
                     "required": ["app_name"],
@@ -130,10 +150,12 @@ class MCPToolRegistry:
             },
             "web_search": {
                 "name": "web_search",
+                # i18n: user-facing
                 "description": "搜索网页",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
+                        # i18n: user-facing
                         "query": {"type": "string", "description": "搜索关键词"},
                     },
                     "required": ["query"],
@@ -141,35 +163,42 @@ class MCPToolRegistry:
             },
             "classify_files": {
                 "name": "classify_files",
+                # i18n: user-facing
                 "description": "AI 文件分类",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
+                        # i18n: user-facing
                         "path": {"type": "string", "description": "要分类的目录"},
                     },
                 },
             },
             "summarize_documents": {
                 "name": "summarize_documents",
+                # i18n: user-facing
                 "description": "AI 文档摘要",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
+                        # i18n: user-facing
                         "path": {"type": "string", "description": "文档目录"},
                     },
                 },
             },
             "desktop_cleanup": {
                 "name": "desktop_cleanup",
+                # i18n: user-facing
                 "description": "整理桌面文件",
                 "inputSchema": {"type": "object", "properties": {}},
             },
             "run_workflow": {
                 "name": "run_workflow",
+                # i18n: user-facing
                 "description": "执行自动化工作流",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
+                        # i18n: user-facing
                         "template": {"type": "string", "description": "模板名称"},
                     },
                     "required": ["template"],
@@ -177,21 +206,26 @@ class MCPToolRegistry:
             },
             "skill_list": {
                 "name": "skill_list",
+                # i18n: user-facing
                 "description": "列出所有可用技能",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
+                        # i18n: user-facing
                         "category": {"type": "string", "description": "按分类筛选"},
                     },
                 },
             },
             "skill_run": {
                 "name": "skill_run",
+                # i18n: user-facing
                 "description": "执行指定技能",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
+                        # i18n: user-facing
                         "name": {"type": "string", "description": "技能名称"},
+                        # i18n: user-facing
                         "params": {"type": "object", "description": "技能参数"},
                     },
                     "required": ["name"],
@@ -226,23 +260,24 @@ class MCPToolRegistry:
             "skill_run": ("__skill__", None),
         }
 
-        logger.info(f"MCP 工具注册完成: {len(self._tools)} 个")
+        logger.info(f"MCP tool registration complete: {len(self._tools)} tools")
 
     def list_tools(self) -> List[Dict[str, Any]]:
-        """返回工具列表 (MCP tools/list 格式)。"""
+        """Return the tool list (MCP tools/list format)."""
         return list(self._tools.values())
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """调用工具 (MCP tools/call 格式)。"""
+        """Call a tool (MCP tools/call format)."""
         if tool_name not in self._tools:
             return {
+                # i18n: user-facing
                 "content": [{"type": "text", "text": f"未知工具: {tool_name}"}],
                 "isError": True,
             }
 
-        logger.info(f"MCP 调用: {tool_name}")
+        logger.info(f"MCP call: {tool_name}")
 
-        # E-9: trace_id 贯穿调用, 异常对外只返 trace_id + 通用消息, 栈仅日志 (HI-5)。
+        # E-9: trace_id carried through the call; on exception only trace_id + a generic message go out, stack logged only (HI-5).
         trace_id = get_trace_id()
         try:
             result = await self._execute_tool(tool_name, arguments)
@@ -251,11 +286,12 @@ class MCPToolRegistry:
                 "_trace_id": trace_id,
             }
         except Exception as e:
-            logger.error(f"MCP 工具执行异常 trace_id={trace_id} tool={tool_name}: {e}", exc_info=True)
+            logger.error(f"MCP tool execution error trace_id={trace_id} tool={tool_name}: {e}", exc_info=True)
             return {
                 "content": [
                     {
                         "type": "text",
+                        # i18n: user-facing
                         "text": f"工具执行失败, 请凭 trace_id 排查: {trace_id}",
                     }
                 ],
@@ -264,7 +300,7 @@ class MCPToolRegistry:
             }
 
     async def _execute_tool(self, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
-        """执行工具: 映射到 NodeRegistry 节点 / SkillRegistry 技能。"""
+        """Execute a tool: map to NodeRegistry nodes / SkillRegistry skills."""
         if tool_name == "skill_list":
             from ..skills import SkillRegistry, register_builtin_skills
 
@@ -286,17 +322,19 @@ class MCPToolRegistry:
             result = await registry.execute(skill_name, **skill_params)
             return {"status": "success", "result": result}
 
-        # E-8: run_workflow 走 TemplateManager + WorkflowEngine, 原误映射 desktop_clean。
+        # E-8: run_workflow goes through TemplateManager + WorkflowEngine; previously mis-mapped to desktop_clean.
         if tool_name == "run_workflow":
             template_id = args.get("template", "")
             if not template_id:
+                # i18n: user-facing
                 return {"error": "缺少 template 参数"}
             from ..templates import TemplateManager
 
             mgr = TemplateManager()
             wf = mgr.template_to_workflow(template_id)
             if wf is None:
-                logger.warning(f"MCP run_workflow 模板不存在: {template_id}")
+                logger.warning(f"MCP run_workflow template not found: {template_id}")
+                # i18n: user-facing
                 return {"error": f"模板不存在: {template_id}", "template": template_id}
             from ..engine import WorkflowEngine
 
@@ -313,6 +351,7 @@ class MCPToolRegistry:
 
         mapping = self._node_map.get(tool_name)
         if not mapping:
+            # i18n: user-facing
             return {"error": f"未实现: {tool_name}"}
 
         node_name, param_fn = mapping
@@ -322,7 +361,7 @@ class MCPToolRegistry:
         if self._permission_manager:
             allowed = await self._permission_manager.check(node_name, "execute", node_params)
             if not allowed:
-                logger.warning(f"MCP 工具 '{tool_name}' (node={node_name}) 被权限拒绝")
+                logger.warning(f"MCP tool '{tool_name}' (node={node_name}) denied by permission")
                 if self._hook_manager:
                     from ..engine.hooks import HookEvent
 
@@ -335,6 +374,7 @@ class MCPToolRegistry:
                             "allowed": False,
                         },
                     )
+                # i18n: user-facing
                 return {"error": f"权限拒绝: {node_name}", "status": "denied"}
 
         # Hook: PRE_NODE_EXECUTE
@@ -350,6 +390,7 @@ class MCPToolRegistry:
                 },
             )
             if hctx and hctx.cancelled:
+                # i18n: user-facing
                 return {"error": f"Hook取消: {node_name}", "status": "cancelled"}
             if hctx and hctx.modified_data and "input_data" in hctx.modified_data:
                 node_params = hctx.modified_data["input_data"]
@@ -358,6 +399,7 @@ class MCPToolRegistry:
 
         node = NodeRegistry.create(node_name, config=NodeConfig(params=node_params))
         if not node:
+            # i18n: user-facing
             return {"error": f"节点创建失败: {node_name}"}
 
         result = await node.execute(node_params)
@@ -384,14 +426,14 @@ class MCPToolRegistry:
 
 
 class MCPServer:
-    """MCP 服务器门面 — 支持 stdio / HTTP 传输。
+    """MCP server facade — supports stdio / HTTP transports.
 
-    用法:
-        # stdio 模式 (Claude Code 调用)
+    Usage:
+        # stdio mode (invoked by Claude Code)
         server = MCPServer()
         await server.serve_stdio()
 
-        # HTTP 模式 (远程调用)
+        # HTTP mode (remote calls)
         server = MCPServer()
         await server.serve_http(port=11438)
     """
@@ -406,16 +448,16 @@ class MCPServer:
         self._running = False
 
     async def serve_stdio(self) -> None:
-        """启动 stdio 传输 (供 Claude Code 通过 MCP 协议调用)。"""
+        """Start the stdio transport (for Claude Code via the MCP protocol)."""
         self._registry.register_tools()
         from .mcp_transport import StdioTransport
 
         transport = StdioTransport(self._registry)
-        logger.info("MCP 服务器启动 (stdio 模式)")
+        logger.info("MCP server started (stdio mode)")
         await transport.run()
 
     async def serve_http(self, event_emitter=None) -> None:
-        """启动 HTTP+SSE 传输 (需 [web] 依赖)。"""
+        """Start the HTTP+SSE transport (requires the [web] extra)."""
         self._registry.register_tools()
         try:
             from .mcp_http import create_http_app
@@ -423,8 +465,8 @@ class MCPServer:
             app = create_http_app(self._registry, event_emitter=event_emitter)
             import uvicorn
 
-            logger.info(f"MCP 服务器启动 (HTTP 模式): {self.host}:{self.port}")
-            # MD-1: 限并发; 请求体上限 1MiB 由 _BodySizeLimitMiddleware (mcp_http) 在 ASGI 层强制
+            logger.info(f"MCP server started (HTTP mode): {self.host}:{self.port}")
+            # MD-1: concurrency capped; the 1MiB request body cap is enforced at the ASGI layer by _BodySizeLimitMiddleware (mcp_http)
             config = uvicorn.Config(
                 app,
                 host=self.host,
@@ -435,11 +477,11 @@ class MCPServer:
             server = uvicorn.Server(config)
             await server.serve()
         except ImportError:
-            logger.error("HTTP 模式需要 [web] 依赖: pip install fusion-cowork[web]")
+            logger.error("HTTP mode requires the [web] extra: pip install fusion-cowork[web]")
             raise
 
     async def serve_streamable_http(self, event_emitter=None) -> None:
-        """启动 Streamable HTTP 传输 (MCP 2025-03-26, 需 [web] 依赖)。"""
+        """Start the Streamable HTTP transport (MCP 2025-03-26, requires the [web] extra)."""
         self._registry.register_tools()
         try:
             from .mcp_http import create_streamable_app
@@ -447,8 +489,8 @@ class MCPServer:
             app = create_streamable_app(self._registry, event_emitter=event_emitter)
             import uvicorn
 
-            logger.info(f"MCP 服务器启动 (Streamable HTTP 模式): {self.host}:{self.port}")
-            # MD-1: 限并发; 请求体上限 1MiB 由 _BodySizeLimitMiddleware (mcp_http) 在 ASGI 层强制
+            logger.info(f"MCP server started (Streamable HTTP mode): {self.host}:{self.port}")
+            # MD-1: concurrency capped; the 1MiB request body cap is enforced at the ASGI layer by _BodySizeLimitMiddleware (mcp_http)
             config = uvicorn.Config(
                 app,
                 host=self.host,
@@ -459,22 +501,22 @@ class MCPServer:
             server = uvicorn.Server(config)
             await server.serve()
         except ImportError:
-            logger.error("Streamable HTTP 模式需要 [web] 依赖: pip install fusion-cowork[web]")
+            logger.error("Streamable HTTP mode requires the [web] extra: pip install fusion-cowork[web]")
             raise
 
     async def start(self) -> None:
-        """兼容旧接口 — 默认启动 stdio 模式。"""
+        """Legacy interface compat — starts stdio mode by default."""
         await self.serve_stdio()
 
     async def stop(self) -> None:
-        """停止 MCP 服务器。"""
+        """Stop the MCP server."""
         self._running = False
-        logger.info("MCP 服务器已停止")
+        logger.info("MCP server stopped")
 
     def get_tools_list(self) -> List[Dict[str, Any]]:
-        """兼容旧接口。"""
+        """Legacy interface compat."""
         return self._registry.list_tools()
 
     async def handle_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """兼容旧接口。"""
+        """Legacy interface compat."""
         return await self._registry.call_tool(tool_name, arguments)

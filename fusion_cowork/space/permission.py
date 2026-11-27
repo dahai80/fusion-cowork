@@ -1,22 +1,22 @@
-"""协作空间权限模型 — 4 级角色矩阵。
+"""Collaborative space permission model — 4-level role matrix.
 
-角色: Owner > Admin > Member > Viewer
-权限动作:
-- manage_space: 修改空间设置
-- manage_members: 邀请/移除成员
-- send_message: 发送消息
-- manage_agents: 创建/修改 Agent
-- call_agent: 调用 Agent（含多 Agent 接力）
-- run_workflow: 运行工作流
-- upload_file: 上传文件
-- delete_data: 删除数据
-- manage_snapshots: 管理快照
-- manage_kb: 绑定/解绑知识库
-- upload_document: 上传文档到知识库
-- view_artifact: 查看 Artifact 渲染
-- edit_artifact: 编辑 Artifact（创建者/被授权者）
-- share_artifact: 分享 Artifact（创建者/Owner/Admin）
-- transfer_artifact: 转交 Artifact 所有权（Owner/Admin）
+Roles: Owner > Admin > Member > Viewer
+Permission actions:
+- manage_space: modify space settings
+- manage_members: invite/remove members
+- send_message: send messages
+- manage_agents: create/modify agents
+- call_agent: call agents (including multi-agent relay)
+- run_workflow: run workflows
+- upload_file: upload files
+- delete_data: delete data
+- manage_snapshots: manage snapshots
+- manage_kb: bind/unbind the knowledge base
+- upload_document: upload documents to the knowledge base
+- view_artifact: view artifact rendering
+- edit_artifact: edit artifacts (creator/authorized users)
+- share_artifact: share artifacts (creator/Owner/Admin)
+- transfer_artifact: transfer artifact ownership (Owner/Admin)
 """
 
 from __future__ import annotations
@@ -102,7 +102,7 @@ _PERMISSION_MATRIX: Dict[str, Dict[str, bool]] = {
 
 
 class SpacePermission:
-    """空间权限检查 — 基于角色矩阵。"""
+    """Space permission checks — based on the role matrix."""
 
     def __init__(self, store: SpaceStore):
         self._store = store
@@ -110,14 +110,14 @@ class SpacePermission:
     async def check(self, space_id: str, user_id: str, action: str) -> bool:
         member = await self._store.get_member(space_id, user_id)
         if not member:
-            logger.warning(f"SpacePermission.check 用户 {user_id} 不在空间 {space_id}")
+            logger.warning(f"SpacePermission.check user {user_id} is not in space {space_id}")
             return False
         role_key = member.role.value if isinstance(member.role, SpaceRole) else member.role
         role_perms = _PERMISSION_MATRIX.get(role_key, {})
         allowed = role_perms.get(action, False)
         if not allowed:
             logger.info(
-                f"SpacePermission.check 拒绝: space={space_id} user={user_id} role={member.role} action={action}",
+                f"SpacePermission.check denied: space={space_id} user={user_id} role={member.role} action={action}",
             )
         return allowed
 

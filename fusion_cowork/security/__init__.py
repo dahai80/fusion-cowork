@@ -1,7 +1,7 @@
 from .audit import AuditLog
 from .circuit_breaker import CircuitBreaker, CircuitOpenError, CircuitState
 
-# encryption 依赖 cryptography (cloud extra); 模块内惰性 import, 这里 re-export 函数名安全
+# encryption depends on cryptography (cloud extra); lazy import inside the module, so re-exporting function names here is safe
 from .encryption import (
     decrypt_at_rest,
     derive_key,
@@ -10,7 +10,7 @@ from .encryption import (
     is_encrypted,
 )
 
-# issue #73: fusion-guard 集成客户端 (UDS JSON-RPC, 默认 OFF)
+# issue #73: fusion-guard integration client (UDS JSON-RPC, OFF by default)
 from .guard import (
     GuardClient,
     GuardVerdict,
