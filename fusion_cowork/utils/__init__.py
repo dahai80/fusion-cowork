@@ -1,4 +1,4 @@
-"""Fusion-Cowork 工具函数导出。"""
+"""Fusion-Cowork utility exports."""
 
 from .logger import get_logger, setup_logger
 

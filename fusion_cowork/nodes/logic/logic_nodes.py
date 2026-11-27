@@ -1,4 +1,4 @@
-"""逻辑节点 — 条件过滤、循环等控制流节点。"""
+"""Logic nodes — conditional filtering, looping and other control-flow nodes."""
 
 from __future__ import annotations
 
@@ -20,26 +20,26 @@ logger = logging.getLogger(__name__)
 
 @register_node
 class FilterNode(BaseNode):
-    """条件过滤节点 — 按条件筛选数据。
+    """Conditional filter node — filter data by condition.
 
-    支持按文件类型、大小、日期、名称等维度过滤。
+    Supports filtering by file type, size, date, name and other dimensions.
     """
 
     name = "filter"
-    display_name = "条件过滤"
+    display_name = "条件过滤"  # i18n: user-facing
     category = NodeCategory.LOGIC
-    description = "按条件筛选数据"
+    description = "按条件筛选数据"  # i18n: user-facing
     icon = "🔍"
-    default_label = "条件过滤"
+    default_label = "条件过滤"  # i18n: user-facing
 
     inputs = [
-        {"key": "data", "label": "输入数据", "type": "any"},
-        {"key": "filter_criteria", "label": "过滤条件", "type": "dict", "optional": True},
+        {"key": "data", "label": "输入数据", "type": "any"},  # i18n: user-facing
+        {"key": "filter_criteria", "label": "过滤条件", "type": "dict", "optional": True},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "passed", "label": "通过的数据", "type": "list"},
-        {"key": "filtered", "label": "过滤掉的数据", "type": "list"},
-        {"key": "passed_count", "label": "通过数量", "type": "integer"},
+        {"key": "passed", "label": "通过的数据", "type": "list"},  # i18n: user-facing
+        {"key": "filtered", "label": "过滤掉的数据", "type": "list"},  # i18n: user-facing
+        {"key": "passed_count", "label": "通过数量", "type": "integer"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -59,10 +59,18 @@ class FilterNode(BaseNode):
                     ],
                     "default": "extension",
                 },
-                "filter_value": {"type": "string", "default": ".pdf,.docx,.md", "description": "过滤值"},
-                "invert": {"type": "boolean", "default": False, "description": "反向过滤"},
+                "filter_value": {
+                    "type": "string",
+                    "default": ".pdf,.docx,.md",
+                    "description": "过滤值",  # i18n: user-facing
+                },  # i18n: user-facing
+                "invert": {"type": "boolean", "default": False, "description": "反向过滤"},  # i18n: user-facing
                 "case_sensitive": {"type": "boolean", "default": False},
-                "data_key": {"type": "string", "default": "files", "description": "输入数据中要过滤的字段名"},
+                "data_key": {
+                    "type": "string",
+                    "default": "files",
+                    "description": "输入数据中要过滤的字段名",  # i18n: user-facing
+                },  # i18n: user-facing
             },
         }
 
@@ -76,7 +84,7 @@ class FilterNode(BaseNode):
         case_sensitive = params.get("case_sensitive", False)
         data_key = params.get("data_key", "files")
 
-        # 获取要过滤的数据列表
+        # Get the data list to filter
         items = data
         if isinstance(data, dict) and data_key in data:
             items = data[data_key]
@@ -114,13 +122,13 @@ class FilterNode(BaseNode):
                 "passed_count": len(passed),
                 "filtered_count": len(filtered),
             },
-            summary=f"通过 {len(passed)}/{len(passed) + len(filtered)} 项",
+            summary=f"通过 {len(passed)}/{len(passed) + len(filtered)} 项",  # i18n: user-facing
         )
 
     def _matches_filter(
         self, item: Any, item_str: str, item_path: Path, filter_type: str, filter_value: str, case_sensitive: bool
     ) -> bool:
-        """检查单个项是否匹配过滤条件。"""
+        """Check whether a single item matches the filter condition."""
         if not filter_value:
             return True
 
@@ -161,7 +169,7 @@ class FilterNode(BaseNode):
                 return True
 
         elif filter_type == "custom":
-            # 简单字符串包含匹配
+            # Simple substring containment match
             return filter_value in item_str
 
         return True
@@ -169,40 +177,45 @@ class FilterNode(BaseNode):
 
 @register_node
 class LoopNode(BaseNode):
-    """循环节点 — 对列表中的每个元素执行相同的处理逻辑。
+    """Loop node — apply the same processing logic to each element of a list.
 
-    注意：LoopNode 在 V0.1 中作为单次批量处理，不支持真正的循环展开。
+    Note: LoopNode acts as a single batch pass in V0.1; it does not support
+    true loop unrolling.
     """
 
     name = "loop"
-    display_name = "循环处理"
+    display_name = "循环处理"  # i18n: user-facing
     category = NodeCategory.LOGIC
-    description = "批量处理列表中的每个元素"
+    description = "批量处理列表中的每个元素"  # i18n: user-facing
     icon = "🔄"
-    default_label = "循环处理"
+    default_label = "循环处理"  # i18n: user-facing
 
     inputs = [
-        {"key": "items", "label": "待处理列表", "type": "list"},
-        {"key": "operation", "label": "处理操作", "type": "string", "optional": True},
+        {"key": "items", "label": "待处理列表", "type": "list"},  # i18n: user-facing
+        {"key": "operation", "label": "处理操作", "type": "string", "optional": True},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "results", "label": "处理结果", "type": "list"},
-        {"key": "total", "label": "总数", "type": "integer"},
-        {"key": "success_count", "label": "成功数", "type": "integer"},
+        {"key": "results", "label": "处理结果", "type": "list"},  # i18n: user-facing
+        {"key": "total", "label": "总数", "type": "integer"},  # i18n: user-facing
+        {"key": "success_count", "label": "成功数", "type": "integer"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "batch_size": {"type": "integer", "default": 50, "description": "每批处理数量"},
-                "max_items": {"type": "integer", "default": 1000, "description": "最大处理数量"},
+                "batch_size": {"type": "integer", "default": 50, "description": "每批处理数量"},  # i18n: user-facing
+                "max_items": {"type": "integer", "default": 1000, "description": "最大处理数量"},  # i18n: user-facing
                 "operation": {
                     "type": "string",
                     "enum": ["passthrough", "collect_metadata", "extract_field"],
                     "default": "passthrough",
                 },
-                "extract_field": {"type": "string", "default": "name", "description": "要提取的字段名"},
+                "extract_field": {
+                    "type": "string",
+                    "default": "name",
+                    "description": "要提取的字段名",  # i18n: user-facing
+                },  # i18n: user-facing
             },
         }
 
@@ -251,7 +264,7 @@ class LoopNode(BaseNode):
                     results.append(item)
                     success_count += 1
             except Exception as e:
-                logger.warning(f"循环处理项失败: {e}")
+                logger.warning(f"Failed to process loop item: {e}")
                 results.append({"error": str(e), "item": str(item)})
 
         return NodeResult(
@@ -262,27 +275,27 @@ class LoopNode(BaseNode):
                 "success_count": success_count,
                 "failed_count": len(items) - success_count,
             },
-            summary=f"处理完成: {success_count}/{len(items)} 成功",
+            summary=f"处理完成: {success_count}/{len(items)} 成功",  # i18n: user-facing
         )
 
 
 @register_node
 class MergeNode(BaseNode):
-    """数据合并节点 — 合并多个上游节点的数据。"""
+    """Data merge node — merge data from multiple upstream nodes."""
 
     name = "merge"
-    display_name = "数据合并"
+    display_name = "数据合并"  # i18n: user-facing
     category = NodeCategory.LOGIC
-    description = "合并多个来源的数据"
+    description = "合并多个来源的数据"  # i18n: user-facing
     icon = "🔀"
-    default_label = "数据合并"
+    default_label = "数据合并"  # i18n: user-facing
 
     inputs = [
-        {"key": "data_1", "label": "数据源 1", "type": "any"},
-        {"key": "data_2", "label": "数据源 2", "type": "any"},
+        {"key": "data_1", "label": "数据源 1", "type": "any"},  # i18n: user-facing
+        {"key": "data_2", "label": "数据源 2", "type": "any"},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "merged", "label": "合并结果", "type": "any"},
+        {"key": "merged", "label": "合并结果", "type": "any"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
@@ -328,40 +341,44 @@ class MergeNode(BaseNode):
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"merged": merged},
-            summary="数据合并完成",
+            summary="数据合并完成",  # i18n: user-facing
         )
 
 
 @register_node
 class WaitForEventNode(BaseNode):
-    """事件等待节点 — 挂起直到同名入站事件到达 (issue #459)。
+    """Event wait node — suspend until an inbound event with the same name arrives (issue #459).
 
-    与入站触发器 (POST /api/hooks/trigger/<token>) 或 POST /api/events/{name}
-    配合: 事件总线按事件名唤醒等待中的节点。timeout 秒内无事件 = 结构化失败;
-    timeout=0 表示无限等待 (受节点看门狗 FUSION_COWORK_NODE_TIMEOUT_S 约束)。
+    Works with inbound triggers (POST /api/hooks/trigger/<token>) or
+    POST /api/events/{name}: the event bus wakes waiting nodes by event name.
+    No event within timeout seconds = structured failure; timeout=0 means wait
+    indefinitely (bounded by the node watchdog FUSION_COWORK_NODE_TIMEOUT_S).
     """
 
     name = "wait_for_event"
-    display_name = "等待事件"
+    display_name = "等待事件"  # i18n: user-facing
     category = NodeCategory.LOGIC
-    description = "挂起等待命名入站事件到达后继续"
+    description = "挂起等待命名入站事件到达后继续"  # i18n: user-facing
     icon = "📡"
-    default_label = "等待事件"
+    default_label = "等待事件"  # i18n: user-facing
 
     inputs = [
-        {"key": "data", "label": "输入数据", "type": "any", "optional": True},
+        {"key": "data", "label": "输入数据", "type": "any", "optional": True},  # i18n: user-facing
     ]
     outputs = [
-        {"key": "event", "label": "事件名", "type": "string"},
-        {"key": "payload", "label": "事件负载", "type": "dict"},
+        {"key": "event", "label": "事件名", "type": "string"},  # i18n: user-facing
+        {"key": "payload", "label": "事件负载", "type": "dict"},  # i18n: user-facing
     ]
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "event": {"type": "string", "description": "等待的事件名 (触发器事件名为 trigger.<名称>)"},
-                "timeout": {"type": "number", "description": "等待上限秒数, 0=无限 (默认 300)"},
+                "event": {
+                    "type": "string",
+                    "description": "等待的事件名 (触发器事件名为 trigger.<名称>)",  # i18n: user-facing
+                },  # i18n: user-facing
+                "timeout": {"type": "number", "description": "等待上限秒数, 0=无限 (默认 300)"},  # i18n: user-facing
             },
             "required": ["event"],
         }
@@ -373,26 +390,26 @@ class WaitForEventNode(BaseNode):
         if not event:
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error="event 参数必填",
-                summary="等待事件失败: 缺少 event 参数",
+                error="event 参数必填",  # i18n: user-facing
+                summary="等待事件失败: 缺少 event 参数",  # i18n: user-facing
             )
         try:
             timeout = float(self.config.params.get("timeout", 300))
         except (TypeError, ValueError):
             timeout = 300.0
-        logger.info(f"wait_for_event: 挂起等待事件 '{event}' (timeout={timeout:g}s)")
+        logger.info(f"wait_for_event: suspending while waiting for event '{event}' (timeout={timeout:g}s)")
         try:
             result = await get_event_bus().wait(event, timeout=timeout)
         except TimeoutError:
-            logger.warning(f"wait_for_event: 事件 '{event}' 等待超时 ({timeout:g}s)")
+            logger.warning(f"wait_for_event: event '{event}' wait timed out ({timeout:g}s)")
             return NodeResult(
                 status=NodeStatus.FAILED,
-                error=f"事件 '{event}' 等待超时 ({timeout:g}s), 无入站事件到达",
-                summary=f"等待事件超时: {event}",
+                error=f"事件 '{event}' 等待超时 ({timeout:g}s), 无入站事件到达",  # i18n: user-facing
+                summary=f"等待事件超时: {event}",  # i18n: user-facing
             )
-        logger.info(f"wait_for_event: 事件 '{event}' 到达, 继续执行")
+        logger.info(f"wait_for_event: event '{event}' arrived, resuming execution")
         return NodeResult(
             status=NodeStatus.SUCCESS,
             data={"event": result["event"], "payload": result["payload"]},
-            summary=f"事件 '{event}' 已到达",
+            summary=f"事件 '{event}' 已到达",  # i18n: user-facing
         )

@@ -1,6 +1,6 @@
 import type { ArtifactCardData } from './api';
 
-// issue #237: Artifacts GUI 深链 ?artifact_ref=<id> — 一次性消费, 失败显式提示
+// issue #237: Artifacts GUI deep link ?artifact_ref=<id> — one-shot consumption, failures surfaced explicitly
 
 export interface ArtifactRef {
     id: string;
@@ -44,11 +44,11 @@ export function artifactRefFromCard(card: ArtifactCardData, fallbackId: string):
 }
 
 export function artifactRefPrompt(ref: ArtifactRef): string {
-    return `基于产物「${ref.name}」继续任务：\n${ref.refText}\n\n新的要求：`;
+    return `基于产物「${ref.name}」继续任务：\n${ref.refText}\n\n新的要求：`; // i18n: user-facing
 }
 
 export function artifactRefChipLabel(ref: ArtifactRef): string {
-    return `▦ 来自 Artifacts · ${ref.name}`;
+    return `▦ 来自 Artifacts · ${ref.name}`; // i18n: user-facing
 }
 
 export function artifactRefFailureKind(error: unknown): ArtifactRefFailureKind {
@@ -61,21 +61,23 @@ export function artifactRefFailureKind(error: unknown): ArtifactRefFailureKind {
 
 export function artifactRefFailureMessage(kind: ArtifactRefFailureKind, t: (zh: string, en: string) => string): string {
     if (kind === 'bad_id') {
-        return t('产物引用无效，未注入任务上下文', 'Invalid artifact reference; nothing was added to the task');
+        return t('产物引用无效，未注入任务上下文', 'Invalid artifact reference; nothing was added to the task'); // i18n: user-facing
     }
     if (kind === 'not_found') {
         return t(
+            // i18n: user-facing
             '产物不存在或没有访问权限，未注入任务上下文',
             'Artifact not found or access denied; nothing was added to the task'
         );
     }
     return t(
+        // i18n: user-facing
         'Artifacts 引擎暂不可用，产物未注入任务上下文',
         'Artifacts engine unavailable; the artifact was not added to the task'
     );
 }
 
-// run 上下文: labels 供运行视图展示, inputs 注入首节点供节点读取 ref。
+// run context: labels are for run-view display, inputs are injected into the first node so it can read the ref.
 export function artifactRunContext(ref: ArtifactRef | null): {
     labels?: Record<string, string>;
     inputs?: Record<string, unknown>;

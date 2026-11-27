@@ -1,16 +1,16 @@
-"""issue #544: cowork module API IDOR 回归矩阵 — 跨租户 actor 永不 2xx。
+"""issue #544: cowork module API IDOR regression matrix — cross-tenant actors must never get 2xx.
 
-模块 api-key 链模型: 单模块密钥 (env 静态 key / 网关签发 fm- key) = admin,
-认证集中在 _auth_middleware (401), 无 per-endpoint 鉴权可绕。
+Module api-key chain model: a single module key (env static key / gateway-issued fm- key) = admin;
+auth is centralized in _auth_middleware (401); there is no per-endpoint auth to bypass.
 
-矩阵 (resource × actor):
+Matrix (resource x actor):
   resource: workflows (list/get/put/delete) / runs (list/get/directive/pause)
             / artifacts / run events (logs) / scheduler tasks
-  actor:    (a) 另一租户的 api-key (任意非接受 key)
-            (b) 另一租户的 user JWT (identity token 不是模块 API 凭证)
-            (c) 无认证
-            (d) 已吊销的 api-key (模块密钥吊销后旧值必须被拒)
-每格判定: 401/403/404 — 绝不 200/201/202 带数据。
+  actor:    (a) another tenant's api-key (any non-accepted key)
+            (b) another tenant's user JWT (identity token is not a module API credential)
+            (c) no auth
+            (d) revoked api-key (after a module key is revoked the old value must be rejected)
+Per-cell verdict: 401/403/404 — never 200/201/202 with data.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import pytest
 
 VALID_BODY = {"workflow": {"nodes": [], "edges": []}, "name": "idor-probe"}
 
-# (method, path, json_body) — 每个资源一条代表端点
+# (method, path, json_body) — one representative endpoint per resource
 MATRIX_ENDPOINTS = [
     ("GET", "/api/workflows", None),
     ("GET", "/api/workflows/wf_foreign_tenant", None),
@@ -71,9 +71,10 @@ def test_foreign_actor_never_reads_tenant_data(idor_client, method, path, body, 
 
 
 def test_revoked_api_key_rejected_everywhere(idor_client, monkeypatch):
-    # (d) 吊销/轮换: 部署仍配置密钥 (auth_configured 必须为 True — 空配置走
-    # #146 "unset = allow" 开发契约, 不属吊销语义), 旧 key 在每个资源上都必须被拒。
-    # 轮换模型: env 静态 key 换新值; 模块 fm- key 吊销: _module_key 返回空
+    # (d) revocation/rotation: the deployment still has a key configured (auth_configured must be True —
+    # an empty config follows the #146 "unset = allow" dev contract, which is not revocation semantics),
+    # and the old key must be rejected on every resource.
+    # Rotation model: env static key swapped to a new value; module fm- key revocation: _module_key returns empty
     from fusion_cowork.server import web_api
 
     old_key = {"Authorization": "Bearer valid-module-key-544"}
@@ -86,13 +87,13 @@ def test_revoked_api_key_rejected_everywhere(idor_client, monkeypatch):
         assert resp.status_code in (401, 403, 404), (
             f"revoked key {method} {path}: expected 401/403/404, got {resp.status_code}"
         )
-    # 新 key 正常 (轮换不锁死)
+    # new key works (rotation does not lock the deployment out)
     resp = idor_client.get("/api/workflows", headers={"Authorization": "Bearer rotated-module-key-544"})
     assert resp.status_code == 200
 
 
 def test_valid_key_still_allowed(idor_client):
-    # 对照组: 合法 key 正常读取 (矩阵不把正确流量也挡掉)
+    # control group: a valid key reads normally (the matrix must not block correct traffic too)
     resp = idor_client.get("/api/workflows", headers={"Authorization": "Bearer valid-module-key-544"})
     assert resp.status_code == 200
     assert "workflows" in resp.json()

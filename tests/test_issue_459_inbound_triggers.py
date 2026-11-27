@@ -1,7 +1,8 @@
-"""issue #459: inbound triggers — webhook/事件新建 run + wait_for_event 节点。
+"""issue #459: inbound triggers — webhook/events create new runs + wait_for_event node.
 
-事件驱动链路起点: token 鉴权 hook 建新 run; wait_for_event 在事件总线命名事件
-到达后继续; 触发器 hook 同时广播 trigger.<name> 事件可链式联动。
+Start of the event-driven chain: token-authenticated hook creates a new run; wait_for_event
+continues once the named event arrives on the event bus; the trigger hook also broadcasts a
+trigger.<name> event so chains can react.
 """
 
 from __future__ import annotations
@@ -122,7 +123,7 @@ class TestWaitForEventNode:
     async def test_timeout_structured_failure(self):
         res = await self._node(event="ghost", timeout=0.05).execute({})
         assert res.status.value == "failed"
-        assert "超时" in res.error and "ghost" in res.error
+        assert "超时" in res.error and "ghost" in res.error  # i18n: user-facing
 
     async def test_missing_event_param(self):
         res = await self._node().execute({})
@@ -136,10 +137,10 @@ class TestWaitForEventNode:
 
         import_all_nodes()
         assert NodeRegistry.get("wait_for_event") is not None
-        assert NODE_NAME_ALIASES.get("等待事件") == "wait_for_event"
-        assert NODE_NAME_ALIASES.get("事件等待") == "wait_for_event"
-        NodeRegistry.register_alias("等待事件", "wait_for_event")
-        assert NodeRegistry.resolve_alias("等待事件") == "wait_for_event"
+        assert NODE_NAME_ALIASES.get("等待事件") == "wait_for_event"  # i18n: user-facing
+        assert NODE_NAME_ALIASES.get("事件等待") == "wait_for_event"  # i18n: user-facing
+        NodeRegistry.register_alias("等待事件", "wait_for_event")  # i18n: user-facing
+        assert NodeRegistry.resolve_alias("等待事件") == "wait_for_event"  # i18n: user-facing
 
 
 class TestTriggerAPI:
@@ -168,10 +169,10 @@ class TestTriggerAPI:
         created = client.post("/api/triggers", json={"name": "nightly", "workflow_id": wf_id}, headers=auth)
         assert created.status_code == 201, created.text
         token = created.json()["token"]
-        # list 响应不含明文 token
+        # list response contains no plaintext token
         listed = client.get("/api/triggers", headers=auth).json()
         assert listed["count"] == 1 and token not in str(listed)
-        # token 鉴权 hook 建新 run
+        # token-authenticated hook creates a new run
         hook = client.post(f"/api/hooks/trigger/{token}", json={"env": "prod"})
         assert hook.status_code == 202, hook.text
         run_id = hook.json()["run_id"]
@@ -185,7 +186,7 @@ class TestTriggerAPI:
         assert detail["status"] == "success", detail
         rec = client.get(f"/api/runs/{run_id}", headers=auth).json()
         assert rec.get("source") == "trigger" or rec.get("labels", {}).get("trigger") == "nightly", rec
-        # 删除触发器后 token 失效
+        # token is invalidated after the trigger is deleted
         tid = created.json()["id"]
         assert client.delete(f"/api/triggers/{tid}", headers=auth).status_code == 200
         assert client.post(f"/api/hooks/trigger/{token}", json={}).status_code == 401
@@ -228,7 +229,7 @@ class TestTriggerAPI:
         }
         wf_id = client.post("/api/workflows", json=wf_def, headers=auth).json()["id"]
         run_id = client.post("/api/runs", json={"workflow_id": wf_id}, headers=auth).json()["run_id"]
-        # 等 run 进入事件等待 (总线上出现 waiter), 再用触发器 hook 唤醒
+        # Wait for the run to enter event-wait (waiter appears on the bus), then wake it via the trigger hook
         token = client.post("/api/triggers", json={"name": "nightly", "workflow_id": wf_id}, headers=auth).json()[
             "token"
         ]

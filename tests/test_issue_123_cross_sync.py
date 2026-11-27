@@ -1,9 +1,9 @@
-"""#123: /api/deliver 不再永久 503 — cross_sync 经 cross_sync_from_env() 注入 web_serve。
+"""#123: /api/deliver no longer 503s forever — cross_sync injected into web_serve via cross_sync_from_env().
 
 Contract:
-- FUSION_COWORK_CROSS_SYNC 未设 → cross_sync_from_env() 返回 None (默认 OFF 零行为变化);
-- =1 → CrossDeviceSync 实例, env 参数生效 (host/port/token);
-- create_web_app(cross_sync=实例) → POST /api/deliver 真实投递 (fake send_message)。
+- FUSION_COWORK_CROSS_SYNC unset -> cross_sync_from_env() returns None (default OFF, zero behavior change);
+- =1 -> a CrossDeviceSync instance, env params honored (host/port/token);
+- create_web_app(cross_sync=instance) -> POST /api/deliver delivers for real (fake send_message).
 """
 
 from __future__ import annotations

@@ -1,9 +1,9 @@
-"""issue #387: 合成 E2E 管线 — 零真实模型 token / 零 GitHub 写 / 无人工闸门。
+"""issue #387: synthetic E2E pipeline — zero real model tokens / zero GitHub writes / no human gates.
 
-- github_api dry_run: 确定性伪结果 (伪 issue / 伪关联 PR), 不调 API 不需 token
-- claude_dispatch dry_run: 不 spawn claude 会话, 确定性伪 PR
-- studio_run model: spec.model 座位模型钉选 (合成用 replay-dev, fusion-mlx#1518)
-- product_lifecycle 模板: seat_model / gates_human / node_dry_run 三参数装配
+- github_api dry_run: deterministic canned results (fake issue / fake linked PR), no API call, no token
+- claude_dispatch dry_run: no claude session spawned, deterministic fake PR
+- studio_run model: spec.model seat-model pinning (synthetic uses replay-dev, fusion-mlx#1518)
+- product_lifecycle template: seat_model / gates_human / node_dry_run three-param assembly
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ def _api_node(**params):
 
 class TestGitHubDryRun:
     async def test_issue_create_canned_no_token(self, monkeypatch):
-        # dry_run 不需 GITHUB_TOKEN、不触网 — _client 被调即炸
+        # dry_run needs no GITHUB_TOKEN and no network — _client blows up if ever called
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         monkeypatch.setattr(GitHubNode, "_client", lambda *a, **k: (_ for _ in ()).throw(AssertionError("network")))
         res = await _api_node(dry_run=True, title="task one").execute({})
@@ -53,10 +53,10 @@ class TestGitHubDryRun:
         node.config.params["allowed_repos"] = ["o/other"]
         res = await node.execute({})
         assert res.status.value == "failed"
-        assert "白名单" in res.error
+        assert "白名单" in res.error  # i18n: user-facing
 
     async def test_dry_run_false_keeps_token_gate(self, monkeypatch):
-        # 缺省 (false) 行为不变: 无 token 仍失败
+        # Default (false) behavior unchanged: still fails without a token
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         res = await _api_node(title="t").execute({})
         assert res.status.value == "failed"
@@ -96,7 +96,7 @@ class TestDispatchDryRun:
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         res = await self._node(cwd="/nonexistent-dir-387", dry_run=True).execute({})
         assert res.status.value == "failed"
-        assert "工作目录不存在" in res.error
+        assert "工作目录不存在" in res.error  # i18n: user-facing
 
     async def test_whitelist_still_enforced(self, monkeypatch, tmp_path):
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
@@ -104,7 +104,7 @@ class TestDispatchDryRun:
         node.config.params["allowed_repos"] = ["o/other"]
         res = await node.execute({})
         assert res.status.value == "failed"
-        assert "白名单" in res.error
+        assert "白名单" in res.error  # i18n: user-facing
 
 
 def _studio_node(**extra):
@@ -195,7 +195,7 @@ class TestTemplateSynthetic:
             assert wf.nodes[nid].config.params["require_review"] is False, nid
         for nid in ("n6", "n7", "n8", "n11", "n12"):
             assert wf.nodes[nid].config.params["dry_run"] is True, nid
-        # 闸 B 仍由 review_arch 独立控制 (缺省 false = 自动通过)
+        # Gate B is still controlled independently by review_arch (default false = auto-pass)
         assert wf.nodes["n4"].config.params["require_review"] is False
 
     def test_default_assembly_production(self):

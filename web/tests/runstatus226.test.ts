@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { TERMINAL_RUN_STATUSES, isTerminalRunStatus, runHistoryActions } from '../src/runstatus';
 
-// issue #226: 终态门必须与 backend WorkflowStatus 一致 — success/partial 是真实终态。
+// issue #226: the terminal gate must match the backend WorkflowStatus — success/partial are real terminal states.
 
 describe('terminal run status', () => {
     it('covers every WorkflowStatus terminal value', () => {

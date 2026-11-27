@@ -1,7 +1,7 @@
-"""集群模型同步测试 — issue #61 迁移自 fusion-multi-node。
+"""Cluster model sync tests — issue #61, migrated from fusion-multi-node.
 
-覆盖: manifest 建造/序列化, sync_diff 增量, 分区检测降级/恢复,
-SSRF + 路径穿越防护, 负载报告。
+Covers: manifest building/serialization, sync_diff incremental, partition detection degrade/recovery,
+SSRF + path traversal protection, load report.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from fusion_cowork.cluster_sync import (
     is_safe_peer_host,
 )
 
-# ── manifest 建造 + 序列化 ──
+# -- manifest building + serialization --
 
 
 def test_manifest_to_dict_from_dict_roundtrip():
@@ -104,7 +104,7 @@ def test_compute_sync_diff_deleted_flag():
     assert diff[0].sha256 == "__deleted__"
 
 
-# ── SSRF 防护 ──
+# -- SSRF protection --
 
 
 @pytest.mark.parametrize(
@@ -152,7 +152,7 @@ def test_build_safe_url_ok():
     assert url == "http://192.168.1.10:8080/api/models/q/manifest"
 
 
-# ── 路径穿越防护 ──
+# -- path traversal protection --
 
 
 @pytest.mark.parametrize("seg", [".", "..", "a/b", "a\\b", "a\x00b", "", "a b"])
@@ -247,7 +247,7 @@ async def test_sync_manager_incremental_sync_rejects_tampered_bytes(tmp_path, mo
     import httpx
 
     mgr = ClusterSyncManager(model_cache_dir=str(tmp_path), node_id="n1")
-    # manifest 声明 sha256 of "good", 但 peer 回灌 "bad" — 完整性校验须拒写
+    # manifest declares sha256 of "good", but the peer feeds back "bad" — integrity check must refuse the write
     expected_sha = hashlib.sha256(b"good").hexdigest()
     remote = ModelManifest(model_name="m", files=[FileEntry(path="a.bin", size=3, sha256=expected_sha)])
 
@@ -275,7 +275,7 @@ async def test_sync_manager_incremental_sync_rejects_tampered_bytes(tmp_path, mo
     assert result["synced"] == 0
     assert result["rejected"] == 1
     assert result["status"] == "partial"
-    # 篡改文件不应落盘
+    # Tampered file must not be written to disk
     assert not (tmp_path / "m" / "a.bin").exists()
 
 
@@ -301,7 +301,7 @@ def test_node_health_values():
     assert NodeHealth.DEGRADED == "degraded"
 
 
-# ── lazy import 注册 ──
+# -- lazy import registration --
 
 
 def test_lazy_import_cluster_sync_symbols():

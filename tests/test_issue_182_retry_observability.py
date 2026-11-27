@@ -1,4 +1,4 @@
-"""issue #182: 节点重试尝试在 run steps API 可观测 — step.attempt + attempt_errors + retry_on_business_failure opt-in。"""
+"""issue #182: node retry attempts observable in the run steps API — step.attempt + attempt_errors + retry_on_business_failure opt-in."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ class _FlakyRaiseNode(BaseNode):
     name = "flaky_raise_182"
     display_name = "Flaky Raise 182"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "测试用: 前两次抛异常, 第三次成功"
     icon = "🎲"
     default_label = "Flaky Raise"
@@ -37,6 +38,7 @@ class _BusinessFailNode(BaseNode):
     name = "biz_fail_182"
     display_name = "Biz Fail 182"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "测试用: 业务 FAILED 两次后成功"
     icon = "📉"
     default_label = "Biz Fail"
@@ -46,6 +48,7 @@ class _BusinessFailNode(BaseNode):
     async def execute(self, inputs: dict) -> NodeResult:
         type(self).calls += 1
         if type(self).calls < 3:
+            # i18n: user-facing
             return NodeResult(status=NodeStatus.FAILED, error=f"业务失败-{type(self).calls}")
         return NodeResult(status=NodeStatus.SUCCESS, data={"ok": True}, summary="ok")
 
@@ -72,7 +75,7 @@ class TestAttemptObservability:
         assert "transient-2" in step.attempt_errors[1]
 
     async def test_success_first_try_clean(self):
-        _FlakyRaiseNode.calls = 2  # 下次调用即成功
+        _FlakyRaiseNode.calls = 2  # next call succeeds
         eng = WorkflowEngine()
         config = NodeConfig(max_retries=3, retry_delay=0.0)
         execution = await eng.execute(_wf("flaky_raise_182", config), execution_id="run-182-clean")
@@ -100,6 +103,7 @@ class TestAttemptObservability:
         assert step.attempt == 3
         assert _BusinessFailNode.calls == 3
         assert len(step.attempt_errors) == 2
+        # i18n: user-facing
         assert "业务失败-1" in step.attempt_errors[0]
 
     async def test_exhausted_retries_surface_all_errors(self):
@@ -110,11 +114,13 @@ class TestAttemptObservability:
             name = "always_biz_fail_182"
             display_name = "Always Biz Fail 182"
             category = NodeCategory.TOOL
+            # i18n: user-facing
             description = "测试用: 永远业务失败"
             icon = "❌"
             default_label = "Always Fail"
 
             async def execute(self, inputs: dict) -> NodeResult:
+                # i18n: user-facing
                 return NodeResult(status=NodeStatus.FAILED, error="永远失败")
 
         eng = WorkflowEngine()
@@ -123,6 +129,7 @@ class TestAttemptObservability:
         assert execution.status.value == "failed"
         step = execution.steps[0]
         assert step.attempt == 3
+        # i18n: user-facing
         assert step.attempt_errors == ["永远失败", "永远失败", "永远失败"]
 
     async def test_step_dict_exposes_attempt_fields(self):

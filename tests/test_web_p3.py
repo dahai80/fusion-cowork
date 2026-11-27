@@ -1,10 +1,10 @@
-"""P3-1 web 迁移批次 (migration doc §6): W17 模型目录 + W20 /rpc 端点。
+"""P3-1 web migration batch (migration doc §6): W17 model catalog + W20 /rpc endpoint.
 
 Contract:
-- GET /api/models: nl_generator.mlx.list_models() 透传; 无 mlx 或上游失败 503。
-- POST /api/ai/generate-workflow: 可选 model 覆盖 (临时生成器, 不污染共享实例)。
-- POST /rpc: rpc_bridge dispatch — 非 plugins 方法 -32601; plugins/bogus
-  依赖在 -32601 / 缺 -32603; JSON 解析失败 400。
+- GET /api/models: passthrough to nl_generator.mlx.list_models(); 503 when mlx missing or upstream fails.
+- POST /api/ai/generate-workflow: optional model override (temporary generator, shared instance untouched).
+- POST /rpc: rpc_bridge dispatch — non-plugins methods -32601; plugins/bogus
+  deps in -32601 / missing -32603; JSON parse failure 400.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ def _auth():
 
 class TestModelsCatalog:
     def test_list_models_ok(self, client):
-        # issue #126: 默认只回 chat 模型 (image_gen 等过滤), total 保留原始计数
+        # issue #126: default returns chat models only (image_gen etc. filtered), total keeps the raw count
         resp = client.get("/api/models", headers=_auth())
         assert resp.status_code == 200
         body = resp.json()
@@ -79,7 +79,7 @@ class TestModelsCatalog:
             nl_generator=FakeGenerator(FakeMlx(fail=True)),
         )
         resp = TestClient(app).get("/api/models", headers=_auth())
-        # issue #172: 冷缓存上游失败不再 503, 返回 200 unavailable envelope
+        # issue #172: cold-cache upstream failure no longer 503, returns a 200 unavailable envelope
         assert resp.status_code == 200
         body = resp.json()
         assert body["models"] == []
@@ -89,9 +89,9 @@ class TestModelsCatalog:
         resp = client.post(
             "/api/ai/generate-workflow",
             headers=_auth(),
-            json={"prompt": "整理下载", "model": "qwen-chat-8b"},
+            json={"prompt": "整理下载", "model": "qwen-chat-8b"},  # i18n: user-facing
         )
-        # FakeMlx 无 chat 能力 → 临时生成器走到推理失败 → 502 (证明 model 路径已接通)
+        # FakeMlx has no chat capability → temporary generator reaches inference failure → 502 (proves the model path is wired)
         assert resp.status_code == 502
 
     def test_generate_requires_prompt(self, client):

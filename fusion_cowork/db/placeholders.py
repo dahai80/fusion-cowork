@@ -1,8 +1,8 @@
-"""SQL 占位符归一化 (v0.4.0 Stage 3).
+"""SQL placeholder normalization (v0.4.0 Stage 3).
 
-SQLite 用 ? 占位符, Postgres (asyncpg) 用 $1/$2/...。
-所有 store SQL 保持 ? (SQLite 风格), postgres 路径经 normalize_placeholders 转换。
-单 helper, 非架构层。
+SQLite uses ? placeholders, Postgres (asyncpg) uses $1/$2/... .
+All store SQL keeps ? (SQLite style); the postgres path converts via normalize_placeholders.
+Single helper, not an architectural layer.
 """
 
 from __future__ import annotations
@@ -16,9 +16,9 @@ _PLACEHOLDER_RE = re.compile(r"\?")
 
 
 def normalize_placeholders(sql: str) -> str:
-    """把 SQL 里的 ? 占位符替换为 Postgres 风格 $1, $2, ...。
+    """Replace ? placeholders in SQL with Postgres-style $1, $2, ... .
 
-    按 ? 出现顺序编号。不处理引号内的 ? (SQL 字面量极少含 ?, 旧库无此用法)。
+    Numbered by ? occurrence order. Does not handle ? inside quotes (SQL literals rarely contain ?, legacy DBs have no such usage).
     """
     counter = [0]
 

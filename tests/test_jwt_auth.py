@@ -1,13 +1,13 @@
-"""Stage 2 — JWT 认证 + secret 脱敏 + principal 从 claim 测试 (v0.4.0)。
+"""Stage 2 — JWT auth + secret redaction + principal-from-claim tests (v0.4.0).
 
-覆盖:
-- JWTVerifier HS256 有效/过期/篡改/错 secret/错租户 claim
-- JWTVerifier RS256 (本地公钥) 有效
-- verify_static_token: 配/未配 expected, require_jwt 模式
-- verify_any_token: JWT 优先 + 静态 fallback
-- desk_rpc _authenticate: 注入 __tenant_id__/__principal__ 从 JWT claim
-- config_center: secret key 日志脱敏 (grep 无明文 token)
-- cli: ntfy_token 打印脱敏 (grep 无明文 token)
+Coverage:
+- JWTVerifier HS256 valid/expired/tampered/wrong secret/wrong tenant claim
+- JWTVerifier RS256 (local public key) valid
+- verify_static_token: with/without expected, require_jwt mode
+- verify_any_token: JWT first + static fallback
+- desk_rpc _authenticate: injects __tenant_id__/__principal__ from JWT claim
+- config_center: secret key log redaction (grep shows no plaintext token)
+- cli: ntfy_token display redaction (grep shows no plaintext token)
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ class TestHS256:
 
     def test_claim_fallback_keys(self):
         v = JWTVerifier(secret=SECRET)
-        # tid + sub 变体
+        # tid + sub variants
         token = _make_hs256({"tid": "beta", "sub": "bob"})
         p = v.verify_token(token)
         assert p.tenant_id == "beta"
@@ -128,7 +128,7 @@ class TestHS256:
         assert v.verify_token(bad) is None
 
 
-# ── JWTVerifier RS256 (本地公钥, 不走 JWKS 远程) ──
+# ── JWTVerifier RS256 (local public key, no remote JWKS) ──
 
 
 class TestRS256:
@@ -180,12 +180,12 @@ class TestRS256:
         assert v.verify_token(token) is None
 
 
-# ── 静态 token fallback ──
+# ── static token fallback ──
 
 
 class TestStaticFallback:
     def test_no_expected_no_token_local(self):
-        # 本地无认证 → 默认 principal (向后兼容)
+        # Local no-auth -> default principal (back-compat)
         p = verify_static_token(None, None)
         assert p is not None
         assert p.is_local
@@ -205,13 +205,13 @@ class TestStaticFallback:
     def test_require_jwt_blocks_local_fallback(self, monkeypatch):
         monkeypatch.setenv("FUSION_REQUIRE_JWT", "1")
         assert require_jwt() is True
-        # 生产模式 + 无静态 token → 拒绝降级
+        # Prod mode + no static token -> refuse to degrade
         assert verify_static_token(None, None) is None
-        # 生产模式 + 有静态 token → 仍可校验
+        # Prod mode + static token present -> still verifies
         assert verify_static_token("ok", "ok") is not None
 
 
-# ── verify_any_token (WS/sync/remote 共用) ──
+# ── verify_any_token (shared by WS/sync/remote) ──
 
 
 class TestVerifyAnyToken:
@@ -225,7 +225,7 @@ class TestVerifyAnyToken:
         assert p.user_id == "alice"
 
     def test_static_fallback_when_no_jwt(self):
-        # 无 JWT env → 走静态
+        # No JWT env -> static path
         p = verify_any_token("my-static", "my-static")
         assert p is not None
         assert p.is_local
@@ -233,7 +233,7 @@ class TestVerifyAnyToken:
     def test_jwt_invalid_falls_to_static(self, monkeypatch):
         monkeypatch.setenv("FUSION_JWT_SECRET", SECRET)
         _reset_default_verifier()
-        # 不是有效 JWT → 静态 fallback
+        # Not a valid JWT -> static fallback
         p = verify_any_token("my-static", "my-static")
         assert p is not None
         assert p.is_local
@@ -241,12 +241,12 @@ class TestVerifyAnyToken:
     def test_both_fail_returns_none(self, monkeypatch):
         monkeypatch.setenv("FUSION_JWT_SECRET", SECRET)
         _reset_default_verifier()
-        # require_jwt 模式 + 无静态 + 非 JWT
+        # require_jwt mode + no static + not a JWT
         monkeypatch.setenv("FUSION_REQUIRE_JWT", "1")
         assert verify_any_token("garbage", None) is None
 
 
-# ── desk_rpc _authenticate 注入 tenant_id ──
+# ── desk_rpc _authenticate tenant_id injection ──
 
 
 class TestDeskRpcAuthInject:
@@ -262,7 +262,7 @@ class TestDeskRpcAuthInject:
         assert "__auth_error__" not in authed
         assert authed["__tenant_id__"] == "tenant-z"
         assert authed["__principal__"] == "zoe"
-        # 身份字段不信 params (CR-5 反 IDOR): attacker 注入被覆盖
+        # Identity fields not trusted from params (CR-5 anti-IDOR): attacker injection is overwritten
         assert authed["user_id"] == "zoe"
         assert authed["operator_id"] == "zoe"
 
@@ -308,7 +308,7 @@ class TestDeskRpcAuthInject:
         assert "__auth_error__" in authed
 
 
-# ── secret 脱敏 ──
+# ── secret redaction ──
 
 
 class TestSecretRedaction:
@@ -361,8 +361,8 @@ class TestSecretRedaction:
         monkeypatch.setattr(cli_mod, "console", FakeConsole())
         from fusion_cowork.config_center import ConfigCenter
 
-        # push_config 用 ConfigCenter.get_instance() 单例 — 设单例值
-        ConfigCenter._instance = None  # 清旧单例
+        # push_config uses the ConfigCenter.get_instance() singleton — set the singleton value
+        ConfigCenter._instance = None  # clear stale singleton
         cc = ConfigCenter(config_file=str(tmp_path / "config.json"))
         ConfigCenter._instance = cc
         cc.set("push.bark_url", "https://bark.example.com")
@@ -381,4 +381,4 @@ class TestSecretRedaction:
             ConfigCenter._instance = None
         joined = "\n".join(captured)
         assert "very-long-ntfy-token-12345678" not in joined
-        assert "REDACTED" in joined or "***" in joined or "已设置" in joined
+        assert "REDACTED" in joined or "***" in joined or "已设置" in joined  # i18n: user-facing

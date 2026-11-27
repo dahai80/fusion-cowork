@@ -1,4 +1,4 @@
-"""issue #255: markdown skill 包 CRUD — 用户目录新建/编辑/删除, 内置包只读。"""
+"""issue #255: markdown skill pack CRUD — create/edit/delete in the user directory, built-in packs read-only."""
 
 from __future__ import annotations
 
@@ -9,12 +9,15 @@ STATIC_KEY = "test-key-255"
 PACK_MD = """---
 name: my-check
 command: /my-check
+# i18n: user-facing
 title: 自检
+# i18n: user-facing
 description: 测试用技能包
 version: "1.0"
 category: custom
 ---
 
+<!-- # i18n: user-facing -->
 按步骤执行自检。
 """
 
@@ -85,13 +88,13 @@ class TestSkillCrud:
     def test_edit_updates_existing_pack(self, client, monkeypatch, tmp_path):
         tc, _ = client
         tc.put("/api/skills", headers=_auth(), json={"markdown": PACK_MD})
-        updated = PACK_MD.replace("description: 测试用技能包", "description: 已更新描述")
+        updated = PACK_MD.replace("description: 测试用技能包", "description: 已更新描述")  # i18n: user-facing
         r = tc.put("/api/skills", headers=_auth(), json={"markdown": updated})
         assert r.status_code == 200, r.text
         files = list((tmp_path / "user-skills").glob("*.md"))
         assert len(files) == 1
         src = tc.get("/api/skills/my-check/source", headers=_auth()).json()
-        assert "已更新描述" in src["markdown"]
+        assert "已更新描述" in src["markdown"]  # i18n: user-facing
 
     def test_delete_user_pack(self, client, monkeypatch, tmp_path):
         tc, _ = client

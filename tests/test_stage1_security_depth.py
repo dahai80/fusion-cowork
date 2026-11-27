@@ -1,13 +1,13 @@
-"""Stage 1 安全纵深补强测试 — 0825 审计 A/E 级修复核验。
+"""Stage 1 security-in-depth hardening tests — 0825 audit A/E-level fix verification.
 
-覆盖 v0.3.1 新增防御 (现有 test_sanitize_stage2 未覆盖的绕过面):
-- A-4: PythonREPL 动态导入/执行绕过 (__import__/importlib/eval/exec/getattr(builtins))
-- E-11: FetchURL SSRF 私网/环回/元数据拒绝 + follow_redirects=False
-- E-10: CDP wait_for_function 危险 token 拒绝 + allow_js gate
-- E-3: file: scope ~/ expanduser (含 params 带 ~ 的对齐)
-- E-4: Permission save 原子写 + load 损坏容错
-- A-6: deny 规则先于 Hook 批准 (Hook approve 不可翻盘 deny)
-- A-2: sandbox kill_process_group / bounded_communicate (darwin seatbelt 见 test_permission_stage3)
+Covers the v0.3.1 defenses (bypass surfaces not covered by the existing test_sanitize_stage2):
+- A-4: PythonREPL dynamic import/exec bypass (__import__/importlib/eval/exec/getattr(builtins))
+- E-11: FetchURL SSRF private/loopback/metadata rejection + follow_redirects=False
+- E-10: CDP wait_for_function dangerous-token rejection + allow_js gate
+- E-3: file: scope ~/ expanduser (incl. params carrying ~ alignment)
+- E-4: Permission save atomic write + load corruption tolerance
+- A-6: deny rules precede Hook approval (Hook approve cannot overturn deny)
+- A-2: sandbox kill_process_group / bounded_communicate (darwin seatbelt in test_permission_stage3)
 """
 
 import json
@@ -22,7 +22,7 @@ from fusion_cowork.nodes.tools.tool_nodes import _check_python_code, _check_ssrf
 fusion_cowork.nodes.import_all_nodes()
 
 
-# ── A-4: PythonREPL 动态导入/执行绕过 ──
+# ── A-4: PythonREPL dynamic import/exec bypass ──
 
 
 class TestPythonReplDynamicBypass:
@@ -43,7 +43,7 @@ class TestPythonReplDynamicBypass:
     )
     def test_dynamic_bypass_blocked(self, code):
         err = _check_python_code(code)
-        assert err is not None, f"动态绕过未拦截: {code}"
+        assert err is not None, f"动态绕过未拦截: {code}"  # i18n: user-facing
 
     @pytest.mark.parametrize(
         "code",
@@ -76,17 +76,19 @@ class TestFetchUrlSSRF:
         ],
     )
     def test_ssrf_blocked(self, url):
-        assert _check_ssrf_url(url) is not None, f"SSRF 未拒: {url}"
+        assert _check_ssrf_url(url) is not None, f"SSRF 未拒: {url}"  # i18n: user-facing
 
     def test_ssrf_metadata_host_blocked(self):
         assert _check_ssrf_url("http://metadata.google.internal/computeMetadata/") is not None
 
     def test_public_url_allowed(self):
-        # 公网域名 (解析失败/超时在测试环境可能拒, 仅断言字面量非私网不直接拒)
+        # public domain (resolution failure/timeout may reject in test env; only assert the
+        # literal is not private-net and is not directly rejected)
         err = _check_ssrf_url("https://example.com/")
-        # example.com 解析公网 IP, 应放行 (None); 若沙箱环境 DNS 不通会拒 — 仅断言非内网误判
+        # example.com resolves to a public IP, should pass (None); sandbox without DNS rejects —
+        # only assert it is not a private-net/loopback misclassification
         if err is not None:
-            assert "内网" not in err and "环回" not in err
+            assert "内网" not in err and "环回" not in err  # i18n: user-facing
 
     def test_is_private_ip_ranges(self):
         import ipaddress
@@ -100,7 +102,7 @@ class TestFetchUrlSSRF:
         assert "fetch_url" in HIGH_RISK_NODES
 
 
-# ── E-10: CDP wait_for_function 危险 token + allow_js ──
+# ── E-10: CDP wait_for_function dangerous token + allow_js ──
 
 
 class TestCdpWaitForGate:
@@ -110,7 +112,7 @@ class TestCdpWaitForGate:
 
         c = CDPClient(host="127.0.0.1", port=9222)
         for expr in ["x}", "x;", "x`y", "eval(1)", "Function(1)", "new Function", "x=>{y"]:
-            with pytest.raises(ValueError, match="危险标记"):
+            with pytest.raises(ValueError, match="危险标记"):  # i18n: user-facing
                 await c.wait_for_function(expr, timeout=0.1)
 
     @pytest.mark.asyncio
@@ -120,7 +122,7 @@ class TestCdpWaitForGate:
         node = NodeRegistry.create("cdp_wait_for", config=NodeConfig(params={"expression": "true", "timeout": 1}))
         result = await node.execute({})
         assert result.status == NodeStatus.FAILED
-        assert "allow_js" in (result.error or "") or "确认" in (result.error or "")
+        assert "allow_js" in (result.error or "") or "确认" in (result.error or "")  # i18n: user-facing
 
     def test_cdp_wait_for_in_high_risk(self):
         assert "cdp_wait_for" in HIGH_RISK_NODES
@@ -151,7 +153,7 @@ class TestScopeExpanduser:
         assert p.matches("file_copy", {"source_path": "~/Desktop/a.txt"})
 
 
-# ── E-4: Permission save 原子写 + load 损坏容错 ──
+# ── E-4: Permission save atomic write + load corruption tolerance ──
 
 
 class TestPermissionPersistAtomic:
@@ -162,13 +164,13 @@ class TestPermissionPersistAtomic:
         target = str(tmp_path / "perm.json")
         pm.save(target)
         assert os.path.exists(target)
-        # 无残留 tmp 文件
+        # no leftover tmp files
         leftovers = [f for f in os.listdir(tmp_path) if ".tmp." in f]
-        assert leftovers == [], f"原子写残留 tmp: {leftovers}"
-        # 权限 0600
+        assert leftovers == [], f"原子写残留 tmp: {leftovers}"  # i18n: user-facing
+        # permission 0600
         if os.name != "nt":
             mode = os.stat(target).st_mode & 0o777
-            assert mode == 0o600, f"权限文件 mode={oct(mode)} 非 0600"
+            assert mode == 0o600, f"权限文件 mode={oct(mode)} 非 0600"  # i18n: user-facing
 
     @pytest.mark.asyncio
     async def test_save_then_load_roundtrip(self, tmp_path):
@@ -190,9 +192,9 @@ class TestPermissionPersistAtomic:
             f.write("{ this is not json")
         pm = PermissionManager()
         pm.approve("shell_exec")
-        pm.load(target)  # 不崩
-        assert pm.rules == [], "损坏 JSON 应清空规则"
-        # 仍可正常工作
+        pm.load(target)  # no crash
+        assert pm.rules == [], "损坏 JSON 应清空规则"  # i18n: user-facing
+        # still functional
         assert await pm.check("file_input") is True
 
     @pytest.mark.asyncio
@@ -205,7 +207,7 @@ class TestPermissionPersistAtomic:
         assert pm.level == PermissionLevel.CONFIRM
 
 
-# ── A-6: deny 先于 Hook 批准 ──
+# ── A-6: deny precedes Hook approval ──
 
 
 class TestDenyBeforeHook:
@@ -221,13 +223,13 @@ class TestDenyBeforeHook:
         hm.register(HookEvent.PERMISSION_REQUEST, approve_all)
         pm = PermissionManager(level=PermissionLevel.CONFIRM, hook_manager=hm)
         pm.deny("shell_exec")
-        # Hook 试图 approve, 但 deny 规则优先 → 仍拒
+        # Hook tries to approve, but deny rules take precedence -> still denied
         assert await pm.check("shell_exec") is False
 
     @pytest.mark.asyncio
     async def test_deny_rule_overrides_bypass_for_explicit_deny(self):
-        # BYPASS 全放行, 但 deny 规则... 审计 A-6: BYPASS 仍 fire 审计, 判定全放行
-        # (BYPASS 设计语义 = 全放行, deny 在 BYPASS 下不拦 — 仅审计记录)
+        # BYPASS allows all, but deny rule... audit A-6: BYPASS still fires the audit hook, verdict allows all
+        # (BYPASS design semantics = allow all; deny does not block under BYPASS — audit record only)
         from fusion_cowork.engine.hooks import HookEvent, HookManager
 
         hm = HookManager()
@@ -240,7 +242,7 @@ class TestDenyBeforeHook:
         pm = PermissionManager(level=PermissionLevel.BYPASS, hook_manager=hm)
         pm.deny("shell_exec")
         result = await pm.check("shell_exec")
-        # BYPASS 放行, 但审计 Hook 仍记录了 denied_by_rule
+        # BYPASS allows, but the audit Hook still recorded denied_by_rule
         assert result is True
         assert saw_deny["v"] is True
 
@@ -255,5 +257,5 @@ class TestDenyBeforeHook:
         pm = PermissionManager(level=PermissionLevel.CONFIRM)
         pm.approve("shell_exec", "command:git *")
         assert await pm.check("shell_exec", params={"command": "git status"}) is True
-        # 越界 command 仍拒 (scope 不匹配)
+        # out-of-scope command still denied (scope mismatch)
         assert await pm.check("shell_exec", params={"command": "rm -rf /"}) is False

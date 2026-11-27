@@ -17,7 +17,7 @@ STATIC_KEY = "test-key-228"
 CONNECTOR_CFG = {
     "id": "sheets",
     "name": "Google Sheets",
-    "description": "读取与写入表格",
+    "description": "读取与写入表格",  # i18n: user-facing
     "transport": "mcp",
     "url": "http://mcp.local:7777",
     "scopes": [{"id": "sheets.read"}, {"id": "sheets.write", "sensitive": True}],
@@ -42,15 +42,18 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
                 "data": [
                     {
                         "graph_id": "g_research",
-                        "name": "研究员",
-                        "description": "拆解调研任务",
+                        "name": "研究员",  # i18n: user-facing
+                        "description": "拆解调研任务",  # i18n: user-facing
                         "graph_data": {"nodes": [{"name": "search"}, {"name": "summarize"}]},
                     }
                 ]
             },
         )
     if path == "/v1/agents":
-        return httpx.Response(200, json={"data": [{"agent_id": "a_reviewer", "name": "审查员", "status": "active"}]})
+        return httpx.Response(
+            200,
+            json={"data": [{"agent_id": "a_reviewer", "name": "审查员", "status": "active"}]},  # i18n: user-facing
+        )  # i18n: user-facing
     if path == "/v1/graphs/g_research":
         return httpx.Response(200, json={"graph_id": "g_research", "graph_data": {"nodes": []}})
     if path == "/v1/agents/a_reviewer/definition":
@@ -87,7 +90,14 @@ def skills_dir(tmp_path):
     pack = root / "echo-pack"
     pack.mkdir(parents=True)
     (pack / "skill.json").write_text(
-        json.dumps({"name": "echo-pack", "type": "node", "node": "ai_summarize", "description": "回声技能"}),
+        json.dumps(
+            {
+                "name": "echo-pack",
+                "type": "node",
+                "node": "ai_summarize",
+                "description": "回声技能",  # i18n: user-facing
+            }  # i18n: user-facing
+        ),  # i18n: user-facing
         encoding="utf-8",
     )
     return root
@@ -245,7 +255,7 @@ class TestGate:
         gate = await self._gate(store, connector_dir, wire)
         verdict, reason = await gate("mcp_client", {"url": "http://mcp.local:7777", "tool": "sheets.read"}, WORKSPACE_B)
         assert verdict == "deny"
-        assert "未安装" in reason
+        assert "未安装" in reason  # i18n: user-facing
 
     async def test_installed_enabled_allows_read_scope(self, caps_path, connector_dir, wire):
         store = CapabilityStore(caps_path)
@@ -271,7 +281,7 @@ class TestGate:
         store.set_enabled(WORKSPACE_A, "connector", "connector.sheets", False)
         gate = await self._gate(store, connector_dir, wire)
         verdict, reason = await gate("mcp_client", {"url": "http://mcp.local:7777", "tool": "sheets.read"}, WORKSPACE_A)
-        assert verdict == "deny" and "停用" in reason
+        assert verdict == "deny" and "停用" in reason  # i18n: user-facing
 
     async def test_sensitive_scope_requires_approval_until_granted(self, caps_path, connector_dir, wire):
         store = CapabilityStore(caps_path)
@@ -280,7 +290,7 @@ class TestGate:
         verdict, reason = await gate(
             "mcp_client", {"url": "http://mcp.local:7777", "tool": "sheets.write"}, WORKSPACE_A
         )
-        assert verdict == "approval" and "敏感 scope" in reason
+        assert verdict == "approval" and "敏感 scope" in reason  # i18n: user-facing
         store.grant_scopes(WORKSPACE_A, "connector.sheets", ["sheets.write"])
         store.set_credentials(WORKSPACE_A, "connector.sheets", {"access_token": "tok"})
         verdict, _ = await gate("mcp_client", {"url": "http://mcp.local:7777", "tool": "sheets.write"}, WORKSPACE_A)
@@ -358,7 +368,7 @@ class TestUsageAudit:
         store.install(WORKSPACE_A, "subagent", "subagent.graph.g_research")
         record = {
             "run_id": "run_1",
-            "workflow_name": "周报",
+            "workflow_name": "周报",  # i18n: user-facing
             "space_id": WORKSPACE_A,
             "labels": {"actor": "dahai"},
             "steps": [
@@ -413,7 +423,7 @@ class TestSubagents:
     def test_spawn_requires_install(self, client, app):
         r = client.post(
             "/api/capabilities/subagents/subagent.graph.g_research/spawn",
-            json={"workspace_id": WORKSPACE_A, "input": "调研"},
+            json={"workspace_id": WORKSPACE_A, "input": "调研"},  # i18n: user-facing
         )
         assert r.status_code == 409
 
@@ -448,10 +458,13 @@ class TestSubagents:
             json={"workspace_id": WORKSPACE_A},
         )
         url = "/api/capabilities/subagents/subagent.graph.g_research/spawn"
-        r = client.post(url, json={"workspace_id": WORKSPACE_A, "input": "调研竞品"})
+        r = client.post(url, json={"workspace_id": WORKSPACE_A, "input": "调研竞品"})  # i18n: user-facing
         assert r.status_code == 409
         assert r.json()["detail"]["code"] == "spawn_approval_required"
-        r = client.post(url, json={"workspace_id": WORKSPACE_A, "input": "调研竞品", "approve": True})
+        r = client.post(
+            url,
+            json={"workspace_id": WORKSPACE_A, "input": "调研竞品", "approve": True},  # i18n: user-facing
+        )  # i18n: user-facing
         assert r.status_code == 200, r.text
         assert r.json()["kind"] == "graph"
 

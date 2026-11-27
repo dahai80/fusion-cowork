@@ -32,7 +32,7 @@ def test_resolved_provider_auto():
 def test_push_empty_message():
     result = asyncio.run(push("t", ""))
     assert result.success is False
-    assert "不能为空" in result.error
+    assert "不能为空" in result.error  # i18n: user-facing
 
 
 def test_push_bark_success():
@@ -43,14 +43,21 @@ def test_push_bark_success():
         client.__aexit__ = AsyncMock(return_value=None)
         mock_client_cls.return_value = client
         result = asyncio.run(
-            push("标题", "内容", provider="bark", url="https://api.day.app", token="abc", sound="minuet")
+            push(
+                "标题",  # i18n: user-facing
+                "内容",  # i18n: user-facing
+                provider="bark",
+                url="https://api.day.app",
+                token="abc",
+                sound="minuet",  # i18n: user-facing
+            )  # i18n: user-facing
         )
         assert result.success is True
         assert result.provider == "bark"
         client.post.assert_awaited_once()
         args, kwargs = client.post.call_args
         assert "abc" in args[0]
-        assert kwargs["json"]["title"] == "标题"
+        assert kwargs["json"]["title"] == "标题"  # i18n: user-facing
         assert kwargs["json"]["sound"] == "minuet"
 
 
@@ -94,4 +101,4 @@ def test_push_node_empty_message():
     node = NodeRegistry.create("push", config=NodeConfig(params={"provider": "local"}))
     r = asyncio.run(node.execute({"title": "t", "message": ""}))
     assert r.status.value == "failed"
-    assert "不能为空" in r.error
+    assert "不能为空" in r.error  # i18n: user-facing

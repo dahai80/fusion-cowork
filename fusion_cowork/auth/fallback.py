@@ -1,7 +1,7 @@
-"""静态 token fallback (v0.4.0 Stage 2) — 本地/桌面保留, 生产强制 JWT。
+"""Static token fallback (v0.4.0 Stage 2) — kept for local/desktop, JWT enforced in production.
 
-- verify_static_token(token, expected): 等值比对 (常量时间), 返 TenantPrincipal (默认租户/local_user)
-- require_jwt(): env FUSION_REQUIRE_JWT=1 → 生产模式, 静态 fallback 被禁
+- verify_static_token(token, expected): equality comparison (constant time), returns TenantPrincipal (default tenant/local_user)
+- require_jwt(): env FUSION_REQUIRE_JWT=1 → production mode, static fallback disabled
 """
 
 from __future__ import annotations
@@ -17,42 +17,44 @@ logger = logging.getLogger(__name__)
 
 
 def require_jwt() -> bool:
-    """生产模式开关: env FUSION_REQUIRE_JWT=1 → 强制 JWT, 禁静态 fallback。"""
+    """Production mode switch: env FUSION_REQUIRE_JWT=1 → JWT enforced, static fallback disabled."""
     return os.environ.get("FUSION_REQUIRE_JWT", "") == "1"
 
 
 def verify_static_token(token: Optional[str], expected: Optional[str]) -> Optional[TenantPrincipal]:
-    """静态 token 校验 (本地/桌面)。
+    """Static token verification (local/desktop).
 
-    配了 expected → token 须常量时间等值, 通过返默认 principal (local_user/default tenant);
-    未配 expected (本地无认证) → 无条件返默认 principal (向后兼容单用户);
-    require_jwt()=1 且 expected 未配 → 返 None (生产强制 JWT, 无静态降级)。
-    失败返 None + 日志 (不泄 token 原文)。
+    expected configured → token must be constant-time equal, on pass returns the default
+    principal (local_user/default tenant);
+    expected not configured (local, no auth) → unconditionally returns the default principal
+    (single-user back-compat);
+    require_jwt()=1 and expected not configured → returns None (production enforces JWT, no static fallback).
+    Failure returns None + log (never leaks the raw token).
     """
     if require_jwt() and not expected:
-        logger.warning("生产模式 FUSION_REQUIRE_JWT=1 且无静态 token, 拒绝降级认证")
+        logger.warning("Production mode FUSION_REQUIRE_JWT=1 with no static token, refusing degraded auth")
         return None
     if not expected:
         return TenantPrincipal(tenant_id=DEFAULT_TENANT, user_id=LOCAL_USER)
     if not token or not isinstance(token, str):
-        logger.warning("静态 token 校验失败: token 缺失")
+        logger.warning("Static token verification failed: token missing")
         return None
     if not hmac.compare_digest(token, expected):
-        logger.warning("静态 token 校验失败: token 不匹配")
+        logger.warning("Static token verification failed: token mismatch")
         return None
     return TenantPrincipal(tenant_id=DEFAULT_TENANT, user_id=LOCAL_USER)
 
 
 def verify_any_token(token: Optional[str], expected: Optional[str]) -> Optional[TenantPrincipal]:
-    """双模校验: JWT 优先, 静态 token fallback。WS/sync/remote 共用。
+    """Dual-mode verification: JWT first, static token fallback. Shared by WS/sync/remote.
 
-    issue #88: FUSION_IDENTITY_ENABLED=1 → 优先 fusion-identity /verify,
-    revoked/fail-closed → None (生产模式不静默降级静态 token)。
-    禁用 → 当前 JWT-then-static 路径不变。
+    issue #88: FUSION_IDENTITY_ENABLED=1 → fusion-identity /verify first,
+    revoked/fail-closed → None (production never silently falls back to a static token).
+    Disabled → the current JWT-then-static path is unchanged.
 
-    - JWT/identity verifier active + token 是有效 JWT → 返 JWT claim principal
-    - 否则静态 token 校验 (verify_static_token)
-    - require_jwt()=1 + 无 JWT 通过 + 无静态 expected → None (生产强制)
+    - JWT/identity verifier active + token is a valid JWT → returns the JWT claim principal
+    - Otherwise static token verification (verify_static_token)
+    - require_jwt()=1 + no JWT pass + no static expected → None (production enforcement)
     """
     if token and isinstance(token, str):
         try:
@@ -63,12 +65,12 @@ def verify_any_token(token: Optional[str], expected: Optional[str]) -> Optional[
                 jwt_principal = verifier.verify_token(token)
                 if jwt_principal is not None:
                     return jwt_principal
-                # issue #88: identity 启用但校验失败 → fail-closed (不降级静态 token)
+                # issue #88: identity enabled but verification failed → fail-closed (no static token fallback)
                 from fusion_cowork.auth.identity import is_identity_enabled
 
                 if is_identity_enabled() and require_jwt():
-                    logger.warning("identity 校验未通过 + 生产模式, 拒绝静态降级")
+                    logger.warning("identity verification not passed + production mode, refusing static fallback")
                     return None
         except Exception as e:
-            logger.warning(f"JWT/identity 校验异常, 回退静态 token: {e}")
+            logger.warning(f"JWT/identity verification error, falling back to static token: {e}")
     return verify_static_token(token, expected)

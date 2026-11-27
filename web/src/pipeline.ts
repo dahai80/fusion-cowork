@@ -17,82 +17,82 @@ export interface PipelineStage {
 export const PIPELINE_STAGES: PipelineStage[] = [
     {
         id: 1,
-        labelZh: '需求登记',
+        labelZh: '需求登记', // i18n: user-facing
         labelEn: 'Requirement intake',
         nodeIds: [],
-        inputsZh: ['需求文本 / 文档上传'],
+        inputsZh: ['需求文本 / 文档上传'], // i18n: user-facing
         inputsEn: ['Requirement text / document upload'],
-        outputsZh: ['需求登记记录 (run 输入快照)'],
+        outputsZh: ['需求登记记录 (run 输入快照)'], // i18n: user-facing
         outputsEn: ['Requirement registration record (run input snapshot)'],
     },
     {
         id: 2,
-        labelZh: '可行性 + PRD',
+        labelZh: '可行性 + PRD', // i18n: user-facing
         labelEn: 'Feasibility + PRD',
         nodeIds: ['n1'],
-        inputsZh: ['需求文本 + fusion-* 能力矩阵'],
+        inputsZh: ['需求文本 + fusion-* 能力矩阵'], // i18n: user-facing
         inputsEn: ['Requirement text + fusion-* capability matrix'],
-        outputsZh: ['可行性结论 + PRD v1'],
+        outputsZh: ['可行性结论 + PRD v1'], // i18n: user-facing
         outputsEn: ['Feasibility verdict + PRD v1'],
     },
     {
         id: 3,
-        labelZh: '闸门 A (PRD 评审)',
+        labelZh: '闸门 A (PRD 评审)', // i18n: user-facing
         labelEn: 'Gate A (PRD review)',
         nodeIds: ['n2'],
-        inputsZh: ['PRD + 评审清单'],
+        inputsZh: ['PRD + 评审清单'], // i18n: user-facing
         inputsEn: ['PRD + review checklist'],
-        outputsZh: ['闸门 A 决定 + 结构化意见'],
+        outputsZh: ['闸门 A 决定 + 结构化意见'], // i18n: user-facing
         outputsEn: ['Gate A decision + structured opinions'],
     },
     {
         id: 4,
-        labelZh: '架构设计',
+        labelZh: '架构设计', // i18n: user-facing
         labelEn: 'Architecture',
         nodeIds: ['n3'],
-        inputsZh: ['已批准 PRD'],
+        inputsZh: ['已批准 PRD'], // i18n: user-facing
         inputsEn: ['Approved PRD'],
-        outputsZh: ['架构图 / 集成文档 / UI 原型 / 项目计划'],
+        outputsZh: ['架构图 / 集成文档 / UI 原型 / 项目计划'], // i18n: user-facing
         outputsEn: ['Architecture diagram / integration doc / UI prototype / project plan'],
     },
     {
         id: 5,
-        labelZh: '闸门 B (架构评审)',
+        labelZh: '闸门 B (架构评审)', // i18n: user-facing
         labelEn: 'Gate B (arch review)',
         nodeIds: ['n4'],
-        inputsZh: ['四项设计交付物 + UX 契约清单'],
+        inputsZh: ['四项设计交付物 + UX 契约清单'], // i18n: user-facing
         inputsEn: ['Four design deliverables + UX contract checklist'],
-        outputsZh: ['闸门 B 决定 + 结构化意见'],
+        outputsZh: ['闸门 B 决定 + 结构化意见'], // i18n: user-facing
         outputsEn: ['Gate B decision + structured opinions'],
     },
     {
         id: 6,
-        labelZh: '脚手架 + 任务分解',
+        labelZh: '脚手架 + 任务分解', // i18n: user-facing
         labelEn: 'Scaffold + decomposition',
         nodeIds: ['n5', 'n6'],
-        inputsZh: ['已批准架构 + 计划'],
+        inputsZh: ['已批准架构 + 计划'], // i18n: user-facing
         inputsEn: ['Approved architecture + plan'],
-        outputsZh: ['business/ai-* 脚手架 + 任务 issue (state:ready) + 派发记录'],
+        outputsZh: ['business/ai-* 脚手架 + 任务 issue (state:ready) + 派发记录'], // i18n: user-facing
         outputsEn: ['business/ai-* scaffold + task issues (state:ready) + dispatch records'],
     },
     {
         id: 7,
-        labelZh: 'Coder 派发',
+        labelZh: 'Coder 派发', // i18n: user-facing
         labelEn: 'Coder dispatch',
         nodeIds: ['n7'],
-        inputsZh: ['任务 issue + 脚手架'],
+        inputsZh: ['任务 issue + 脚手架'], // i18n: user-facing
         inputsEn: ['Task issue + scaffold'],
-        outputsZh: ['PR + findings[] + 自测证据'],
+        outputsZh: ['PR + findings[] + 自测证据'], // i18n: user-facing
         outputsEn: ['PR + findings[] + self-test evidence'],
     },
     {
         id: 8,
-        labelZh: '机器验收',
+        labelZh: '机器验收', // i18n: user-facing
         labelEn: 'Machine acceptance',
         nodeIds: ['n8'],
-        inputsZh: ['PR + CI + findings 汇总'],
+        inputsZh: ['PR + CI + findings 汇总'], // i18n: user-facing
         inputsEn: ['PR + CI + findings summary'],
-        outputsZh: ['机器验收报告 + 发布/回滚指令'],
+        outputsZh: ['机器验收报告 + 发布/回滚指令'], // i18n: user-facing
         outputsEn: ['Machine acceptance report + release/rollback directive'],
     },
     {
@@ -100,19 +100,19 @@ export const PIPELINE_STAGES: PipelineStage[] = [
         labelZh: 'Mock + Staging',
         labelEn: 'Mock + staging',
         nodeIds: ['n9'],
-        inputsZh: ['发布指令 + PRD/架构'],
+        inputsZh: ['发布指令 + PRD/架构'], // i18n: user-facing
         inputsEn: ['Release directive + PRD/arch'],
-        outputsZh: ['mock 包 + staging 部署记录 + doctor 健康报告'],
+        outputsZh: ['mock 包 + staging 部署记录 + doctor 健康报告'], // i18n: user-facing
         outputsEn: ['Mock pack + staging deploy record + doctor health report'],
     },
     {
         id: 10,
-        labelZh: '闸门 C (人工验收)',
+        labelZh: '闸门 C (人工验收)', // i18n: user-facing
         labelEn: 'Gate C (acceptance)',
         nodeIds: ['n10'],
-        inputsZh: ['staging + 完整证据表'],
+        inputsZh: ['staging + 完整证据表'], // i18n: user-facing
         inputsEn: ['Staging + full evidence table'],
-        outputsZh: ['闸门 C 决定 (逐项部分批准) + tag/发布记录'],
+        outputsZh: ['闸门 C 决定 (逐项部分批准) + tag/发布记录'], // i18n: user-facing
         outputsEn: ['Gate C decision (per-task partial approval) + tag/release record'],
     },
 ];
@@ -156,5 +156,5 @@ export function stageLinks(output: Record<string, unknown> | null | undefined): 
 // the purpose-built pipeline visualization — match by template name (bilingual)
 export function isPipelineRun(workflowName: string): boolean {
     const n = workflowName ?? '';
-    return n.includes('产品生命周期') || n.includes('product_lifecycle') || n.includes('交付-产品');
+    return n.includes('产品生命周期') || n.includes('product_lifecycle') || n.includes('交付-产品'); // i18n: user-facing
 }

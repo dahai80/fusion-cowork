@@ -104,7 +104,7 @@ class TestDeskRpcWorkflowCreateReturn:
         async def fake_generate(self, prompt):
             return {"name": "fake", "nodes": [], "edges": []}
 
-        # #85: generate() 返回 dict; handler 不再调 to_dict()
+        # #85: generate() returns a dict; the handler no longer calls to_dict()
         monkeypatch.setattr(NLWorkflowGenerator, "generate", fake_generate)
 
         class FakeMlx:
@@ -116,6 +116,6 @@ class TestDeskRpcWorkflowCreateReturn:
 
         srv = type("S", (), {})()
         srv._get_mlx_client = lambda: FakeMlx()
-        result = asyncio.run(DeskRPCServer._handle_workflow_create(srv, {"prompt": "你是谁"}))
+        result = asyncio.run(DeskRPCServer._handle_workflow_create(srv, {"prompt": "你是谁"}))  # i18n: user-facing
         assert result["workflow"] == {"name": "fake", "nodes": [], "edges": []}
         assert not hasattr(result["workflow"], "to_dict")

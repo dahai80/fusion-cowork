@@ -34,16 +34,21 @@ function PipelineRunPicker() {
     const runs = (retry.data?.runs ?? []).filter((r) => isPipelineRun(r.workflow_name)).slice(0, 20);
     return (
         <div className="mx-auto max-w-3xl space-y-3 p-4">
-            <h1 className="text-lg font-semibold">{t('交付管线', 'Delivery pipeline')}</h1>
+            <h1 className="text-lg font-semibold">{t('交付管线', 'Delivery pipeline') /* i18n: user-facing */}</h1>
             <p className="text-xs text-text-secondary">
-                {t('选择一次产品生命周期运行查看管线视图', 'Pick a product_lifecycle run to open its pipeline view')}
+                {
+                    t(
+                        '选择一次产品生命周期运行查看管线视图', // i18n: user-facing
+                        'Pick a product_lifecycle run to open its pipeline view'
+                    ) /* i18n: user-facing */
+                }
             </p>
             {retry.loading && !retry.data ? <SkeletonLines rows={6} /> : null}
             {retry.error ? <ErrorState message={retry.error.message} onRetry={retry.manualRetry} /> : null}
             {!retry.loading && !retry.error && runs.length === 0 ? (
                 <EmptyState
                     title={t(
-                        '暂无产品生命周期运行 — 从「模板」启动 product_lifecycle 模板',
+                        '暂无产品生命周期运行 — 从「模板」启动 product_lifecycle 模板', // i18n: user-facing
                         'No product_lifecycle runs yet — launch the template from Templates'
                     )}
                 />
@@ -130,7 +135,7 @@ function PipelineRunView({ runId }: { runId: string }) {
         <div className="mx-auto max-w-6xl space-y-4 p-4">
             <div className="flex items-center justify-between">
                 <h1 className="text-lg font-semibold">
-                    {t('交付管线', 'Delivery pipeline')}
+                    {t('交付管线', 'Delivery pipeline') /* i18n: user-facing */}
                     <span className="ml-2 font-mono text-xs text-text-secondary">{runId}</span>
                 </h1>
                 <div className="flex items-center gap-2 text-xs">
@@ -142,7 +147,7 @@ function PipelineRunView({ runId }: { runId: string }) {
                             setCursor((c) => Math.max(0, (c ?? total - 1) - 1));
                         }}
                     >
-                        {t('上一步', 'Prev')}
+                        {t('上一步', 'Prev') /* i18n: user-facing */}
                     </button>
                     <button
                         type="button"
@@ -152,7 +157,7 @@ function PipelineRunView({ runId }: { runId: string }) {
                             setCursor((c) => Math.min(total - 1, (c ?? -1) + 1));
                         }}
                     >
-                        {t('下一步', 'Next')}
+                        {t('下一步', 'Next') /* i18n: user-facing */}
                     </button>
                     <button
                         type="button"
@@ -162,7 +167,7 @@ function PipelineRunView({ runId }: { runId: string }) {
                             setPlaying((p) => !p);
                         }}
                     >
-                        {playing ? t('暂停', 'Pause') : t('自动播放', 'Autoplay')}
+                        {playing ? t('暂停', 'Pause') : t('自动播放', 'Autoplay') /* i18n: user-facing */}
                     </button>
                     <button
                         type="button"
@@ -172,18 +177,18 @@ function PipelineRunView({ runId }: { runId: string }) {
                             setCursor(null);
                         }}
                     >
-                        {t('实时', 'Live')}
+                        {t('实时', 'Live') /* i18n: user-facing */}
                     </button>
                 </div>
             </div>
             {cursor !== null ? (
                 <p className="text-xs text-text-secondary">
-                    {t('回放', 'Replay')}: {cursor + 1}/{total}
+                    {t('回放', 'Replay') /* i18n: user-facing */}: {cursor + 1}/{total}
                 </p>
             ) : null}
 
             {total === 0 ? (
-                <EmptyState title={t('运行尚无步骤记录', 'Run has no recorded steps yet')} />
+                <EmptyState title={t('运行尚无步骤记录', 'Run has no recorded steps yet') /* i18n: user-facing */} />
             ) : (
                 <div className="grid grid-cols-3 gap-4">
                     {[0, 1, 2].map((col) => (
@@ -215,7 +220,8 @@ function PipelineRunView({ runId }: { runId: string }) {
             )}
 
             <p className="text-xs text-text-secondary">
-                {t('回流环', 'Rejection loops')}:{PIPELINE_LOOPS.map(([from, to]) => ` ${from}→${to}`).join(',')}
+                {t('回流环', 'Rejection loops') /* i18n: user-facing */}:
+                {PIPELINE_LOOPS.map(([from, to]) => ` ${from}→${to}`).join(',')}
             </p>
 
             {selected !== null ? (
@@ -234,12 +240,14 @@ function PipelineRunView({ runId }: { runId: string }) {
                                             className="text-xs text-text-secondary underline"
                                             onClick={() => setSelected(null)}
                                         >
-                                            {t('关闭', 'Close')}
+                                            {t('关闭', 'Close') /* i18n: user-facing */}
                                         </button>
                                     </div>
                                     <div className="grid grid-cols-2 gap-4 text-xs">
                                         <div>
-                                            <p className="mb-1 font-medium">{t('输入工件', 'Input artifacts')}</p>
+                                            <p className="mb-1 font-medium">
+                                                {t('输入工件', 'Input artifacts') /* i18n: user-facing */}
+                                            </p>
                                             <ul className="list-inside list-disc space-y-0.5">
                                                 {stage.inputsZh.map((x, i) => (
                                                     <li key={`i${i}`}>{t(x, stage.inputsEn[i] ?? x)}</li>
@@ -252,7 +260,9 @@ function PipelineRunView({ runId }: { runId: string }) {
                                             </ul>
                                         </div>
                                         <div>
-                                            <p className="mb-1 font-medium">{t('输出工件', 'Output artifacts')}</p>
+                                            <p className="mb-1 font-medium">
+                                                {t('输出工件', 'Output artifacts') /* i18n: user-facing */}
+                                            </p>
                                             <ul className="list-inside list-disc space-y-0.5">
                                                 {stage.outputsZh.map((x, i) => (
                                                     <li key={`o${i}`}>{t(x, stage.outputsEn[i] ?? x)}</li>

@@ -11,7 +11,7 @@ import {
 } from '../src/artifactRef';
 import { buildContextChips } from '../src/composer';
 
-// issue #237: Artifacts GUI 深链 — 参数解析 / chip / 上下文注入 / 失败提示契约
+// issue #237: Artifacts GUI deep link — param parsing / chip / context injection / failure message contract
 
 function card(over: Partial<ArtifactCardData> = {}): ArtifactCardData {
     return {
@@ -20,11 +20,11 @@ function card(over: Partial<ArtifactCardData> = {}): ArtifactCardData {
         type: 'report',
         kind: 'document',
         current_version: 3,
-        summary: '十月对账异常项汇总',
+        summary: '十月对账异常项汇总', // i18n: user-facing
         source_module: 'fusion-doc',
         is_starred: false,
         deep_link: '/shell/fusion-artifacts/#/a/art_1',
-        ref_text: '[Artifact: Q3 Report | ID: art_1 | Version: v3 | Type: report | Summary: 十月对账异常项汇总]',
+        ref_text: '[Artifact: Q3 Report | ID: art_1 | Version: v3 | Type: report | Summary: 十月对账异常项汇总]', // i18n: user-facing
         ...over,
     };
 }
@@ -60,11 +60,11 @@ describe('artifact ref rendering', () => {
         const ref = artifactRefFromCard(card(), 'art_1');
         expect(ref.name).toBe('Q3 Report');
         expect(artifactRefPrompt(ref)).toContain('[Artifact: Q3 Report | ID: art_1');
-        expect(artifactRefPrompt(ref)).toContain('新的要求：');
-        expect(artifactRefChipLabel(ref)).toBe('▦ 来自 Artifacts · Q3 Report');
+        expect(artifactRefPrompt(ref)).toContain('新的要求：'); // i18n: user-facing
+        expect(artifactRefChipLabel(ref)).toBe('▦ 来自 Artifacts · Q3 Report'); // i18n: user-facing
     });
 
-    it('renders the removable context chip labelled "来自 Artifacts"', () => {
+    it('renders the removable context chip labelled "来自 Artifacts"', () => { // i18n: user-facing
         let cleared = 0;
         const chips = buildContextChips({
             artifactRefName: 'Q3 Report',
@@ -74,7 +74,7 @@ describe('artifact ref rendering', () => {
             },
         });
         expect(chips).toHaveLength(1);
-        expect(chips[0].label).toBe('▦ 来自 Artifacts · Q3 Report');
+        expect(chips[0].label).toBe('▦ 来自 Artifacts · Q3 Report'); // i18n: user-facing
         chips[0].onClick?.();
         expect(cleared).toBe(1);
     });
@@ -122,11 +122,11 @@ describe('failure notice', () => {
 
     it('produces explicit bilingual notices instead of a silent no-op', () => {
         const t = (zh: string, en: string) => `${zh}|${en}`;
-        expect(artifactRefFailureMessage('bad_id', t)).toContain('无效');
-        expect(artifactRefFailureMessage('not_found', t)).toContain('不存在');
-        expect(artifactRefFailureMessage('unavailable', t)).toContain('暂不可用');
+        expect(artifactRefFailureMessage('bad_id', t)).toContain('无效'); // i18n: user-facing
+        expect(artifactRefFailureMessage('not_found', t)).toContain('不存在'); // i18n: user-facing
+        expect(artifactRefFailureMessage('unavailable', t)).toContain('暂不可用'); // i18n: user-facing
         for (const kind of ['bad_id', 'not_found', 'unavailable'] as const) {
-            expect(artifactRefFailureMessage(kind, t)).toContain('未注入任务上下文');
+            expect(artifactRefFailureMessage(kind, t)).toContain('未注入任务上下文'); // i18n: user-facing
         }
     });
 });

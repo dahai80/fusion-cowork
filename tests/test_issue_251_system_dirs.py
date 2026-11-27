@@ -1,4 +1,4 @@
-"""issue #251: 系统工作目录枚举 — 新建目录名只能从服务端真实目录选, 不收手输。"""
+"""issue #251: system workspace directory enumeration — new directory names must be picked from real server-side directories, no free-typed input."""
 
 from __future__ import annotations
 
@@ -31,6 +31,7 @@ class TestSystemDirs:
     def test_lists_immediate_subdirs_sorted(self, client, monkeypatch, tmp_path):
         tc, _ = client
         root = tmp_path / "wsroot"
+        # i18n: user-facing
         (root / "Q3 对账").mkdir(parents=True)
         (root / "alpha").mkdir()
         (root / "zeta").mkdir()
@@ -40,6 +41,7 @@ class TestSystemDirs:
         body = r.json()
         assert body["available"] is True
         assert body["root"] == str(root)
+        # i18n: user-facing
         assert [d["name"] for d in body["directories"]] == sorted(["Q3 对账", "alpha", "zeta"], key=str.lower)
         assert all(d["path"] for d in body["directories"])
 
@@ -49,7 +51,7 @@ class TestSystemDirs:
         (root / "real").mkdir(parents=True)
         (root / ".hidden").mkdir()
         (root / "plain.txt").write_text("x", encoding="utf-8")
-        (root / "real" / "nested").mkdir()  # 只列直接子目录
+        (root / "real" / "nested").mkdir()  # only immediate subdirectories are listed
         monkeypatch.setenv("FUSION_COWORK_WORKSPACE_ROOT", str(root))
         r = tc.get("/api/workspaces/system-dirs", headers=_auth())
         names = [d["name"] for d in r.json()["directories"]]
@@ -83,7 +85,7 @@ class TestSystemDirs:
             r = tc.get(f"/api/workspaces/system-dirs?path={evil}", headers=_auth())
             assert r.status_code == 400, (evil, r.text)
             assert r.json()["detail"]["code"] == "bad_path"
-        # 绝对路径被归一化为根内相对名 → 不可能是越界列举 (400/404 均安全, 严禁 200)
+        # Absolute paths are normalized to root-relative names → out-of-root enumeration is impossible (400/404 are both safe, 200 strictly forbidden)
         r = tc.get("/api/workspaces/system-dirs?path=/etc", headers=_auth())
         assert r.status_code in (400, 404)
 
@@ -119,7 +121,7 @@ class TestSystemDirs:
         monkeypatch.delenv("FUSION_COWORK_WORKSPACE_ROOT", raising=False)
         r = tc.get("/api/workspaces/system-dirs", headers=_auth())
         assert r.status_code == 200, r.text
-        assert r.json()["available"] is True  # 测试机 home 必为目录
+        assert r.json()["available"] is True  # the test machine's home must be a directory
 
     def test_cap_200(self, client, monkeypatch, tmp_path):
         tc, _ = client

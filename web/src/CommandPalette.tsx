@@ -81,13 +81,13 @@ export function CommandPalette() {
             <div
                 role="dialog"
                 aria-modal="true"
-                aria-label={t('全局搜索', 'Global search')}
+                aria-label={t('全局搜索', 'Global search')} // i18n: user-facing
                 className="w-full max-w-xl overflow-hidden rounded-2xl border border-border bg-bg-elevated shadow-md shadow-zinc-900/10"
             >
                 <input
                     ref={inputRef}
                     className="w-full border-b border-border bg-transparent px-4 py-3 text-sm text-text-primary outline-none"
-                    placeholder={t('搜索工作流 / 运行 / 空间 / 能力…', 'Search workflows, runs, spaces, capabilities…')}
+                    placeholder={t('搜索工作流 / 运行 / 空间 / 能力…', 'Search workflows, runs, spaces, capabilities…')} // i18n: user-facing
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     onKeyDown={(e) => {
@@ -104,7 +104,9 @@ export function CommandPalette() {
                 />
                 {error ? <div className="px-4 py-3 text-xs text-error">{error}</div> : null}
                 {!error && query.trim() !== '' && items.length === 0 ? (
-                    <div className="px-4 py-3 text-xs text-text-muted">{t('无匹配结果', 'No matches')}</div>
+                    <div className="px-4 py-3 text-xs text-text-muted">
+                        {t('无匹配结果', 'No matches') /* i18n: user-facing */}
+                    </div>
                 ) : null}
                 <ul className="max-h-80 overflow-auto">
                     {items.map((item, i) => (

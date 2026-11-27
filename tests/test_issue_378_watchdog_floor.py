@@ -1,9 +1,9 @@
-"""issue #378: 双层超时分歧 — 引擎看门狗 1800s 先杀 dispatch 节点 (child 3600s)。
+"""issue #378: dual-layer timeout divergence — the engine watchdog at 1800s kills the dispatch node first (child 3600s).
 
-- BaseNode.watchdog_floor 默认 0; 节点可用自解析 deadline 上调引擎看门狗
-- ClaudeDispatchNode.watchdog_floor 与 execute 同链解析 (param > env > 3600)
-- 节点超时 detach 结果显式 outcome=detached_session_still_running + pid
-- 看门狗取消日志带 node_deadline (双超时同框)
+- BaseNode.watchdog_floor defaults to 0; a node may raise the engine watchdog via a self-resolved deadline
+- ClaudeDispatchNode.watchdog_floor resolves on the same chain as execute (param > env > 3600)
+- node timeout detach result carries explicit outcome=detached_session_still_running + pid
+- watchdog cancel log carries node_deadline (both timeouts in one frame)
 """
 
 import asyncio
@@ -45,7 +45,7 @@ class MockBrokenFloor378(MockSlow378):
 
 @pytest.fixture()
 def _mock_nodes():
-    # 测试期注册/结束注销 — 模块级注册会污染依赖节点清单的其他测试
+    # Register for the test / unregister at the end — module-level registration would pollute other tests that depend on the node list
     for cls in (MockSlow378, MockFloorSlow378, MockBrokenFloor378):
         register_node(cls)
     yield
@@ -68,7 +68,7 @@ def _engine_and_run(node_name, node_timeout_s=1.0):
 @pytest.mark.usefixtures("_mock_nodes")
 class TestEngineWatchdogFloor:
     async def test_floor_node_survives_engine_default(self):
-        # floor 50 > engine 1.0 → 1.5s 慢节点正常完成, 不被看门狗杀
+        # floor 50 > engine 1.0 -> the 1.5s slow node completes normally, not killed by the watchdog
         engine, wf = _engine_and_run("mock_floor_slow_378", node_timeout_s=1.0)
         exec_res = await engine.execute(wf)
         assert exec_res.status == WorkflowStatus.SUCCESS
@@ -78,13 +78,13 @@ class TestEngineWatchdogFloor:
         engine, wf = _engine_and_run("mock_slow_378", node_timeout_s=1.0)
         exec_res = await engine.execute(wf)
         assert exec_res.status == WorkflowStatus.FAILED
-        assert "超时" in (exec_res.steps[0].error or "")
+        assert "超时" in (exec_res.steps[0].error or "")  # i18n: user-facing
 
     async def test_broken_floor_degrades_to_engine_default(self):
         engine, wf = _engine_and_run("mock_broken_floor_378", node_timeout_s=1.0)
         exec_res = await engine.execute(wf)
         assert exec_res.status == WorkflowStatus.FAILED
-        assert "超时" in (exec_res.steps[0].error or "")
+        assert "超时" in (exec_res.steps[0].error or "")  # i18n: user-facing
 
 
 class TestDispatchWatchdogFloorResolution:
@@ -161,8 +161,8 @@ class TestDispatchTimeoutOutcome:
         assert res.data["outcome"] == "detached_session_still_running"
         assert res.data["detached"] is True
         assert res.data["pid"] == 4321
-        assert "超时" in res.error
-        # 收尾: 结束后台 comm 任务 + watcher, 不留悬挂任务
+        assert "超时" in res.error  # i18n: user-facing
+        # Teardown: stop the background comm task + watcher, leave no dangling tasks
         for t in asyncio.all_tasks():
             if t is not asyncio.current_task():
                 t.cancel()
@@ -177,7 +177,7 @@ class TestDispatchTimeoutOutcome:
         task.cancel()
         with caplog.at_level(logging.WARNING), pytest.raises(asyncio.CancelledError):
             await task
-        assert "被看门狗取消" in caplog.text
+        assert "cancelled by watchdog" in caplog.text
         assert "node_deadline=3600s" in caplog.text
         assert "4321" in caplog.text
         for t in asyncio.all_tasks():

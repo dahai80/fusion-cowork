@@ -48,8 +48,10 @@ class TriggerRegistry:
         name = str(name or "").strip()
         workflow_id = str(workflow_id or "").strip()
         if not name:
+            # i18n: user-facing
             raise ValueError("trigger name 必填")
         if not workflow_id:
+            # i18n: user-facing
             raise ValueError("workflow_id 必填")
         trigger_id = f"trg_{secrets.token_hex(5)}"
         token = f"trgk_{secrets.token_hex(16)}"

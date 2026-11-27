@@ -1,10 +1,10 @@
-"""issue #343: 插值加固 — ${result.*} 信封回退 + 未命中引用明确报错。
+"""issue #343: interpolation hardening — ${result.*} envelope fallback + loud error on unresolved refs.
 
-github_api 等节点输出为 {"result": {...}} 信封, 下游 `${result.number}`
-速记此前只取顶层键, 字面量漏到 int() 二次崩溃。修复: 顶层未命中时下钻
-result 信封子树; 插值后仍残留 result./step./param. 引用的参数直接
-"unresolved interpolation" 报错, 不再留字面量进节点。
-"""
+Nodes like github_api emit a {"result": {...}} envelope; the downstream `${result.number}`
+shorthand previously only read top-level keys, so the literal leaked into int() and crashed a
+second time. Fix: when the top level misses, descend into the result envelope subtree;
+parameters still containing result./step./param. references after interpolation raise an
+"unresolved interpolation" error instead of passing the literal into the node."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ class _IssueCreateNode(BaseNode):
     name = "issue_create_343"
     display_name = "Issue Create 343"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "测试用: github_api 形态输出 (result 信封)"
     icon = "🎫"
     default_label = "IssueCreate"
@@ -44,6 +45,7 @@ class _IssueCreateNode(BaseNode):
 class _IssueCreateTopNode(_IssueCreateNode):
     name = "issue_create_343_top"
     display_name = "Issue Create Top 343"
+    # i18n: user-facing
     description = "测试用: 顶层键 + result 信封双层输出"
 
     async def execute(self, inputs: dict) -> NodeResult:
@@ -57,6 +59,7 @@ class _NoisyNode(BaseNode):
     name = "noisy_343"
     display_name = "Noisy 343"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "测试用: 输出里带占位符字符串"
     icon = "📛"
     default_label = "Noisy"
@@ -70,6 +73,7 @@ class _ConsumeNode(BaseNode):
     name = "consume_343"
     display_name = "Consume 343"
     category = NodeCategory.TOOL
+    # i18n: user-facing
     description = "测试用: 记录收到的参数"
     icon = "📥"
     default_label = "Consume"
@@ -96,8 +100,8 @@ def _wf(producer_name: str, consumer_params: dict) -> Workflow:
 
 class TestResultEnvelopeFallback:
     async def test_result_number_resolves_through_envelope(self):
-        # 回归主场景 (issue 请求 3): issue_create 信封输出链 claude_dispatch 形态消费 —
-        # `"issue_number": "${result.number}"` 收到 int 7, 不是占位符
+        # Regression main scenario (issue request 3): issue_create envelope output consumed in claude_dispatch form —
+        # `"issue_number": "${result.number}"` receives int 7, not the placeholder
         _ConsumeNode.seen = []
         eng = WorkflowEngine()
         wf = _wf("issue_create_343", {"issue_number": "${result.number}"})
@@ -108,7 +112,7 @@ class TestResultEnvelopeFallback:
         assert isinstance(got, int)
 
     async def test_top_level_key_wins_over_envelope(self):
-        # 顶层键优先 — 信封回退只在顶层未命中时生效, 不改变既有语义
+        # Top-level keys win — the envelope fallback only applies when the top level misses, existing semantics unchanged
         _ConsumeNode.seen = []
         eng = WorkflowEngine()
         wf = _wf("issue_create_343_top", {"cwd": "${result.repo_path}"})
@@ -117,7 +121,7 @@ class TestResultEnvelopeFallback:
         assert _ConsumeNode.seen[-1]["params"]["cwd"] == "/ws/top"
 
     async def test_embedded_ref_with_envelope(self):
-        # 嵌入串形态同样走信封回退
+        # Embedded-string form also goes through the envelope fallback
         _ConsumeNode.seen = []
         eng = WorkflowEngine()
         wf = _wf("issue_create_343", {"cwd": "${result.repo_path}/CLAUDE.md", "note": "PR: ${result.pr_url}"})
@@ -127,7 +131,7 @@ class TestResultEnvelopeFallback:
         assert _ConsumeNode.seen[-1]["params"]["note"] == "PR: https://github.com/o/r/pull/9"
 
     async def test_explicit_step_result_form(self):
-        # 显式 ${step.<id>.result.*} 形态 (issue 请求 2 的备选写法) 本就可用
+        # The explicit ${step.<id>.result.*} form (alternative spelling from issue request 2) already works
         _ConsumeNode.seen = []
         eng = WorkflowEngine()
         wf = _wf("issue_create_343", {"issue_number": "${step.n1.result.number}"})
@@ -138,7 +142,7 @@ class TestResultEnvelopeFallback:
 
 class TestUnresolvedRefLoudFail:
     async def test_unresolved_result_ref_fails_clear(self):
-        # 未命中引用不再留字面量进节点 — 明确 unresolved interpolation 报错
+        # Unresolved refs no longer leak the literal into the node — a clear unresolved interpolation error is raised
         _ConsumeNode.seen = []
         eng = WorkflowEngine()
         wf = _wf("issue_create_343", {"issue_number": "${result.nope}"})
@@ -149,7 +153,7 @@ class TestUnresolvedRefLoudFail:
         assert "${result.nope}" in execution.error
 
     async def test_param_ref_missing_at_assembly_fails_clear(self):
-        # ${param.*} 装配期缺参残留到运行期 — 同样明确报错 (原为 float()/int() 二次崩溃)
+        # ${param.*} missing at assembly time survives into runtime — also a loud error (previously a float()/int() secondary crash)
         _ConsumeNode.seen = []
         eng = WorkflowEngine()
         wf = _wf("issue_create_343", {"timeout": "${param.dispatch_timeout}"})
@@ -159,8 +163,8 @@ class TestUnresolvedRefLoudFail:
         assert "${param.dispatch_timeout}" in execution.error
 
     async def test_input_side_refs_stay_lenient(self):
-        # 输入侧 (节点产出数据) 保持宽松: 字面量保留 + WARNING, run 不因上游数据里的
-        # 占位符字符串失败 — 明确报错只针对作者声明的节点参数
+        # The input side (node-produced data) stays lenient: literals are kept with a WARNING, the run does not fail
+        # because of placeholder strings in upstream data — the loud error only targets author-declared node params
         _ConsumeNode.seen = []
         eng = WorkflowEngine()
         wf = Workflow(name="interp-343-lenient")
@@ -177,7 +181,7 @@ class TestUnresolvedRefLoudFail:
         assert _ConsumeNode.seen[-1]["inputs"]["body"] == "literal ${result.nope} kept"
 
     async def test_run_id_placeholder_untouched(self):
-        # ${run_id} 无引擎前缀 — 不是本机制引用, 不误报不替换
+        # ${run_id} has no engine prefix — not a reference handled by this mechanism; no false positive, no replacement
         _ConsumeNode.seen = []
         eng = WorkflowEngine()
         wf = _wf("issue_create_343", {"body": "evidence archived (run ${run_id})"})

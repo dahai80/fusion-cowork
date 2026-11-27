@@ -1,9 +1,9 @@
-"""自然语言 → 工作流解析器。
+"""Natural language -> workflow parser.
 
-用户输入一句话（如"帮我把桌面所有 PDF 按主题自动分类归档"），
-AI 自动解析生成完整的工作流定义。
+The user types one sentence (e.g. "sort all PDFs on my desktop by topic"),
+the AI parses it and generates a complete workflow definition.
 
-调用 fusion-mlx 的 /v1/chat/completions 端点进行 LLM 推理。
+Calls the fusion-mlx /v1/chat/completions endpoint for LLM inference.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class WorkflowParseError(Exception):
-    """LLM 输出无法解析为工作流 JSON（raw_output 供带反馈的重试）。"""
+    """LLM output could not be parsed as workflow JSON (raw_output kept for retry with feedback)."""
 
     def __init__(self, message: str, raw_output: str = ""):
         super().__init__(message)
@@ -29,21 +29,21 @@ class WorkflowParseError(Exception):
 
 
 def extract_json_object(content: str) -> str:
-    """从 LLM 输出中提取第一个完整 JSON 对象的文本。
+    """Extract the first complete JSON object from LLM output as text.
 
-    处理三种常见形态: ```json 围栏、前置说明文字、尾随解释文字。
-    采用字符串感知的花括号配平（忽略字符串字面量内的花括号与转义），
-    比脆弱的 split("```") 鲁棒。
+    Handles three common shapes: ```json fences, leading prose, trailing prose.
+    Uses string-aware brace balancing (ignores braces and escapes inside string
+    literals), more robust than a naive split("```").
     """
     import re
 
     text = content.strip()
-    # 1) 优先取 markdown 围栏块（存在时围栏内就是 JSON）
+    # 1) Prefer the markdown fenced block first (when present, its interior is the JSON)
     fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
     if fence:
         text = fence.group(1).strip()
 
-    # 2) 定位第一个 '{'，做字符串感知的括号配平
+    # 2) Locate the first '{', then do string-aware brace balancing
     start = text.find("{")
     if start == -1:
         raise WorkflowParseError("no JSON object found in model output", raw_output=content)
@@ -71,54 +71,53 @@ def extract_json_object(content: str) -> str:
     raise WorkflowParseError("unbalanced JSON object in model output", raw_output=content)
 
 
-# 系统提示词 — 指导 LLM 将自然语言转换为工作流定义
-SYSTEM_PROMPT = """你是一个 macOS 桌面自动化工作流生成器。将用户的自然语言需求转换为结构化工作流定义。
-
-可用的节点类型:
-1. desktop_clean - 桌面清理（清理桌面文件，按类型/日期分类）
-2. download_organizer - 下载文件夹整理（归档、去重、整理）
-3. file_classifier - AI 文件分类（根据内容语义分类）
-4. file_batch_rename - 批量重命名（AI 理解内容生成规范名称）
-5. ai_summarize - AI 文档摘要（批量总结文档内容）
-6. disk_cleaner - 磁盘清理（扫描并清理垃圾文件）
-7. file_watcher - 文件监听（监听目录变化触发流程）
-8. file_copy - 文件复制/备份
-9. file_move - 文件移动
-10. file_delete - 文件删除
-11. filter - 条件过滤（按条件筛选文件）
-12. loop - 循环处理（批量处理每个文件）
-13. file_input - 文件输入（读取文件列表）
-14. file_output - 文件输出（写入结果到文件）
-
-返回格式: 严格的 JSON 格式，包含 nodes 和 edges 数组。
-每个节点包含: id, name, config.params (节点参数)
-
-示例:
-用户输入: "每天晚上9点自动清理下载文件夹并备份"
-输出:
-{
-  "name": "下载文件夹定时清理备份",
-  "description": "每天晚上9点自动清理下载文件夹并备份到文稿",
-  "nodes": [
-    {"id": "n1", "name": "file_input", "config": {"params": {"path": "~/Downloads", "recursive": false}}},
-    {"id": "n2", "name": "download_organizer", "config": {"params": {"action": "clean", "days_threshold": 30}}},
-    {"id": "n3", "name": "file_copy", "config": {"params": {"destination": "~/Documents/Downloads_Backup", "create_subdir": true}}}
-  ],
-  "edges": [
-    {"source_id": "n1", "target_id": "n2"},
-    {"source_id": "n2", "target_id": "n3"}
-  ]
-}
-
-路径规则: 只能使用用户在需求里明确给出的路径。用户没有给出路径时, 对应参数
-填空字符串 "" 留待用户在参数面板填写, 严禁编造任何不存在的文件/目录路径。
-
-只返回 JSON，不要其他解释。"""
+# System prompt — guides the LLM to convert natural language into workflow definitions.
+# i18n: user-facing
+SYSTEM_PROMPT = (
+    "你是一个 macOS 桌面自动化工作流生成器。将用户的自然语言需求转换为结构化工作流定义。\n\n"  # i18n: user-facing
+    "可用的节点类型:\n"  # i18n: user-facing
+    "1. desktop_clean - 桌面清理（清理桌面文件，按类型/日期分类）\n"  # i18n: user-facing
+    "2. download_organizer - 下载文件夹整理（归档、去重、整理）\n"  # i18n: user-facing
+    "3. file_classifier - AI 文件分类（根据内容语义分类）\n"  # i18n: user-facing
+    "4. file_batch_rename - 批量重命名（AI 理解内容生成规范名称）\n"  # i18n: user-facing
+    "5. ai_summarize - AI 文档摘要（批量总结文档内容）\n"  # i18n: user-facing
+    "6. disk_cleaner - 磁盘清理（扫描并清理垃圾文件）\n"  # i18n: user-facing
+    "7. file_watcher - 文件监听（监听目录变化触发流程）\n"  # i18n: user-facing
+    "8. file_copy - 文件复制/备份\n"  # i18n: user-facing
+    "9. file_move - 文件移动\n"  # i18n: user-facing
+    "10. file_delete - 文件删除\n"  # i18n: user-facing
+    "11. filter - 条件过滤（按条件筛选文件）\n"  # i18n: user-facing
+    "12. loop - 循环处理（批量处理每个文件）\n"  # i18n: user-facing
+    "13. file_input - 文件输入（读取文件列表）\n"  # i18n: user-facing
+    "14. file_output - 文件输出（写入结果到文件）\n\n"  # i18n: user-facing
+    "返回格式: 严格的 JSON 格式，包含 nodes 和 edges 数组。\n"  # i18n: user-facing
+    "每个节点包含: id, name, config.params (节点参数)\n\n"  # i18n: user-facing
+    "示例:\n"  # i18n: user-facing
+    '用户输入: "每天晚上9点自动清理下载文件夹并备份"\n'  # i18n: user-facing
+    "输出:\n"  # i18n: user-facing
+    "{\n"
+    '  "name": "下载文件夹定时清理备份",\n'  # i18n: user-facing
+    '  "description": "每天晚上9点自动清理下载文件夹并备份到文稿",\n'  # i18n: user-facing
+    '  "nodes": [\n'
+    '    {"id": "n1", "name": "file_input", "config": {"params": {"path": "~/Downloads", "recursive": false}}},\n'
+    '    {"id": "n2", "name": "download_organizer", "config": {"params": {"action": "clean", "days_threshold": 30}}},\n'
+    '    {"id": "n3", "name": "file_copy", "config": {"params": {"destination": "~/Documents/Downloads_Backup", "create_subdir": true}}}\n'
+    "  ],\n"
+    '  "edges": [\n'
+    '    {"source_id": "n1", "target_id": "n2"},\n'
+    '    {"source_id": "n2", "target_id": "n3"}\n'
+    "  ]\n"
+    "}\n\n"
+    "路径规则: 只能使用用户在需求里明确给出的路径。用户没有给出路径时, 对应参数\n"  # i18n: user-facing
+    '填空字符串 "" 留待用户在参数面板填写, 严禁编造任何不存在的文件/目录路径。\n\n'  # i18n: user-facing
+    "只返回 JSON，不要其他解释。"
+)
 
 
-# #85: mlx /v1/models 不保证 chat 模型在前 (FLUX/Wan 等 image/video 模型可能排第一)。
-# 非 chat engine_type 集合; metadata.engine_type 或顶层 engine_type 均判。
-# #131: draft = 投机解码草稿模型, 不可作为 chat 默认。
+# #85: mlx /v1/models does not guarantee chat models come first (image/video models
+# like FLUX/Wan may be listed first). Non-chat engine_type set; both metadata.engine_type
+# and top-level engine_type are checked.
+# #131: draft = speculative-decoding draft model, must not be picked as chat default.
 _NON_CHAT_ENGINE_TYPES = {
     "image_gen",
     "video_gen",
@@ -134,11 +133,13 @@ _NON_CHAT_ENGINE_TYPES = {
 
 
 def _is_chat_model(m: Dict[str, Any]) -> bool:
-    """#126: 单模型 chat 能力判定 — engine_type 不在非 chat 集合即视为 chat 可用。
+    """#126: single-model chat capability check — engine_type not in the non-chat
+    set means chat-capable.
 
-    #131: gateway (fusion-gateway#245) 在 /v1/models 上带 capabilities 元数据时,
-    capabilities.embedding=True 或 text_generation=False 直接判非 chat
-    (engine_type 缺失、仅带 modality 的来源也正确, 如 bge-m3 modality=text)。
+    #131: when the gateway (fusion-gateway#245) attaches capabilities metadata on
+    /v1/models, capabilities.embedding=True or text_generation=False immediately
+    means non-chat (also correct for sources lacking engine_type and carrying only
+    modality, e.g. bge-m3 modality=text).
     """
     if not isinstance(m, dict):
         return False
@@ -158,10 +159,10 @@ def _is_chat_model(m: Dict[str, Any]) -> bool:
 
 
 def _pick_chat_model(models: List[Dict[str, Any]]) -> str:
-    """从 list_models() 结果选一个 chat 模型 id。
+    """Pick a chat model id from list_models() results.
 
-    跳过 image_gen/video_gen/tts/embedding 等 engine_type;
-    优先 Qwen/Llama instruct; 否则取第一个 chat 模型。
+    Skips image_gen/video_gen/tts/embedding engine_types;
+    prefers Qwen/Llama instruct; otherwise takes the first chat model.
     """
     chat_candidates: List[str] = []
     for m in models or []:
@@ -170,7 +171,7 @@ def _pick_chat_model(models: List[Dict[str, Any]]) -> str:
         chat_candidates.append(m.get("id") or m.get("model"))
     if not chat_candidates:
         return ""
-    # 优先 instruct/chat/qwen/llama 命名
+    # Prefer instruct/chat/qwen/llama naming
     prefer_keywords = ("instruct", "chat", "qwen", "llama", "gemma", "mistral")
     for mid in chat_candidates:
         low = mid.lower()
@@ -183,11 +184,13 @@ _PATH_LIKE_RE = re.compile(r"^(?:~|/|\./|\.\./)[^\s]*$")
 
 
 def _sanitize_generated_paths(workflow_def: Dict[str, Any], user_input: str, context: Optional[Dict[str, Any]]) -> None:
-    """issue #509: 剔除 LLM 幻觉出的文件路径 (确定性兜底, 不依赖提示词遵从)。
+    """issue #509: strip LLM-hallucinated file paths (deterministic fallback,
+    does not rely on prompt compliance).
 
-    参数值形如绝对/家目录/相对路径 (~开头、/开头、./ ../开头) 且未出现在
-    用户输入或上下文中 → 判为幻觉, 置空留待用户填写, 并写入 workflow_def
-    ["warnings"] 供前端预览卡提示。
+    Param values shaped like absolute/home/relative paths (leading ~, /, ./ ../)
+    that do not appear in the user input or context are judged hallucinations,
+    blanked for the user to fill in, and recorded in workflow_def["warnings"]
+    for the frontend preview card.
     """
     import re as _re
 
@@ -210,13 +213,15 @@ def _sanitize_generated_paths(workflow_def: Dict[str, Any], user_input: str, con
                 continue
             if value.strip() in haystack:
                 continue
-            # #509: URL/协议前缀不是本地路径, 不动
+            # #509: URL/protocol prefixes are not local paths, leave untouched
             if _re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", value.strip()):
                 continue
             params[key] = ""
-            msg = f"节点 '{node.get('id')}' 参数 '{key}' 的路径 '{value}' 未在需求中出现, 已置空待用户填写 (issue #509)"
+            msg = f"节点 '{node.get('id')}' 参数 '{key}' 的路径 '{value}' 未在需求中出现, 已置空待用户填写 (issue #509)"  # i18n: user-facing
             warnings.append(msg)
-            logger.warning(f"NL 生成剔除疑似幻觉路径: node={node.get('id')} param={key} value={value}")
+            logger.warning(
+                f"NL generation dropped suspected hallucinated path: node={node.get('id')} param={key} value={value}"
+            )
     if warnings:
         existing = workflow_def.get("warnings")
         if isinstance(existing, list):
@@ -226,15 +231,15 @@ def _sanitize_generated_paths(workflow_def: Dict[str, Any], user_input: str, con
 
 
 class NLWorkflowGenerator:
-    """自然语言工作流生成器。
+    """Natural language workflow generator.
 
-    将用户的自然语言描述转换为可执行的工作流定义。
-    底层调用 fusion-mlx 进行 LLM 推理。
+    Converts the user's natural language description into an executable
+    workflow definition. Backed by fusion-mlx for LLM inference.
     """
 
     def __init__(self, mlx_client: FusionMLXClient, model: str = ""):
         self.mlx = mlx_client
-        self.model = model  # 空字符串表示使用默认模型
+        self.model = model  # empty string means use the default model
 
     async def generate(
         self,
@@ -243,26 +248,30 @@ class NLWorkflowGenerator:
         system_prompt: str = "",
         raise_on_parse_error: bool = False,
     ) -> Dict[str, Any]:
-        """将自然语言转换为工作流定义。
+        """Convert natural language into a workflow definition.
 
         Args:
-            user_input: 用户的自然语言描述
-            context: 可选的上下文信息（当前目录、文件列表等）
-            system_prompt: 可选的自定义系统提示词（插件/宿主可用自己的节点
-                目录替换默认的桌面自动化提示词；空串用默认）
-            raise_on_parse_error: True 时解析失败抛 WorkflowParseError（供宿主
-                带反馈重试）；False（默认，兼容旧调用方）返回带 error 的空工作流
+            user_input: the user's natural language description
+            context: optional context info (current directory, file list, etc.)
+            system_prompt: optional custom system prompt (plugins/hosts may replace
+                the default desktop-automation prompt with their own node catalog;
+                empty string uses the default)
+            raise_on_parse_error: when True, raise WorkflowParseError on parse
+                failure (lets the host retry with feedback); False (default, back
+                compatible) returns an empty workflow carrying an error field
 
         Returns:
-            dict: 工作流定义，包含 name, description, nodes, edges
+            dict: workflow definition with name, description, nodes, edges
         """
-        # 先确定 chat 模型: 用户显式 > FUSION_MLX_MODEL env > 过滤 list_models 取 chat 模型 > 默认。
-        # #85: models[0] 可能是 image_gen/video_gen (FLUX/Wan) 不支持 chat completions, 盲取会 -32603。
+        # Resolve the chat model first: explicit user value > FUSION_MLX_MODEL env
+        # > filter list_models for a chat model > default.
+        # #85: models[0] may be an image_gen/video_gen (FLUX/Wan) that does not support
+        # chat completions; blindly taking it yields -32603.
         if not self.model:
             env_model = os.environ.get("FUSION_MLX_MODEL", "").strip()
             if env_model:
                 self.model = env_model
-                logger.info(f"使用 FUSION_MLX_MODEL env 模型: {self.model}")
+                logger.info(f"Using FUSION_MLX_MODEL env model: {self.model}")
 
         if not self.model:
             try:
@@ -270,16 +279,16 @@ class NLWorkflowGenerator:
                 chat_model = _pick_chat_model(models)
                 if chat_model:
                     self.model = chat_model
-                    logger.info(f"自动选择 chat 模型: {self.model}")
+                    logger.info(f"Auto-selected chat model: {self.model}")
                 else:
-                    logger.warning(f"模型列表中未找到 chat 模型, 共 {len(models)} 个, 回退默认")
+                    logger.warning(f"No chat model found in model list ({len(models)} total), falling back to default")
             except Exception as e:
-                logger.warning(f"获取模型列表失败: {e}，使用默认模型")
+                logger.warning(f"Failed to fetch model list: {e}, using default model")
 
         if not self.model:
-            self.model = "Qwen3.8-27B-4bit"  # 默认 chat 模型 (#85 修正: 旧 qwen3.5-9b 不存在)
+            self.model = "Qwen3.8-27B-4bit"  # default chat model (#85 fix: old qwen3.5-9b does not exist)
 
-        # 构建上下文信息
+        # Build context info
         context_str = ""
         if context:
             ctx_parts = []
@@ -288,36 +297,37 @@ class NLWorkflowGenerator:
                     ctx_parts.append(f"{key}: {json.dumps(value, ensure_ascii=False)[:500]}")
                 else:
                     ctx_parts.append(f"{key}: {value}")
-            context_str = "\n上下文信息:\n" + "\n".join(ctx_parts)
+            context_str = "\n上下文信息:\n" + "\n".join(ctx_parts)  # i18n: user-facing
 
         messages = [
             {"role": "system", "content": system_prompt.strip() or SYSTEM_PROMPT},
             {"role": "user", "content": f"{user_input}{context_str}"},
         ]
 
-        # 调用 fusion-mlx 进行 LLM 推理
+        # Call fusion-mlx for LLM inference
         response = await self.mlx.chat(
             model=self.model,
             messages=messages,
-            temperature=0.2,  # 低温度确保输出稳定
+            temperature=0.2,  # low temperature for stable output
             max_tokens=4096,
         )
 
         content = response.content.strip()
 
-        # 提取 JSON（字符串感知的花括号配平，处理围栏/前置/尾随噪声）
+        # Extract JSON (string-aware brace balancing; handles fences/leading/trailing noise)
         try:
             json_str = extract_json_object(content)
-            # issue #554: 修复梯兜住围栏/尾逗号/截断形态 — 全败仍走原 fallback
+            # issue #554: repair ladder covers fences/trailing commas/truncation — falls back to original path on total failure
             workflow_def = parse_llm_json(json_str, context="nl_generate")
 
-            # 确保必有字段
-            workflow_def.setdefault("name", "AI 生成的工作流")
+            # Ensure required fields
+            workflow_def.setdefault("name", "AI 生成的工作流")  # i18n: user-facing
             workflow_def.setdefault("description", user_input)
             workflow_def.setdefault("nodes", [])
             workflow_def.setdefault("edges", [])
 
-            # CR-13b: 逐节点校验 name ∈ NodeRegistry, 未知名剔除 (LLM 可能幻觉节点名)
+            # CR-13b: validate each node's name against NodeRegistry, drop unknown
+            # names (the LLM may hallucinate node names)
             try:
                 from ..engine.node import NodeRegistry
 
@@ -332,33 +342,34 @@ class NLWorkflowGenerator:
                         else:
                             dropped.append(nm)
                     if dropped:
-                        logger.warning(f"NL 生成剔除未注册节点名: {dropped}")
+                        logger.warning(f"NL generation dropped unregistered node names: {dropped}")
                     workflow_def["nodes"] = kept
             except Exception as ve:
-                logger.debug(f"NL 节点名校验跳过 (NodeRegistry 未就绪): {ve}")
+                logger.debug(f"NL node name validation skipped (NodeRegistry not ready): {ve}")
 
-            # issue #509: 幻觉路径确定性剔除 — 未在用户输入/上下文出现的路径参数置空
+            # issue #509: deterministic hallucinated-path removal — path params absent from
+            # user input/context are blanked
             try:
                 _sanitize_generated_paths(workflow_def, user_input, context)
             except Exception as se:
-                logger.warning(f"NL 路径净化跳过 (非阻断): {se}")
+                logger.warning(f"NL path sanitization skipped (non-blocking): {se}")
 
-            logger.info(f"成功生成工作流: {workflow_def['name']} ({len(workflow_def['nodes'])} 个节点)")
+            logger.info(f"Workflow generated: {workflow_def['name']} ({len(workflow_def['nodes'])} nodes)")
             return workflow_def
 
         except (JSONRepairError, WorkflowParseError) as e:
-            logger.error(f"解析 LLM 输出为 JSON 失败: {e}")
-            logger.debug(f"LLM 原始输出: {content}")
+            logger.error(f"Failed to parse LLM output as JSON: {e}")
+            logger.debug(f"LLM raw output: {content}")
             if raise_on_parse_error:
                 if isinstance(e, WorkflowParseError):
                     raise
                 raise WorkflowParseError(f"invalid JSON: {e}", raw_output=content) from e
             return {
-                "name": "AI 生成的工作流",
+                "name": "AI 生成的工作流",  # i18n: user-facing
                 "description": user_input,
                 "nodes": [],
                 "edges": [],
-                "error": f"解析失败: {e}",
+                "error": f"解析失败: {e}",  # i18n: user-facing
                 "raw_output": content,
             }
 
@@ -366,20 +377,20 @@ class NLWorkflowGenerator:
         self,
         user_input: str,
     ) -> List[Dict[str, Any]]:
-        """根据用户输入推荐合适的模板。
+        """Recommend suitable templates based on the user input.
 
         Args:
-            user_input: 用户描述
+            user_input: the user's description
 
         Returns:
-            list[dict]: 推荐的模板列表
+            list[dict]: recommended template list
         """
         messages = [
             {
                 "role": "system",
-                "content": "你是一个桌面自动化助手。根据用户的需求，推荐最合适的自动化模板。"
-                "返回 JSON 数组，每项包含 name, description, match_score。"
-                "只返回 JSON。",
+                "content": "你是一个桌面自动化助手。根据用户的需求，推荐最合适的自动化模板。"  # i18n: user-facing
+                "返回 JSON 数组，每项包含 name, description, match_score。"  # i18n: user-facing
+                "只返回 JSON。",  # i18n: user-facing
             },
             {"role": "user", "content": user_input},
         ]
@@ -398,8 +409,8 @@ class NLWorkflowGenerator:
             content = content.split("```")[1].split("```")[0].strip()
 
         try:
-            # issue #554: LLM 输出 JSON 修复梯 (内核 json_repair) 替换裸 json.loads
+            # issue #554: LLM output JSON repair ladder (kernel json_repair) replaces bare json.loads
             return parse_llm_json(content, context="template_recommend")
         except JSONRepairError:
-            logger.warning(f"模板推荐解析失败: {content[:200]}")
+            logger.warning(f"Template recommendation parse failed: {content[:200]}")
             return []

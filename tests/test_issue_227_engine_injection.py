@@ -1,11 +1,12 @@
-"""#227 (D3): 引擎 pause/resume + 运行中指令注入。
+"""#227 (D3): engine pause/resume + mid-run directive injection.
 
 Contract:
-- inject 指令: 下一节点边界把 instruction 并入目标节点输入 (user_instruction 键),
-  时间线落一条 user_correction 标记步 (skipped 零耗时, 非节点执行)。
-- 空指令早拒; 未知执行/未知 action 拒绝。
-- pause 语义 graceful: 当前节点完成后挂起, resume 续跑, 步骤齐全。
-- POST /api/runs/{id}/directive inject 202; 空指令 409; _step_dict 透出 user_correction。
+- inject directive: at the next node boundary the instruction is merged into the target node's
+  input (user_instruction key); the timeline records a user_correction marker step
+  (skipped, zero duration, not a node execution).
+- Empty instructions are rejected early; unknown executions / unknown actions are rejected.
+- pause semantics are graceful: suspend after the current node completes, resume continues, all steps intact.
+- POST /api/runs/{id}/directive inject returns 202; empty instruction 409; _step_dict exposes user_correction.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ def _make_echo_node(name: str, delay: float = 0.02):
     _Node.name = name
     _Node.display_name = name
     _Node.category = NodeCategory.TOOL
-    _Node.description = "测试用"
+    _Node.description = "测试用"  # i18n: user-facing
     _Node.icon = "🧪"
     _Node.default_label = name
     return _Node
@@ -116,7 +117,7 @@ class TestEngineInject:
         third = next(s for s in execution.steps if s.node_id == "n3" and not s.user_correction)
         assert third.input_data.get("user_instruction") == "use plan B"
         assert third.input_data.get("budget") == 42
-        # n2 未被点名 → 不吃指令
+        # n2 was not addressed → does not consume the instruction
         second = next(s for s in execution.steps if s.node_id == "n2" and not s.user_correction)
         assert "user_instruction" not in second.input_data
 
@@ -163,7 +164,7 @@ class TestPauseResumeGraceful:
         task = asyncio.create_task(engine.execute(three_node_workflow, execution_id="exec-p1"))
         await _pause_after_first(engine, "exec-p1")
 
-        # graceful: 当前节点已完成落盘, 后续未跑
+        # graceful: the current node has completed and persisted, later ones have not run
         assert engine.is_paused("exec-p1")
         engine.resume("exec-p1")
         execution = await asyncio.wait_for(task, timeout=5)
@@ -171,7 +172,7 @@ class TestPauseResumeGraceful:
         assert execution.status.value == "success"
         assert [s.node_id for s in execution.steps if not s.user_correction] == ["n1", "n2", "n3"]
         assert all(s.status.value == "success" for s in execution.steps if not s.user_correction)
-        # 产物一致: 每步输出都在
+        # Artifacts consistent: every step's output is present
         assert all("echo" in s.output_data for s in execution.steps if not s.user_correction)
 
 
@@ -212,12 +213,12 @@ class TestInjectRouteAndStepDict:
 
         r = tc.post(
             "/api/runs/run_227/directive",
-            json={"action": "inject", "instruction": "只看华东区"},
+            json={"action": "inject", "instruction": "只看华东区"},  # i18n: user-facing
             headers={"Authorization": f"Bearer {STATIC_KEY}"},
         )
         assert r.status_code == 202
         assert registry._runs["run_227"]["directives"][0]["action"] == "inject"
-        assert registry._runs["run_227"]["directives"][0]["payload"]["instruction"] == "只看华东区"
+        assert registry._runs["run_227"]["directives"][0]["payload"]["instruction"] == "只看华东区"  # i18n: user-facing
 
     def test_inject_empty_instruction_409(self, client):
         tc, app = client
@@ -241,7 +242,7 @@ class TestInjectRouteAndStepDict:
             node_name="inj_second",
             node_display_name="inj_second",
             status=NodeStatus.SKIPPED,
-            summary="用户修正: x",
+            summary="用户修正: x",  # i18n: user-facing
             user_correction=True,
         )
         plain = WorkflowStep(

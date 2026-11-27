@@ -1,6 +1,6 @@
-"""Stage 6 — 安全规模化测试: 限流 / 加密 / 审计链 / 熔断。
+"""Stage 6 — security scale tests: rate limiting / encryption / audit chain / circuit breaker.
 
-opt-in 设计: 无 env/config → 行为不变; 设了才激活。cryptography 懒装, importorskip 门控加密。
+Opt-in design: no env/config -> behavior unchanged; activated only when set. cryptography is lazily installed, importorskip gates the encryption tests.
 """
 
 from __future__ import annotations
@@ -10,25 +10,25 @@ import pytest
 from fusion_cowork.security.circuit_breaker import CircuitBreaker, CircuitOpenError, CircuitState
 from fusion_cowork.security.rate_limit import RateLimiter, TokenBucket
 
-# ── TokenBucket ──
+# -- TokenBucket --
 
 
 class TestTokenBucket:
     def test_burst_then_deny(self):
-        # rate=1/s burst=3 → 头 3 次过, 第 4 次因无补充 (瞬时) 拒
+        # rate=1/s burst=3 -> first 3 pass, 4th denied (no refill in the burst)
         bucket = TokenBucket(rate=1.0, burst=3)
         results = [bucket.allow() for _ in range(5)]
         assert results[:3] == [True, True, True]
-        # 瞬时连发, 第 4/5 次 (令牌 < 1) 拒
+        # Instant burst, 4th/5th (tokens < 1) denied
         assert results[3] is False
         assert results[4] is False
 
     def test_refill_over_time(self):
         bucket = TokenBucket(rate=100.0, burst=1)
         assert bucket.allow() is True
-        # 瞬时无令牌 → 拒
+        # No tokens instantly -> deny
         assert bucket.allow() is False
-        # 手动拨 _last 模拟时间过 (rate=100/s, 50ms 补 5 令牌, 上限 1)
+        # Manually rewind _last to simulate elapsed time (rate=100/s, 50ms refills 5 tokens, cap 1)
         bucket._last -= 0.1
         assert bucket.allow() is True
 
@@ -38,17 +38,17 @@ class TestTokenBucket:
             assert bucket.allow() is True
 
 
-# ── RateLimiter ──
+# -- RateLimiter --
 
 
 class TestRateLimiter:
     def test_per_tenant_isolation(self):
         limiter = RateLimiter(rate=1.0, burst=2)
-        # tenantA 耗尽 (2 burst)
+        # tenantA exhausted (2 burst)
         assert limiter.allow("tenantA") is True
         assert limiter.allow("tenantA") is True
         assert limiter.allow("tenantA") is False
-        # tenantB 不受影响 (独立桶)
+        # tenantB unaffected (independent bucket)
         assert limiter.allow("tenantB") is True
         assert limiter.allow("tenantB") is True
 
@@ -65,7 +65,7 @@ class TestRateLimiter:
         assert limiter.allow("t1") is True
 
 
-# ── Encryption (cryptography 懒装) ──
+# -- Encryption (cryptography lazily installed) --
 
 
 @pytest.fixture
@@ -92,7 +92,7 @@ class TestEncryption:
     def test_decrypt_plaintext_passthrough(self, enc_key):
         from fusion_cowork.security.encryption import decrypt_at_rest
 
-        # 非密文 (无前缀) 原样返 (向后兼容明文)
+        # Non-ciphertext (no prefix) returned as-is (backward-compatible with plaintext)
         assert decrypt_at_rest("plain-value") == "plain-value"
         assert decrypt_at_rest("") == ""
 
@@ -100,7 +100,7 @@ class TestEncryption:
         monkeypatch.delenv("FUSION_ENCRYPTION_KEY", raising=False)
         from fusion_cowork.security.encryption import encrypt_at_rest
 
-        # 无 key → 明文 + WARN (本地兼容), 不抛
+        # No key -> plaintext + WARN (local compatibility), no raise
         assert encrypt_at_rest("secret") == "secret"
 
     def test_is_encrypted(self, enc_key):
@@ -111,7 +111,7 @@ class TestEncryption:
         assert is_encrypted("plain") is False
 
 
-# ── ConfigCenter 加密落盘 ──
+# -- ConfigCenter encrypted at rest --
 
 
 class TestConfigCenterEncryption:
@@ -124,7 +124,7 @@ class TestConfigCenterEncryption:
         cc.set("ai.api_key", "sk-live-secret-999", source="user")
         cc.save()
 
-        # 读原始盘文件 — secret 值须为密文 (fernet:), 非明文
+        # Read the raw on-disk file — the secret value must be ciphertext (fernet:), not plaintext
         import json
 
         with open(str(tmp_path / "config.json"), encoding="utf-8") as f:
@@ -133,7 +133,7 @@ class TestConfigCenterEncryption:
         assert stored.startswith("fernet:")
         assert "sk-live-secret-999" not in stored
 
-        # reload → 解密回明文
+        # reload -> decrypted back to plaintext
         cc2 = ConfigCenter(config_file=str(tmp_path / "config.json"))
         cc2.load()
         assert cc2.get("ai.api_key") == "sk-live-secret-999"
@@ -152,12 +152,12 @@ class TestConfigCenterEncryption:
 
         with open(str(tmp_path / "config.json"), encoding="utf-8") as f:
             raw = json.load(f)
-        # 非密保明文
+        # Non-secret stays plaintext
         assert raw["entries"]["log.level"]["value"] == "DEBUG"
         ConfigCenter.reset_instance()
 
 
-# ── AuditLog 防篡改链 ──
+# -- AuditLog tamper-evident chain --
 
 
 class TestAuditLogChain:
@@ -189,7 +189,7 @@ class TestAuditLogChain:
         audit = AuditLog(store=store)
         await audit.log("tA", "u1", "create", "space:s1", {"name": "alpha"})
         await audit.log("tA", "u1", "update", "space:s1", {"name": "beta"})
-        # 篡改第一条 entry_hash → 链断
+        # Tamper with the first entry_hash -> chain broken
         async with store.write_tx("tA") as h:
             await h.exec(
                 "UPDATE audit_log SET entry_hash = 'tampered' WHERE action = ?",
@@ -240,7 +240,7 @@ class TestCircuitBreaker:
         cb = CircuitBreaker(name="test", failure_threshold=1, recovery_timeout=30.0)
         cb.on_failure()
         assert cb.state == CircuitState.OPEN
-        # recovery_timeout floor=1.0s, 太慢; monkeypatch time.monotonic 模拟过期。
+        # recovery_timeout floor=1.0s, too slow; monkeypatch time.monotonic to simulate expiry.
         fake = [cb._opened_at + cb.recovery_timeout + 1.0]
         monkeypatch.setattr("fusion_cowork.security.circuit_breaker.time.monotonic", lambda: fake[0])
         # state property auto-transitions OPEN→HALF_OPEN after recovery_timeout
@@ -286,7 +286,7 @@ class TestCircuitBreaker:
         with pytest.raises(RuntimeError):
             await cb.call(boom)
         assert cb._failures == 1
-        # 再失败一次 → OPEN
+        # One more failure -> OPEN
         with pytest.raises(RuntimeError):
             await cb.call(boom)
         assert cb.state == CircuitState.OPEN

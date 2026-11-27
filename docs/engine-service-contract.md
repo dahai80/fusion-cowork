@@ -66,8 +66,7 @@ headers = {"Authorization": f"Bearer {key}"}
 resp = httpx.post(
     f"{base}/api/runs",
     headers=headers,
-    json={"workflow_id": "product_lifecycle_agents",
-          "inputs": {"order_id": order_id, "prd": prd_text}},
+    json={"workflow_id": "product_lifecycle_agents", "inputs": {"order_id": order_id, "prd": prd_text}},
 )
 run_id = resp.json()["run_id"]
 
@@ -79,8 +78,7 @@ while True:
 
 failed = [s for s in rec["steps"] if s["status"] == "failed"]
 if failed:
-    httpx.post(f"{base}/api/runs/{run_id}/resume-from",
-               headers=headers, json={"node_id": failed[-1]["node_id"]})
+    httpx.post(f"{base}/api/runs/{run_id}/resume-from", headers=headers, json={"node_id": failed[-1]["node_id"]})
 ```
 
 ## 4. Failure semantics

@@ -1,6 +1,7 @@
-"""issue #466 (W8): 编排质量基准 — 确定性场景过真实 WorkflowEngine, score=100 为 CI 门禁。
+"""issue #466 (W8): orchestration quality benchmark — deterministic scenarios run through the real
+WorkflowEngine, score=100 is the CI gate.
 
-覆盖: 全场景满分、单场景过滤、探针节点幂等注册、CLI 命令。
+Covers: full-score scenarios, single-scenario filtering, probe-node idempotent registration, CLI command.
 """
 
 from __future__ import annotations

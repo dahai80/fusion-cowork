@@ -1,4 +1,4 @@
-"""issue #180: python_repl 多语句代码静默不执行 — stdin 只读一次修复回归测试。"""
+"""issue #180: python_repl silently not executing multi-statement code — regression test for the read-stdin-once fix."""
 
 import pytest
 
@@ -18,7 +18,7 @@ async def test_multi_statement_code_executes():
     node = _make_node("total = 0\nfor i in range(5):\n    total += i\nprint(json.dumps({'total': total}))")
     result = await node.execute({"code": node.config.params["code"]})
     assert result.status == NodeStatus.SUCCESS
-    # exec 模式下用户 print 走 stdout, json.loads 失败回退整段 stdout 为 result
+    # In exec mode user print goes to stdout; when json.loads fails, the whole stdout falls back as the result
     assert '{"total": 10}' in result.data["result"]
 
 

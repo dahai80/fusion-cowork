@@ -1,8 +1,8 @@
-"""issue #467 (phase 3.2/3.3): coordinator-subagent 扇出 + session fork。
+"""issue #467 (phase 3.2/3.3): coordinator-subagent fanout + session fork.
 
-覆盖: coordinator_fanout (harness SubagentRunner 并行/顺序/失败传播/partial/
-harness 缺失响亮报错)、session_fork (父 session 派生分支 id/汇聚/失败传播/
-波边界经真实引擎)、HIGH_RISK 门禁、中文别名。
+Covers: coordinator_fanout (harness SubagentRunner parallel/serial/failure propagation/partial/
+loud error when harness missing), session_fork (parent-session derived branch ids/convergence/failure
+propagation/wave boundary through the real engine), HIGH_RISK gating, Chinese aliases.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ class _ProbeOk(BaseNode):
     name = PROBE_OK
     display_name = "Fork Probe OK 467"
     category = NodeCategory.LOGIC
-    description = "测试用: 成功探针 (#467)"
+    description = "测试用: 成功探针 (#467)"  # i18n: user-facing
     icon = "🧪"
     default_label = "ProbeOk"
 
@@ -48,7 +48,7 @@ class _ProbeFail(BaseNode):
     name = PROBE_FAIL
     display_name = "Fork Probe Fail 467"
     category = NodeCategory.LOGIC
-    description = "测试用: 失败探针 (#467)"
+    description = "测试用: 失败探针 (#467)"  # i18n: user-facing
     icon = "🧪"
     default_label = "ProbeFail"
 
@@ -244,7 +244,7 @@ class TestSessionFork:
 def test_chinese_aliases_registered():
     from fusion_cowork import NODE_NAME_ALIASES
 
-    assert NODE_NAME_ALIASES["协调分发"] == "coordinator_fanout"
-    assert NODE_NAME_ALIASES["子代理分发"] == "coordinator_fanout"
-    assert NODE_NAME_ALIASES["会话分叉"] == "session_fork"
-    assert NODE_NAME_ALIASES["会话分叉并行"] == "session_fork"
+    assert NODE_NAME_ALIASES["协调分发"] == "coordinator_fanout"  # i18n: user-facing
+    assert NODE_NAME_ALIASES["子代理分发"] == "coordinator_fanout"  # i18n: user-facing
+    assert NODE_NAME_ALIASES["会话分叉"] == "session_fork"  # i18n: user-facing
+    assert NODE_NAME_ALIASES["会话分叉并行"] == "session_fork"  # i18n: user-facing

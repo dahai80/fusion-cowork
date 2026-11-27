@@ -17,9 +17,9 @@ export function ClusterPage() {
         return (
             <div className="mx-auto max-w-3xl">
                 <EmptyState
-                    title={t('集群未启用', 'Cluster disabled')}
+                    title={t('集群未启用', 'Cluster disabled')} // i18n: user-facing
                     description={t(
-                        '设置 FUSION_CLUSTER_ENABLED=1 启用分布式状态层',
+                        '设置 FUSION_CLUSTER_ENABLED=1 启用分布式状态层', // i18n: user-facing
                         'Set FUSION_CLUSTER_ENABLED=1 to enable the distributed state layer'
                     )}
                 />
@@ -30,13 +30,16 @@ export function ClusterPage() {
     return (
         <div className="mx-auto max-w-3xl">
             <div className="flex items-end justify-between pb-2">
-                <div className="text-sm font-medium text-text-primary">{t('集群', 'Cluster')}</div>
+                <div className="text-sm font-medium text-text-primary">
+                    {t('集群', 'Cluster') /* i18n: user-facing */}
+                </div>
                 <div className="text-xs text-text-muted">
-                    {t('节点', 'Nodes')}: {state.nodes.length} · vRAM {state.total_allocated_mb} MB
+                    {t('节点', 'Nodes') /* i18n: user-facing */}: {state.nodes.length} · vRAM {state.total_allocated_mb}{' '}
+                    MB
                 </div>
             </div>
             {state.nodes.length === 0 ? (
-                <EmptyState title={t('暂无节点', 'No nodes')} />
+                <EmptyState title={t('暂无节点', 'No nodes') /* i18n: user-facing */} />
             ) : (
                 <div className="space-y-1">
                     {state.nodes.map((n) => (
@@ -63,7 +66,7 @@ export function ClusterPage() {
                             ) : null}
                             <StatusBadge
                                 status={n.last_heartbeat_at ? 'success' : 'offline'}
-                                label={n.last_heartbeat_at ? t('在线', 'alive') : t('无心跳', 'no heartbeat')}
+                                label={n.last_heartbeat_at ? t('在线', 'alive') : t('无心跳', 'no heartbeat')} // i18n: user-facing
                             />
                         </div>
                     ))}
@@ -72,7 +75,7 @@ export function ClusterPage() {
             {Object.keys(state.vram).length > 0 ? (
                 <div className="pt-3">
                     <div className="pb-1 text-xs text-text-secondary">
-                        {t('vRAM 分配 (按插件)', 'vRAM allocations (by plugin)')}
+                        {t('vRAM 分配 (按插件)', 'vRAM allocations (by plugin)') /* i18n: user-facing */}
                     </div>
                     <div className="space-y-1">
                         {Object.entries(state.vram).map(([pluginId, mb]) => (

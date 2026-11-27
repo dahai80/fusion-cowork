@@ -239,6 +239,7 @@ class TestTeamCallGuards:
             {"team": "alpha", "member": "ba", "task_title": "t", "timeout": 0.15, "poll_interval": 0.05}
         ).execute({})
         assert res.status.value == "failed"
+        # i18n: user-facing
         assert "超时" in res.error
         assert res.data["detached"] is True
         assert res.data["task_id"].startswith("task-")
@@ -276,7 +277,9 @@ class TestRegistration:
         assert NodeRegistry.get("team_call") is not None
         from fusion_cowork import NODE_NAME_ALIASES
 
+        # i18n: user-facing
         assert NODE_NAME_ALIASES.get("团队调用") == "team_call"
+        # i18n: user-facing
         assert NODE_NAME_ALIASES.get("团队任务") == "team_call"
 
     def test_high_risk(self):

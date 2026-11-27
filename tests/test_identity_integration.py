@@ -1,7 +1,7 @@
-"""issue #88 — fusion-identity 集成测试 (offline, httpx MockTransport)。
+"""issue #88 — fusion-identity integration tests (offline, httpx MockTransport).
 
-无 live fusion-identity (CI 无 11470)。全部 sync httpx.Client 经 MockTransport 模拟。
-opt-in OFF (无 FUSION_IDENTITY_ENABLED) → 零行为变化, 全套件绿。
+No live fusion-identity (CI has no 11470). All sync httpx.Client calls are simulated via MockTransport.
+Opt-in OFF (no FUSION_IDENTITY_ENABLED) → zero behavior change, whole suite green.
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ def _clean_env(monkeypatch):
     monkeypatch.delenv("FUSION_IDENTITY_URL", raising=False)
     monkeypatch.delenv("FUSION_IDENTITY_SERVICE_TOKEN", raising=False)
     identity_mod.reset_identity_client()
-    # 单例 verifier 会缓存 identity 适配器 — 不重置会泄漏到后续模块
+    # The singleton verifier caches the identity adapter — without a reset it leaks into later modules
     jwt_mod._DEFAULT_VERIFIER = None
     yield
     identity_mod.reset_identity_client()
@@ -124,7 +124,7 @@ class TestIdentityClientWire:
         r2 = c.verify(tok)
         assert r1 is not None and r2 is not None
         assert r1.tid == r2.tid == "t1"
-        assert len(calls) == 1, "第二次应命中缓存不发起 HTTP"
+        assert len(calls) == 1, "第二次应命中缓存不发起 HTTP"  # i18n: user-facing
 
     def test_verify_revoked_returns_none(self):
         def handler(request: httpx.Request) -> httpx.Response:
@@ -431,7 +431,7 @@ class TestMcpHttpMiddleware:
         app = create_streamable_app(reg)
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
         try:
-            # initialize 无 token → require_jwt=False 放行 (exempt /mcp)
+            # initialize without a token → require_jwt=False lets it through (exempt /mcp)
             resp = await client.post(
                 "/mcp",
                 json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-03-26"}},

@@ -25,6 +25,7 @@ class EventBus:
     async def wait(self, name: str, timeout: float = 300.0) -> Dict[str, Any]:
         name = str(name or "").strip()
         if not name:
+            # i18n: user-facing
             raise ValueError("event name 必填")
         loop = asyncio.get_running_loop()
         fut: asyncio.Future = loop.create_future()
@@ -43,6 +44,7 @@ class EventBus:
     def emit(self, name: str, payload: Any = None) -> int:
         name = str(name or "").strip()
         if not name:
+            # i18n: user-facing
             raise ValueError("event name 必填")
         waiters = self._waiters.pop(name, None)
         if not waiters:

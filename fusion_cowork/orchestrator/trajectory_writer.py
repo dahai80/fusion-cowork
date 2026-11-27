@@ -1,4 +1,4 @@
-"""Plan retrospective writer (audit 方案二③).
+"""Plan retrospective writer (audit scheme 2, item 3).
 
 Appends a plan terminal snapshot to the trajectory jsonl so every
 orchestrated run is reviewable afterwards: task tree with parent links,
@@ -41,7 +41,7 @@ def _task_snapshot(task) -> Dict[str, Any]:
 
 
 def _collect_side_effects(results: Dict[str, Any]) -> list:
-    """方案五 (audit v3): extract file-ish side effects from executor results
+    """Scheme 5 (audit v3): extract file-ish side effects from executor results
     (output_path / file_path / path keys in result data) so the retrospective
     doubles as a delivery note listing WHAT the run touched on disk."""
     effects = []
@@ -61,7 +61,7 @@ def write_plan_retrospective(plan, results: Dict[str, Any], elapsed: float) -> s
     """Write one retrospective line for a terminal plan; returns the path."""
     failed = [t.task_id for t in plan.tasks if t.status in ("failed", "skipped")]
     completed = [t.task_id for t in plan.tasks if t.status == "completed"]
-    # 方案五 (audit v3): delivery-note fields — per-task timings, disk side
+    # Scheme 5 (audit v3): delivery-note fields — per-task timings, disk side
     # effects, and the superseded-retry history explaining plan churn.
     task_timings = {
         t.task_id: round(t.completed_at - t.started_at, 3) for t in plan.tasks if t.completed_at and t.started_at
@@ -169,7 +169,7 @@ def list_plan_retrospectives(
                 "ts": ts,
                 "task_count": data.get("task_count", 0),
                 "failed_tasks": data.get("failed_tasks", []),
-                # 方案五 (audit v3): delivery-note fields for the GUI
+                # Scheme 5 (audit v3): delivery-note fields for the GUI
                 "task_timings": data.get("task_timings", {}),
                 "side_effects": data.get("side_effects", []),
                 "superseded_history": data.get("superseded_history", []),
@@ -185,7 +185,7 @@ def write_task_step(
     step: str,
     content: str,
 ) -> None:
-    """方案二 (audit v3): persist one agent execution intermediate step
+    """Scheme 2 (audit v3): persist one agent execution intermediate step
     (tool output, error, retry trace) to the trajectory jsonl. Best-effort —
     a write failure must never break the relay chain."""
     try:
@@ -212,7 +212,7 @@ def read_task_steps(
     limit: int = 10,
     after_ts: float = 0.0,
 ) -> list:
-    """方案二 (audit v3): read recent task_step events for a space (oldest
+    """Scheme 2 (audit v3): read recent task_step events for a space (oldest
     first) so relay context can include intermediate outputs that never went
     through the chat table. Best-effort; returns [] on any failure."""
     base = Path(DEFAULT_TRAJECTORY_DIR)

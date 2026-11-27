@@ -1,10 +1,10 @@
-"""issue #361/#362: 管道重跑参数透传 + PR 链接强度契约。
+"""issue #361/#362: pipeline re-run parameter pass-through + PR link strength contract.
 
-- #361: product_lifecycle 模板暴露 scaffold_overwrite 启动参数, 透传 n5 repo_scaffold
-  overwrite; issue_create 去重复用 (v0.5.85) 的下游复用经 ${result.number} 不变
-- #362: linked_pr 增加 pr_link_strength (closing|mention) — PR 正文带关闭关键词才算
-  交付性关联; require_closing_link=true 时仅提及即阻塞; claude_dispatch 输出带会话
-  自述交付声明 session_claim
+- #361: product_lifecycle template exposes a scaffold_overwrite launch parameter, passed through to the n5 repo_scaffold
+  overwrite; issue_create dedup reuse (v0.5.85) downstream reuse via ${result.number} unchanged
+- #362: linked_pr adds pr_link_strength (closing|mention) — only a PR body with closing keywords counts as a
+  delivery-grade link; require_closing_link=true blocks mention-only; claude_dispatch output carries the session
+  self-declared delivery claim session_claim
 """
 
 import json
@@ -110,6 +110,7 @@ class TestPrLinkStrength:
         monkeypatch.setattr(GitHubNode, "_client", _gh_node("Found while working on #8"))
         res = await _api_node("linked_pr", require_closing_link=True).execute({})
         assert res.status.value == "failed"
+        # i18n: user-facing
         assert "关闭关键词" in res.error
         assert "PR#9" in res.error
         assert res.data["pr_link_strength"] == "mention"
@@ -158,7 +159,7 @@ class TestPrLinkStrength:
         assert res.data["pr_link_strength"] == "mention"
 
     def test_no_closing_regex_false_positive(self):
-        # "Closes #8" 不匹配 "Closes #88" — 边界词校验 (pattern 内建 \\b)
+        # "Closes #8" does not match "Closes #88" — word-boundary validation (\\b built into the pattern)
         import re
 
         body = "Closes #88 not this one"

@@ -1,4 +1,4 @@
-"""Fusion-Cowork 服务器模块。"""
+"""Fusion-Cowork server modules."""
 
 from .desk_rpc import DeskRPCServer
 from .mcp_server import MCPServer, MCPToolRegistry

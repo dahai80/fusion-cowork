@@ -1,7 +1,7 @@
-"""Postgres 后端集成测试 (v0.4.0 Stage 3).
+"""Postgres backend integration tests (v0.4.0 Stage 3).
 
-门控: pytest.importorskip("asyncpg") + env FUSION_PG_DSN。无则全 skip (不阻断 CI)。
-本地: docker run -e POSTGRES_PASSWORD=x -e POSTGRES_DB=fusion -p 5432:5432 postgres:16
+Gating: pytest.importorskip("asyncpg") + env FUSION_PG_DSN. Without it everything skips (does not block CI).
+Local: docker run -e POSTGRES_PASSWORD=x -e POSTGRES_DB=fusion -p 5432:5432 postgres:16
       FUSION_PG_DSN=postgresql://postgres:x@localhost:5432/fusion python -m pytest tests/test_postgres_backend.py -v
 """
 
@@ -17,7 +17,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.postgres]
 PG_DSN = os.environ.get("FUSION_PG_DSN")
 
 if not PG_DSN:
-    pytest.skip("FUSION_PG_DSN 未设 — 跳过 Postgres 集成测试", allow_module_level=True)
+    pytest.skip("FUSION_PG_DSN not set — skipping Postgres integration tests", allow_module_level=True)
 
 
 @pytest.fixture(scope="module")
@@ -32,7 +32,7 @@ def event_loop():
 @pytest.fixture
 async def pg_conn():
     conn = await asyncpg.connect(PG_DSN)
-    # 清干净测试库
+    # Clean the test database
     for t in [
         "schema_migrations",
         "sidebar_modules",
@@ -59,7 +59,7 @@ async def test_spacestore_postgres_init(pg_conn, tmp_path):
     store = SpaceStore(data_dir=str(tmp_path), dsn=PG_DSN)
     await store.initialize()
     assert store.backend == "postgres"
-    # 12 数据表 + sidebar_modules + space_notifications + schema_migrations = 15 (>=13 容差)
+    # 12 data tables + sidebar_modules + space_notifications + schema_migrations = 15 (>=13 tolerance)
     row = await pg_conn.fetchval("SELECT count(*) FROM information_schema.tables WHERE table_schema='public'")
     assert row >= 13
     await store.close()
@@ -89,7 +89,7 @@ async def test_rls_blocks_cross_tenant(pg_conn, tmp_path):
         await pg_conn.execute(pgsql, *params) if params else await pg_conn.execute(pgsql)
 
     await MigrationRunner("postgres", executor=_exec, error_class=Exception).run_pending()
-    # 插两条不同租户数据 (spaces: created_at/updated_at TEXT NOT NULL 无默认, 须显式给)
+    # Insert two rows for different tenants (spaces: created_at/updated_at TEXT NOT NULL with no default, must be explicit)
     await pg_conn.execute(
         "INSERT INTO spaces (id, name, owner_id, created_at, updated_at, tenant_id) "
         "VALUES ($1, 'a', 'u1', '2026-01-01', '2026-01-01', 'tenantA')",
@@ -100,9 +100,9 @@ async def test_rls_blocks_cross_tenant(pg_conn, tmp_path):
         "VALUES ($1, 'b', 'u2', '2026-01-01', '2026-01-01', 'tenantB')",
         "sp_b_" + uuid.uuid4().hex[:6],
     )
-    # RLS 建表主(超级用户)仍绕过 RLS; 须用非超级用户角色验证。
-    # provision 非超级角色 + 授权 (postgres superuser 建角色)
-    # 先清前次残留角色依赖 (DROP OWNED 再 DROP ROLE)
+    # The RLS table owner (superuser) still bypasses RLS; must verify with a non-superuser role.
+    # Provision a non-super role + grants (postgres superuser creates the role)
+    # First clear leftover role dependencies from previous runs (DROP OWNED then DROP ROLE)
     try:
         await pg_conn.execute("DROP OWNED BY rls_test")
     except Exception:
@@ -112,8 +112,8 @@ async def test_rls_blocks_cross_tenant(pg_conn, tmp_path):
     await pg_conn.execute("GRANT USAGE ON SCHEMA public TO rls_test")
     await pg_conn.execute("GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO rls_test")
     await apply_rls(pg_conn)
-    # 以 rls_test 角色另连验证 RLS 生效 — 通用 DSN 凭证替换 (勿硬编码 superuser 名)
-    # CI/本地 DSN 用户名各异 (postgres / fusion / ...), 从 DSN 解析建表主用户名
+    # Reconnect as the rls_test role to verify RLS takes effect — generic DSN credential swap (do not hardcode the superuser name)
+    # CI/local DSN usernames differ (postgres / fusion / ...), parse the table-owner username from the DSN
     from urllib.parse import urlparse
 
     parsed = urlparse(PG_DSN)
@@ -124,7 +124,7 @@ async def test_rls_blocks_cross_tenant(pg_conn, tmp_path):
     role_dsn = f"postgresql://rls_test:rls@{su_host}:{su_port}/{su_db}"
     rls_conn = await asyncpg.connect(role_dsn)
     try:
-        # tenantA 上下文应只见 1 条 (RLS 挡 tenantB)
+        # tenantA context should only see 1 row (RLS blocks tenantB)
         await rls_conn.execute("BEGIN")
         await set_tenant_context(rls_conn, "tenantA")
         count = await rls_conn.fetchval("SELECT count(*) FROM spaces")
@@ -132,8 +132,8 @@ async def test_rls_blocks_cross_tenant(pg_conn, tmp_path):
         assert count == 1
     finally:
         await rls_conn.close()
-        # 清角色依赖: REASSIGN + DROP OWNED + REVOKE 再 DROP ROLE
-        # REASSIGN 目标用解析出的建表主 (非硬编码 postgres, 否则角色不存在报错)
+        # Clear role dependencies: REASSIGN + DROP OWNED + REVOKE then DROP ROLE
+        # REASSIGN target uses the parsed table owner (not hardcoded postgres, otherwise the role does not exist error)
         await pg_conn.execute(f"REASSIGN OWNED BY rls_test TO {su_user}")
         await pg_conn.execute("DROP OWNED BY rls_test")
         await pg_conn.execute("DROP ROLE IF EXISTS rls_test")
@@ -151,7 +151,7 @@ async def test_store_crud_postgres(tmp_path):
     got = await store.get_space(created.id, tenant_id=tid)
     assert got is not None
     assert got.name == "pg-test"
-    # 跨租户不可见
+    # Cross-tenant invisible
     other = await store.get_space(created.id, tenant_id="other_tenant")
     assert other is None
     await store.close()
@@ -168,6 +168,6 @@ async def test_sessionstore_postgres(tmp_path):
     got = store.get(sess.id, tenant_id=tid)
     assert got is not None
     assert got.workflow_id == "wf1"
-    # 跨租户不可见
+    # Cross-tenant invisible
     assert store.get(sess.id, tenant_id="other") is None
     store.close()

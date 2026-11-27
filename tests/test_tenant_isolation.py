@@ -1,12 +1,12 @@
-"""多租户隔离测试 (v0.4.0 Stage 1) — 双租户 A/B 跨租户数据不可见。
+"""Multi-tenant isolation tests (v0.4.0 Stage 1) — tenants A/B cannot see each other's data.
 
-覆盖:
-- Space: A 查不到 B 的 space
-- Message: A 读不到 B 的消息, cross-tenant delete_message rowcount=0
-- Artifact: A 列不到 B 的 artifact, cross-tenant get_artifact=None
-- Notification: cross-tenant mark_read 不影响 B
-- Session: cross-tenant get/list 不可见
-- Scheduler: list_tasks 按 tenant 过滤
+Coverage:
+- Space: A cannot find B's space
+- Message: A cannot read B's messages, cross-tenant delete_message rowcount=0
+- Artifact: A cannot list B's artifacts, cross-tenant get_artifact=None
+- Notification: cross-tenant mark_read does not affect B
+- Session: cross-tenant get/list invisible
+- Scheduler: list_tasks filters by tenant
 """
 
 import pytest
@@ -68,7 +68,7 @@ async def _make_space(store, tenant, name, owner):
 class TestTenantSpaceIsolation:
     async def test_cross_tenant_get_space_returns_none(self, store):
         sp_a = await _make_space(store, TENANT_A, "space-a", "uA")
-        # B 在自己租户里查 A 的 space_id → None
+        # B queries A's space_id within its own tenant → None
         tok = set_current_tenant(TENANT_B)
         try:
             got = await store.get_space(sp_a.id)
@@ -99,7 +99,7 @@ class TestTenantMessageIsolation:
             tenant_id=TENANT_A,
         )
         await store.add_message(msg, tenant_id=TENANT_A)
-        # B 在同一 space_id 下读消息 → 空 (tenant_id 守卫挡)
+        # B reads messages under the same space_id → empty (tenant_id guard blocks)
         tok = set_current_tenant(TENANT_B)
         try:
             msgs_b = await store.get_messages(sp_a.id)
@@ -116,14 +116,14 @@ class TestTenantMessageIsolation:
             tenant_id=TENANT_A,
         )
         await store.add_message(msg, tenant_id=TENANT_A)
-        # B 试图删 A 的 msg → rowcount=0, 不删
+        # B tries to delete A's msg → rowcount=0, not deleted
         tok = set_current_tenant(TENANT_B)
         try:
             deleted = await store.delete_message(msg.id)
         finally:
             reset_current_tenant(tok)
         assert deleted is False
-        # A 的消息仍在
+        # A's message still present
         tok = set_current_tenant(TENANT_A)
         try:
             still = await store.get_messages(sp_a.id)
@@ -135,15 +135,15 @@ class TestTenantMessageIsolation:
 class TestTenantArtifactIsolation:
     async def test_cross_tenant_list_artifacts_empty(self, store, artifact_svc):
         sp_a = await _make_space(store, TENANT_A, "space-a", "uA")
-        # perm.check 依赖 contextvar (get_member 无显式 tenant), 创 artifact 须在 A 上下文。
+        # perm.check relies on the contextvar (get_member has no explicit tenant), artifact creation must run in A's context.
         tok = set_current_tenant(TENANT_A)
         try:
             await artifact_svc.create_artifact(sp_a.id, "uA", name="art-a", tenant_id=TENANT_A)
         finally:
             reset_current_tenant(tok)
-        # B 列同一 space_id 的 artifact → perm.check 先拒 (B 在 B 租户查 A 的 space,
-        # get_member 必空 → check 返 False → raise PermissionError)。权限层先于数据层,
-        # 跨租户拿不到数据即隔离生效。
+        # B lists artifacts of the same space_id → perm.check rejects first (B queries A's space in B's tenant,
+        # get_member must be empty → check returns False → raise PermissionError). The permission layer runs before the data layer,
+        # so isolation holds as long as cross-tenant data is unreachable.
         tok = set_current_tenant(TENANT_B)
         try:
             with pytest.raises(PermissionError):
@@ -158,7 +158,7 @@ class TestTenantArtifactIsolation:
             art = await artifact_svc.create_artifact(sp_a.id, "uA", name="art-a", tenant_id=TENANT_A)
         finally:
             reset_current_tenant(tok)
-        # 用 store 直接查绕过 perm, 验数据层 tenant_id 守卫: A 的 artifact 在 B 租户查不到。
+        # Query via the store directly, bypassing perm, to verify the data-layer tenant_id guard: A's artifact is not found in B's tenant.
         tok = set_current_tenant(TENANT_B)
         try:
             db = await store._ensure_db()
@@ -176,8 +176,8 @@ class TestTenantNotificationIsolation:
     async def test_cross_tenant_mark_read_no_effect(self, store, notif_svc):
         sp_a = await _make_space(store, TENANT_A, "space-a", "uA")
         notif = await notif_svc.push_notification(sp_a.id, "uA", "approval", "title-a", "content-a", tenant_id=TENANT_A)
-        # B 试图 mark_read A 的通知 → UPDATE WHERE tenant_id=B 影响 0 行, 但返 True (幂等)
-        # 验 A 的通知 read 仍 0 (未受影响)
+        # B tries to mark_read A's notification → UPDATE WHERE tenant_id=B affects 0 rows, but returns True (idempotent)
+        # Verify A's notification read is still 0 (unaffected)
         tok = set_current_tenant(TENANT_B)
         try:
             await notif_svc.mark_read(notif["id"])
@@ -194,7 +194,7 @@ class TestTenantNotificationIsolation:
     async def test_cross_tenant_list_notifications_empty(self, store, notif_svc):
         sp_a = await _make_space(store, TENANT_A, "space-a", "uA")
         await notif_svc.push_notification(sp_a.id, "uA", "approval", "title-a", tenant_id=TENANT_A)
-        # B 查 uA 的通知 (同 user_id) → tenant_id 守卫挡, 空
+        # B queries uA's notifications (same user_id) → tenant_id guard blocks, empty
         tok = set_current_tenant(TENANT_B)
         try:
             notifs_b = await notif_svc.list_notifications("uA")
@@ -208,7 +208,7 @@ class TestTenantSessionIsolation:
         store = SessionStore(db_path=str(tmp_path / "sess.db"))
         sess = Session(workflow_id="wf-a", workflow_name="wf-a", tenant_id=TENANT_A)
         store.save(sess)
-        # B 查 A 的 session_id → None
+        # B queries A's session_id → None
         tok = set_current_tenant(TENANT_B)
         try:
             got = store.get(sess.id)
@@ -217,7 +217,7 @@ class TestTenantSessionIsolation:
             reset_current_tenant(tok)
         assert got is None
         assert listed == []
-        # A 仍能查到
+        # A can still find it
         tok = set_current_tenant(TENANT_A)
         try:
             got_a = store.get(sess.id)
@@ -244,7 +244,7 @@ class TestTenantSchedulerIsolation:
         sched_a.add_interval_task("task-a", "wf-a", minutes=5, tenant_id=TENANT_A)
         sched_b = TaskScheduler(task_store_path=str(tmp_path / "b.json"))
         sched_b.add_interval_task("task-b", "wf-b", minutes=10, tenant_id=TENANT_B)
-        # A 只看到自己的 task
+        # A only sees its own task
         tok = set_current_tenant(TENANT_A)
         try:
             tasks_a = sched_a.list_tasks()
@@ -256,7 +256,7 @@ class TestTenantSchedulerIsolation:
 
 class TestDefaultTenantBackwardCompat:
     async def test_no_tenant_defaults_to_default(self, store):
-        # 不设 contextvar, 不传 tenant_id → 落 DEFAULT_TENANT, 旧测试兼容
+        # No contextvar, no tenant_id passed → falls into DEFAULT_TENANT, backward compatible with old tests
         sp = Space(name="compat", owner_id="u")
         sp = await store.create_space(sp)
         assert sp.tenant_id == DEFAULT_TENANT

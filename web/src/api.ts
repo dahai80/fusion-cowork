@@ -69,11 +69,11 @@ export interface RunListItem {
     review: RunReview | null;
     source?: string | null;
     labels?: Record<string, string> | null;
-    // issue #223: 归属工作区 ("" = 未绑定目录)
+    // issue #223: owning workspace ("" = no bound directory)
     space_id?: string;
 }
 
-// issue #223: 首页目录选择态聚合 — Space 卡片 + 成员/任务计数 + 最近活动
+// issue #223: home directory-selection aggregation — Space cards + member/task counts + recent activity
 export interface WorkspaceInfo {
     id: string;
     name: string;
@@ -87,7 +87,7 @@ export interface WorkspaceInfo {
     last_run_at?: number | null;
 }
 
-// issue #251: 系统工作目录枚举 — 新建目录名只能从服务端真实目录选; 支持子目录下钻
+// issue #251: system working-directory enumeration — new directory names must come from real server directories; supports subdirectory drill-down
 export interface SystemDirectory {
     name: string;
     path: string;
@@ -113,12 +113,12 @@ export interface RunStep {
     output_data: Record<string, unknown>;
     input_data?: Record<string, unknown>;
     tokens?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
-    // issue #227: 用户修正标记步 — 时间线渲染为修正行, 非节点执行
+    // issue #227: user-correction marker step — rendered as a correction row in the timeline, not a node execution
     user_correction?: boolean;
 }
 
-// issue #224: run 视图需要的完整形状 — runs_get 返回全量记录
-// (workflow_def 供拓扑分层, space_id 供工作区抽屉, directives 供指令回显)
+// issue #224: full shape needed by the run view — runs_get returns the full record
+// (workflow_def for topological layering, space_id for the workspace drawer, directives for directive echo)
 export interface RunWorkflowDef {
     name?: string;
     nodes?: { id: string; name: string; config?: { label?: string } }[];
@@ -134,7 +134,7 @@ export interface RunRecord extends RunListItem {
     workflow_def?: RunWorkflowDef | null;
     directives?: { action: string; payload?: Record<string, unknown>; at?: number }[];
     paused_reason?: string;
-    // issue #558 (#132): 边级失败归因候选 (仅终态失败 run 附带)
+    // issue #558 (#132): edge-level failure attribution candidates (only attached to terminally failed runs)
     failure_attribution?: {
         handoff_candidates?: { from_node: string; to_node: string; step: number; distance: number; reason: string }[];
         decisive_moment?: Record<string, unknown>;
@@ -142,8 +142,8 @@ export interface RunRecord extends RunListItem {
     };
 }
 
-// issue #233: artifact 卡片 — fusion-artifacts-engine v0.6.0 卡片契约
-// (payload 保持轻量 ref, 卡片字段按渲染时重新拉取保证版本新鲜)
+// issue #233: artifact cards — fusion-artifacts-engine v0.6.0 card contract
+// (payload stays a lightweight ref; card fields are re-fetched at render time to guarantee freshness)
 export interface ArtifactCardData {
     artifact_id: string;
     name: string;
@@ -157,7 +157,7 @@ export interface ArtifactCardData {
     ref_text: string;
 }
 
-// issue #150: 引用溯源 — 结构化引用 (文件路径 / 空间消息 id)
+// issue #150: citation tracing — structured references (file paths / space message ids)
 export interface CitationRef {
     type: string;
     path?: string;
@@ -165,7 +165,7 @@ export interface CitationRef {
     message_id?: string;
 }
 
-// issue #148: chat-first 委托结果 — auto 直接执行的 run_id / plan 待批准
+// issue #148: chat-first delegate result — run_id for auto direct execution / plan pending approval
 export interface ChatDelegateResult {
     mode: 'auto' | 'plan';
     workflow_id: string;
@@ -363,7 +363,7 @@ export interface RpcResponse<T> {
     error?: { code: number; message: string; data?: unknown };
 }
 
-// issue #142: 审批 diff 分块 — SequenceMatcher opcode 切片, 非(equal)块可独立接受/拒绝
+// issue #142: approval diff blocks — SequenceMatcher opcode slices; non-equal blocks can be accepted/rejected independently
 export interface DiffBlock {
     index: number;
     tag: 'equal' | 'replace' | 'delete' | 'insert';
@@ -430,8 +430,8 @@ async function patch<T>(path: string, body?: unknown): Promise<T> {
     return (await sdk.http.request<T>(path, { method: 'PATCH', body })).data;
 }
 
-// issue #156: 管理台密钥只在浏览器本地 (localStorage), 随请求走 x-admin-key。
-// sdk.http 不接受自定义头, 管理台单独走同源 fetch (嵌入式 shell 不承载管理台)。
+// issue #156: admin key lives only in browser-local storage (localStorage) and is sent per request via x-admin-key.
+// sdk.http does not accept custom headers, so the admin console uses a separate same-origin fetch (the embedded shell does not host the admin console).
 const ADMIN_KEY_STORAGE = 'fusion-cowork-admin-key';
 
 export function adminKey(): string {
@@ -533,7 +533,7 @@ export interface SkillRunResult {
     errors?: string[];
 }
 
-// issue #170: Extensions console — Skills tab (JSON 用户包) + Knowledge tab (fusion-rag)。
+// issue #170: Extensions console — Skills tab (JSON user packs) + Knowledge tab (fusion-rag).
 export interface ExtensionSkill {
     name: string;
     description: string;
@@ -744,13 +744,13 @@ export const api = {
     cancelRun: (id: string) => post<{ status: string }>(`/api/runs/${encodeURIComponent(id)}/cancel`),
     pauseRun: (id: string) => post<{ status: string }>(`/api/runs/${encodeURIComponent(id)}/pause`),
     resumeRun: (id: string) => post<{ status: string }>(`/api/runs/${encodeURIComponent(id)}/resume`),
-    // issue #226: 终态 run 从指定步骤重跑 — 新 run 链回原 run
+    // issue #226: rerun terminal runs from a given step — the new run links back to the original run
     resumeRunFrom: (id: string, nodeId: string) =>
         post<{ run_id: string; resumed_from: string; resume_of: string; snapshot_steps: number }>(
             `/api/runs/${encodeURIComponent(id)}/resume-from`,
             { node_id: nodeId }
         ),
-    // issue #233: artifact 卡片代理 — fusion-artifacts-engine v0.6.0 契约字段
+    // issue #233: artifact card proxy — fusion-artifacts-engine v0.6.0 contract fields
     artifactCard: (id: string) => get<{ artifact: ArtifactCardData }>(`/api/artifacts/refs/${encodeURIComponent(id)}`),
     directive: (
         id: string,
@@ -761,7 +761,7 @@ export const api = {
             node?: Record<string, unknown>;
             after_node_id?: string;
             input?: Record<string, unknown>;
-            // issue #227/#224: 运行中指令注入 — interrupt composer 发送
+            // issue #227/#224: directive injection into a running run — sent by the interrupt composer
             instruction?: string;
             merge?: Record<string, unknown>;
         }
@@ -770,7 +770,7 @@ export const api = {
     templates: (category = '') =>
         get<{ templates: TemplateInfo[]; count: number }>(`/api/templates?category=${encodeURIComponent(category)}`),
     template: (id: string) => get<TemplateInfo>(`/api/templates/${encodeURIComponent(id)}`),
-    // issue #294: 一键启动模板 — params 按 schema 表单收集, 服务端替换 ${param.X} 后起 run
+    // issue #294: one-click launch templates — params collected via schema form, server replaces ${param.X} before starting the run
     launchTemplate: (id: string, params: Record<string, unknown>) =>
         post<{ run_id: string; status: string }>(`/api/templates/${encodeURIComponent(id)}/launch`, { params }),
     // issue #400: intake mode — requirement in, slug/private repo/registry derived
@@ -784,7 +784,7 @@ export const api = {
             run_id?: string;
             plan: { slug: string; suggested_from: string; repo: string; dry_run: boolean };
         }>(`/api/templates/${encodeURIComponent(id)}/launch-intake`, body),
-    // issue #261: 模板资产 — 发布/导入/删除/导出
+    // issue #261: template assets — publish/import/delete/export
     publishTemplate: (body: { name: string; description?: string; category?: string; workflow: unknown }) =>
         post<{ id: string; name: string }>('/api/templates', body),
     importTemplate: (body: unknown) => post<{ id: string; name: string }>('/api/templates/import', body),
@@ -797,7 +797,7 @@ export const api = {
         const blob = await res.blob();
         return URL.createObjectURL(blob);
     },
-    // issue #263: 仓库 onboarding 向导
+    // issue #263: repo onboarding wizard
     wizardRepos: (org: string) =>
         get<{ repos: { name: string; full_name: string; private: boolean; default_branch: string }[]; count: number }>(
             `/api/wizard/repos?org=${encodeURIComponent(org)}`
@@ -907,12 +907,12 @@ export const api = {
             '/api/ai/generate-workflow',
             body
         ),
-    // issue #148: chat-first 委托 — 简单任务直接执行 (auto), 复杂任务返回计划待批准 (plan)
+    // issue #148: chat-first delegation — simple tasks execute directly (auto), complex tasks return a plan pending approval (plan)
     chatDelegate: (body: { prompt: string; model?: string; memory?: boolean }) =>
         post<ChatDelegateResult>('/api/ai/chat-delegate', body),
-    // issue #150: 引用溯源 — 读取引用文件内容 (沙箱范围内)
+    // issue #150: citation tracing — read referenced file contents (within sandbox scope)
     readFile: (path: string) => get<FileReadResult>(`/api/files/read?path=${encodeURIComponent(path)}`),
-    // issue #149: 产物就地 AI 修订
+    // issue #149: in-place AI revision of artifacts
     spaceAiRevise: (id: string, aid: string, body: { selection: string; instruction: string; model?: string }) =>
         post<{ selection: string; revised: string; diff_blocks: DiffBlock[]; model: string }>(
             `/api/space/spaces/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(aid)}/ai_revise`,
@@ -936,9 +936,9 @@ export const api = {
     spaces: () => get<SpaceInfo[]>('/api/space/spaces'),
     createSpace: (body: { name: string; description?: string }) => post<SpaceInfo>('/api/space/spaces', body),
     deleteSpace: (id: string) => sdk.http.delete(`/api/space/spaces/${encodeURIComponent(id)}`),
-    // issue #223: 首页目录聚合 + 工作区内邀请成员
+    // issue #223: home directory aggregation + inviting members within a workspace
     workspaces: () => get<{ workspaces: WorkspaceInfo[]; available: boolean }>('/api/workspaces'),
-    // issue #251: 系统工作目录枚举 — 新建目录名只能从这里选; path= 子目录下钻
+    // issue #251: system working-directory enumeration — new directory names must be chosen here; path= subdirectory drill-down
     systemDirectories: (path = '') =>
         get<SystemDirListing>(`/api/workspaces/system-dirs${path ? `?path=${encodeURIComponent(path)}` : ''}`),
     addSpaceMember: (id: string, body: { user_id: string; role?: string; display_name?: string }) =>
@@ -1022,7 +1022,7 @@ export const api = {
             ...(acceptedBlocks ? { accepted_blocks: acceptedBlocks } : {}),
             ...(once ? { once: true } : {}),
             ...(editedParams ? { edited_params: editedParams } : {}),
-            // issue #328: 拒绝评审意见 — 修订回路重跑时并入产出节点输入
+            // issue #328: reject review findings — merged into producing-node inputs when the revision loop reruns
             ...(comment ? { comment } : {}),
         }),
     spaceInstructions: (spaceId: string) =>
@@ -1047,7 +1047,7 @@ export const api = {
         if (!res.ok && !body.error) body.error = `run failed: ${res.status}`;
         return body;
     },
-    // issue #255: markdown skill 包 CRUD (用户目录包可编辑, 内置包只读)
+    // issue #255: markdown skill pack CRUD (user-directory packs editable, built-in packs read-only)
     skillSource: (name: string) =>
         get<{ name: string; editable: boolean; markdown: string }>(`/api/skills/${encodeURIComponent(name)}/source`),
     saveSkillPackage: (markdown: string) =>

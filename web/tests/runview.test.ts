@@ -102,8 +102,8 @@ describe('computeWaves', () => {
     });
 
     it('carries node labels through', () => {
-        const waves = computeWaves({ nodes: [{ id: 'a', name: 'shell_exec', config: { label: '清理临时文件' } }] });
-        expect(waves[0].nodes[0].label).toBe('清理临时文件');
+        const waves = computeWaves({ nodes: [{ id: 'a', name: 'shell_exec', config: { label: '清理临时文件' } }] }); // i18n: user-facing
+        expect(waves[0].nodes[0].label).toBe('清理临时文件'); // i18n: user-facing
     });
 });
 
@@ -158,7 +158,7 @@ describe('capabilitiesInUse', () => {
     });
 });
 
-// issue #225: 审批卡 "编辑参数" 草稿解析
+// issue #225: approval-card "edit params" draft parsing
 describe('parseParamsDraft', () => {
     it('accepts a JSON object', () => {
         expect(parseParamsDraft('{"amount": 10, "payee": "acme"}')).toEqual({
@@ -182,7 +182,7 @@ describe('parseParamsDraft', () => {
     });
 });
 
-// issue #233: artifact 轻量引用提取 (引擎 ref_text 格式)
+// issue #233: lightweight artifact ref extraction (engine ref_text format)
 describe('findArtifactRefs', () => {
     it('extracts refs in order', () => {
         const text = 'x [Artifact: Q3 Report | ID: art_1 | Version: v2 | Type: report | Size: 4096] y';
@@ -273,7 +273,7 @@ describe('applyMatchOverrides (#422 F-1 re-verdict)', () => {
         const flipped = applyMatchOverrides(view, { verdict: 'new', matched_repo: '' });
         expect(flipped!.verdict).toBe('new');
         expect(flipped!.matchedRepo).toBe('');
-        // score 等未覆盖字段保留
+        // uncovered fields such as score are preserved
         expect(flipped!.score).toBe(0.87);
     });
 

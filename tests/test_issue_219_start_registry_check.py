@@ -1,8 +1,8 @@
-"""issue #219: start.sh 启动前端口登记自检。
+"""issue #219: start.sh pre-start port registry self-check.
 
-未登记端口必须在 start 即失败 (而不是事后被 CI check-ports 抓到);
-FUSION_SKIP_REGISTRY_CHECK=1 显式跳过; 缺登记文件 warn 放行 (独立部署)。
-通过 `start.sh registry-check` 子命令直接驱动 registry_selfcheck。
+An unregistered port must fail at start immediately (instead of being caught after the fact by CI check-ports);
+FUSION_SKIP_REGISTRY_CHECK=1 skips explicitly; a missing registry file warns and proceeds (standalone deploys).
+Drives registry_selfcheck directly via the `start.sh registry-check` subcommand.
 """
 
 from __future__ import annotations

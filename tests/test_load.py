@@ -1,6 +1,6 @@
-"""Stage 7 负载 — 1000 并发建 space 跨 10 租户, 无跨租户泄漏。
+"""Stage 7 load — 1000 concurrent space creations across 10 tenants, no cross-tenant leakage.
 
-@ pytest.mark.slow。
+@ pytest.mark.slow.
 """
 
 from __future__ import annotations
@@ -47,12 +47,14 @@ class TestLoadConcurrentSpaces:
         assert len(ids) == n_tenants * per_tenant
         assert len(set(ids)) == n_tenants * per_tenant
 
-        # 每租户恰好 100, 无跨租户泄漏
+        # Exactly 100 per tenant, no cross-tenant leakage
         for t in tenants:
             spaces = await store.list_spaces(tenant_id=t, limit=500)
-            assert len(spaces) == per_tenant, f"租户 {t} 应有 {per_tenant} 空间, 实际 {len(spaces)}"
+            assert len(spaces) == per_tenant, (
+                f"租户 {t} 应有 {per_tenant} 空间, 实际 {len(spaces)}"  # i18n: user-facing
+            )  # i18n: user-facing
 
-        # 跨租户查取不到
+        # Cross-tenant lookup finds nothing
         for t in tenants:
             other = next(x for x in tenants if x != t)
             other_spaces = await store.list_spaces(tenant_id=other, limit=500)

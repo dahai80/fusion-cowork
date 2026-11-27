@@ -1,14 +1,14 @@
 """issue #489: pipeline stage rewind/resume (gate rejection semantics) + deployment executor.
 
-Part 1 — rewind: gate 驳回后从回退点起重跑下游; 回退点前已消耗步骤快照续跑 (不重复执行);
-幂等键 (run_id, node_id) — 产物 run 活跃期间重复调用返回同一 run; 每次回退落历史
-(who/when/which rule) 到原 run rewinds 字段。gate 语义 (驳回到哪个节点) 由调用方编码,
-cowork 提供原语 + 审计记录。
+Part 1 — rewind: after a gate rejection, downstream nodes re-run from the rewind point; steps consumed before the rewind point resume from the snapshot (not re-executed);
+idempotency key (run_id, node_id) — repeated calls while the derived run is active return the same run; each rewind records history
+(who/when/which rule) into the original run's rewinds field. Gate semantics (which node a rejection rewinds to) are encoded by the caller;
+cowork provides the primitive + audit record.
 
-Part 2 — deploy_service 节点: docker (pull/run) / launchd (plist bootstrap) / script
-(安装脚本) 三种部署方式 + 健康检查轮询; 阶段链 (pull→start→healthcheck) 带状态/重试/
-日志摘要; 成功后 endpoint 即可访问的应用端点。subprocess 与健康轮询走模块级 seam,
-测试零网络零子进程。
+Part 2 — deploy_service node: docker (pull/run) / launchd (plist bootstrap) / script
+(install script) deployment modes + health-check polling; the stage chain (pull→start→healthcheck) carries status/retry/
+log summaries; on success endpoint is the reachable application endpoint. subprocess and health polling go through module-level seams,
+so tests run with zero network and zero subprocesses.
 """
 
 from __future__ import annotations
@@ -71,12 +71,13 @@ def _wait_terminal(tc, run_id, timeout=8.0):
         if r.status_code == 200 and r.json()["status"] not in ("running", "pending"):
             return r.json()
         time.sleep(0.05)
+    # i18n: user-facing
     raise AssertionError("run 未在超时内进入终态")
 
 
 class TestRewind:
     def test_rewind_at_gate_reruns_downstream_snapshots_before(self, client):
-        # gate B 驳回 → rewind 到 coding: prd/gate_a 快照续跑, coding→gate_b 真正重执行
+        # Gate B rejected → rewind to coding: prd/gate_a resume from snapshot, coding→gate_b truly re-executes
         tc, app = client
         r = tc.post("/api/runs", json={"workflow": WF_DEF, "name": "rw489"}, headers=_headers())
         assert r.status_code == 202, r.text
@@ -95,16 +96,16 @@ class TestRewind:
         assert body["rewind_of"] == orig_id
         assert body["resumed_from"] == "coding"
         assert body["idempotent"] is False
-        assert body["snapshot_steps"] == 2  # prd + gate_a 已消耗, 免重跑
+        assert body["snapshot_steps"] == 2  # prd + gate_a consumed, no re-run
 
         rec = _wait_terminal(tc, new_id)
         assert rec["status"] == "success"
         assert [s["node_id"] for s in rec["steps"]] == ["prd", "gate_a", "coding", "tests", "gate_b"]
-        # 审计链: 新 run labels 带回退规则/操作人
+        # Audit chain: new run labels carry the rewind rule/operator
         assert rec["labels"]["rewind_of"] == orig_id
         assert rec["labels"]["rewind_rule"] == "gate_b_reject"
         assert rec["labels"]["rewind_actor"] == "reviewer-1"
-        # 原 run 落回退历史 (who/when/which rule)
+        # Original run records the rewind history (who/when/which rule)
         orig_after = tc.get(f"/api/runs/{orig_id}", headers=_headers()).json()
         rewinds = orig_after["rewinds"]
         assert len(rewinds) == 1
@@ -115,14 +116,14 @@ class TestRewind:
         assert rewinds[0]["at"] > 0
 
     def test_rewind_idempotent_while_resumed_run_active(self, client, monkeypatch):
-        # 同键 (run_id, node_id) 重复 rewind: 产物 run 活跃期间返回同一 run, 不再派生
+        # Same key (run_id, node_id) rewound again: while the derived run is active, return the same run instead of deriving a new one
         tc, app = client
         registry = app.state.run_registry
         r = tc.post("/api/runs", json={"workflow": WF_DEF, "name": "rw489i"}, headers=_headers())
         orig_id = r.json()["run_id"]
         _wait_terminal(tc, orig_id)
 
-        # 让产物 run 挂在 running: rewind 走 HTTP (start 需事件循环), 完成后手工置活跃态模拟仍在执行
+        # Keep the derived run in running: rewind goes over HTTP (start needs an event loop), manually set it active after completion to simulate still executing
         r = tc.post(
             f"/api/runs/{orig_id}/rewind", json={"node_id": "coding", "rule": "r1", "actor": "a1"}, headers=_headers()
         )
@@ -130,8 +131,8 @@ class TestRewind:
         first = r.json()
         assert first["idempotent"] is False
         resumed_id = first["run_id"]
-        # 等产物 run 真正终态 (context-manager portal 下它在后台继续执行, 会写回终态),
-        # 再手工置 running 模拟仍在执行
+        # Wait for the derived run to reach a real terminal state (under the context-manager portal it keeps executing in the background and will write back a terminal state),
+        # then manually set it to running to simulate still executing
         _wait_terminal(tc, resumed_id)
         registry._runs[resumed_id]["status"] = "running"
 
@@ -140,9 +141,9 @@ class TestRewind:
         ).json()
         assert second["idempotent"] is True
         assert second["run_id"] == resumed_id
-        # 幂等命中不再追加 rewinds 历史
+        # Idempotent hit no longer appends rewinds history
         assert len(registry._runs[orig_id]["rewinds"]) == 1
-        # 不同节点键 → 非幂等, 派生新 run
+        # Different node key → not idempotent, derives a new run
         third = tc.post(
             f"/api/runs/{orig_id}/rewind", json={"node_id": "tests", "rule": "r2", "actor": "a2"}, headers=_headers()
         ).json()
@@ -183,7 +184,7 @@ class TestRewind:
         assert r.json()["detail"]["code"] == "not_terminal"
 
     def test_rewind_never_executed_node_full_rerun(self, client):
-        # 回退点取首节点 → 快照 0, 全量重跑 (gate A 驳回重审场景)
+        # Rewind point is the first node → snapshot 0, full re-run (gate A rejection re-review scenario)
         tc, app = client
         r = tc.post("/api/runs", json={"workflow": WF_DEF, "name": "rw489f"}, headers=_headers())
         orig_id = r.json()["run_id"]
@@ -193,7 +194,7 @@ class TestRewind:
         assert r.json()["snapshot_steps"] == 0
 
 
-# ── Part 2: deploy_service 节点 ──
+# ── Part 2: deploy_service node ──
 
 
 def _node(params):
@@ -255,7 +256,7 @@ class TestDeployService:
         assert data["endpoint"] == "http://127.0.0.1:8080/health"
         stages = [s["stage"] for s in data["stages"]]
         assert stages == ["pull", "start", "healthcheck"]
-        # 幂等重部署: 先 rm 旧容器再 run
+        # Idempotent redeploy: rm the old container first, then run
         assert any(cmd.startswith("docker pull site/app:latest") for cmd in cmds)
         assert any("docker rm -f site-app" in cmd for cmd in cmds)
         run_cmd = next(c for c in cmds if c.startswith("docker run -d"))
@@ -313,7 +314,7 @@ class TestDeployService:
         res = await node.execute({})
         assert res.status.value == "success"
         stages = {s["stage"]: s for s in res.data["stages"]}
-        assert stages["pull"]["status"] == "ok"  # plist 校验通过
+        assert stages["pull"]["status"] == "ok"  # plist validation passed
         assert "launchctl bootstrap" in cmds[0] and str(plist) in cmds[0]
         assert "launchctl load" in cmds[0]  # fallback in same command
 
@@ -336,8 +337,9 @@ class TestDeployService:
         res = await node.execute({})
         assert res.status.value == "failed"
         assert res.data["stages"][0]["stage"] == "pull"
+        # i18n: user-facing
         assert "plist 不存在" in res.data["stages"][0]["error"]
-        assert ran == []  # 未执行任何命令
+        assert ran == []  # no commands executed
 
     async def test_script_target_healthcheck_fail(self, monkeypatch):
         _patch_cmd(monkeypatch, lambda cmd: (0, "service started"))
@@ -354,7 +356,7 @@ class TestDeployService:
         stages = {s["stage"]: s for s in res.data["stages"]}
         assert stages["start"]["status"] == "ok"
         assert stages["healthcheck"]["status"] == "failed"
-        assert res.data["endpoint"] == ""  # 健康不过不给端点 (避免假预览)
+        assert res.data["endpoint"] == ""  # no endpoint until health passes (avoids fake preview)
 
     async def test_validation_errors(self, monkeypatch):
         node = _node({"target": "docker", "healthcheck_url": "http://x/health"})

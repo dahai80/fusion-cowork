@@ -33,7 +33,7 @@ interface FlowNodeData extends Record<string, unknown> {
 }
 
 function CoworkNode({ data, selected }: NodeProps<Node<FlowNodeData>>) {
-    // issue #261: run 进行中按节点终态着色 (blocked=闸门等待, failed=红, passed=绿)
+    // issue #261: color nodes by run terminal state while running (blocked=gate wait, failed=red, passed=green)
     const runBorder = data.runStatus ? toneColor(data.runStatus) : '';
     return (
         <div
@@ -98,11 +98,11 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
     const [name, setName] = useState('');
     const [saving, setSaving] = useState(false);
     const [running, setRunning] = useState(false);
-    // issue #157: per-run 记忆开关 (默认开)
+    // issue #157: per-run memory toggle (default on)
     const [memoryEnabled, setMemoryEnabled] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [loadPending, setLoadPending] = useState(!!workflowId);
-    // issue #261: 画布内实时运行 — run 提交后轮询状态, 节点按终态着色, 闸门等待出横幅
+    // issue #261: in-canvas live run — poll status after run submit, color nodes by terminal state, banner on gate wait
     const [runId, setRunId] = useState('');
     const [runState, setRunState] = useState('');
     const [hitlPending, setHitlPending] = useState(false);
@@ -262,7 +262,7 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
     async function save() {
         if (isReadonly || saving) return;
         if (!name.trim()) {
-            sdk.toast.show({ level: 'warning', message: t('请填写工作流名称', 'Workflow name required') });
+            sdk.toast.show({ level: 'warning', message: t('请填写工作流名称', 'Workflow name required') }); // i18n: user-facing
             return;
         }
         setSaving(true);
@@ -292,10 +292,10 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                 });
                 window.location.hash = `#/canvas/${created.id}`;
             }
-            sdk.toast.show({ level: 'success', message: t('已保存', 'Saved') });
+            sdk.toast.show({ level: 'success', message: t('已保存', 'Saved') }); // i18n: user-facing
         } catch (e) {
             console.error('[cowork-web] save failed', e);
-            sdk.toast.show({ level: 'error', message: t('保存失败', 'Save failed') });
+            sdk.toast.show({ level: 'error', message: t('保存失败', 'Save failed') }); // i18n: user-facing
         } finally {
             setSaving(false);
         }
@@ -318,23 +318,23 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                 memory: memoryEnabled,
             });
             console.info(`[cowork-web] run started: ${res.run_id}`);
-            // issue #261: 不再跳转 — 留在画布轮询, 节点实时着色; 运行视图入口见横幅
+            // issue #261: no redirect — stay on canvas polling with live node coloring; run view entry is in the banner
             setRunId(res.run_id);
             setRunState('running');
-            sdk.toast.show({ level: 'success', message: t('已提交运行', 'Run submitted') });
+            sdk.toast.show({ level: 'success', message: t('已提交运行', 'Run submitted') }); // i18n: user-facing
         } catch (e) {
             console.error('[cowork-web] run failed', e);
-            sdk.toast.show({ level: 'error', message: t('运行提交失败', 'Failed to submit run') });
+            sdk.toast.show({ level: 'error', message: t('运行提交失败', 'Failed to submit run') }); // i18n: user-facing
         } finally {
             setRunning(false);
         }
     }
 
-    // issue #261: 画布流程发布为命名模板 (custom)
+    // issue #261: publish canvas workflow as a named template (custom)
     async function publish() {
         if (isReadonly || publishing) return;
         if (!name.trim()) {
-            sdk.toast.show({ level: 'warning', message: t('请填写工作流名称', 'Workflow name required') });
+            sdk.toast.show({ level: 'warning', message: t('请填写工作流名称', 'Workflow name required') }); // i18n: user-facing
             return;
         }
         setPublishing(true);
@@ -354,16 +354,16 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                 workflow: { name: name.trim(), nodes: nodeDefs, edges: edgeDefs },
             });
             setPublishedId(res.id);
-            sdk.toast.show({ level: 'success', message: t(`已发布模板: ${res.id}`, `Template published: ${res.id}`) });
+            sdk.toast.show({ level: 'success', message: t(`已发布模板: ${res.id}`, `Template published: ${res.id}`) }); // i18n: user-facing
         } catch (e) {
             console.error('[cowork-web] publish failed', e);
-            sdk.toast.show({ level: 'error', message: t('发布失败', 'Publish failed') });
+            sdk.toast.show({ level: 'error', message: t('发布失败', 'Publish failed') }); // i18n: user-facing
         } finally {
             setPublishing(false);
         }
     }
 
-    // issue #261: 导出已发布模板 JSON (先发布再导出)
+    // issue #261: export published template JSON (publish first, then export)
     async function exportPublished() {
         if (!publishedId) return;
         try {
@@ -375,14 +375,14 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
             URL.revokeObjectURL(url);
         } catch (e) {
             console.error('[cowork-web] export failed', e);
-            sdk.toast.show({ level: 'error', message: t('导出失败', 'Export failed') });
+            sdk.toast.show({ level: 'error', message: t('导出失败', 'Export failed') }); // i18n: user-facing
         }
     }
 
     if (loadPending) return <SkeletonLines rows={4} />;
     if (loadError)
         return (
-            <ErrorState message={loadError} retryLabel={t('重试', 'Retry')} onRetry={() => window.location.reload()} />
+            <ErrorState message={loadError} retryLabel={t('重试', 'Retry')} onRetry={() => window.location.reload()} /> // i18n: user-facing
         );
 
     const sel = selectedNode();
@@ -402,15 +402,15 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                 <ReadOnlyBanner
                     text={
                         viewParam
-                            ? t('查看模式 — 链接分享只读打开', 'View mode — shared link opens read-only')
-                            : t('只读模式 — 画布编辑仅桌面端支持', 'Read-only — canvas editing is desktop-only')
+                            ? t('查看模式 — 链接分享只读打开', 'View mode — shared link opens read-only') // i18n: user-facing
+                            : t('只读模式 — 画布编辑仅桌面端支持', 'Read-only — canvas editing is desktop-only') // i18n: user-facing
                     }
                 />
             ) : null}
             <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
                 <input
                     className="w-48 rounded-md border border-border bg-bg px-2 py-1 text-sm text-text-primary disabled:opacity-50"
-                    placeholder={t('工作流名称', 'Workflow name')}
+                    placeholder={t('工作流名称', 'Workflow name')} // i18n: user-facing
                     value={name}
                     disabled={isReadonly}
                     onChange={(e) => setName(e.target.value)}
@@ -422,12 +422,12 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                         disabled={isReadonly || saving}
                         onClick={() => void save()}
                     >
-                        {saving ? t('保存中…', 'Saving…') : t('保存', 'Save')}
+                        {saving ? t('保存中…', 'Saving…') : t('保存', 'Save') /* i18n: user-facing */}
                     </button>
                     <label
                         className="flex items-center gap-1 text-sm text-text-secondary"
                         title={t(
-                            '运行结束后把产出写入 fusion-memory 长期记忆',
+                            '运行结束后把产出写入 fusion-memory 长期记忆', // i18n: user-facing
                             'Write run outcomes to fusion-memory after the run ends'
                         )}
                     >
@@ -437,7 +437,7 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                             onChange={(e) => setMemoryEnabled(e.target.checked)}
                             disabled={isReadonly || running}
                         />
-                        {t('记忆', 'Memory')}
+                        {t('记忆', 'Memory') /* i18n: user-facing */}
                     </label>
                     <button
                         type="button"
@@ -445,7 +445,7 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                         disabled={isReadonly || running}
                         onClick={() => void run()}
                     >
-                        {running ? t('提交中…', 'Submitting…') : t('运行', 'Run')}
+                        {running ? t('提交中…', 'Submitting…') : t('运行', 'Run') /* i18n: user-facing */}
                     </button>
                     <button
                         type="button"
@@ -453,16 +453,20 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                         disabled={isReadonly || publishing}
                         onClick={() => void publish()}
                     >
-                        {publishing ? t('发布中…', 'Publishing…') : t('发布模板', 'Publish template')}
+                        {
+                            publishing
+                                ? t('发布中…', 'Publishing…') // i18n: user-facing
+                                : t('发布模板', 'Publish template') /* i18n: user-facing */
+                        }
                     </button>
                     <button
                         type="button"
                         className="rounded-md border border-border px-3 py-1 text-sm text-text-primary hover:bg-bg-muted disabled:opacity-50"
                         disabled={!publishedId}
-                        title={publishedId ? publishedId : t('先发布模板后可导出', 'Publish a template first')}
+                        title={publishedId ? publishedId : t('先发布模板后可导出', 'Publish a template first')} // i18n: user-facing
                         onClick={() => void exportPublished()}
                     >
-                        {t('导出', 'Export')}
+                        {t('导出', 'Export') /* i18n: user-facing */}
                     </button>
                 </div>
             </div>
@@ -473,11 +477,11 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                         style={{ background: toneColor(runState === 'running' ? 'running' : runState) }}
                     />
                     <span className="text-text-secondary">
-                        {t(`运行 ${runId}`, `Run ${runId}`)} · {runState}
-                        {hitlPending ? ` · ${t('等待审批', 'awaiting approval')}` : ''}
+                        {t(`运行 ${runId}`, `Run ${runId}`)} · {runState /* i18n: user-facing */}
+                        {hitlPending ? ` · ${t('等待审批', 'awaiting approval')}` : '' /* i18n: user-facing */}
                     </span>
                     <a className="ml-auto text-brand hover:underline" href={`#/runs/${runId}`}>
-                        {t('打开运行视图', 'Open run view')}
+                        {t('打开运行视图', 'Open run view') /* i18n: user-facing */}
                     </a>
                 </div>
             ) : null}
@@ -485,7 +489,7 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                 {!isReadonly ? (
                     <aside className="w-44 shrink-0 overflow-y-auto border-r border-border p-2">
                         <div className="px-1 pb-1 text-xs font-medium text-text-secondary">
-                            {t('节点面板', 'Node palette')}
+                            {t('节点面板', 'Node palette') /* i18n: user-facing */}
                         </div>
                         {nodesRetry.loading && !nodesRetry.data ? (
                             <SkeletonLines rows={4} />
@@ -625,7 +629,7 @@ export function CanvasPage({ workflowId: rawId }: { workflowId: string }) {
                             {fields.length > 0 ? (
                                 <details className="pt-1">
                                     <summary className="cursor-pointer text-[10px] text-text-secondary">
-                                        {t('额外参数 / JSON 形式', 'Extra / raw params')}
+                                        {t('额外参数 / JSON 形式', 'Extra / raw params') /* i18n: user-facing */}
                                     </summary>
                                     <div className="mt-1 space-y-1">
                                         {Object.entries(sel.data.params)

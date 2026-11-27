@@ -1,13 +1,13 @@
-"""统一 trace_id 上下文 (v0.4.0 Stage 4).
+"""Unified trace_id context (v0.4.0 Stage 4).
 
-contextvar 持 trace_id, 跨 await 自动传播 (替散落 secrets.token_hex(8) / mcp_<hex> 格式)。
-格式: fc_<16hex>。缺则自动生并注入。
+A contextvar holds the trace_id, propagated automatically across awaits (replacing the scattered secrets.token_hex(8) / mcp_<hex> formats).
+Format: fc_<16hex>. Generated and injected automatically when missing.
 
-用法:
+Usage:
     from fusion_cowork.observability.trace import get_trace_id
-    tid = get_trace_id()  # 首次调用自动生
+    tid = get_trace_id()  # generated automatically on first call
     async with trace_context(tid):
-        ...  # 块内 get_trace_id() 返 tid
+        ...  # get_trace_id() inside the block returns tid
 """
 
 from __future__ import annotations
@@ -42,8 +42,8 @@ def set_trace_id(tid: Optional[str]) -> contextvars.Token:
 
 
 def trace_propagation_headers() -> dict:
-    # issue #464: OTel spine — 出站 LLM 调用携带 trace 上下文:
-    # x-fusion-trace-id (平台内关联) + W3C traceparent (网关/上游透传, 上游支持前先落格式)
+    # issue #464: OTel spine — outbound LLM calls carry trace context:
+    # x-fusion-trace-id (in-platform correlation) + W3C traceparent (gateway/upstream pass-through; settles the format before upstream support lands)
     tid = _trace_var.get()
     if not tid:
         return {}
@@ -56,7 +56,7 @@ def trace_propagation_headers() -> dict:
 
 
 class trace_context:
-    """async ctx mgr — 块内 get_trace_id() 返指定 tid; 退出恢复。"""
+    """async ctx mgr — get_trace_id() inside the block returns the given tid; restored on exit."""
 
     def __init__(self, tid: Optional[str] = None):
         self._tid = tid or new_trace_id()

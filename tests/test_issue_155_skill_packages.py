@@ -1,4 +1,4 @@
-"""issue #155: markdown skill 包 — frontmatter 解析 / 发现 / 参数表单 / 执行。"""
+"""issue #155: markdown skill packages — frontmatter parsing / discovery / param form / execution."""
 
 from __future__ import annotations
 
@@ -12,8 +12,10 @@ def test_parse_markdown_package():
 
     text = """---
 name: demoSKill
+# i18n: user-facing
 title: 演示
 category: demo
+# i18n: user-facing
 aliases: [演示技能]
 handler: demo_handler
 params:
@@ -25,13 +27,16 @@ params:
     required: true
 ---
 
-执行演示指令。
 """
+    text += (
+        # i18n: user-facing
+        "执行演示指令。\n"
+    )
     pkg = parse_markdown(text)
     assert pkg.name == "/demoSKill"
-    assert pkg.title == "演示"
+    assert pkg.title == "演示"  # i18n: user-facing
     assert [p.name for p in pkg.params] == ["count", "note"]
-    assert pkg.instructions == "执行演示指令。"
+    assert pkg.instructions == "执行演示指令。"  # i18n: user-facing
 
 
 def test_parse_markdown_rejects_bad_frontmatter():
@@ -55,8 +60,8 @@ def test_builtin_seed_packages_discovered():
     contract = registry.get("/contract-review")
     assert contract is not None
     assert contract.output_template
-    # 别名同样可寻址
-    assert registry.get("合同审查") is contract
+    # Alias is addressable too
+    assert registry.get("合同审查") is contract  # i18n: user-facing
 
 
 def test_param_coercion_and_required_errors():
@@ -83,7 +88,7 @@ def test_unknown_package_run():
 
     reset_package_registry()
     result = asyncio.run(get_package_registry().run("/nope", {}))
-    assert "未知 skill 包" in result["error"]
+    assert "未知 skill 包" in result["error"]  # i18n: user-facing
 
 
 class _FakeLLM:
@@ -102,7 +107,7 @@ class _FakeLLM:
         _FakeLLM.calls.append({"model": model, "messages": messages})
 
         class _Resp:
-            content = "## 风险条款\n| 条款 | 依据 |\n|---|---|\n| 付款 | [P1] |"
+            content = "## 风险条款\n| 条款 | 依据 |\n|---|---|\n| 付款 | [P1] |"  # i18n: user-facing
 
         return _Resp()
 
@@ -114,7 +119,7 @@ def test_contract_review_runs_local_with_fake_llm(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mlx_client, "FusionMLXClient", _FakeLLM)
     contract = tmp_path / "contract.md"
-    contract.write_text("甲方应于交付后三十日内付款。", encoding="utf-8")
+    contract.write_text("甲方应于交付后三十日内付款。", encoding="utf-8")  # i18n: user-facing
 
     from fusion_cowork.skills.packages import get_package_registry, reset_package_registry
 
@@ -128,8 +133,8 @@ def test_contract_review_runs_local_with_fake_llm(tmp_path, monkeypatch):
     assert result["status"] == "success", result
     memo = tmp_path / "contract.memo.md"
     assert memo.is_file()
-    assert "合同审查备忘" in memo.read_text(encoding="utf-8")
-    assert _FakeLLM.calls and "三十日" in _FakeLLM.calls[-1]["messages"][1]["content"]
+    assert "合同审查备忘" in memo.read_text(encoding="utf-8")  # i18n: user-facing
+    assert _FakeLLM.calls and "三十日" in _FakeLLM.calls[-1]["messages"][1]["content"]  # i18n: user-facing
 
 
 def test_weekly_readout_aggregates_lifecycle(tmp_path):
@@ -161,7 +166,7 @@ def test_weekly_readout_aggregates_lifecycle(tmp_path):
     assert result["data"]["failures"] == 1
     report = next(out.glob("weekly-readout-*.md"))
     body = report.read_text(encoding="utf-8")
-    assert "事件总数: 2" in body
+    assert "事件总数: 2" in body  # i18n: user-facing
     assert "run_failed" in body
 
 

@@ -1,11 +1,11 @@
-"""issue #422: historical_match 节点 + repo_scaffold extend 路径 + 模板接线。
+"""issue #422: historical_match node + repo_scaffold extend path + template wiring.
 
-- match: 确定性能力重叠打分, 三值判定 extend/base/new; base 不泄露他客户项目名
-- scaffold extend: verdict=extend + extend_repo 时 clone 已有仓 (不建新脚手架),
-  token 只走环境变量; 已有工作树复用
-- product_lifecycle 模板: n4m (match) 接在闸 B 与脚手架之间, verdict/matched_repo
-  接进 n5
-"""
+- match: deterministic capability-overlap scoring with a three-way extend/base/new verdict;
+  base must not leak other customers' project names
+- scaffold extend: when verdict=extend + extend_repo, clone the existing repo (no new scaffold),
+  the token only flows via environment variables; an existing worktree is reused
+- product_lifecycle template: n4m (match) sits between gate B and the scaffold; verdict/matched_repo
+  wire into n5"""
 
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ class TestMatchVerdicts:
         assert res.data["matched_repo"] == "o/ai-pet-hotel"
 
     async def test_base_hides_customer_name(self):
-        # issue #422 隐私红线: 命中他客户项目 → base, matched_visible 必须为空
+        # issue #422 privacy red line: hitting another customer's project -> base, matched_visible must be empty
         res = await _match(
             requirement="pet hotel booking with payments",
             candidates=[
@@ -78,9 +78,9 @@ class TestMatchVerdicts:
             own_customer="tenant-b",
         ).execute({})
         assert res.data["verdict"] == "base"
-        # issue #444: 原始 matched 也置空 — runs API 逐字暴露 step output_data
+        # issue #444: the raw matched is blanked too — the runs API exposes step output_data verbatim
         assert res.data["matched"] == {}
-        assert res.data["matched_visible"] == {}  # 新客户可见面零泄露
+        assert res.data["matched_visible"] == {}  # zero leakage on the new customer's visible surface
         assert res.data["matched_repo"] == ""
 
     async def test_below_threshold_is_new(self):
@@ -132,7 +132,7 @@ class TestScaffoldExtend:
         assert res.data["extended"] is True
         assert res.data["repo_path"] == str(tmp_path / "ai-pet-hotel")
         assert "clone" in " ".join(seen["argv"])
-        # token 不进 argv, 走 GIT_CONFIG_* 环境变量
+        # The token never enters argv; it flows via GIT_CONFIG_* environment variables
         argv_str = " ".join(str(a) for a in seen["argv"])
         assert "t422" not in argv_str
         assert seen["env"]["GIT_CONFIG_VALUE_0"] == "Authorization: Bearer t422"
@@ -183,7 +183,7 @@ class TestTemplateWiring:
         assert nodes["n5"]["config"]["params"]["verdict"] == "${step.n4m.verdict}"
         assert nodes["n5"]["config"]["params"]["extend_repo"] == "${step.n4m.matched_repo}"
         edges = {(e["source_id"], e["target_id"]) for e in tpl["workflow"]["edges"]}
-        # issue #422 F-1: match 在闸门 B 之前自动运行 — 闸 B 暂停时判定卡可见, 可改判后批准
+        # issue #422 F-1: match runs automatically before gate B — the verdict card is visible while gate B is paused and can be re-judged before approval
         assert ("n3", "n4m") in edges and ("n4m", "n4") in edges and ("n4m", "n5") in edges
 
     def test_new_params_exist(self):

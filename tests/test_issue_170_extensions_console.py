@@ -1,7 +1,7 @@
-"""Issue #170 回归测试 — Extensions 控制台 (Skills + Knowledge, f-ecommerce E2 迁移)。
+"""Issue #170 regression tests — Extensions console (Skills + Knowledge, f-ecommerce E2 migration).
 
-Skills: JSON 用户包 校验/安装/注册 SkillRegistry/测试运行/移除; 脚本包仅静态管理密钥。
-Knowledge: fusion-rag 代理 — health/KB 列表(过滤+分页)/创建接线/wire/documents/upload/search。
+Skills: JSON user packs validate/install/register SkillRegistry/test-run/remove; script packs admin-only with a static key.
+Knowledge: fusion-rag proxy — health/KB list (filter+paginate)/create+wire/wire state/documents/upload/search.
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ class _FakeHttp:
 
 
 class _FakeKB:
-    """离线替身 — 覆盖路由用到的 KBClient 面 (client.get/post + create_kb 等)。"""
+    """Offline stand-in — covers the KBClient surface used by the routes (client.get/post + create_kb etc)."""
 
     state = {"bases": [], "docs": {}, "hits": {}, "uploads": []}
 

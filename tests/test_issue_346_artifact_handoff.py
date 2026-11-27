@@ -1,8 +1,9 @@
-"""issue #346: product_lifecycle 规范产物交接 — 下游座位按 artifact id 取 PRD, 不猜路径。
+"""issue #346: product_lifecycle canonical artifact handoff — downstream seats fetch the PRD by artifact id, no path guessing.
 
-agent-studio run result 的 artifacts 是 id 字符串列表 (非对象), 模板把
-${step.n1.result.artifacts.0} 插进架构/env-pack 座位 prompt 作规范引用;
-BA 无产物时按 #343 语义明确 unresolved 报错, 不静默猜路径。
+agent-studio run result artifacts are a list of id strings (not objects); the template inserts
+${step.n1.result.artifacts.0} into the architect/env-pack seat prompts as the canonical reference;
+when the BA has no artifacts, #343 semantics fail loudly with an unresolved error instead of
+silently guessing a path.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ class _StudioBaNode(BaseNode):
     name = "studio_ba_346"
     display_name = "Studio BA 346"
     category = NodeCategory.TOOL
-    description = "测试用: agent-studio run result 形态 (artifacts id 列表 + last_result.report)"
+    description = "测试用: agent-studio run result 形态 (artifacts id 列表 + last_result.report)"  # i18n: user-facing
     icon = "📝"
     default_label = "BA"
 
@@ -57,7 +58,7 @@ class _ConsumeNode(BaseNode):
     name = "consume_346"
     display_name = "Consume 346"
     category = NodeCategory.TOOL
-    description = "测试用: 记录收到的参数"
+    description = "测试用: 记录收到的参数"  # i18n: user-facing
     icon = "📥"
     default_label = "Consume"
 
@@ -70,7 +71,7 @@ class _ConsumeNode(BaseNode):
 
 class TestArtifactHandoffTemplate:
     def test_architect_prompt_carries_canonical_artifact_ref(self):
-        # n3 架构座位 prompt 传入 BA 产物 artifact id 规范引用
+        # n3 architect seat prompt receives the BA artifact's artifact-id canonical reference
         nodes = {n["id"]: n for n in _tpl()["workflow"]["nodes"]}
         n3_input = nodes["n3"]["config"]["params"]["input"]
         assert "${step.n1.result.artifacts.0" in n3_input
@@ -83,7 +84,7 @@ class TestArtifactHandoffTemplate:
         assert "${step.n3.result.artifacts.0" in n9_input
 
     def test_assembly_preserves_artifact_refs(self):
-        # ${param.*} 装配期替换, ${step.*} artifact 引用留给引擎运行期
+        # ${param.*} is replaced at assembly time, ${step.*} artifact refs are left for engine runtime
         wf = TemplateManager().template_to_workflow(
             "product_lifecycle", param_values={"slug": "demo", "repo": "o/r", "task_title": "t"}
         )
@@ -93,7 +94,7 @@ class TestArtifactHandoffTemplate:
 
 class TestArtifactRefInterpolation:
     async def test_artifact_id_resolves_through_list_index(self):
-        # 引擎端到端: run result 形态产出 → 下游参数按列表下标取 artifact id
+        # Engine end-to-end: run-result-shaped output → downstream param takes the artifact id by list index
         _ConsumeNode.seen = []
         eng = WorkflowEngine()
         wf = Workflow(name="interp-346")
@@ -112,7 +113,7 @@ class TestArtifactRefInterpolation:
         assert _ConsumeNode.seen[-1]["params"]["prd_artifact"] == "PRD artifact id (canonical reference):\n8d7baf6a616c"
 
     async def test_missing_artifact_fails_loud_not_silent(self):
-        # BA 无产物 → 明确 unresolved 报错 (不静默, 下游不再靠运气猜路径)
+        # BA has no artifacts → explicit unresolved error (loud, downstream no longer guesses paths by luck)
         _ConsumeNode.seen = []
         _StudioBaNode.with_artifacts = False
         try:

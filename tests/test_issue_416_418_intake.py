@@ -1,8 +1,8 @@
-"""issue #416/#418: intake 加固 — scaffold 双前缀杜绝 + repo owner 默认 org。
+"""issue #416/#418: intake hardening — no double prefix in scaffold + repo owner defaults to org.
 
-- #416: repo_scaffold slug 已带 ai- 前缀时不再重复 (intake slug 形态), 目录/包名/标题归一
-- #418: owner decision 2026-11-09 — ai-* 仓默认归属 dahai80-business org,
-  FUSION_BUSINESS_GITHUB_OWNER 覆盖
+- #416: repo_scaffold slug already carrying the ai- prefix is not re-prefixed (intake slug shape), dir/package/title normalized
+- #418: owner decision 2026-11-09 — ai-* repos default to the dahai80-business org,
+  FUSION_BUSINESS_GITHUB_OWNER overrides
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ def _scaffold(slug: str, base_dir: str) -> RepoScaffoldNode:
 
 class TestScaffoldPrefix:
     async def test_prefixed_slug_no_double_prefix(self, tmp_path):
-        # issue #416: intake 派生 slug 本就带 ai- — 目录必须恰好一层前缀
+        # issue #416: the intake-derived slug already carries ai- — the directory must have exactly one prefix layer
         res = await _scaffold("ai-acceptance-probe-2026-11-2", str(tmp_path)).execute({})
         assert res.status.value == "success", res.error
         assert res.data["repo_path"] == str(tmp_path / "ai-acceptance-probe-2026-11-2")
@@ -78,7 +78,7 @@ class TestOwnerDefault:
         )
         assert info["full_name"] == "dahai80-business/ai-pet-hotel"
         assert seen[0] == ("GET", "/repos/dahai80-business/ai-pet-hotel")
-        # issue #418: org owner 建仓走 /orgs/{org}/repos, 不是 /user/repos
+        # issue #418: org owner repo creation goes through /orgs/{org}/repos, not /user/repos
         assert ("POST", "/orgs/dahai80-business/repos") in seen
         assert ("POST", "/user/repos") not in seen
 

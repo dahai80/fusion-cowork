@@ -1,7 +1,7 @@
-"""issue #464: OTel spine — run 全程一个 trace_id, 出站 LLM 调用携带 trace 头。
+"""issue #464: OTel spine — one trace_id for the whole run, outbound LLM calls carry trace headers.
 
-引擎 trace_id=exec_id; 波次 span (无 SDK no-op 不阻断); traceparent W3C 格式;
-轨迹事件携带 trace_id; MLX 客户端请求头合并 x-fusion-trace-id/traceparent。
+Engine trace_id=exec_id; wave spans (no-op without the SDK, non-blocking); traceparent W3C format;
+trajectory events carry trace_id; MLX client request headers merge x-fusion-trace-id/traceparent.
 """
 
 from __future__ import annotations
@@ -76,10 +76,11 @@ class TestEngineTrace:
         exec_id = "run-464-trace"
         execution = await asyncio.wait_for(eng.execute(wf, execution_id=exec_id), timeout=10)
         assert execution.status.value == "success"
+        # i18n: user-facing
         assert _Echo464.seen == [exec_id], "节点内 trace_id 应等于 run exec_id"
 
     async def test_wave_spans_noop_without_otel(self):
-        # span() 无 OTel SDK 时 no-op — 波次执行不被阻断
+        # span() is a no-op without the OTel SDK — wave execution is not blocked
         eng = WorkflowEngine(permission_manager=PermissionManager())
         wf = Workflow(name="wf-464-span")
         wf.add_node(NodeRegistry.create("echo464"))

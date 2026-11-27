@@ -1,6 +1,6 @@
-"""Stage 5 部署冒烟测试 — Dockerfile / docker-compose / Helm chart / serve 命令。
+"""Stage 5 deployment smoke tests — Dockerfile / docker-compose / Helm chart / serve command.
 
-均 @pytest.mark.slow, 无 docker/helm → skip 不阻断普通 CI。
+All @pytest.mark.slow; without docker/helm they skip and do not block normal CI.
 """
 
 import os
@@ -20,7 +20,7 @@ def _which(name: str) -> str | None:
     return shutil.which(name)
 
 
-# ── Dockerfile 存在性 (不 build, build 见 test_dockerfile_build) ──
+# ── Dockerfile existence (no build; build covered in test_dockerfile_build) ──
 
 
 def test_dockerfile_exists_and_nonroot():
@@ -28,8 +28,8 @@ def test_dockerfile_exists_and_nonroot():
     assert os.path.isfile(path)
     text = open(path, encoding="utf-8").read()
     assert "PYTHON_VERSION=3.12-slim" in text or "python:3.12-slim" in text
-    assert "USER fcuser" in text, "Dockerfile 必须非 root 运行"
-    assert "HEALTHCHECK" in text, "Dockerfile 必须有 HEALTHCHECK"
+    assert "USER fcuser" in text, "Dockerfile 必须非 root 运行"  # i18n: user-facing
+    assert "HEALTHCHECK" in text, "Dockerfile 必须有 HEALTHCHECK"  # i18n: user-facing
     assert "EXPOSE 11438" in text
 
 
@@ -47,10 +47,10 @@ def test_compose_file_structure():
     text = open(path, encoding="utf-8").read()
     assert "postgres:16" in text
     assert "FUSION_PG_DSN" in text
-    assert "pg_isready" in text, "postgres 必须有 healthcheck"
+    assert "pg_isready" in text, "postgres 必须有 healthcheck"  # i18n: user-facing
 
 
-# ── docker-compose config 校验 (需 docker) ──
+# ── docker-compose config validation (requires docker) ──
 
 
 @pytest.mark.slow
@@ -67,7 +67,7 @@ def test_compose_config_valid():
     assert result.returncode == 0, f"docker compose config failed:\n{result.stderr}"
 
 
-# ── Dockerfile build 冒烟 (需 docker, 最重, 单测) ──
+# ── Dockerfile build smoke (requires docker, heaviest, standalone test) ──
 
 
 @pytest.mark.slow
@@ -84,14 +84,14 @@ def test_dockerfile_build_smoke():
             timeout=600,
         )
     except subprocess.TimeoutExpired:
-        pytest.skip("docker build 超时 (>600s, 网络/镜像源慢, 非代码缺陷)")
+        pytest.skip("docker build 超时 (>600s, 网络/镜像源慢, 非代码缺陷)")  # i18n: user-facing
     if result.returncode != 0:
-        pytest.skip(f"docker build failed (可能网络/镜像源问题):\n{result.stderr[-2000:]}")
-    # 清理镜像
+        pytest.skip(f"docker build failed (可能网络/镜像源问题):\n{result.stderr[-2000:]}")  # i18n: user-facing
+    # Clean up image
     subprocess.run(["docker", "rmi", "-f", tag], capture_output=True, timeout=60)
 
 
-# ── Helm chart render (需 helm) ──
+# ── Helm chart render (requires helm) ──
 
 
 @pytest.mark.slow
@@ -115,18 +115,18 @@ def test_helm_template_renders():
     assert "kind: HorizontalPodAutoscaler" in out
     assert "FUSION_PG_DSN" in out
     assert "FUSION_JWT_SECRET" in out
-    assert "/health" in out, "deployment 必须有 liveness/readiness /health probe"
+    assert "/health" in out, "deployment 必须有 liveness/readiness /health probe"  # i18n: user-facing
 
 
 def test_helm_values_sensible_defaults():
     values = os.path.join(PROJ_DIR, "deploy", "helm", "fusion-cowork", "values.yaml")
     text = open(values, encoding="utf-8").read()
-    assert "change-me" in text, "secret 占位必须标 change-me"
+    assert "change-me" in text, "secret 占位必须标 change-me"  # i18n: user-facing
     assert "terminationGracePeriodSeconds: 30" in text
     assert "targetCPUUtilizationPercentage: 70" in text
 
 
-# ── serve 命令绑 0.0.0.0 + /health 可达 (短暂起 + 停) ──
+# ── serve command binds 0.0.0.0 + /health reachable (brief start + stop) ──
 
 
 def _free_port() -> int:
@@ -160,7 +160,7 @@ def test_serve_binds_all_interfaces_health():
                     break
             except Exception:
                 time.sleep(0.5)
-        assert ok, "serve /health 未在 20s 内就绪"
+        assert ok, "serve /health 未在 20s 内就绪"  # i18n: user-facing
     finally:
         proc.terminate()
         try:
@@ -170,6 +170,6 @@ def test_serve_binds_all_interfaces_health():
 
 
 def sys_python() -> str:
-    # #198: 用当前解释器, 不走 PATH — PATH 下的 python3 可能是另一个环境
-    # (venv 未激活时解析到 homebrew python, 缺 fusion_cowork, serve 启动失败)
+    # #198: use the current interpreter, not PATH — the python3 on PATH may be a different environment
+    # (without an activated venv it resolves to homebrew python, missing fusion_cowork, so serve fails to start)
     return sys.executable

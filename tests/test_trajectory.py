@@ -1,4 +1,4 @@
-"""D1 轨迹飞轮 — TrajectoryRecorder 单元测试 (issue #520 kernel schema)。"""
+"""D1 trajectory flywheel — TrajectoryRecorder unit tests (issue #520 kernel schema)."""
 
 from __future__ import annotations
 

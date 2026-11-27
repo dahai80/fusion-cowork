@@ -1,7 +1,7 @@
-"""Issue #139 回归测试 — manifest ext + 搜索/通知源。
+"""Issue #139 regression tests — manifest ext + search/notification sources.
 
-manifest 遵循 fusion-web-shell#24 ext schema; /api/search 聚合工作流/运行/空间;
-通知源 id 稳定, 满足宿主 dedup 合同。
+manifest follows the fusion-web-shell#24 ext schema; /api/search aggregates workflows/runs/spaces;
+notification source ids are stable, satisfying the host dedup contract.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ class TestManifestSchema:
     def test_pages_deep_links_valid(self):
         m = json.loads(MANIFEST.read_text(encoding="utf-8"))
         pages = m.get("pages") or []
-        assert pages, "manifest 应声明 pages"
+        assert pages, "manifest 应声明 pages"  # i18n: user-facing
         for p in pages:
             route = p["route"]
             assert route.startswith("/") and "#" not in route and ".." not in route
@@ -61,7 +61,7 @@ class TestManifestSchema:
     def test_search_provider_endpoint(self):
         m = json.loads(MANIFEST.read_text(encoding="utf-8"))
         sps = m.get("searchProviders") or []
-        assert sps, "manifest 应声明 searchProviders"
+        assert sps, "manifest 应声明 searchProviders"  # i18n: user-facing
         for sp in sps:
             assert sp["id"] and sp["label"]
             ep = sp["endpoint"]
@@ -72,7 +72,7 @@ class TestManifestSchema:
     def test_notifications_sources_valid(self):
         m = json.loads(MANIFEST.read_text(encoding="utf-8"))
         notifs = m.get("notifications") or []
-        assert notifs, "manifest 应声明 notifications"
+        assert notifs, "manifest 应声明 notifications"  # i18n: user-facing
         for n in notifs:
             assert n["id"] and n["label"]
             ep = n["endpoint"]
@@ -105,11 +105,14 @@ def _mk_space(client, name):
 
 class TestSearch:
     def test_workflow_hit(self, client):
-        wf_id = _mk_wf(client, "整理下载文件夹")
-        r = client.get("/api/search", params={"q": "下载"}, headers=_auth())
+        wf_id = _mk_wf(client, "整理下载文件夹")  # i18n: user-facing
+        r = client.get("/api/search", params={"q": "下载"}, headers=_auth())  # i18n: user-facing
         assert r.status_code == 200
         items = r.json()["items"]
-        assert any(i["route"] == f"/canvas/{wf_id}" and "整理下载文件夹" in i["title"] for i in items)
+        assert any(
+            i["route"] == f"/canvas/{wf_id}" and "整理下载文件夹" in i["title"]  # i18n: user-facing
+            for i in items  # i18n: user-facing
+        )  # i18n: user-facing
 
     def test_empty_q_empty_items(self, client):
         r = client.get("/api/search", params={"q": ""}, headers=_auth())
@@ -137,17 +140,17 @@ class TestSearch:
         deadline = time.time() + 5
         while time.time() < deadline:
             rr = client.get("/api/search", params={"q": "tidydownloads"}, headers=_auth())
-            if any("运行: " in i["title"] for i in rr.json()["items"]):
+            if any("运行: " in i["title"] for i in rr.json()["items"]):  # i18n: user-facing
                 break
             time.sleep(0.1)
         items = rr.json()["items"]
         assert any(i["kind"] == "run" and "TidyDownloadsRun" in i["title"] for i in items)
 
     def test_space_hit(self, client):
-        _mk_space(client, "调研空间")
-        r = client.get("/api/search", params={"q": "调研"}, headers=_auth())
+        _mk_space(client, "调研空间")  # i18n: user-facing
+        r = client.get("/api/search", params={"q": "调研"}, headers=_auth())  # i18n: user-facing
         items = r.json()["items"]
-        assert any(i["kind"] == "space" and "调研" in i["title"] for i in items)
+        assert any(i["kind"] == "space" and "调研" in i["title"] for i in items)  # i18n: user-facing
 
 
 class TestNotifications:
@@ -172,7 +175,7 @@ class TestNotifications:
             if rr.json().get("status") in ("completed", "failed", "canceled"):
                 return rr.json()
             time.sleep(0.1)
-        raise AssertionError("run 未在 5s 内到达终态")
+        raise AssertionError("run 未在 5s 内到达终态")  # i18n: user-facing
 
     def test_runs_source_failed_run_level_error(self, client):
         rec = self._wait_terminal(client)

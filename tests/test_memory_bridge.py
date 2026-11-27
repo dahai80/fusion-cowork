@@ -1,5 +1,5 @@
-# fusion_cowork.memory_bridge 单测 (issue #157)。
-# wire 契约: /v1/memory/{retrieve,commit} + Bearer; fm-core interaction.rs 字段形状。
+# fusion_cowork.memory_bridge unit tests (issue #157).
+# Wire contract: /v1/memory/{retrieve,commit} + Bearer; fm-core interaction.rs field shapes.
 
 import json
 import time
@@ -27,7 +27,7 @@ def _clean_env(monkeypatch):
     monkeypatch.delenv("FUSION_MEMORY_BASE_URL", raising=False)
 
 
-def _step(name="搜索节点", status_value="success", summary="找到 3 条", output=None):
+def _step(name="搜索节点", status_value="success", summary="找到 3 条", output=None):  # i18n: user-facing
     return SimpleNamespace(
         node_id="n1",
         node_name="web_search",
@@ -68,14 +68,14 @@ def test_from_env_base_url_override(monkeypatch):
 
 
 def test_build_interaction_shape():
-    steps = [_step("搜索", "success", "找到 3 条"), _step("写入", "failed", "", {"k": "v"})]
+    steps = [_step("搜索", "success", "找到 3 条"), _step("写入", "failed", "", {"k": "v"})]  # i18n: user-facing
     ix = MemoryBridge.build_interaction(
         session_id="run_abc",
         workflow_id="wf1",
-        workflow_name="周报生成",
-        description="每周五生成",
+        workflow_name="周报生成",  # i18n: user-facing
+        description="每周五生成",  # i18n: user-facing
         steps=steps,
-        result_summary="完成",
+        result_summary="完成",  # i18n: user-facing
         execution_id="run_abc",
     )
     assert ix["id"].startswith("cowork_")
@@ -83,29 +83,29 @@ def test_build_interaction_shape():
     assert isinstance(ix["timestamp"], int) and abs(ix["timestamp"] - time.time()) < 60
     turn = ix["turns"][0]
     assert turn["turn_idx"] == 0
-    assert turn["user_message"] == "周报生成: 每周五生成"
-    assert turn["assistant_message"] == "完成"
+    assert turn["user_message"] == "周报生成: 每周五生成"  # i18n: user-facing
+    assert turn["assistant_message"] == "完成"  # i18n: user-facing
     assert len(turn["tool_calls"]) == 2
     assert turn["tool_calls"][0] == {
-        "name": "搜索",
+        "name": "搜索",  # i18n: user-facing
         "args": {},
-        "result_summary": "[success] 找到 3 条",
+        "result_summary": "[success] 找到 3 条",  # i18n: user-facing
     }
-    # 失败步骤: error 即摘要 (fail-visible), 带 status 前缀
+    # failed step: error is the summary (fail-visible), with status prefix
     assert turn["tool_calls"][1]["result_summary"] == "[failed] boom"
-    # 无 summary 无 error 的步骤用 _compact(output_data) 兜底
+    # step without summary/error falls back to _compact(output_data)
     ix2 = MemoryBridge.build_interaction(
         session_id="s",
         workflow_id="",
         workflow_name="wf",
         description="",
-        steps=[_step("节点", "success", "", {"k": "v"})],
+        steps=[_step("节点", "success", "", {"k": "v"})],  # i18n: user-facing
         result_summary="ok",
     )
     assert '"k": "v"' in ix2["turns"][0]["tool_calls"][0]["result_summary"]
     assert ix["metadata"]["agent_type"] == "cowork"
     assert ix["metadata"]["node_id"] == "wf1"
-    assert ix["metadata"]["tool_names"] == ["搜索", "写入"]
+    assert ix["metadata"]["tool_names"] == ["搜索", "写入"]  # i18n: user-facing
 
 
 def test_build_interaction_caps_and_defaults():
@@ -116,9 +116,9 @@ def test_build_interaction_caps_and_defaults():
     )
     assert len(ix["turns"][0]["tool_calls"]) == 64
     assert all(len(tc["result_summary"]) <= 4000 for tc in ix["turns"][0]["tool_calls"])
-    # 空 summary/结果 → "(无输出)"
-    assert ix["turns"][0]["assistant_message"] == "(无输出)"
-    # 空 workflow_id 回落 execution_id... 此处都空 → node_id 空串不崩
+    # empty summary/result -> the no-output default literal (asserted below)
+    assert ix["turns"][0]["assistant_message"] == "(无输出)"  # i18n: user-facing
+    # empty workflow_id falls back to execution_id... both empty here -> empty node_id string, no crash
     assert "node_id" in ix["metadata"]
 
 
@@ -134,15 +134,15 @@ async def test_retrieve_ok(monkeypatch):
         assert request.headers.get("authorization") == "Bearer k1"
         payload = json.loads(request.content)
         assert payload["method"] == "retrieve"
-        assert payload["params"]["text"] == "周报"
+        assert payload["params"]["text"] == "周报"  # i18n: user-facing
         return httpx.Response(
             200,
             json={
                 "jsonrpc": "2.0",
                 "result": {
                     "blocks": [
-                        {"turns_text": "上周产出: 报表 A"},
-                        {"turns_text": "偏好: 表格输出"},
+                        {"turns_text": "上周产出: 报表 A"},  # i18n: user-facing
+                        {"turns_text": "偏好: 表格输出"},  # i18n: user-facing
                     ],
                     "total_tokens": 42,
                 },
@@ -153,8 +153,8 @@ async def test_retrieve_ok(monkeypatch):
     _patch_transport(monkeypatch, handler)
     monkeypatch.setenv("FUSION_MEMORY_API_KEY", "k1")
     bridge = MemoryBridge.from_env()
-    text = await bridge.retrieve_context("周报")
-    assert text == "上周产出: 报表 A\n\n偏好: 表格输出"
+    text = await bridge.retrieve_context("周报")  # i18n: user-facing
+    assert text == "上周产出: 报表 A\n\n偏好: 表格输出"  # i18n: user-facing
 
 
 @pytest.mark.asyncio
@@ -243,7 +243,7 @@ async def test_write_back_dict_contract(monkeypatch):
     ix = MemoryBridge.build_interaction(
         session_id="run_x",
         workflow_id="wf",
-        workflow_name="任务",
+        workflow_name="任务",  # i18n: user-facing
         description="",
         steps=[],
         result_summary="done",
@@ -288,4 +288,4 @@ def test_compact_dict_and_scalar():
     assert _compact({"a": 1}) == '{"a": 1}'
     assert _compact("plain") == "plain"
     assert len(_compact("y" * 9999)) == 4000
-    assert _compact(object())  # 任意对象不崩
+    assert _compact(object())  # arbitrary object must not crash

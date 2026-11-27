@@ -1,9 +1,9 @@
 import type { CapabilityCatalog, CapabilityItem, CapabilityType } from './api';
 
 export const CAPABILITY_TABS: Array<{ key: CapabilityType; zh: string; en: string; icon: string }> = [
-    { key: 'skill', zh: '技能', en: 'Skills', icon: '⚙' },
-    { key: 'connector', zh: '连接器', en: 'Connectors', icon: '🔌' },
-    { key: 'subagent', zh: '子代理', en: 'Subagents', icon: '🤖' },
+    { key: 'skill', zh: '技能', en: 'Skills', icon: '⚙' }, // i18n: user-facing
+    { key: 'connector', zh: '连接器', en: 'Connectors', icon: '🔌' }, // i18n: user-facing
+    { key: 'subagent', zh: '子代理', en: 'Subagents', icon: '🤖' }, // i18n: user-facing
 ];
 
 export function capabilityTypeFromRoute(arg: string): CapabilityType {
@@ -45,7 +45,7 @@ export function poolExtraCapabilities(catalog: CapabilityCatalog | null): Capabi
     return [...(catalog?.connectors ?? []), ...(catalog?.subagents ?? [])].filter(usableCapability);
 }
 
-// issue #244 R1: 首访 pitch 卡 — 三类能力一句话定位, 安装任意能力后永久消失。
+// issue #244 R1: first-visit pitch cards — one-line positioning per capability type; permanently dismissed once any capability is installed.
 export const PITCH_DISMISS_KEY = 'cowork.capabilities.pitchDismissed';
 
 export interface CapabilityPitch {
@@ -60,20 +60,20 @@ export function capabilityPitches(): CapabilityPitch[] {
         {
             key: 'skill',
             icon: '⚙',
-            title: { zh: '技能', en: 'Skills' },
-            desc: { zh: '领域知识与最佳实践', en: 'Domain knowledge and best practices' },
+            title: { zh: '技能', en: 'Skills' }, // i18n: user-facing
+            desc: { zh: '领域知识与最佳实践', en: 'Domain knowledge and best practices' }, // i18n: user-facing
         },
         {
             key: 'connector',
             icon: '🔌',
-            title: { zh: '连接器', en: 'Connectors' },
-            desc: { zh: '接入你已在用的工具', en: 'Bring the tools you already use' },
+            title: { zh: '连接器', en: 'Connectors' }, // i18n: user-facing
+            desc: { zh: '接入你已在用的工具', en: 'Bring the tools you already use' }, // i18n: user-facing
         },
         {
             key: 'subagent',
             icon: '🤖',
-            title: { zh: '子代理', en: 'Subagents' },
-            desc: { zh: '端到端处理专项任务', en: 'Handle specialized tasks end to end' },
+            title: { zh: '子代理', en: 'Subagents' }, // i18n: user-facing
+            desc: { zh: '端到端处理专项任务', en: 'Handle specialized tasks end to end' }, // i18n: user-facing
         },
     ];
 }
@@ -90,7 +90,7 @@ export function dismissPitches(): void {
     try {
         localStorage.setItem(PITCH_DISMISS_KEY, '1');
     } catch {
-        // 无 localStorage (隐私模式) — 会话内 state 兜底
+        // no localStorage (privacy mode) — in-session state as fallback
     }
 }
 

@@ -1,7 +1,8 @@
-"""授权工作文件夹沙箱 — Claude Cowork 第一安全特征。
+"""Authorized working-folder sandbox — Claude Cowork's first security feature.
 
-只允许节点访问明确授权的文件夹 (scoped folder)，越界路径直接拒绝。
-对应审计 P0-2: scoped folder jail 缺失。
+Nodes may only access explicitly authorized folders (scoped folders); out-of-bounds paths
+are refused outright.
+Corresponds to audit P0-2: missing scoped folder jail.
 """
 
 from __future__ import annotations
@@ -18,10 +19,10 @@ _singleton_lock = threading.Lock()
 
 
 class ScopedFolderManager:
-    """工作文件夹白名单 + 路径越界拒绝。
+    """Working-folder whitelist + out-of-bounds path refusal.
 
-    enforce=False 时不拦截 (向后兼容); enforce=True 时所有文件/Shell 节点
-    访问的路径必须 resolve() 后位于某个授权文件夹内。
+    enforce=False intercepts nothing (back-compat); enforce=True requires every path accessed
+    by file/shell nodes to resolve() inside one of the authorized folders.
     """
 
     def __init__(self, scoped_folders: Optional[List[str]] = None, enforce: bool = False):
@@ -31,7 +32,7 @@ class ScopedFolderManager:
                 self._scopes.append(Path(f).expanduser().resolve())
         self._enforce = enforce and bool(self._scopes)
         if self._enforce:
-            logger.info(f"ScopedFolder 沙箱启用: {len(self._scopes)} 个授权文件夹")
+            logger.info(f"ScopedFolder sandbox enabled: {len(self._scopes)} authorized folders")
 
     @classmethod
     def from_config(cls) -> ScopedFolderManager:
@@ -55,14 +56,14 @@ class ScopedFolderManager:
         if not self._enforce:
             return True
         try:
-            # LO-9: strict=False 不跟随符号链接, 再 lstat 拒符号链接遍历 (TOCTOU)
+            # LO-9: strict=False does not follow symlinks, then lstat rejects symlink traversal (TOCTOU)
             target = Path(path).expanduser().resolve(strict=False)
         except (OSError, ValueError) as e:
-            logger.warning(f"ScopedFolder 路径解析失败: {path} ({e})")
+            logger.warning(f"ScopedFolder path resolution failed: {path} ({e})")
             return False
-        # LO-9: 路径任一前缀段为符号链接则拒 (防 scope 内 symlink 指向 scope 外)
+        # LO-9: refuse if any prefix segment of the path is a symlink (prevents in-scope symlinks pointing outside the scope)
         if self._path_contains_symlink(path):
-            logger.warning(f"ScopedFolder 拒符号链接路径: {path} (可能逃逸授权文件夹)")
+            logger.warning(f"ScopedFolder refusing symlink path: {path} (may escape authorized folders)")
             return False
         for scope in self._scopes:
             try:
@@ -70,12 +71,12 @@ class ScopedFolderManager:
                 return True
             except ValueError:
                 continue
-        logger.warning(f"ScopedFolder 拒绝越界路径: {target} (不在授权文件夹内)")
+        logger.warning(f"ScopedFolder refusing out-of-bounds path: {target} (not inside an authorized folder)")
         return False
 
     @staticmethod
     def _path_contains_symlink(path: str | os.PathLike) -> bool:
-        # 逐段检查 path 的每个父目录是否为符号链接; 不 follow, 仅 lstat
+        # Check every parent directory of path for symlinks segment by segment; no follow, lstat only
         p = Path(path).expanduser()
         try:
             current = p if p.is_absolute() else Path.cwd() / p
@@ -97,7 +98,7 @@ class ScopedFolderManager:
     def ensure_allowed(self, path: str | os.PathLike) -> bool:
         if self.is_allowed(path):
             return True
-        logger.error(f"ScopedFolder 沙箱拦截: {path}")
+        logger.error(f"ScopedFolder sandbox blocked: {path}")
         return False
 
     def resolve_in_scope(self, path: str | os.PathLike) -> Optional[Path]:
@@ -110,7 +111,7 @@ _default_manager: Optional[ScopedFolderManager] = None
 
 
 def get_scoped_folder_manager() -> ScopedFolderManager:
-    # LO-8: 单例重建加锁, 防 from_config 竞态致多实例
+    # LO-8: lock around singleton rebuild, prevents from_config races creating multiple instances
     global _default_manager
     if _default_manager is not None:
         return _default_manager

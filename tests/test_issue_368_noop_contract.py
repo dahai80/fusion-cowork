@@ -1,10 +1,9 @@
-"""issue #368: n6 dedupe 全状态 + scaffold overwrite 非破坏性 + n7 no-op 交付契约。
+"""issue #368: n6 dedupe across all states + non-destructive scaffold overwrite + n7 no-op delivery contract.
 
-- github_api issue_create 去重查 open+closed (PR 合并关闭后重跑不再建假任务)
-- repo_scaffold overwrite 只补缺失脚手架文件, 不覆写既有文件 (交付内容不被打回 stub)
-- claude_dispatch 会话关闭 issue 为 duplicate/invalid (无 PR) = 合法 no-op 交付
-- linked_pr: issue 已关闭且无关联 PR 放行验收 (no-op 交付)
-"""
+- github_api issue_create dedupe queries open+closed (re-running after a PR-merged close no longer creates a fake task)
+- repo_scaffold overwrite only fills in missing scaffold files, never overwrites existing files (delivered content is not reverted to stub)
+- claude_dispatch closing the issue as duplicate/invalid (no PR) = a legitimate no-op delivery
+- linked_pr: a closed issue with no linked PR passes acceptance (no-op delivery)"""
 
 import json
 
@@ -86,7 +85,7 @@ class TestScaffoldOverwriteNonDestructive:
         base.mkdir()
         target = base / "ai-probe"
         target.mkdir()
-        # 已交付内容 — 与脚手架 stub 不同, 必须原样保留
+        # Delivered content — differs from the scaffold stub, must be preserved verbatim
         delivered_readme = "# ai-probe v0.1\n\ndelivered docs\n"
         delivered_pyproject = '[project]\nname = "fusion_ai_probe"\nversion = "0.2.0"\n'
         (target / "README.md").write_text(delivered_readme)
@@ -96,7 +95,7 @@ class TestScaffoldOverwriteNonDestructive:
         assert res.status.value == "success"
         assert (target / "README.md").read_text() == delivered_readme
         assert (target / "pyproject.toml").read_text() == delivered_pyproject
-        # 缺失脚手架文件补齐
+        # Missing scaffold files are filled in
         assert (target / "CLAUDE.md").exists()
         assert (target / "src" / "pkg").exists()
         assert set(res.data["skipped_files"]) == {"README.md", "pyproject.toml"}
@@ -190,7 +189,7 @@ class TestLinkedPrClosedNoop:
         _patch_gh_client(monkeypatch, handler)
         res = await _api_node("linked_pr", issue_number=5, require=True).execute({})
         assert res.status.value == "failed"
-        assert "先提 PR" in res.error
+        assert "先提 PR" in res.error  # i18n: user-facing
 
     async def test_state_fetch_failure_still_blocks(self, monkeypatch):
         def handler(request: httpx.Request) -> httpx.Response:

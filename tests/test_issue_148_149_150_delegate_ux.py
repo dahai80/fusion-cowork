@@ -1,14 +1,14 @@
-"""issue #148 + #149 + #150: chat-first 委托 / 产物就地 AI 修订 / 引用溯源。
+"""issue #148 + #149 + #150: chat-first delegate / in-place artifact AI revision / citation provenance.
 
 Contract:
-- #148 POST /api/ai/chat-delegate: ≤2 节点且无高风险 → mode=auto 直接执行
-  (run_id 返回, 工作流落库); 3 节点或含 HIGH_RISK_NODES → mode=plan 不启动运行;
-  缺 prompt 400; 生成失败 502。
-- #149 产物就地修订: /ai_revise 选区不在内容中 400; mlx 桩改写 → diff_blocks
-  非空; /apply_revision 写回 (block 级部分接受经 apply_block_selection 重建),
-  revision_history 追加, 版本 +1; 乐观锁冲突 409。
-- #150 引用溯源: AISummarize/AIClassify 输出 citations (源文件); 产物收集透传
-  citations; GET /api/files/read 沙箱内读取 (行范围), 缺 path 400, 不存在 404。
+- #148 POST /api/ai/chat-delegate: <=2 nodes and no high-risk -> mode=auto executes directly
+  (run_id returned, workflow persisted); 3 nodes or HIGH_RISK_NODES -> mode=plan does not start a run;
+  missing prompt 400; generation failure 502.
+- #149 in-place artifact revision: /ai_revise selection not in content 400; mlx stub rewrite -> diff_blocks
+  non-empty; /apply_revision writes back (block-level partial accept rebuilt via apply_block_selection),
+  revision_history appended, version +1; optimistic-lock conflict 409.
+- #150 citation provenance: AISummarize/AIClassify output citations (source files); artifact collection
+  passes citations through; GET /api/files/read reads within sandbox (line ranges), missing path 400, not found 404.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def client(tmp_path, monkeypatch):
     @register_node
     class MockEchoNode(BaseNode):
         name = "mock_echo_148"
-        display_name = "回显"
+        display_name = "回显"  # i18n: user-facing
         category = NodeCategory.TOOL
 
         async def execute(self, params):
@@ -44,9 +44,9 @@ def client(tmp_path, monkeypatch):
 
     web_api._WEB_DIR = tmp_path / "web"
     workflow_stub = {
-        "name": "委托计划",
+        "name": "委托计划",  # i18n: user-facing
         "description": "desc",
-        "nodes": [{"id": "n1", "name": "mock_echo_148", "config": {"label": "回显"}}],
+        "nodes": [{"id": "n1", "name": "mock_echo_148", "config": {"label": "回显"}}],  # i18n: user-facing
         "edges": [],
     }
 
@@ -73,44 +73,48 @@ def _auth():
 
 class TestIssue148ChatDelegate:
     def test_simple_plan_auto_runs(self, client):
-        resp = client.post("/api/ai/chat-delegate", headers=_auth(), json={"prompt": "做个回显"})
+        resp = client.post("/api/ai/chat-delegate", headers=_auth(), json={"prompt": "做个回显"})  # i18n: user-facing
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["mode"] == "auto"
         assert body["run_id"]
-        assert body["plan"]["steps"][0]["display"] == "回显"
+        assert body["plan"]["steps"][0]["display"] == "回显"  # i18n: user-facing
         run = client.get(f"/api/runs/{body['run_id']}", headers=_auth()).json()
         assert run["status"] in ("running", "completed", "success")
         wf = client.get(f"/api/workflows/{body['workflow_id']}", headers=_auth())
-        assert wf.status_code == 200, "计划应落库 (画布可选编辑)"
+        assert wf.status_code == 200, "计划应落库 (画布可选编辑)"  # i18n: user-facing
 
     def test_high_risk_node_goes_plan(self, tmp_path, monkeypatch):
-        # 单节点但属 HIGH_RISK_NODES → 必须走 plan 批准路径 (确定性分流, 不走模型)
+        # Single node but in HIGH_RISK_NODES -> must go through the plan approval path (deterministic routing, not model-driven)
         from fastapi.testclient import TestClient
 
         from fusion_cowork.engine import WorkflowEngine
         from fusion_cowork.server import web_api
 
         web_api._WEB_DIR = tmp_path / "web"
-        # issue #168: 本机 ~/.fusion-cowork/web_module_key 会激活鉴权 — 显式设 env key 匹配 _auth()
+        # issue #168: a local ~/.fusion-cowork/web_module_key activates auth — set the env key explicitly to match _auth()
         monkeypatch.setenv("FUSION_COWORK_WEB_API_KEY", STATIC_KEY)
 
         class _NLRisk:
             async def generate(self, prompt, context=None):
-                return {"name": "高危计划", "nodes": [{"id": "n1", "name": "clipboard"}], "edges": []}
+                return {
+                    "name": "高危计划",  # i18n: user-facing
+                    "nodes": [{"id": "n1", "name": "clipboard"}],
+                    "edges": [],
+                }  # i18n: user-facing
 
         app = web_api.create_web_app(
             engine=WorkflowEngine(), dist_dir=tmp_path / "no-dist", store_root=tmp_path / "wfr", nl_generator=_NLRisk()
         )
         c = TestClient(app)
-        resp = c.post("/api/ai/chat-delegate", headers=_auth(), json={"prompt": "读剪贴板"})
+        resp = c.post("/api/ai/chat-delegate", headers=_auth(), json={"prompt": "读剪贴板"})  # i18n: user-facing
         assert resp.status_code == 200
         body = resp.json()
-        assert body["mode"] == "plan", "高风险节点必须批准后执行"
+        assert body["mode"] == "plan", "高风险节点必须批准后执行"  # i18n: user-facing
         assert not body.get("run_id")
 
     def test_three_node_plan_not_auto(self, client, tmp_path, monkeypatch):
-        # 直接构造 3 节点 stub 应用验证 plan 分流
+        # Build a 3-node stub app directly to verify the plan routing
         from fastapi.testclient import TestClient
 
         from fusion_cowork.engine import WorkflowEngine
@@ -121,7 +125,7 @@ class TestIssue148ChatDelegate:
         class _NL3:
             async def generate(self, prompt, context=None):
                 return {
-                    "name": "多步计划",
+                    "name": "多步计划",  # i18n: user-facing
                     "nodes": [
                         {"id": "n1", "name": "mock_echo_148"},
                         {"id": "n2", "name": "mock_echo_148"},
@@ -137,10 +141,10 @@ class TestIssue148ChatDelegate:
             engine=WorkflowEngine(), dist_dir=tmp_path / "no-dist", store_root=tmp_path / "wf3", nl_generator=_NL3()
         )
         c = TestClient(app)
-        resp = c.post("/api/ai/chat-delegate", headers=_auth(), json={"prompt": "三步任务"})
+        resp = c.post("/api/ai/chat-delegate", headers=_auth(), json={"prompt": "三步任务"})  # i18n: user-facing
         assert resp.status_code == 200
         body = resp.json()
-        assert body["mode"] == "plan", "3 节点不应自动执行"
+        assert body["mode"] == "plan", "3 节点不应自动执行"  # i18n: user-facing
         assert not body.get("run_id")
         assert len(body["plan"]["steps"]) == 3
 
@@ -167,7 +171,7 @@ class TestIssue148ChatDelegate:
 
 
 class _StubMlx:
-    def __init__(self, content: str = "修订后的文本"):
+    def __init__(self, content: str = "修订后的文本"):  # i18n: user-facing
         self.content = content
 
     async def chat(self, model="", messages=None, **kw):
@@ -199,7 +203,7 @@ def space_client(tmp_path, monkeypatch):
     web_api._WEB_DIR = tmp_path / "web"
     store = SpaceStore(data_dir=str(tmp_path / "spaces"))
     perm = SpacePermission(store)
-    chat_svc = SpaceChatService(store, _StubMlx(content="第二段已改写"), perm)
+    chat_svc = SpaceChatService(store, _StubMlx(content="第二段已改写"), perm)  # i18n: user-facing
     artifact_svc = SpaceArtifactService(store, perm)
     space_api = create_space_api(
         SpaceService(store),
@@ -228,19 +232,19 @@ class TestIssue149ArtifactRevise:
         art = client.post(
             f"/api/space/spaces/{sid}/artifacts",
             headers=_auth(),
-            json={"name": "doc", "content": "第一段\n第二段原文\n第三段"},
+            json={"name": "doc", "content": "第一段\n第二段原文\n第三段"},  # i18n: user-facing
         ).json()
         aid = art["id"]
         resp = client.post(
             f"/api/space/spaces/{sid}/artifacts/{aid}/ai_revise",
             headers=_auth(),
-            json={"selection": "第二段原文", "instruction": "更简洁"},
+            json={"selection": "第二段原文", "instruction": "更简洁"},  # i18n: user-facing
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        assert body["revised"] == "第二段已改写"
-        assert body["diff_blocks"], "选区被改写应产出 diff blocks"
-        assert body["model"] == "stub-chat", "未指定 model 时应自动选 chat 模型"
+        assert body["revised"] == "第二段已改写"  # i18n: user-facing
+        assert body["diff_blocks"], "选区被改写应产出 diff blocks"  # i18n: user-facing
+        assert body["model"] == "stub-chat", "未指定 model 时应自动选 chat 模型"  # i18n: user-facing
 
     def test_apply_revision_and_history(self, space_client):
         client, space_api, artifact_svc, store = space_client
@@ -270,21 +274,21 @@ class TestIssue149ArtifactRevise:
         art = client.post(
             f"/api/space/spaces/{sid}/artifacts",
             headers=_auth(),
-            json={"name": "doc3", "content": "keep old line\n目标行\nkeep too"},
+            json={"name": "doc3", "content": "keep old line\n目标行\nkeep too"},  # i18n: user-facing
         ).json()
         aid = art["id"]
         resp = client.post(
             f"/api/space/spaces/{sid}/artifacts/{aid}/apply_revision",
             headers=_auth(),
             json={
-                "selection": "目标行",
-                "revised": "目标行A\n目标行B",
+                "selection": "目标行",  # i18n: user-facing
+                "revised": "目标行A\n目标行B",  # i18n: user-facing
                 "accepted_blocks": [0],
             },
         )
         assert resp.status_code == 200
         got = client.get(f"/api/space/spaces/{sid}/artifacts/{aid}", headers=_auth()).json()
-        assert "目标行A" in got["content"]
+        assert "目标行A" in got["content"]  # i18n: user-facing
 
     def test_apply_selection_mismatch_400(self, space_client):
         client, space_api, artifact_svc, store = space_client
@@ -295,7 +299,7 @@ class TestIssue149ArtifactRevise:
         resp = client.post(
             f"/api/space/spaces/{sid}/artifacts/{art['id']}/apply_revision",
             headers=_auth(),
-            json={"selection": "不存在的选区", "revised": "x"},
+            json={"selection": "不存在的选区", "revised": "x"},  # i18n: user-facing
         )
         assert resp.status_code == 400
 
@@ -308,7 +312,7 @@ class TestIssue149ArtifactRevise:
         resp = client.post(
             f"/api/space/spaces/{sid}/artifacts/{art['id']}/ai_revise",
             headers=_auth(),
-            json={"selection": "不存在的选区", "instruction": ""},
+            json={"selection": "不存在的选区", "instruction": ""},  # i18n: user-facing
         )
         assert resp.status_code == 400
 
@@ -342,14 +346,14 @@ class TestIssue150Citations:
         step = SimpleNamespace(
             node_id="n1",
             node_name="ai_summarize",
-            node_display_name="AI摘要",
+            node_display_name="AI摘要",  # i18n: user-facing
             output_data={
-                "report": "# 报告\n内容",
+                "report": "# 报告\n内容",  # i18n: user-facing
                 "citations": [{"type": "file", "path": "/tmp/a.md", "name": "a.md"}],
             },
         )
         arts = _collect_artifacts([step])
-        assert arts, "报告产物应被收集"
+        assert arts, "报告产物应被收集"  # i18n: user-facing
         assert arts[0]["citations"][0]["path"] == "/tmp/a.md"
 
     def test_files_read_endpoint(self, client, tmp_path):

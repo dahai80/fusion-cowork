@@ -1,9 +1,9 @@
-"""Issue #142 回归测试 — 审批 diff 逐块审阅 + 文件产物 unified diff。
+"""Issue #142 regression tests — approval diff per-block review + file artifact unified diff.
 
-- ast_diff 文本工具: 分块 / 逐块选择重建 / unified diff
-- 本地待审批详情附 diff_blocks + raw_edit
-- confirm accepted_blocks: 部分接受窄化 / 全拒不落规则
-- _collect_artifacts: 编辑对/diff 字段/.patch 后缀 → diff 产物
+- ast_diff text utilities: block splitting / per-block selection rebuild / unified diff
+- Local pending-approval details carry diff_blocks + raw_edit
+- confirm accepted_blocks: partial accept narrows / full reject lands no rule
+- _collect_artifacts: edit pairs / diff fields / .patch suffix → diff artifacts
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def test_apply_block_selection_partial():
     assert apply_block_selection(old, new, [1]) == "line1\nXX\nline3\nline4\nline5\n"
     assert apply_block_selection(old, new, []) == old
     assert apply_block_selection(old, new, [1, 3]) == new
-    # equal 块不在可选集内 — 只传 equal 索引等价于无有效选择, 回退原文
+    # equal blocks are not selectable — passing only equal indexes is equivalent to no valid selection, falling back to the original text
     assert apply_block_selection(old, new, [0]) == old
 
 
@@ -63,7 +63,7 @@ def test_local_pending_details_diff_blocks():
     assert ok is False
     entries = pm.list_pending()
     assert entries and entries[0]["tool_name"] == "apply_edit"
-    assert entries[0]["diff_blocks"], "编辑型待审批应附 diff 分块"
+    assert entries[0]["diff_blocks"], "编辑型待审批应附 diff 分块"  # i18n: user-facing
     assert any(b["tag"] != "equal" for b in entries[0]["diff_blocks"])
     raw = entries[0]["raw_edit"]
     assert raw["old"] == "a\nb\n" and raw["new"] == "a\nc\n"
@@ -100,7 +100,7 @@ def test_apply_edit_pending_via_engine_run(client):
             break
         _t.sleep(0.1)
     pend = [e for e in pm.list_pending() if e.get("workflow") == "wf-edit-142"]
-    assert pend, "apply_edit 高危拒绝应落待审批队列"
+    assert pend, "apply_edit 高危拒绝应落待审批队列"  # i18n: user-facing
     assert pend[0]["diff_blocks"]
 
 
@@ -177,7 +177,7 @@ class TestConfirmAcceptedBlocks:
             )
             body = r.json()
             assert body["confirmed"] is False
-            assert "拒绝" in body["reason"]
+            assert "拒绝" in body["reason"]  # i18n: user-facing
         finally:
             pm._pending_local_approvals.pop("perm_blks2", None)
             pm._pending_local_details.pop("perm_blks2", None)
@@ -207,13 +207,13 @@ class TestArtifactDiff:
         step = SimpleNamespace(
             node_id="n1",
             node_name="apply_edit",
-            node_display_name="文件编辑",
+            node_display_name="文件编辑",  # i18n: user-facing
             output_data={"success": True, "changes": 1},
             input_data={"file_path": "/tmp/demo.txt", "old_text": "a\nb\n", "new_text": "a\nc\n"},
         )
         artifacts = _collect_artifacts([step])
         diff_items = [a for a in artifacts if a["type"] == "diff"]
-        assert diff_items, "编辑对输入应产出 diff 产物"
+        assert diff_items, "编辑对输入应产出 diff 产物"  # i18n: user-facing
         assert diff_items[0]["content"].startswith("---")
         assert diff_items[0]["artifact_id"] == "n1:diff"
 
@@ -239,7 +239,7 @@ class TestArtifactDiff:
         step = SimpleNamespace(
             node_id="n3",
             node_name="file_output",
-            node_display_name="输出",
+            node_display_name="输出",  # i18n: user-facing
             output_data={"path": str(p)},
             input_data={},
         )

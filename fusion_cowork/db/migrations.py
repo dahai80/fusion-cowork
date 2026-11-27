@@ -1,13 +1,13 @@
-"""版本化数据库迁移 (v0.4.0 Stage 3).
+"""Versioned database migrations (v0.4.0 Stage 3).
 
-替代 store.py 无版本管理盲 ALTER try/except:
-- schema_migrations 表跟踪已应用版本
-- MigrationRunner: 读已应用版本 → 按序 apply pending → 单事务记版本 (失败回滚)
-- 幂等: 重复 run 已应用版本无副作用 (跳过)
+Replaces store.py's unversioned blind ALTER try/except:
+- the schema_migrations table tracks applied versions
+- MigrationRunner: read applied versions → apply pending in order → record version in a single transaction (rollback on failure)
+- Idempotent: re-running applied versions has no side effects (skipped)
 
-v1 = 现 Stage 1 tenant_id 列迁移 (对旧库 ADD COLUMN; 新库 _SCHEMA_SQL 已含, idempotent)
-v2 = 现 _MIGRATION_SQL (artifact 列 + sidebar_modules + space_notifications)
-后续版本追加于此。
+v1 = the former Stage 1 tenant_id column migration (ADD COLUMN for legacy DBs; new DB _SCHEMA_SQL already includes it, idempotent)
+v2 = the former _MIGRATION_SQL (artifact columns + sidebar_modules + space_notifications)
+Later versions are appended here.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Migration:
-    """单条迁移: 版本号 + 名称 + 上行 SQL 语句列表 + 适用后端。"""
+    """Single migration: version number + name + up SQL statement list + applicable backend."""
 
     version: int
     name: str
@@ -29,10 +29,10 @@ class Migration:
     backend: str = "both"  # both | sqlite | postgres
 
 
-# ── 迁移序列 (按 version 升序) ──
-# v1: tenant_id 列迁移 — 对 Stage 1 之前的旧库补 ADD COLUMN (新库 _SCHEMA_SQL 已含, idempotent)
-#     每条 ADD COLUMN 包 IF NOT EXISTS — Postgres 9.6+ / SQLite 不支持, 走 runner 的 OperationalError 吞错。
-# v2: artifact 列 + sidebar_modules + space_notifications (原 store._MIGRATION_SQL)
+# ── migration sequence (ascending by version) ──
+# v1: tenant_id column migration — adds ADD COLUMN for legacy DBs predating Stage 1 (new DB _SCHEMA_SQL already includes it, idempotent)
+#     Each ADD COLUMN would carry IF NOT EXISTS — Postgres 9.6+ / SQLite do not support it, so the runner swallows the OperationalError instead.
+# v2: artifact columns + sidebar_modules + space_notifications (former store._MIGRATION_SQL)
 
 _TENANT_ADD_COLUMN = [
     ("spaces", "tenant_id TEXT NOT NULL DEFAULT ''"),
@@ -82,9 +82,9 @@ MIGRATIONS: List[Migration] = [
         ],
         backend="both",
     ),
-    # v3: 旧库 (v0.4.0 之前建的 space_notifications / sidebar_modules) 表内无 tenant_id 列 —
-    #     v2 的 CREATE TABLE IF NOT EXISTS 对已存在表是 no-op, 列永远补不上, 查询直接
-    #     `no such column: tenant_id` 500 (issue #253)。ADD COLUMN 重复执行由 runner 吞错幂等。
+    # v3: legacy DBs (space_notifications / sidebar_modules created before v0.4.0) lack the tenant_id column —
+    #     v2's CREATE TABLE IF NOT EXISTS is a no-op on existing tables, the column never gets added, and queries fail
+    #     outright with `no such column: tenant_id` 500 (issue #253). Repeated ADD COLUMN execution is idempotent via runner error swallowing.
     Migration(
         version=3,
         name="legacy_tenant_columns",
@@ -107,12 +107,12 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 
 class MigrationRunner:
-    """迁移执行器 — 跨 sqlite/postgres 后端。
+    """Migration runner — across sqlite/postgres backends.
 
-    executor: 异步执行回调 async (sql, params?) -> rows (读) 或 None (写)。
-        sqlite: 直接 aiosqlite conn (含 commit); postgres: asyncpg conn (execute/fetch)。
-    error_class: 后端列已存在错误类型 (sqlite OperationalError / postgres asyncpg.DuplicateColumnError),
-        runner 吞此错做 idempotent ADD COLUMN。
+    executor: async execution callback async (sql, params?) -> rows (read) or None (write).
+        sqlite: direct aiosqlite conn (incl. commit); postgres: asyncpg conn (execute/fetch).
+    error_class: the backend's column-already-exists error type (sqlite OperationalError / postgres asyncpg.DuplicateColumnError),
+        the runner swallows this error to make ADD COLUMN idempotent.
     """
 
     def __init__(self, backend: str, executor: Any, error_class: Any = Exception, now_fn=None):
@@ -137,10 +137,10 @@ class MigrationRunner:
         )
 
     async def run_pending(self, migrations: Optional[List[Migration]] = None) -> List[int]:
-        """按 version 升序 apply 未应用的迁移; 返回本次应用的版本号列表。
+        """Apply unapplied migrations in ascending version order; returns the list of versions applied this run.
 
-        幂等: 已应用版本跳过。ADD COLUMN 列已存在 → 吞 error_class 继续 (idempotent)。
-        CREATE TABLE/INDEX IF NOT EXISTS 自身幂等。
+        Idempotent: applied versions are skipped. ADD COLUMN on an existing column → swallow error_class and continue (idempotent).
+        CREATE TABLE/INDEX IF NOT EXISTS is idempotent by itself.
         """
         await self._ensure_migration_table()
         applied = await self._applied_versions()
@@ -154,8 +154,8 @@ class MigrationRunner:
                 try:
                     await self._exec(sql)
                 except self._error_class:
-                    logger.debug(f"迁移 v{m.version} SQL 幂等跳过 (已存在): {sql[:60]}")
+                    logger.debug(f"migration v{m.version} SQL idempotent skip (already exists): {sql[:60]}")
             await self._record(m)
             applied_now.append(m.version)
-            logger.info(f"迁移 v{m.version} ({m.name}) 已应用 [backend={self.backend}]")
+            logger.info(f"migration v{m.version} ({m.name}) applied [backend={self.backend}]")
         return applied_now

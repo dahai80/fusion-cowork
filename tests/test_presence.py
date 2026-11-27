@@ -42,8 +42,8 @@ def test_list_present_returns_states():
 
 
 def test_timeout_removes_expired():
-    # R-6: 过期 presence 不留 ghost (旧版仅置 online=False 永驻 → 内存泄漏+假在线)。
-    # 超时后 GC 直接删除条目, list_present 不再返回该 user。
+    # R-6: expired presence leaves no ghost (the old version only set online=False and kept the entry forever -> memory leak + fake online).
+    # After timeout the GC deletes the entry outright; list_present no longer returns that user.
     pm = PresenceManager(event_emitter=_noop_emitter(), timeout=0.05)
     pm.heartbeat("s1", "u1")
     time.sleep(0.06)

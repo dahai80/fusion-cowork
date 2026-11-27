@@ -1,7 +1,7 @@
-"""issue #249: run-context token budget + rolling summary — resume 链祖先摘要, 快照预算, skipped 副本可续。
+"""issue #249: run-context token budget + rolling summary — resume-chain ancestor summaries, snapshot budget, skipped copies resumable.
 
-预算逐级降细节 (full → compact → ref-only → 丢摘要键 → 丢条目), 不做中段字符串截断;
-链式 resume 的上下文规模随链深亚线性 (keep_recent + 预算封顶)。
+Budget degrades detail level by level (full → compact → ref-only → drop summary key → drop entries), no mid-string truncation;
+chained resume context size grows sub-linearly with chain depth (keep_recent + budget cap).
 """
 
 from __future__ import annotations
@@ -31,8 +31,9 @@ WF_DEF = {
 
 def test_estimate_tokens_cjk_and_ascii():
     assert estimate_tokens("") == 0
-    assert estimate_tokens("汉字汉字") == 4  # CJK ≈ 1 token/字
-    assert 1 <= estimate_tokens("abcd") <= 2  # ASCII ≈ 4 字符/token
+    # i18n: user-facing
+    assert estimate_tokens("汉字汉字") == 4  # CJK ≈ 1 token per character
+    assert 1 <= estimate_tokens("abcd") <= 2  # ASCII ≈ 4 characters per token
 
 
 def test_snapshot_recent_full_older_summarized():
@@ -52,9 +53,11 @@ def test_snapshot_recent_full_older_summarized():
 
 
 def test_snapshot_skipped_copies_eligible_and_normalized():
-    # 断点续跑副本 (status=skipped) 携带恢复输出 — 链式 resume 必须可选, 归一化 success
+    # Checkpoint-resume copies (status=skipped) carry recovery output — must be selectable for chained resume, normalized to success
     steps = [
+        # i18n: user-facing
         {"node_id": "n1", "status": "skipped", "output_data": {"v": 1}, "summary": "恢复自快照, 跳过重跑"},
+        # i18n: user-facing
         {"node_id": "n2", "status": "skipped", "output_data": {"v": 2}, "summary": "恢复自快照, 跳过重跑"},
     ]
     snapshot, _, _ = build_resume_snapshot("run_y", steps, 2)
@@ -80,7 +83,7 @@ def test_budget_demotes_full_to_compact_to_ref(monkeypatch):
             kinds.add("compact")
         else:
             kinds.add("full")
-    # 贪心最老先降级: 预算满足即停 — 至少有降级发生, 且不做中段截断 (full 只能是原始 500 字符)
+    # Greedy oldest-first degradation: stop once the budget is met — at least one degradation happens, and no mid-string truncation (full must be the original 500 characters)
     assert kinds != {"full"}
     assert "compact" in kinds or "ref" in kinds
     for a in ancestor_new:
@@ -101,9 +104,9 @@ def test_budget_drops_summary_keys_then_entries(monkeypatch):
     ]
     snapshot, ancestor_new, stats = build_resume_snapshot("run_w", steps, 20)
     assert stats["estimated_tokens"] <= 300
-    assert all("output_data" not in s for s in snapshot)  # 全部降到 ref-only
+    assert all("output_data" not in s for s in snapshot)  # all degraded to ref-only
     keyless = [a for a in ancestor_new if "output_summary" not in a]
-    assert len(keyless) < len(ancestor_new) or len(ancestor_new) < 12  # 丢键或丢条目
+    assert len(keyless) < len(ancestor_new) or len(ancestor_new) < 12  # keys dropped or entries dropped
 
 
 def test_compose_ancestor_summary_caps_and_counts():
@@ -111,7 +114,7 @@ def test_compose_ancestor_summary_caps_and_counts():
     newer = [{"node_id": f"q{i}", "output_ref": f"step://b/q{i}"} for i in range(5)]
     merged, truncated = compose_ancestor_summary(prior, newer)
     assert len(merged) == 50 and truncated == 5
-    assert merged[0]["node_id"] == "p0" or merged[0]["node_id"] == "p5"  # 最老被丢, 保留最新
+    assert merged[0]["node_id"] == "p0" or merged[0]["node_id"] == "p5"  # oldest dropped, newest kept
     assert merged[-1]["node_id"] == "q4"
 
 
@@ -128,8 +131,8 @@ def client(monkeypatch, tmp_path):
         store_root=tmp_path / "workflows",
         space_data_dir=tmp_path / "spaces",
     )
-    # 上下文管理进入 = portal 跨请求常驻; 裸 TestClient 每请求一个事件循环,
-    # run 后台任务会随请求结束被取消 (issue #257 看门狗 wait_for 让节点必然 yield 后暴露)
+    # Context-manager entry = portal persists across requests; bare TestClient spins one event loop per request,
+    # so the run's background task gets canceled when the request ends (issue #257 watchdog wait_for forces the node to yield before surfacing)
     with TestClient(app) as tc:
         yield tc, app
 
@@ -144,6 +147,7 @@ def _wait_terminal(tc, run_id, timeout=10.0):
         if r.status_code == 200 and r.json()["status"] not in ("running", "pending"):
             return r.json()
         time.sleep(0.05)
+    # i18n: user-facing
     raise AssertionError("run 未在超时内进入终态")
 
 
@@ -155,7 +159,7 @@ class TestResumeChain:
         run1 = r.json()["run_id"]
         assert _wait_terminal(tc, run1)["status"] == "success"
 
-        # depth 2: run1 从 n9 重跑 → 快照 n1..n8 全量
+        # depth 2: run1 re-runs from n9 → snapshot n1..n8 in full
         r = tc.post(f"/api/runs/{run1}/resume-from", json={"node_id": "n9"}, headers=_headers())
         assert r.status_code == 200, r.text
         d2 = r.json()
@@ -164,24 +168,25 @@ class TestResumeChain:
         assert "context" in d2 and d2["context"]["estimated_tokens"] > 0
         rec2 = _wait_terminal(tc, run2)
         assert rec2["status"] == "success"
-        assert rec2["ancestor_summary"] == []  # 首次 resume 无祖先
+        assert rec2["ancestor_summary"] == []  # first resume has no ancestors
 
-        # depth 3: run2 从 n12 重跑 — skipped 副本 (n1..n8) 可选 + 祖先摘要滚动
+        # depth 3: run2 re-runs from n12 — skipped copies (n1..n8) selectable + rolling ancestor summaries
         r = tc.post(f"/api/runs/{run2}/resume-from", json={"node_id": "n12"}, headers=_headers())
         assert r.status_code == 200, r.text
         d3 = r.json()
         run3 = d3["run_id"]
-        # 修复点: run2 时间线里 n1..n8 是 skipped 副本, 旧代码只认 success → 快照 0 全量重跑;
-        # 现在副本可选 → 快照近 8 步 + 更早步摘要
+        # Fix point: in run2's timeline n1..n8 are skipped copies, old code only accepted success → snapshot 0 and a full re-run;
+        # now copies are selectable → snapshot covers the last 8 steps + summaries for earlier steps
         assert d3["snapshot_steps"] >= 8
         assert d3["context"]["ancestor_new"] >= 1
         rec3 = _wait_terminal(tc, run3)
         assert rec3["status"] == "success"
         anc = rec3["ancestor_summary"]
+        # i18n: user-facing
         assert anc, "depth-3 run 应携带祖先摘要"
         for a in anc:
             assert a["output_ref"].startswith("step://")
-            assert "output_data" not in a  # 摘要行不带完整步体
+            assert "output_data" not in a  # summary lines carry no full step body
 
     def test_context_scales_sublinearly_with_depth(self, client):
         tc, app = client
@@ -202,7 +207,7 @@ class TestResumeChain:
 
         d1_tokens = max(stats_by_depth[0]["estimated_tokens"], 1)
         d3_tokens = stats_by_depth[2]["estimated_tokens"]
-        # 线性整链回放会 3 倍涨; 预算 + 摘要封顶 → 亚线性 (这里 < 2 倍)
+        # A linear full-chain replay would grow 3x; budget + summary cap → sub-linear (here < 2x)
         assert d3_tokens < d1_tokens * 2, (stats_by_depth,)
 
     def test_tiny_budget_refs_only_snapshot(self, client, monkeypatch):
@@ -217,4 +222,4 @@ class TestResumeChain:
         assert d2["context"]["estimated_tokens"] <= 800
         rec = _wait_terminal(tc, d2["run_id"])
         assert rec["status"] in ("success", "completed_with_denials")
-        # 预算内降级不破坏执行 — 全量重跑兜底语义由 engine 快照恢复保证
+        # In-budget degradation does not break execution — the full-re-run fallback semantics are guaranteed by engine snapshot recovery

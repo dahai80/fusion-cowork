@@ -1,9 +1,9 @@
 """issue #221 — DB conventions (architecture/fusion-db-conventions-1030.md).
 
-- DB-2/DB-3: DATABASE_URL 为唯一规范 Postgres 连接名 (FUSION_PG_DSN 旧名仍接受)
-- DB-4: .env.example 占位无凭据
-- DB-9: 连接时幂等建 schema (live 集成测试门控 env)
-- SpaceStore __init__ 无 I/O → env 决议可纯单元测; SessionStore 经 monkeypatch _init_postgres 测决议
+- DB-2/DB-3: DATABASE_URL is the single canonical Postgres connection name (legacy FUSION_PG_DSN still accepted)
+- DB-4: .env.example placeholders carry no credentials
+- DB-9: idempotent schema creation on connect (live integration tests gated by env)
+- SpaceStore __init__ does no I/O → env resolution unit-testable; SessionStore resolution tested via monkeypatched _init_postgres
 """
 
 import os
@@ -151,7 +151,7 @@ _LIVE_DSN = os.environ.get("DATABASE_URL") or os.environ.get("FUSION_PG_DSN")
 @pytest.mark.postgres
 @pytest.mark.skipif(
     not (_HAS_ASYNCPG and _LIVE_DSN),
-    reason="DATABASE_URL 未设 (或无 asyncpg) — 跳过 live Postgres 集成 (issue #221 验收)",
+    reason="DATABASE_URL 未设 (或无 asyncpg) — 跳过 live Postgres 集成 (issue #221 验收)",  # i18n: user-facing
 )
 class TestLivePostgresIdempotentSchema:
     async def test_initialize_idempotent_and_health(self):
@@ -163,7 +163,7 @@ class TestLivePostgresIdempotentSchema:
             assert isinstance(spaces, list)
         finally:
             await s.close()
-        # DB-9: 二次 initialize (同 schema) 幂等
+        # DB-9: a second initialize (same schema) is idempotent
         s2 = SpaceStore(dsn=_LIVE_DSN)
         await s2.initialize()
         await s2.close()

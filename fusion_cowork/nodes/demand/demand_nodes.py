@@ -38,11 +38,11 @@ class PollQqImapNode(BaseNode):
     # issue #585: QQ mail IMAP poll — read-only, UID cursor for restart-safe
     # resume, Message-ID dedupe. One cycle per invocation (cron-driven).
     name = "poll_qq_imap"
-    display_name = "QQ邮箱IMAP轮询"
+    display_name = "QQ邮箱IMAP轮询"  # i18n: user-facing
     category = NodeCategory.IO
     description = "IMAP read-only poll: new mail -> raw_messages (UID cursor + Message-ID dedupe)"
     icon = "mail"
-    default_label = "IMAP轮询"
+    default_label = "IMAP轮询"  # i18n: user-facing
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
@@ -117,11 +117,11 @@ class NormalizeLeadNode(BaseNode):
     # merge into the existing lead and file a duplicate marker instead of
     # wedging the raw mail in a permanent error loop.
     name = "normalize_lead"
-    display_name = "线索归一化"
+    display_name = "线索归一化"  # i18n: user-facing
     category = NodeCategory.IO
     description = "raw_messages -> unified Lead schema (model classify+extract, rule fallback)"
     icon = "inbox"
-    default_label = "线索归一化"
+    default_label = "线索归一化"  # i18n: user-facing
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
@@ -205,11 +205,11 @@ class MatchLeadNode(BaseNode):
     # never dropped; catalog version recorded per row. Re-runs skip leads
     # already scored against the current catalog version.
     name = "match"
-    display_name = "能力目录匹配"
+    display_name = "能力目录匹配"  # i18n: user-facing
     category = NodeCategory.LOGIC
     description = "Lead x capability catalog deterministic scoring (no LLM, re-runnable)"
     icon = "target"
-    default_label = "目录匹配"
+    default_label = "目录匹配"  # i18n: user-facing
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {
@@ -278,11 +278,11 @@ class DualDraftNode(BaseNode):
     # cannot alter the brief); price comes from the catalog quote; output is
     # stored drafts + optional ntfy ping. Never sends anything.
     name = "dual_draft"
-    display_name = "双模型草稿"
+    display_name = "双模型草稿"  # i18n: user-facing
     category = NodeCategory.AI_PROCESSING
     description = "matched Lead -> draft_a (local) + draft_b (cloud GLM-5), stored drafts only, never sends"
     icon = "pen"
-    default_label = "双草稿"
+    default_label = "双草稿"  # i18n: user-facing
 
     def get_params_schema(self) -> Dict[str, Any]:
         return {

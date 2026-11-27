@@ -110,7 +110,7 @@ class CapabilityStore:
         self._path = Path(resolved)
         self._lock = threading.RLock()
         self._data: Dict[str, Any] = self._load()
-        logger.info(f"能力池存储: {self._path} (工作区 {len(self._data.get('workspaces', {}))} 个)")
+        logger.info(f"capability store: {self._path} ({len(self._data.get('workspaces', {}))} workspaces)")
 
     @property
     def path(self) -> Path:
@@ -122,10 +122,10 @@ class CapabilityStore:
         except FileNotFoundError:
             return {"version": 1, "workspaces": {}}
         except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"能力池文件损坏, 重建空池 {self._path}: {e}")
+            logger.warning(f"capability store file corrupted, rebuilding empty store {self._path}: {e}")
             return {"version": 1, "workspaces": {}}
         if not isinstance(raw, dict) or not isinstance(raw.get("workspaces"), dict):
-            logger.warning(f"能力池结构非法, 重建空池 {self._path}")
+            logger.warning(f"capability store structure invalid, rebuilding empty store {self._path}")
             return {"version": 1, "workspaces": {}}
         raw.setdefault("version", 1)
         return raw
@@ -181,8 +181,10 @@ class CapabilityStore:
         actor: str = "",
     ) -> CapabilityEntry:
         if cap_type not in CAPABILITY_TYPES:
+            # i18n: user-facing
             raise ValueError(f"非法能力类型: {cap_type}")
         if not cap_id:
+            # i18n: user-facing
             raise ValueError("capability id 不能为空")
         with self._lock:
             existing = self._entry(workspace_id, cap_type, cap_id)
@@ -204,7 +206,7 @@ class CapabilityStore:
             )
             entry.audit = entry.audit[-MAX_AUDIT:]
             self._put(workspace_id, entry)
-            logger.info(f"能力安装: ws={normalize_workspace(workspace_id)} {cap_id} (actor={actor or '-'})")
+            logger.info(f"capability installed: ws={normalize_workspace(workspace_id)} {cap_id} (actor={actor or '-'})")
             return entry
 
     def uninstall(self, workspace_id: Any, cap_type: str, cap_id: str, *, actor: str = "") -> bool:
@@ -213,7 +215,9 @@ class CapabilityStore:
             removed = bucket.get(cap_type, {}).pop(cap_id, None) is not None
             if removed:
                 self._save()
-                logger.info(f"能力卸载: ws={normalize_workspace(workspace_id)} {cap_id} (actor={actor or '-'})")
+                logger.info(
+                    f"capability uninstalled: ws={normalize_workspace(workspace_id)} {cap_id} (actor={actor or '-'})"
+                )
             return removed
 
     def set_enabled(
@@ -227,7 +231,7 @@ class CapabilityStore:
             entry.audit.append({"at": time.time(), "action": "enable" if enabled else "disable", "actor": actor})
             entry.audit = entry.audit[-MAX_AUDIT:]
             self._put(workspace_id, entry)
-            logger.info(f"能力开关: ws={normalize_workspace(workspace_id)} {cap_id} enabled={entry.enabled}")
+            logger.info(f"capability toggle: ws={normalize_workspace(workspace_id)} {cap_id} enabled={entry.enabled}")
             return entry
 
     def grant_scopes(
@@ -242,7 +246,7 @@ class CapabilityStore:
             entry.audit.append({"at": time.time(), "action": "scope_grant", "actor": actor, "scopes": merged})
             entry.audit = entry.audit[-MAX_AUDIT:]
             self._put(workspace_id, entry)
-            logger.info(f"连接器 scope 授权: ws={normalize_workspace(workspace_id)} {cap_id} scopes={merged}")
+            logger.info(f"connector scope grant: ws={normalize_workspace(workspace_id)} {cap_id} scopes={merged}")
             return entry
 
     def set_credentials(self, workspace_id: Any, cap_id: str, credentials: Dict[str, str]) -> bool:
@@ -255,8 +259,8 @@ class CapabilityStore:
             entry.audit = entry.audit[-MAX_AUDIT:]
             self._put(workspace_id, entry)
             logger.info(
-                f"连接器凭据已保存: ws={normalize_workspace(workspace_id)} {cap_id} "
-                f"keys={sorted(credentials)} (值不落日志)"
+                f"connector credentials saved: ws={normalize_workspace(workspace_id)} {cap_id} "
+                f"keys={sorted(credentials)} (values not logged)"
             )
             return True
 
@@ -270,7 +274,7 @@ class CapabilityStore:
             entry.audit.append({"at": time.time(), "action": "oauth_revoked", "actor": ""})
             entry.audit = entry.audit[-MAX_AUDIT:]
             self._put(workspace_id, entry)
-            logger.info(f"连接器凭据已撤销: ws={normalize_workspace(workspace_id)} {cap_id}")
+            logger.info(f"connector credentials revoked: ws={normalize_workspace(workspace_id)} {cap_id}")
             return True
 
     def record_usage(

@@ -78,7 +78,7 @@ class TestLinkedPrOp:
             "pr_url": "https://github.com/org/x/pull/42",
             "pr_number": 42,
             "ci_status": "success",
-            # issue #362: 链接强度 — PR body 无关闭关键词时 mention
+            # issue #362: link strength — mention when the PR body has no closing keyword
             "pr_link_strength": "mention",
         }
 
@@ -93,7 +93,7 @@ class TestLinkedPrOp:
             {"op": "linked_pr", "repo": "org/x", "issue_number": 5, "require": True}, {"timeline": TIMELINE_NO_PR}
         )
         assert res.status.value == "failed"
-        assert "先提 PR 再进验收" in res.error
+        assert "先提 PR 再进验收" in res.error  # i18n: user-facing
         assert res.data["found"] is False
 
     def test_require_true_passes_with_pr(self):

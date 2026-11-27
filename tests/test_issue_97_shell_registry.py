@@ -1,4 +1,4 @@
-"""#97: web serve shell 网关注册 — env 门控 / manifest 加载 / 注册-心跳-重注册循环。"""
+"""#97: web serve shell gateway registration — env gating / manifest loading / register-heartbeat-re-register loop."""
 
 from __future__ import annotations
 

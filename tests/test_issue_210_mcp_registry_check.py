@@ -1,7 +1,8 @@
-"""issue #210: mcp_client 注册表审计 — 握手前对照 mcp-server-registry.json, warn 级不阻断。
+"""issue #210: mcp_client registry audit — checked against mcp-server-registry.json before the handshake, warn-level non-blocking.
 
-两组: sys.modules 注入假 fusion_core (CI 裸装也跑) + 真实 fusion-core 走临时注册表
-(pytest.importorskip 守卫), 校验 verdict 分类、correlation_id、审计日志与放行语义。
+Two groups: fake fusion_core injected via sys.modules (runs even on bare CI) + real fusion-core against a
+temporary registry (guarded by pytest.importorskip), verifying verdict classification, correlation_id,
+audit logging, and allow-through semantics.
 """
 
 from __future__ import annotations
@@ -134,7 +135,7 @@ class TestWarnLevelVerdicts:
         with caplog.at_level(logging.DEBUG, logger=LOGGER_NAME):
             result = await node.execute({})
         assert result.status.value == "success"
-        warns = [m for m in _logs(caplog, logging.WARNING) if "注册表检查失败" in m]
+        warns = [m for m in _logs(caplog, logging.WARNING) if "registry check failed" in m]
         assert warns
         assert "registry file corrupt" in warns[0]
         assert _TRACE_RE.search(warns[0])
@@ -151,7 +152,7 @@ class TestWarnLevelVerdicts:
             second = await node.execute({})
         assert first.status.value == "success"
         assert second.status.value == "success"
-        warns = [m for m in _logs(caplog, logging.WARNING) if "降级跳过" in m]
+        warns = [m for m in _logs(caplog, logging.WARNING) if "degraded/skipped" in m]
         assert len(warns) == 1
         assert "url=http://127.0.0.1:11500/mcp" in warns[0]
         assert "tool=t" in warns[0]

@@ -1,4 +1,4 @@
-"""issue #233: artifact 卡片 — 引擎 ref 提取 + 卡片代理路由 + fusion-artifacts-engine v0.6.0 契约消费。"""
+"""issue #233: artifact cards — engine ref extraction + card proxy route + fusion-artifacts-engine v0.6.0 contract consumption."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ CARD_PAYLOAD = {
     "type": "report",
     "kind": "document",
     "current_version": 3,
-    "summary": "十月对账异常项汇总",
+    "summary": "十月对账异常项汇总",  # i18n: user-facing
     "source_module": "fusion-doc",
     "is_starred": True,
 }
@@ -49,13 +49,13 @@ class TestFindArtifactRefs:
         from fusion_cowork.server.web_api import find_artifact_refs
 
         text = (
-            "结果 [Artifact: B 报告 | ID: b_1 | Version: v2 | Type: report | Size: 4096] "
-            "与 [Artifact: A 图表 | ID: a_1 | v1], 重复 [Artifact: B 副本 | ID: b_1 | v3]"
+            "结果 [Artifact: B 报告 | ID: b_1 | Version: v2 | Type: report | Size: 4096] "  # i18n: user-facing
+            "与 [Artifact: A 图表 | ID: a_1 | v1], 重复 [Artifact: B 副本 | ID: b_1 | v3]"  # i18n: user-facing
         )
         refs = find_artifact_refs(text)
         assert refs == [
-            {"artifact_id": "b_1", "name": "B 报告"},
-            {"artifact_id": "a_1", "name": "A 图表"},
+            {"artifact_id": "b_1", "name": "B 报告"},  # i18n: user-facing
+            {"artifact_id": "a_1", "name": "A 图表"},  # i18n: user-facing
         ]
 
     def test_non_string_or_no_match_returns_empty(self):
@@ -67,7 +67,7 @@ class TestFindArtifactRefs:
         assert find_artifact_refs("[Artifact: missing id pipe]") == []
 
     def test_ref_text_roundtrip(self):
-        # _artifact_ref_text 重建的 ref 仍可被 find_artifact_refs 提取 (卡片注入 composer 后闭环)
+        # Refs rebuilt by _artifact_ref_text are still extractable by find_artifact_refs (closing the loop after card injection into the composer)
         from fusion_cowork.server.web_api import _artifact_ref_text, find_artifact_refs
 
         card = {
@@ -75,7 +75,7 @@ class TestFindArtifactRefs:
             "artifact_id": "art_1",
             "current_version": 3,
             "type": "report",
-            "summary": "十月对账异常项汇总",
+            "summary": "十月对账异常项汇总",  # i18n: user-facing
         }
         refs = find_artifact_refs(_artifact_ref_text(card))
         assert refs == [{"artifact_id": "art_1", "name": "Q3 Report"}]
@@ -102,12 +102,12 @@ class TestFetchArtifactCard:
             "type": "report",
             "kind": "document",
             "current_version": 3,
-            "summary": "十月对账异常项汇总",
+            "summary": "十月对账异常项汇总",  # i18n: user-facing
             "source_module": "fusion-doc",
             "is_starred": True,
             "deep_link": "/shell/fusion-artifacts/#/a/art_1",
         }
-        # 契约路径 + Bearer 鉴权
+        # Contract path + Bearer auth
         assert seen["url"].endswith("/api/v1/artifacts/art_1")
         assert seen["auth"] == "Bearer sek-233"
 
@@ -131,7 +131,7 @@ class TestFetchArtifactCard:
             return httpx.Response(404, json={"error": "not found"})
 
         assert asyncio.run(web_api._fetch_artifact_card("art_1", transport=httpx.MockTransport(handler))) is None
-        # 非法 id (路径注入面) 不发请求
+        # Invalid id (path-injection surface) sends no request
         assert (
             asyncio.run(web_api._fetch_artifact_card("../etc/passwd", transport=httpx.MockTransport(handler))) is None
         )
@@ -140,7 +140,7 @@ class TestFetchArtifactCard:
     def test_connection_failure_returns_none(self, monkeypatch):
         from fusion_cowork.server import web_api
 
-        monkeypatch.setenv("FUSION_ARTIFACTS_URL", "http://127.0.0.1:1")  # 不可达端口
+        monkeypatch.setenv("FUSION_ARTIFACTS_URL", "http://127.0.0.1:1")  # unreachable port
         assert asyncio.run(web_api._fetch_artifact_card("art_1")) is None
 
 
@@ -157,7 +157,7 @@ class TestArtifactRefRoute:
                 "type": "report",
                 "kind": "document",
                 "current_version": 3,
-                "summary": "十月对账异常项汇总",
+                "summary": "十月对账异常项汇总",  # i18n: user-facing
                 "source_module": "fusion-doc",
                 "is_starred": True,
                 "deep_link": "/shell/fusion-artifacts/#/a/art_1",
@@ -168,7 +168,7 @@ class TestArtifactRefRoute:
         assert r.status_code == 200, r.text
         card = r.json()["artifact"]
         assert card["deep_link"] == "/shell/fusion-artifacts/#/a/art_1"
-        # ref_text 是引擎 ~30 token 轻量格式, 可被 find_artifact_refs 再提取
+        # ref_text is the engine's ~30-token lightweight format, re-extractable by find_artifact_refs
         assert "[Artifact: Q3 Report | ID: art_1" in card["ref_text"]
 
     def test_route_upstream_unavailable_502(self, client, monkeypatch):

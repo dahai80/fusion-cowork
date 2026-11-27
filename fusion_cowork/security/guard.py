@@ -1,10 +1,10 @@
-"""fusion-guard 集成客户端 (issue #73)。
+"""fusion-guard integration client (issue #73).
 
-UDS JSON-RPC over /tmp/fusion-guard.sock, 换行分隔帧。
-HIGH_RISK_NODES 委托 guard.evaluate; 低风险不走 guard。
-guard 不可达 → 缓存规则 fail-closed (H2)。
+UDS JSON-RPC over /tmp/fusion-guard.sock, newline-delimited frames.
+HIGH_RISK_NODES delegate to guard.evaluate; low-risk nodes skip the guard.
+Guard unreachable → cached rules fail-closed (H2).
 
-纯 cowork 客户端, 不依赖 fusion-guard fg-pyo3 wheel — 直接对 wire contract 编程。
+Pure cowork client, no dependency on the fusion-guard fg-pyo3 wheel — programmed directly against the wire contract.
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ class GuardClient:
             )
             return True
         except (TimeoutError, OSError) as e:
-            logger.warning(f"guard UDS 连接失败 {self._sock_path}: {e}")
+            logger.warning(f"guard UDS connection failed {self._sock_path}: {e}")
             self._writer = None
             self._reader = None
             return False
@@ -115,7 +115,7 @@ class GuardClient:
                 await asyncio.wait_for(self._writer.drain(), timeout=self._timeout)
                 reply = await asyncio.wait_for(self._read_reply(), timeout=self._timeout)
             except (TimeoutError, OSError, json.JSONDecodeError, asyncio.IncompleteReadError) as e:
-                logger.warning(f"guard _call 失败 method={method}: {e}")
+                logger.warning(f"guard _call failed method={method}: {e}")
                 await self.close()
                 return None
             if reply is None:
@@ -131,13 +131,13 @@ class GuardClient:
         try:
             raw = await self._reader.readuntil(_FRAMING_NEWLINE)
         except asyncio.IncompleteReadError as e:
-            # 上游契约: 响应原始 JSON 无尾换行 → readuntil 抛 IncompleteReadError, 取已读部分
+            # Upstream contract: raw JSON response without trailing newline → readuntil raises IncompleteReadError, use the partial read
             chunk = e.partial
             if not chunk:
                 return None
             return json.loads(chunk.decode("utf-8").strip())
         except asyncio.LimitOverrunError:
-            logger.warning("guard 响应超 _MAX_LINE_BYTES, 丢弃")
+            logger.warning("guard response exceeds _MAX_LINE_BYTES, discarding")
             await self.close()
             return None
         return json.loads(raw.decode("utf-8").strip())
@@ -175,7 +175,7 @@ class GuardClient:
         try:
             return GuardVerdict.from_dict(result)
         except (TypeError, ValueError) as e:
-            logger.warning(f"guard evaluate 响应解析失败: {e}")
+            logger.warning(f"guard evaluate response parse failed: {e}")
             return None
 
     async def confirm(
@@ -210,7 +210,7 @@ def load_cached_rules() -> Optional[Tuple[list, int]]:
         epoch = int(data.get("epoch", 0))
         return rules, epoch
     except (OSError, json.JSONDecodeError, ValueError) as e:
-        logger.debug(f"guard 缓存规则读取失败: {e}")
+        logger.debug(f"guard cached rules read failed: {e}")
         return None
 
 
@@ -223,7 +223,7 @@ def save_cached_rules(rules: list, epoch: int) -> None:
             f.write(payload)
         os.replace(tmp, RULES_CACHE_FILE)
     except OSError as e:
-        logger.warning(f"guard 缓存规则写入失败: {e}")
+        logger.warning(f"guard cached rules write failed: {e}")
 
 
 def get_cached_epoch() -> int:
@@ -288,7 +288,7 @@ def get_guard_client() -> Optional[GuardClient]:
         return None
     if _guard_client is None:
         _guard_client = GuardClient()
-        logger.info("guard 集成已启用, UDS=%s", DEFAULT_SOCK)
+        logger.info("guard integration enabled, UDS=%s", DEFAULT_SOCK)
     return _guard_client
 
 

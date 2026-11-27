@@ -1,8 +1,9 @@
 """Durable HITL approval journal (issue #463).
 
-审批决定日志 — SQLite 落盘, 服务器崩溃后审批不丢: 待审批在闸门入口记录,
-决定 (approve/deny/timeout) 落库; 重启恢复时 pending 行可重建进审批队列,
-已有决定在闸门重入时直接重放 (durable resumable wait)。
+Approval decision journal — SQLite persistence, approvals survive server crashes: pending approvals are
+recorded at the gate entry, decisions (approve/deny/timeout) are committed to the DB; on restart recovery
+pending rows can be rebuilt into the approval queue, and existing decisions replay directly on gate re-entry
+(durable resumable wait).
 """
 
 from __future__ import annotations
@@ -57,7 +58,7 @@ class ApprovalJournal:
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
-        logger.info(f"审批日志就绪: {self._path}")
+        logger.info(f"Approval journal ready: {self._path}")
 
     def close(self) -> None:
         try:
@@ -96,7 +97,7 @@ class ApprovalJournal:
                 ),
             )
             self._conn.commit()
-        logger.info(f"审批日志: pending action={action_id} run={run_id} node={node_id} tool={tool_name}")
+        logger.info(f"Approval journal: pending action={action_id} run={run_id} node={node_id} tool={tool_name}")
 
     def resolve(self, action_id: str, approved: bool, decided_by: str = "", comments: str = "") -> bool:
         with self._lock:
@@ -115,11 +116,13 @@ class ApprovalJournal:
             self._conn.commit()
             ok = cur.rowcount > 0
         if ok:
-            logger.info(f"审批日志: {'approved' if approved else 'denied'} action={action_id} by={decided_by or '-'}")
+            logger.info(
+                f"Approval journal: {'approved' if approved else 'denied'} action={action_id} by={decided_by or '-'}"
+            )
         return ok
 
     def resolve_run(self, run_id: str, approved: bool, decided_by: str = "", comments: str = "") -> int:
-        # run 级批量落账 — resolve_hitl 无 action_id 上下文时用
+        # run-level batch resolution — used when resolve_hitl has no action_id context
         with self._lock:
             cur = self._conn.execute(
                 "UPDATE approval_journal SET status=?, approved=?, decided_by=?, comments=?, decided_at=? "
@@ -136,7 +139,9 @@ class ApprovalJournal:
             self._conn.commit()
             n = cur.rowcount
         if n:
-            logger.info(f"审批日志: run={run_id} {'approved' if approved else 'denied'} x{n} by={decided_by or '-'}")
+            logger.info(
+                f"Approval journal: run={run_id} {'approved' if approved else 'denied'} x{n} by={decided_by or '-'}"
+            )
         return n
 
     def decision_for(self, run_id: str, node_id: str) -> Optional[Dict[str, Any]]:
@@ -147,8 +152,9 @@ class ApprovalJournal:
         ).fetchone()
         if not row:
             return None
-        # issue #554: 恢复路径同一扫描 — 持久化的待审批 params 重放进 run 前过
-        # artifact_scan, 命中注入/凭据规则的决定视为无效 (不重放, 入隔离区)
+        # issue #554: recovery path runs the same scan — persisted pending params pass through
+        # artifact_scan before replaying into the run; decisions hitting injection/credential rules
+        # are treated as invalid (not replayed, moved to quarantine)
         entry = dict(row)
         try:
             from .kernel_gates import get_quarantine, scan_or_quarantine
@@ -168,8 +174,9 @@ class ApprovalJournal:
         return entry
 
     def consume_run_node(self, run_id: str, node_id: str) -> int:
-        # issue #507: 决定消费 — 引擎实际采用某次决定 (含重放/超时) 时把该 (run, node)
-        # 的已决行翻成 'consumed', 修订回路对同一节点的下一次闸门评估不再重放旧决定
+        # issue #507: decision consumption — when the engine actually adopts a decision (replay/timeout included)
+        # it flips that (run, node)'s decided rows to 'consumed', so the revision loop's next gate evaluation
+        # for the same node does not replay the old decision
         with self._lock:
             cur = self._conn.execute(
                 "UPDATE approval_journal SET status='consumed' "
@@ -179,7 +186,7 @@ class ApprovalJournal:
             self._conn.commit()
             n = cur.rowcount
         if n:
-            logger.info(f"审批日志: 决定已消费 run={run_id} node={node_id} x{n} (issue #507)")
+            logger.info(f"Approval journal: decisions consumed run={run_id} node={node_id} x{n} (issue #507)")
         return n
 
     def pending(self) -> List[Dict[str, Any]]:

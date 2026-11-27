@@ -1,12 +1,12 @@
-"""数据库后端模块 (v0.4.0 Stage 3).
+"""Database backend module (v0.4.0 Stage 3).
 
-- migrations: 版本化迁移 (schema_migrations 表 + MigrationRunner)
-- rls: Postgres 行级安全策略 (纵深防御租户隔离)
-- backup: pg_dump 备份/恢复
-- placeholders: ? → $1/$2 占位符归一化 (跨后端 SQL 复用)
+- migrations: versioned migrations (schema_migrations table + MigrationRunner)
+- rls: Postgres row-level security policies (defense-in-depth tenant isolation)
+- backup: pg_dump backup/restore
+- placeholders: ? → $1/$2 placeholder normalization (cross-backend SQL reuse)
 
-单 SpaceStore 类按 dsn 选后端: 传 dsn 或 env DATABASE_URL (旧名 FUSION_PG_DSN, issue #221) → postgres (asyncpg);
-只传 data_dir → sqlite (aiosqlite)。946 测试零改动 (仍传 data_dir)。
+A single SpaceStore class selects the backend by dsn: pass dsn or env DATABASE_URL (legacy name FUSION_PG_DSN, issue #221) → postgres (asyncpg);
+pass data_dir only → sqlite (aiosqlite). 946 tests unchanged (still pass data_dir).
 """
 
 from fusion_cowork.db.backup import BackupManager

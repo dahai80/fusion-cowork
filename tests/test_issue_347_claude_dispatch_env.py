@@ -1,8 +1,9 @@
-"""issue #347: claude_dispatch env 白名单透传 claude 认证变量 + 崩溃输出可诊断。
+"""issue #347: claude_dispatch env whitelist passes through claude auth variables + crash output stays diagnosable.
 
-env 白名单此前只有 PATH/HOME/LANG/GITHUB_TOKEN — 依赖 ANTHROPIC_AUTH_TOKEN
-认证的宿主上 claude CLI 未登录退出 1 (daemon 上下文无 Keychain 必挂)。
-现在四个认证变量按存在透传; 非零退出时会话输出头并入错误。
+The env whitelist previously only had PATH/HOME/LANG/GITHUB_TOKEN — on hosts authenticating via
+ANTHROPIC_AUTH_TOKEN, the claude CLI exited 1 when not logged in (no Keychain in daemon context,
+always fails). Now the four auth variables pass through when present; on non-zero exit the
+session output head is merged into the error.
 """
 
 import stat
@@ -21,7 +22,7 @@ def _probe(tmp_path, probe_lines):
 
 class TestClaudeDispatchEnv:
     async def test_auth_token_passthrough(self, tmp_path, monkeypatch):
-        # 父环境有 ANTHROPIC_AUTH_TOKEN → 子进程可见; 缺失则模拟未登录退出 1
+        # Parent env has ANTHROPIC_AUTH_TOKEN → visible to the subprocess; when absent, simulate logged-out exit 1
         monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "tok-347")
         binp = _probe(
             tmp_path,
@@ -50,7 +51,7 @@ class TestClaudeDispatchEnv:
         assert "ANTHROPIC_BASE_URL=v-ANTHROPIC_BASE_URL" in content
 
     async def test_unauthenticated_crash_includes_output_head(self, tmp_path, monkeypatch):
-        # 非零退出: 会话输出头并入错误 — 无需复现即可诊断 (issue 次要诉求)
+        # Non-zero exit: session output head merged into the error — diagnosable without reproducing (issue secondary ask)
         for var in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
             monkeypatch.delenv(var, raising=False)
         binp = _fake_claude(tmp_path, ['echo "Not logged in · Please run /login" >&2'], exit_code=1)

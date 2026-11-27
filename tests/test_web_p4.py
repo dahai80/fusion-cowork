@@ -1,14 +1,14 @@
-"""P3-2 + P4 web 迁移批次 (migration doc §6): W19 guard 审批 + W21 集群面板 + W9 交付审查 + W18 用量。
+"""P3-2 + P4 web migration batch (migration doc §6): W19 guard approvals + W21 cluster panel + W9 delivery review + W18 usage.
 
 Contract:
-- GET /api/permissions/pending: list_pending_guard 快照 (空/有项)。
-- POST /api/permissions/pending/{aid}/confirm: guard 未启用 confirmed=false;
-  本地规则在 confirm 成功后追加 (approve/deny)。
-- GET /api/cluster/state: 集群关闭 → cluster_enabled=false 空结构;
-  开启 + 种子数据 → nodes/vram/total。
-- POST /api/space/spaces/{sid}/artifacts/{aid}/review: owner/admin 审查
-  通过/退回, 状态落 metadata.review; 非审查者 PermissionError。
-- GET /api/usage: 空间域计数 + 配额字段 (默认 unlimited)。
+- GET /api/permissions/pending: list_pending_guard snapshot (empty / with items).
+- POST /api/permissions/pending/{aid}/confirm: guard disabled → confirmed=false;
+  local rules appended after a successful confirm (approve/deny).
+- GET /api/cluster/state: cluster off → cluster_enabled=false empty structure;
+  on + seeded data → nodes/vram/total.
+- POST /api/space/spaces/{sid}/artifacts/{aid}/review: owner/admin review
+  approve/reject, status stored in metadata.review; non-reviewer PermissionError.
+- GET /api/usage: space-domain counts + quota fields (default unlimited).
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ class TestGuardApprovals:
         pm._pending_guard_approvals["act-2"] = "FileMove"
         listed = tc.get("/api/permissions/pending", headers=_auth()).json()["approvals"]
         assert {a["action_id"] for a in listed} == {"act-1", "act-2"}
-        # guard 未启用 → confirm 返回 False (fail-closed, 不加本地规则)
+        # guard not enabled → confirm returns False (fail-closed, no local rule added)
         r1 = tc.post("/api/permissions/pending/act-1/confirm", headers=_auth(), json={"approved": True})
         assert r1.status_code == 200
         assert r1.json()["confirmed"] is False
@@ -101,7 +101,7 @@ class TestClusterPanel:
         import fusion_cowork.distributed_state as ds
         from fusion_cowork.distributed_state import DistributedStateStore
 
-        # 直接注入 tmp 路径 store (默认路径写 home, 测试禁止)
+        # Inject a tmp-path store directly (the default path writes to home, forbidden in tests)
         store = DistributedStateStore(state_path=str(tmp_path / "cluster-state.json"), node_id="node-a")
         ds._STORE = store
         store.heartbeat(host="127.0.0.1", port=11461)
@@ -123,12 +123,13 @@ class TestClusterPanel:
 
 
 def _seed_space_with_artifact(tc):
-    """建 space + artifact, 返回 (space_id, artifact_id)。"""
+    """Create a space + artifact, return (space_id, artifact_id)."""
     space = tc.post("/api/space/spaces", headers=_auth(), json={"name": "review-space", "description": "w9"}).json()
     sid = space["id"]
     art = tc.post(
         f"/api/space/spaces/{sid}/artifacts",
         headers=_auth(),
+        # i18n: user-facing
         json={"name": "周报.md", "artifact_type": "document", "content": "# 周报"},
     ).json()
     return sid, art["id"]
@@ -151,7 +152,7 @@ class TestArtifactReview:
         review = _json.loads(art["metadata"])["review"]
         assert review["status"] == "approved"
         assert review["note"] == "ok"
-        # 退回 — 重审覆盖
+        # Reject — re-review overwrites
         r2 = tc.post(f"/api/space/spaces/{sid}/artifacts/{aid}/review", headers=_auth(), json={"approved": False})
         assert r2.status_code == 200
         art2 = tc.get(f"/api/space/spaces/{sid}/artifacts/{aid}", headers=_auth()).json()
@@ -216,7 +217,7 @@ class TestMobileOverview:
         app.state.permission_manager._pending_guard_approvals["act-9"] = "ShellExec"
         body = tc.get("/api/mobile/overview", headers=_auth()).json()
         assert [r["run_id"] for r in body["runs"]] == ["run_x"]
-        # issue #124: pending 合并 guard+local, guard 条目带 source=guard
+        # issue #124: pending merges guard+local, guard entries carry source=guard
         assert body["pending_approvals"] == [{"action_id": "act-9", "tool_name": "ShellExec", "source": "guard"}]
 
 
@@ -248,8 +249,8 @@ class TestDeliverToDesktop:
         from fusion_cowork.server.sync import CrossDeviceSync, Device, DeviceStatus
 
         sync = CrossDeviceSync()
-        # host/port 指向必拒端口 — 默认 localhost:11437 在本机真有同步服务时
-        # 连接会成功, 测试变环境相关 (register_device 强制 ONLINE)
+        # host/port point to a definitely-rejected port — the default localhost:11437 would actually connect
+        # if a sync service runs locally, making the test environment-dependent (register_device forces ONLINE)
         sync.register_device(
             Device(
                 device_id="phone-2",
@@ -271,14 +272,14 @@ class TestDeliverToDesktop:
             "finished_at": None,
             "error": None,
         }
-        # 离线设备 → delivered=False (诚实, 不假装送达)
+        # Offline device → delivered=False (honest, does not pretend delivery)
         r_off = tc2.post("/api/deliver", headers=_auth(), json={"run_id": "run_y", "target_device_id": "phone-2"})
         assert r_off.status_code == 200
         assert r_off.json()["delivered"] is False
-        # 未知设备 → False
+        # Unknown device → False
         r_unknown = tc2.post("/api/deliver", headers=_auth(), json={"run_id": "run_y", "target_device_id": "nope"})
         assert r_unknown.json()["delivered"] is False
-        # 广播 (无在线设备, 零连接尝试) → True (广播语义)
+        # Broadcast (no online devices, zero connection attempts) → True (broadcast semantics)
         r_b = tc2.post("/api/deliver", headers=_auth(), json={"run_id": "run_y"})
         assert r_b.status_code == 200
         assert r_b.json()["receiver"] == "broadcast"

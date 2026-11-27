@@ -44,11 +44,11 @@ _DOMAIN_RULES: List[tuple] = [
 ]
 _SPAM_MARKERS = (
     "unsubscribe",
-    "退订",
+    "退订",  # i18n: user-facing
     "promotion",
     "newsletter",
     "lottery",
-    "中奖",
+    "中奖",  # i18n: user-facing
     "bitcoin",
     "crypto profit",
     "seo services offer",
@@ -89,7 +89,7 @@ _BUDGET_RE = re.compile(
     re.IGNORECASE,
 )
 _PLATFORM_ID_RE = re.compile(r"(?:job|project|order|gig)\b[^A-Za-z0-9]{0,10}~?([A-Za-z0-9]{6,20})\b", re.IGNORECASE)
-_TITLE_RE = re.compile(r"^(?:subject|title|position)\s*[:：]\s*(.{5,80})$", re.IGNORECASE | re.MULTILINE)
+_TITLE_RE = re.compile(r"^(?:subject|title|position)\s*[:\uff1a]\s*(.{5,80})$", re.IGNORECASE | re.MULTILINE)
 
 
 def classify_rules(subject: str, from_addr: str, body_text: str) -> Dict[str, Any]:

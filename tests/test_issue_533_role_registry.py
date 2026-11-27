@@ -24,7 +24,7 @@ except ImportError as exc:  # pragma: no cover
 
 class TestSingleRepresentation:
     def test_member_spec_is_the_composed_kernel_member(self):
-        role = BusinessRole("shell_operator", "命令行执行", "executor_shell", duties=["run cmd"])
+        role = BusinessRole("shell_operator", "命令行执行", "executor_shell", duties=["run cmd"])  # i18n: user-facing
         assert isinstance(role.member, TeamMember)
         # derived properties read the SAME object — no dual representation
         assert role.role_id is role.member.name
@@ -57,7 +57,7 @@ class TestRegistryAuthorityUnchanged:
         assert not hasattr(planner.member, "acceptor")
         assert not hasattr(planner.member, "deliverables")
         assert planner.acceptor == "coordinator"
-        assert planner.deliverables == "结构化子任务清单 (JSON)"
+        assert planner.deliverables == "结构化子任务清单 (JSON)"  # i18n: user-facing
 
     def test_export_definition_still_valid(self):
         from fusion_harness.team import TeamDefinition

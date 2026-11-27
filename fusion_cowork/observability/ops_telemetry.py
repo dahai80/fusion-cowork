@@ -157,7 +157,7 @@ class OpsTelemetry:
             "attempts": attempts,
             "failure_signature": failure_sig,
         }
-        if json_repairs > 0:  # issue #554: LLM JSON 修复梯触发次数 (0 不落盘)
+        if json_repairs > 0:  # issue #554: LLM JSON repair-ladder trigger count (0 not persisted)
             payload["json_repairs"] = json_repairs
         await self._emit(
             {

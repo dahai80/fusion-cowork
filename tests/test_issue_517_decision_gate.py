@@ -254,7 +254,7 @@ class TestValidationAndRegistry:
         assert any(n["name"] == "decision_gate" for n in NodeRegistry.list())
         from fusion_cowork import NODE_NAME_ALIASES
 
-        assert NODE_NAME_ALIASES["决策门"] == "decision_gate"
+        assert NODE_NAME_ALIASES["决策门"] == "decision_gate"  # i18n: user-facing
 
     def test_decision_url_env_override(self, monkeypatch):
         monkeypatch.setenv("FUSION_MLX_DECISION_URL", "http://127.0.0.1:19999")

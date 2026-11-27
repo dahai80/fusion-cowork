@@ -43,7 +43,7 @@ from .models import SpaceMessage
 logger = logging.getLogger(__name__)
 
 # @mention tokens: up to whitespace/punctuation, CJK-friendly
-_MENTION_RE = re.compile(r"@([^\s@,，。;；!！?？:：()（）\[\]【】]+)")
+_MENTION_RE = re.compile(r"@([^\s@,\uff0c\u3002;\uff1b!\uff01?\uff1f:\uff1a()\uff08\uff09\[\]\u3010\u3011]+)")
 _META_VERSION = 1
 
 

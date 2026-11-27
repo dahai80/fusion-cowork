@@ -1,4 +1,4 @@
-"""issue #225: 内联审批 — 审批卡 "编辑参数" 覆盖并入被闸节点输入 + confirm 路由 edited_params 透传。"""
+"""issue #225: inline approvals — approval card "edit params" override merged into the gated node input + confirm route edited_params passthrough."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ class _ProbeNode(BaseNode):
     name = HITL_NODE
     display_name = "HITL Probe 225"
     category = NodeCategory.TOOL
-    description = "测试用: 高风险探针 (#225)"
+    description = "测试用: 高风险探针 (#225)"  # i18n: user-facing
     icon = "🧪"
     default_label = "Probe"
 
@@ -61,7 +61,7 @@ async def _wait_hitl(engine: WorkflowEngine, exec_id: str, timeout: float = 5.0)
 
 class TestHitlParamOverride:
     async def test_edited_params_merge_into_gated_node_input(self, pm_no_guard):
-        # 编辑参数 + 一次性批准 → 覆盖并入本节点输入, 原参数保留未覆盖键
+        # Edit params + once-only approval → override merged into this node's input, original params keep uncovered keys
         _ProbeNode.calls = 0
         _ProbeNode.received = {}
         eng = WorkflowEngine(permission_manager=pm_no_guard)
@@ -74,11 +74,11 @@ class TestHitlParamOverride:
         assert _ProbeNode.calls == 1
         assert _ProbeNode.received["amount"] == 10
         assert _ProbeNode.received["payee"] == "acme"
-        # 覆盖一次性消费 — 不残留
+        # Override consumed once — no residue
         assert eng._hitl_param_overrides == {}
 
     async def test_params_ignored_on_deny(self, pm_no_guard):
-        # 拒绝时 params 不生效, 节点不执行, 覆盖不残留
+        # On denial params do not apply, node does not execute, override leaves no residue
         _ProbeNode.calls = 0
         eng = WorkflowEngine(permission_manager=pm_no_guard)
         exec_id = "run-225-deny"
@@ -131,7 +131,7 @@ def client(monkeypatch, tmp_path):
         "result": None,
         "error": None,
     }
-    # 本地待审批: 绑定 run_225, 带原参数
+    # Local pending approval: bound to run_225, with original params
     pm._pending_local_approvals["act_225"] = HITL_NODE
     pm._pending_local_details["act_225"] = {
         "tool_name": HITL_NODE,
@@ -165,7 +165,7 @@ class TestConfirmRouteEditedParams:
         assert calls and calls[0]["params"] is None
 
     def test_edited_params_rejected_also_wakes_run(self, client):
-        # 拒绝路径 (#216) 即唤醒, 不带参数覆盖 — resolver 收 approved=False params=None
+        # Denial path (#216) wakes immediately, without the params override — resolver receives approved=False params=None
         tc, calls = client
         r = tc.post(
             "/api/permissions/pending/act_225/confirm",

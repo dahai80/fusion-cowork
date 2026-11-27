@@ -1,7 +1,8 @@
-"""issue #549: 终态 run 不再残留 mid-run GET 写入的 hitl_pending/hitl_deadline。
+"""issue #549: terminal runs no longer retain hitl_pending/hitl_deadline written by mid-run GETs.
 
-runs_get 直接改写注册表共享 record dict — running 时写入的 HITL 标记在 run
-到终态后必须清除, 否则 success/failed 的 run 永远带 "hitl_pending: true"。
+runs_get mutates the registry's shared record dict directly — HITL markers written while running
+must be cleared once the run reaches a terminal state, otherwise success/failed runs keep
+"hitl_pending: true" forever.
 """
 
 from __future__ import annotations
@@ -68,12 +69,12 @@ def test_terminal_run_drops_stale_hitl_fields(pm_no_guard, tmp_path, monkeypatch
             time.sleep(0.05)
         else:
             pytest.fail("run never parked in HITL")
-        # mid-run GET — 写入 hitl_pending/hitl_deadline/awaiting_human 进共享 record
+        # mid-run GET — writes hitl_pending/hitl_deadline/awaiting_human into the shared record
         detail = client.get(f"/api/runs/{run_id}", headers=auth).json()
         assert detail["hitl_pending"] is True
         assert detail["hitl_deadline"] > time.time()
         assert detail["awaiting_human"] is True
-        # 批准 → run 终态
+        # Approve → run reaches terminal state
         action_id = client.get("/api/permissions/pending", headers=auth).json()["approvals"][0]["action_id"]
         assert (
             client.post(
@@ -89,7 +90,7 @@ def test_terminal_run_drops_stale_hitl_fields(pm_no_guard, tmp_path, monkeypatch
                 break
             time.sleep(0.05)
         assert detail["status"] == "success", detail
-        # issue #549: 终态不残留运行期 HITL 标记
+        # issue #549: terminal state retains no run-time HITL markers
         assert "hitl_pending" not in detail, detail
         assert "hitl_deadline" not in detail, detail
         assert "awaiting_human" not in detail, detail

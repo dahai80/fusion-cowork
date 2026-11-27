@@ -1,7 +1,7 @@
-"""issue #461: 跨 run 并发闸 + per-run 波次并行度 + token/花费归因。
+"""issue #461: cross-run concurrency gate + per-run wave parallelism + token/spend attribution.
 
-concurrency_key 让不同 key 的 run 交错执行 (fair share), 同 key 排队;
-步级 usage 汇总成 run 级 tokens/spend_usd, /api/usage 按 run 与 workflow 聚合。
+concurrency_key lets runs with different keys interleave (fair share) while same-key runs queue;
+step-level usage aggregates into run-level tokens/spend_usd; /api/usage aggregates by run and workflow.
 """
 
 from __future__ import annotations
@@ -163,7 +163,7 @@ class TestConcurrencyAPI:
         assert r3["status"] == "running"
         d1 = self._wait_terminal(client, auth, r1["run_id"])
         assert d1["status"] == "success", d1
-        # key a 槽位释放, 排队 run 翻 running 并跑完
+        # key a slot freed, the queued run flips to running and completes
         d2 = self._wait_terminal(client, auth, r2["run_id"])
         assert d2["status"] == "success", d2
         assert d2.get("concurrency_key") == "a"
@@ -173,7 +173,7 @@ class TestConcurrencyAPI:
         wf = self._wf(client, auth, "slow461")
         r1 = client.post("/api/runs", json={"workflow_id": wf}, headers=auth).json()
         r2 = client.post("/api/runs", json={"workflow_id": wf}, headers=auth).json()
-        # 缺省 key 相同 → 第二个排队; 闸开启本身不改变语义
+        # Default key is identical → the second queues; the gate being on does not change semantics
         assert r1["status"] == "running"
         assert r2["status"] in ("queued", "running")
         assert self._wait_terminal(client, auth, r1["run_id"])["status"] == "success"

@@ -1,10 +1,11 @@
-"""Stage 6 — 令牌桶限流 (per-tenant 隔离)。
+"""Stage 6 — token bucket rate limiting (per-tenant isolation).
 
-TokenBucket: 经典令牌桶, rate (令牌/秒) + burst (桶容量), 后台无 — 惰性按时间差补充。
-RateLimiter: Dict[key, TokenBucket], allow(key) -> bool, per-key 隔离 (A 耗尽不影响 B)。
-FastAPIRateLimitMiddleware: 读 request.state.tenant_id (JWT 中间件设), 超限 429。
+TokenBucket: classic token bucket, rate (tokens/second) + burst (bucket capacity), no background
+worker — lazily refilled by elapsed time.
+RateLimiter: Dict[key, TokenBucket], allow(key) -> bool, per-key isolation (exhausting A does not affect B).
+FastAPIRateLimitMiddleware: reads request.state.tenant_id (set by the JWT middleware), 429 on limit.
 
-opt-in: 无显式配置 (RateLimiter 实例) → 不限流, 现有行为不变。
+opt-in: no explicit configuration (RateLimiter instance) → no rate limiting, existing behavior unchanged.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class TokenBucket:
-    """令牌桶 — rate 令牌/秒, burst 桶容量上限。惰性补充 (allow 时按经过时间补)。"""
+    """Token bucket — rate tokens/second, burst bucket capacity cap. Lazily refilled (by elapsed time on allow)."""
 
     def __init__(self, rate: float, burst: int):
         self.rate = max(0.0, float(rate))
@@ -39,7 +40,7 @@ class TokenBucket:
 
 
 class RateLimiter:
-    """per-key 限流器 — 默认无限 (unlimited=False 时按 key 各建独立桶)。"""
+    """Per-key rate limiter — unlimited by default (when unlimited=False, each key gets its own bucket)."""
 
     def __init__(self, rate: float = 10.0, burst: int = 20, unlimited: bool = False):
         self.rate = rate
@@ -54,10 +55,10 @@ class RateLimiter:
         if bucket is None:
             bucket = TokenBucket(self.rate, self.burst)
             self._buckets[key] = bucket
-            logger.debug(f"RateLimiter 新桶 key={key} rate={self.rate} burst={self.burst}")
+            logger.debug(f"RateLimiter new bucket key={key} rate={self.rate} burst={self.burst}")
         ok = bucket.allow()
         if not ok:
-            logger.warning(f"RateLimiter 限流命中 key={key} (rate={self.rate}/s burst={self.burst})")
+            logger.warning(f"RateLimiter limit hit key={key} (rate={self.rate}/s burst={self.burst})")
         return ok
 
     def reset(self, key: str = "") -> None:
@@ -68,10 +69,10 @@ class RateLimiter:
 
 
 class FastAPIRateLimitMiddleware:
-    """ASGI 中间件 — 读 request.state.tenant_id, 超限 429。
+    """ASGI middleware — reads request.state.tenant_id, 429 on limit.
 
-    用法: app = FastAPIRateLimitMiddleware(app, limiter)
-    缺 limiter 或 limiter.unlimited → 透传不限。
+    Usage: app = FastAPIRateLimitMiddleware(app, limiter)
+    Missing limiter or limiter.unlimited → passthrough without limiting.
     """
 
     def __init__(self, app, limiter: Optional[RateLimiter] = None):
@@ -86,7 +87,7 @@ class FastAPIRateLimitMiddleware:
             await self.app(scope, receive, send)
             return
         tenant_id = "anonymous"
-        # 优先读 scope["state"].tenant_id (route handler 注入); 缺则从 Authorization JWT 提。
+        # Prefer scope["state"].tenant_id (injected by route handler); fall back to extracting from the Authorization JWT.
         state = scope.get("state")
         if state is not None and hasattr(state, "tenant_id"):
             tenant_id = getattr(state, "tenant_id", "") or ""
@@ -102,7 +103,7 @@ class FastAPIRateLimitMiddleware:
 
 
 def _extract_tenant_from_headers(scope) -> str:
-    """从 Authorization: Bearer <jwt> 提 tenant_id (JWT verifier active 时); 否则空。"""
+    """Extract tenant_id from Authorization: Bearer <jwt> (when the JWT verifier is active); otherwise empty."""
     auth = b""
     for k, v in scope.get("headers", []):
         if k == b"authorization":
@@ -128,7 +129,7 @@ def _extract_tenant_from_headers(scope) -> str:
 
 
 def get_default_rate_limiter() -> RateLimiter:
-    """从 env 构造默认限流器: FUSION_RATE_LIMIT (rate/burst 如 10/20) 设了才启用。"""
+    """Build the default rate limiter from env: enabled only when FUSION_RATE_LIMIT (rate/burst e.g. 10/20) is set."""
     import os
 
     cfg = os.environ.get("FUSION_RATE_LIMIT", "").strip()
@@ -138,8 +139,10 @@ def get_default_rate_limiter() -> RateLimiter:
         parts = cfg.split("/")
         rate = float(parts[0])
         burst = int(parts[1]) if len(parts) > 1 else int(rate * 2)
-        logger.info(f"默认限流器启用 rate={rate}/s burst={burst}")
+        logger.info(f"Default rate limiter enabled rate={rate}/s burst={burst}")
         return RateLimiter(rate=rate, burst=burst)
     except (ValueError, IndexError):
-        logger.warning(f"FUSION_RATE_LIMIT 格式错 '{cfg}' (期望 rate/burst 如 10/20), 限流未启")
+        logger.warning(
+            f"FUSION_RATE_LIMIT malformed '{cfg}' (expected rate/burst e.g. 10/20), rate limiting not enabled"
+        )
         return RateLimiter(unlimited=True)

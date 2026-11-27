@@ -1,4 +1,4 @@
-"""M3 里程碑测试 — 插件系统 + 技能机制 + Chrome CDP + MCP权限拦截 + SSE + Session集成。"""
+"""M3 milestone tests — plugin system + skill mechanism + Chrome CDP + MCP permission interception + SSE + Session integration."""
 
 import asyncio
 import json
@@ -45,7 +45,7 @@ class _ShellNode(BaseNode):
         return NodeResult(status=NodeStatus.SUCCESS, data={"stdout": "done"})
 
 
-# ── MCP Tool 权限拦截 ──
+# ── MCP Tool permission interception ──
 
 
 class TestMCPPermission:
@@ -57,6 +57,7 @@ class TestMCPPermission:
         registry.register_tools()
         result = await registry.call_tool("run_terminal", {"command": "ls"})
         body = result["content"][0]["text"]
+        # i18n: user-facing
         assert "denied" in body.lower() or "权限" in body
 
     @pytest.mark.asyncio
@@ -121,7 +122,7 @@ class TestMCPPermission:
 
     @pytest.mark.asyncio
     async def test_mcp_error_trace_id_no_leak(self):
-        # E-9: 异常对外只返 trace_id + 通用消息, 不泄内部栈/路径/SQL
+        # E-9: exceptions only return trace_id + generic message externally, no internal stack/path/SQL leak
         pm = PermissionManager(level=PermissionLevel.BYPASS)
         registry = MCPToolRegistry(permission_manager=pm)
         registry.register_tools()
@@ -151,7 +152,7 @@ class TestMCPPermission:
         assert "_trace_id" in result
         body = result["content"][0]["text"]
         assert "trace_id" in body
-        # 不泄漏内部栈/SQL/路径
+        # No internal stack/SQL/path leak
         assert "SELECT" not in body
         assert "/secret" not in body
         assert "Traceback" not in body
@@ -159,11 +160,11 @@ class TestMCPPermission:
 
     @pytest.mark.asyncio
     async def test_mcp_run_workflow_maps_to_engine(self):
-        # E-8: run_workflow 不再误映射 desktop_clean, 走 TemplateManager+WorkflowEngine
+        # E-8: run_workflow no longer mis-maps desktop_clean, goes through TemplateManager+WorkflowEngine
         pm = PermissionManager(level=PermissionLevel.BYPASS)
         registry = MCPToolRegistry(permission_manager=pm)
         registry.register_tools()
-        # 不存在的模板 → 返回 error 含 template 字段, 不执行 desktop_clean
+        # Nonexistent template → returns error containing template field, does not execute desktop_clean
         result = await registry.call_tool("run_workflow", {"template": "__nope__"})
         body = json.loads(result["content"][0]["text"])
         assert body.get("template") == "__nope__"
@@ -202,7 +203,7 @@ class TestEventEmitterSSE:
         assert len(buffered) == 5
 
 
-# ── WorkflowEngine + Session + Event 集成 ──
+# ── WorkflowEngine + Session + Event integration ──
 
 
 class TestWorkflowEngineSessionEvent:
@@ -266,7 +267,7 @@ class TestWorkflowEngineSessionEvent:
 
     @pytest.mark.asyncio
     async def test_session_resume_replays_from_snapshot(self):
-        # P1-2 端到端: 执行 → 快照含 output_data → resume 跳过已完成节点续跑
+        # P1-2 end-to-end: execute → snapshot contains output_data → resume skips completed nodes and continues
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             db_path = f.name
         try:
@@ -278,17 +279,17 @@ class TestWorkflowEngineSessionEvent:
 
             sessions = store.list_sessions(limit=1)
             assert len(sessions) == 1
-            # 快照步骤含 output_data (P1-2 修复)
+            # Snapshot steps contain output_data (P1-2 fix)
             snap = sessions[0].steps_snapshot
             assert len(snap) >= 1
             assert snap[0]["output_data"] == {"content": "ok"}
 
-            # resume 返回快照, 用作断点续跑输入
+            # resume returns the snapshot, used as checkpoint-resume input
             payload = store.resume(sessions[0].id)
             assert payload is not None
             assert payload["steps_snapshot"] == snap
 
-            # 用快照续跑: n1 应被跳过
+            # Resume from snapshot: n1 should be skipped
             wf2 = Workflow(name="resume_e2e", workflow_id="wf_res1")
             wf2.add_node(_OkNode(node_id="n1"))
             execution = await engine.execute(wf2, resume_steps=payload["steps_snapshot"])
@@ -344,7 +345,7 @@ class TestWorkflowEngineSessionEvent:
             os.unlink(db_path)
 
 
-# ── MCPServer 集成 ──
+# ── MCPServer integration ──
 
 
 class TestMCPServerM3:
@@ -357,13 +358,13 @@ class TestMCPServerM3:
 
     def test_server_default_no_permission(self):
         server = MCPServer()
-        # E-9: 默认无注入时启用 CONFIRM 级 PermissionManager — 高风险 MCP 工具
-        # (run_terminal/file_output/app_lifecycle) 不再无 gate 直跑。
+        # E-9: with no injection, a CONFIRM-level PermissionManager is enabled by default — high-risk MCP tools
+        # (run_terminal/file_output/app_lifecycle) no longer run without a gate.
         assert server._registry._permission_manager is not None
         assert server._registry._hook_manager is None
 
 
-# ── 插件系统测试 ──
+# ── Plugin system tests ──
 
 
 class TestPluginManifest:
@@ -496,11 +497,11 @@ class TestPluginLoader:
             assert not plugin_dir.exists()
 
 
-# ── E-13: 插件清单/zip 安装安全加固 ──
+# ── E-13: plugin manifest/zip install security hardening ──
 
 
 class TestPluginManifestNameValidation:
-    # E-13: from_dict 拒绝空 name (防 target=plugins_dir 越界删除) 与路径分隔符 (防遍历)
+    # E-13: from_dict rejects empty name (prevents target=plugins_dir out-of-bounds deletion) and path separators (prevents traversal)
 
     def test_empty_name_rejected(self):
         from fusion_cowork.plugins.manifest import PluginManifest
@@ -535,7 +536,7 @@ class TestPluginManifestNameValidation:
 
 
 class TestSafeRmtreeBaseGuard:
-    # E-13: _safe_rmtree 拒绝 target==base (name="" 或 ".") — 旧版 rmtree(plugins_dir) 删插件根
+    # E-13: _safe_rmtree rejects target==base (name="" or ".") — old rmtree(plugins_dir) deleted the plugin root
 
     def test_empty_name_rejected(self):
         from fusion_cowork.plugins.loader import PluginLoader
@@ -545,6 +546,7 @@ class TestSafeRmtreeBaseGuard:
             loader._plugins_dir = Path(tmp)
             ok = loader._safe_rmtree("")
             assert ok is False
+            # i18n: user-facing
             assert Path(tmp).exists(), "插件根目录必须保留"
 
     def test_dot_name_rejected(self):
@@ -580,7 +582,7 @@ class TestSafeRmtreeBaseGuard:
 
 
 class TestInstallZipBombGuard:
-    # E-13: _install_zip 限文件数/解压总大小/压缩比, 防 zip 炸弹
+    # E-13: _install_zip caps file count / total uncompressed size / compression ratio, guards against zip bombs
 
     def _make_zip(self, tmp_src: str, entries: dict) -> Path:
         zip_path = Path(tmp_src) / "bomb.zip"
@@ -593,7 +595,7 @@ class TestInstallZipBombGuard:
         from fusion_cowork.plugins.loader import PluginLoader
 
         loader = PluginLoader()
-        # 10001 条目 > 上限 10000
+        # 10001 entries > cap 10000
         entries = {f"bomb/f{i}.txt": "x" for i in range(10001)}
         with tempfile.TemporaryDirectory() as tmp_plugins, tempfile.TemporaryDirectory() as tmp_src:
             loader._plugins_dir = Path(tmp_plugins)
@@ -605,12 +607,13 @@ class TestInstallZipBombGuard:
         from fusion_cowork.plugins.loader import PluginLoader
 
         loader = PluginLoader()
-        # 1KB 压缩 → ~1MB 解压, 比 >200 (但解压总大小 <512MB, 走压缩比分支)
+        # 1KB compressed → ~1MB uncompressed, ratio >200 (but total uncompressed <512MB, takes the ratio branch)
         entries = {"bomb/big.txt": "A" * (1024 * 1024), "bomb/manifest.json": "{}"}
         with tempfile.TemporaryDirectory() as tmp_plugins, tempfile.TemporaryDirectory() as tmp_src:
             loader._plugins_dir = Path(tmp_plugins)
             zip_path = self._make_zip(tmp_src, entries)
             ok = loader._install_zip(zip_path)
+            # i18n: user-facing
             assert ok is False, "高压缩比 zip 应被拒绝"
 
     def test_normal_zip_accepted(self):
@@ -631,7 +634,7 @@ class TestInstallZipBombGuard:
             assert (Path(tmp_plugins) / "ok_zip").exists()
 
 
-# ── P1-6 插件沙箱运行时隔离测试 ──
+# ── P1-6 plugin sandbox runtime isolation tests ──
 
 _SANDBOX_PLUGIN_CODE = """
 from fusion_cowork.engine.node import BaseNode, NodeCategory, NodeResult, NodeStatus, register_node
@@ -643,6 +646,7 @@ class EchoNode(BaseNode):
     category = NodeCategory.TOOL
     description = "echo with prefix"
     icon = "🔁"
+    # i18n: user-facing
     default_label = "回声"
     def get_params_schema(self):
         return {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
@@ -745,7 +749,7 @@ class TestPluginSandboxIsolation:
         assert "entry_file" in (res.error or "")
 
 
-# ── 技能机制测试 ──
+# ── Skill mechanism tests ──
 
 
 class TestSkillRegistry:
@@ -840,13 +844,13 @@ class TestSkillRegistry:
         assert registry.list_skills() == []
 
 
-# ── E-13: 基线内置节点卸载保护 ──
+# ── E-13: baseline builtin node unregister protection ──
 
 
 class TestBuiltinNodeUnregisterGuard:
     def test_freeze_then_unregister_builtin_rejected(self):
-        # E-13: freeze_builtins 后, 内置名不可被 unregister 删除
-        # (防恶意插件 node_map 谎报拥有 shell_exec → loader.unload 删内置)
+        # E-13: after freeze_builtins, builtin names cannot be removed via unregister
+        # (prevents a malicious plugin node_map from falsely claiming shell_exec → loader.unload deletes a builtin)
         from fusion_cowork.engine.node import BaseNode, NodeConfig, NodeRegistry
 
         class _E13FakeBuiltin(BaseNode):
@@ -865,13 +869,13 @@ class TestBuiltinNodeUnregisterGuard:
         saved_frozen = NodeRegistry._builtins_frozen
         try:
             NodeRegistry.register(_E13FakeBuiltin)
-            # 模拟 import_all_nodes: 仅冻结本次模块新注册的名 (非全表快照)
+            # Simulate import_all_nodes: freeze only names newly registered by this module (not a full-table snapshot)
             NodeRegistry.freeze_builtins(extra_names={"e13_builtin_node"})
             assert "e13_builtin_node" in NodeRegistry._builtin_names
-            # 卸载被拒 — 内置名受保护
+            # Uninstall rejected — builtin names are protected
             NodeRegistry.unregister("e13_builtin_node")
             assert "e13_builtin_node" in NodeRegistry._registry
-            # force=True 仍可卸 (内部重注册场景)
+            # force=True can still uninstall (internal re-registration scenario)
             NodeRegistry.unregister("e13_builtin_node", force=True)
             assert "e13_builtin_node" not in NodeRegistry._registry
         finally:
@@ -880,7 +884,7 @@ class TestBuiltinNodeUnregisterGuard:
             NodeRegistry._builtins_frozen = saved_frozen
 
     def test_unregister_non_builtin_ok(self):
-        # E-13: freeze 后注册的插件节点不在 builtin 快照 → 可正常卸载 (插件生命周期)
+        # E-13: plugin nodes registered after freeze are not in the builtin snapshot → can be uninstalled normally (plugin lifecycle)
         from fusion_cowork.engine.node import BaseNode, NodeConfig, NodeRegistry
 
         class _E13PluginNode(BaseNode):
@@ -900,7 +904,7 @@ class TestBuiltinNodeUnregisterGuard:
         try:
             NodeRegistry.freeze_builtins()
             builtin_count = len(NodeRegistry._builtin_names)
-            # freeze 之后注册的插件节点不在快照内
+            # Plugin nodes registered after freeze are not in the snapshot
             NodeRegistry.register(_E13PluginNode)
             assert "e13_plugin_node" not in NodeRegistry._builtin_names
             assert len(NodeRegistry._builtin_names) == builtin_count
@@ -942,7 +946,7 @@ class TestBuiltinSkills:
             assert s is not None, f"Missing skill: {skill_obj.name}"
 
 
-# ── CDP 测试 ──
+# ── CDP tests ──
 
 
 class TestCDPClient:
@@ -960,7 +964,7 @@ class TestCDPClient:
         assert client is not None
 
 
-# ── issue #65: FUSION_BROWSER_CDP env 目标切换 ──
+# ── issue #65: FUSION_BROWSER_CDP env target switch ──
 
 
 class TestCDPFusionBrowserEnvSwitch:
@@ -971,7 +975,7 @@ class TestCDPFusionBrowserEnvSwitch:
         client = CDPClient(host="127.0.0.1", port=9999, token="x")
         assert client.host == "127.0.0.1"
         assert client.port == 9222
-        # issue #72: fusion-browser WS upgrade 需 Bearer, token 保留 (非置 None) 以转发
+        # issue #72: fusion-browser WS upgrade requires Bearer, token kept (not set to None) for forwarding
         assert client.token == "x"
         assert client._target == "fusion-browser"
 
@@ -1009,10 +1013,11 @@ class TestCDPFusionBrowserEnvSwitch:
         with caplog.at_level(logging.WARNING):
             client = CDPClient(host="8.8.8.8", port=9222)
         assert client.host == "127.0.0.1"
+        # i18n: user-facing
         assert all("未配置 token" not in r.message for r in caplog.records)
 
 
-# ── issue #72: CDP WS upgrade 要求 Authorization: Bearer ──
+# ── issue #72: CDP WS upgrade requires Authorization: Bearer ──
 
 
 class TestCDPWSBearerForwarding:
@@ -1312,7 +1317,7 @@ class TestCDPNodes:
         assert "save_path" in schema.get("properties", {})
 
 
-# ── MCP Skill 工具测试 ──
+# ── MCP Skill tool tests ──
 
 
 class TestMCPSkillTools:
@@ -1338,7 +1343,7 @@ class TestMCPSkillTools:
         assert data["count"] >= 0
 
 
-# ── CLI 命令测试 ──
+# ── CLI command tests ──
 
 
 class TestCLICommandsM3:
@@ -1350,7 +1355,8 @@ class TestCLICommandsM3:
         runner = CliRunner()
         result = runner.invoke(cli, ["plugin", "--help"])
         assert result.exit_code == 0
-        assert "插件管理" in result.output
+        # i18n: user-facing
+        assert "Plugin management" in result.output
 
     def test_skill_group_exists(self):
         from click.testing import CliRunner
@@ -1360,7 +1366,8 @@ class TestCLICommandsM3:
         runner = CliRunner()
         result = runner.invoke(cli, ["skill", "--help"])
         assert result.exit_code == 0
-        assert "技能管理" in result.output
+        # i18n: user-facing
+        assert "Skill management" in result.output
 
     def test_cdp_group_exists(self):
         from click.testing import CliRunner
@@ -1379,7 +1386,7 @@ class TestCLICommandsM3:
 
         runner = CliRunner()
         result = runner.invoke(cli, ["plugin", "list"])
-        # May show "没有发现插件" which is fine
+        # i18n: user-facing — may show "没有发现插件" which is fine
         assert result.exit_code == 0 or "插件" in result.output
 
     def test_skill_list_command(self):

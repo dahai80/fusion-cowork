@@ -1,8 +1,8 @@
-"""issue #340: 闸门决定不落持久规则 — deny/approve 规则不得预拒/盲放 approval_gate.
+"""issue #340: gate decisions never persist as rules — deny/approve rules must not pre-deny or blindly allow approval_gate.
 
-闸门决定是工作流决策 (喂 on_reject=revise 修订回路), 不是工具级权限:
-deny 规则预拒会让一次拒绝永久杀死后续所有闸门 HITL 卡; approve 规则盲放
-等于永久跳过人工闸门。check() 对闸门跳过规则匹配, confirm 对闸门只出队。
+A gate decision is a workflow decision (feeding the on_reject=revise revision loop), not a tool-level permission:
+a pre-denying deny rule would let one denial permanently kill all later gate HITL cards; a blindly allowing
+approve rule equals permanently skipping the human gate. check() skips rule matching for gates, confirm only dequeues.
 """
 
 from __future__ import annotations
@@ -24,18 +24,18 @@ def pm_340(monkeypatch):
 
 class TestGateRuleExempt:
     async def test_deny_rule_does_not_preempt_gate(self, pm_340):
-        # 一次拒绝留下的 approval_gate deny 规则不得静默预拒 — 必须照常产生待审批卡
+        # An approval_gate deny rule left by one denial must not silently pre-deny — a pending approval card must still be produced
         pm_340.deny("approval_gate")
         assert any(not r.allowed and r.tool_name == "approval_gate" for r in pm_340.rules)
         allowed = await pm_340.check("approval_gate", "execute", {})
         assert allowed is False
-        # 关键: 不是 deny-fast, 而是入待审批队列 (HITL 卡可见)
+        # Key: not deny-fast but enqueue into pending approvals (HITL card visible)
         pending = [p for p in pm_340.list_pending() if p.get("tool_name") == "approval_gate"]
         assert len(pending) == 1
         assert pending[0]["source"] == "local"
 
     async def test_approve_rule_does_not_blind_pass_gate(self, pm_340):
-        # 历史 approve 规则不得盲放闸门 — 人工闸门每次都要走审批
+        # A historical approve rule must not blindly allow the gate — the human gate requires approval every time
         pm_340.approve("approval_gate")
         allowed = await pm_340.check("approval_gate", "execute", {})
         assert allowed is False
@@ -46,14 +46,14 @@ class TestGateRuleExempt:
         action_id = pm_340.list_pending()[0]["action_id"]
         assert await pm_340.confirm_guard(action_id, approved=True, approved_by="t") is True
         assert await pm_340.confirm_guard("local_missing", approved=False, approved_by="t") is False
-        # 出队后不落任何 approval_gate 规则 (approve/deny 均不落)
+        # After dequeue no approval_gate rule is persisted (neither approve nor deny)
         assert not any(r.tool_name == "approval_gate" for r in pm_340.rules)
 
     async def test_gate_tools_constant(self):
         assert "approval_gate" in HITL_GATE_TOOLS
 
     async def test_non_gate_tools_keep_rule_semantics(self, pm_340):
-        # 回归: 非闸门工具 deny 规则仍预拒 (不再入队), approve 规则仍放行
+        # Regression: non-gate tool deny rules still pre-deny (no longer enqueued), approve rules still allow
         pm_340.deny("shell_exec")
         assert await pm_340.check("shell_exec", "execute", {}) is False
         assert not any(p.get("tool_name") == "shell_exec" for p in pm_340.list_pending())

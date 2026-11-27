@@ -38,7 +38,7 @@ describe('govGateProgress', () => {
 describe('isGovernanceRun', () => {
     test('matches lifecycle + batch audit names', () => {
         expect(isGovernanceRun('G1-G5 gate pipeline for one issue')).toBe(true);
-        expect(isGovernanceRun('治理-议题生命周期 (G1-G4-G5 闸门)')).toBe(true);
+        expect(isGovernanceRun('治理-议题生命周期 (G1-G4-G5 闸门)')).toBe(true); // i18n: user-facing
         expect(isGovernanceRun('governance batch audit')).toBe(true);
         expect(isGovernanceRun('desktop_daily_cleanup')).toBe(false);
     });

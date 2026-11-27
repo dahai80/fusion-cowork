@@ -1,10 +1,10 @@
-"""#125: web/manifest.json 携带 upstream/api_key — gateway #232 动态代理可解析。
+"""#125: web/manifest.json carries upstream/api_key — gateway #232 dynamic proxy can parse it.
 
 Contract:
-- manifest.json 声明 upstream (11461) + api_key_env;
-- load_manifest() 注入 api_key (env 有值) / 剔除 (env 空);
-- FUSION_COWORK_WEB_UPSTREAM 覆盖部署特定端口;
-- 默认 upstream 不为空 (UpstreamFor 可解析)。
+- manifest.json declares upstream (11461) + api_key_env;
+- load_manifest() injects api_key (env set) / strips it (env empty);
+- FUSION_COWORK_WEB_UPSTREAM overrides deployment-specific ports;
+- default upstream is non-empty (UpstreamFor can resolve).
 """
 
 from __future__ import annotations

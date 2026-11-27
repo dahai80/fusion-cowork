@@ -138,61 +138,61 @@ function parseHash(): { route: Route; arg: string } {
 function routeLabel(r: Route, t: (zh: string, en: string) => string): string {
     switch (r) {
         case 'home':
-            return t('首页', 'Home');
+            return t('首页', 'Home'); // i18n: user-facing
         case 'workflows':
-            return t('工作流', 'Workflows');
+            return t('工作流', 'Workflows'); // i18n: user-facing
         case 'delegate':
-            return t('委托', 'Delegate');
+            return t('委托', 'Delegate'); // i18n: user-facing
         case 'runs':
-            return t('运行', 'Runs');
+            return t('运行', 'Runs'); // i18n: user-facing
         case 'sessions':
-            return t('会话', 'Sessions');
+            return t('会话', 'Sessions'); // i18n: user-facing
         case 'spaces':
-            return t('空间', 'Spaces');
+            return t('空间', 'Spaces'); // i18n: user-facing
         case 'schedule':
-            return t('调度', 'Schedule');
+            return t('调度', 'Schedule'); // i18n: user-facing
         case 'templates':
-            return t('模板', 'Templates');
+            return t('模板', 'Templates'); // i18n: user-facing
         case 'nodes':
-            return t('节点', 'Nodes');
+            return t('节点', 'Nodes'); // i18n: user-facing
         case 'canvas':
-            return t('画布', 'Canvas');
+            return t('画布', 'Canvas'); // i18n: user-facing
         case 'plugins':
-            return t('插件', 'Plugins');
+            return t('插件', 'Plugins'); // i18n: user-facing
         case 'approvals':
-            return t('审批', 'Approvals');
+            return t('审批', 'Approvals'); // i18n: user-facing
         case 'cluster':
-            return t('集群', 'Cluster');
+            return t('集群', 'Cluster'); // i18n: user-facing
         case 'usage':
-            return t('用量', 'Usage');
+            return t('用量', 'Usage'); // i18n: user-facing
         case 'admin':
-            return t('管理', 'Admin');
+            return t('管理', 'Admin'); // i18n: user-facing
         case 'skills':
-            return t('技能', 'Skills');
+            return t('技能', 'Skills'); // i18n: user-facing
         case 'extensions':
-            return t('扩展', 'Extensions');
+            return t('扩展', 'Extensions'); // i18n: user-facing
         case 'wizard':
-            return t('Onboarding 向导', 'Onboarding Wizard');
+            return t('Onboarding 向导', 'Onboarding Wizard'); // i18n: user-facing
         case 'permissions':
-            return t('权限规则', 'Permissions');
+            return t('权限规则', 'Permissions'); // i18n: user-facing
         case 'benchmark':
-            return t('基准测试', 'Benchmark');
+            return t('基准测试', 'Benchmark'); // i18n: user-facing
         case 'system':
-            return t('系统', 'System');
+            return t('系统', 'System'); // i18n: user-facing
         case 'team':
-            return t('团队', 'Team');
+            return t('团队', 'Team'); // i18n: user-facing
         case 'voice':
-            return t('语音', 'Voice');
+            return t('语音', 'Voice'); // i18n: user-facing
         case 'governance':
-            return t('治理', 'Governance');
+            return t('治理', 'Governance'); // i18n: user-facing
         case 'pipeline':
-            return t('交付管线', 'Pipeline');
+            return t('交付管线', 'Pipeline'); // i18n: user-facing
         case 'demand':
-            return t('需求引擎', 'Demand');
+            return t('需求引擎', 'Demand'); // i18n: user-facing
         case 'capabilities':
-            return t('能力市场', 'Capabilities');
+            return t('能力市场', 'Capabilities'); // i18n: user-facing
         case 'm':
-            return t('移动端', 'Mobile');
+            return t('移动端', 'Mobile'); // i18n: user-facing
     }
 }
 
@@ -222,8 +222,8 @@ export function App() {
                     <div className="text-sm font-medium">Fusion Cowork</div>
                     <div className="flex items-center gap-2">
                         <select
-                            aria-label={t('模型', 'Model')}
-                            title={models.error ? t('模型列表不可用', 'Models unavailable') : undefined}
+                            aria-label={t('模型', 'Model')} // i18n: user-facing
+                            title={models.error ? t('模型列表不可用', 'Models unavailable') : undefined} // i18n: user-facing
                             className="rounded-md border border-border bg-bg px-2 py-1 text-xs text-text-primary"
                             value={model}
                             onChange={(e) => {
@@ -231,7 +231,7 @@ export function App() {
                                 setPreferredModel(e.target.value);
                             }}
                         >
-                            <option value="">{t('默认模型', 'Default model')}</option>
+                            <option value="">{t('默认模型', 'Default model') /* i18n: user-facing */}</option>
                             {model && !(models.data?.models ?? []).some((m) => m.id === model) ? (
                                 <option value={model}>{model}</option>
                             ) : null}

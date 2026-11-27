@@ -1,4 +1,4 @@
-"""M2 里程碑测试 — 权限模型、Hook系统、会话持久化、流式事件。"""
+"""M2 milestone tests — permission model, hook system, session persistence, streaming events."""
 
 import asyncio
 import os
@@ -28,7 +28,7 @@ from fusion_cowork.engine.workflow import (
     WorkflowStatus,
 )
 
-# ── 权限模型 ──
+# ── Permission model ──
 
 
 class TestPermissionLevel:
@@ -69,7 +69,7 @@ class TestPermissionManager:
 
     @pytest.mark.asyncio
     async def test_manual_allows_safe(self):
-        # CR-16: MANUAL 放行低风险节点 (file_input 非高风险, 无需显式批准)
+        # CR-16: MANUAL lets low-risk nodes through (file_input is not high-risk, no explicit approval needed)
         pm = PermissionManager(level=PermissionLevel.MANUAL)
         assert await pm.check("file_input") is True
 
@@ -105,7 +105,7 @@ class TestPermissionManager:
             os.unlink(path)
 
 
-# ── Hook 系统 ──
+# ── Hook system ──
 
 
 class TestHookEvent:
@@ -189,7 +189,7 @@ class TestHookManager:
         assert len(called) == 0
 
 
-# ── 会话持久化 ──
+# ── Session persistence ──
 
 
 class TestSession:
@@ -266,7 +266,7 @@ class TestSessionStore:
         assert "id" in d
 
 
-# ── 流式事件 ──
+# ── Streaming events ──
 
 
 class TestWorkflowEvent:
@@ -319,7 +319,7 @@ class TestEventEmitter:
         assert em.subscriber_count == 0
 
 
-# ── WorkflowEngine 集成 ──
+# ── WorkflowEngine integration ──
 
 
 class _OkNode(BaseNode):

@@ -1,18 +1,18 @@
-"""#189: 节点执行器抽象 + ready-set 波次并行。
+"""#189: node executor abstraction + ready-set wave parallelism.
 
-覆盖:
-- 默认 concurrency=1 与旧串行逐节点等价
-- 3 个无依赖节点 concurrency=3 时墙钟 ≈ max 而非 sum
-- DAG 屏障: 汇合节点等全部前驱完成
-- FUSION_COWORK_MAX_CONCURRENCY 环境变量 / 非法值回退
-- NodeConfig 执行器字段序列化往返
-- AgentExecutor UDS 通道: 多轮循环、工具调用计数、逐节点覆盖参数透传
-- AgentExecutor UDS 失败 / 缺任务文本 / socket 不可用
-- AgentExecutor HTTP 回退: 结果读取、覆盖参数降级告警、超时取消
-- 工作流内 agent 节点: step.executor、executors 分布、run 摘要
-- agent 节点失败中止 run
-- 断点续跑跨 agent 节点
-- 未知执行器回退 simple
+Covers:
+- default concurrency=1 equivalent to the old serial per-node execution
+- 3 independent nodes at concurrency=3: wall clock ~= max, not sum
+- DAG barrier: join node waits for all predecessors
+- FUSION_COWORK_MAX_CONCURRENCY env var / invalid value fallback
+- NodeConfig executor field serialization round-trip
+- AgentExecutor UDS channel: multi-turn loop, tool call count, per-node override params passthrough
+- AgentExecutor UDS failure / missing task text / socket unavailable
+- AgentExecutor HTTP fallback: result read, override param downgrade warning, timeout cancel
+- agent node inside workflow: step.executor, executors distribution, run summary
+- agent node failure aborts the run
+- resume across agent nodes
+- unknown executor falls back to simple
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ class _SleepNode(BaseNode):
     name = "sleep_189"
     display_name = "Sleep 189"
     category = NodeCategory.TOOL
-    description = "测试用: 可控延迟节点"
+    description = "测试用: 可控延迟节点"  # i18n: user-facing
     icon = "⏱️"
     default_label = "Sleep"
 
@@ -75,7 +75,7 @@ class _TrackNode(BaseNode):
     name = "track_189"
     display_name = "Track 189"
     category = NodeCategory.TOOL
-    description = "测试用: 记录并发峰值"
+    description = "测试用: 记录并发峰值"  # i18n: user-facing
     icon = "📈"
     default_label = "Track"
 
@@ -98,7 +98,7 @@ class _JoinNode(BaseNode):
     name = "join_189"
     display_name = "Join 189"
     category = NodeCategory.TOOL
-    description = "测试用: 汇合节点"
+    description = "测试用: 汇合节点"  # i18n: user-facing
     icon = "🔗"
     default_label = "Join"
 
@@ -112,7 +112,7 @@ class _EchoNode(BaseNode):
     name = "echo_189"
     display_name = "Echo 189"
     category = NodeCategory.TOOL
-    description = "测试用: 回显"
+    description = "测试用: 回显"  # i18n: user-facing
     icon = "🔁"
     default_label = "Echo"
 
@@ -125,7 +125,7 @@ class _BoomNode(BaseNode):
     name = "boom_189"
     display_name = "Boom 189"
     category = NodeCategory.TOOL
-    description = "测试用: 直接失败"
+    description = "测试用: 直接失败"  # i18n: user-facing
     icon = "💥"
     default_label = "Boom"
 
@@ -138,13 +138,13 @@ class _AgentProbeNode(BaseNode):
     name = "agent_probe_189"
     display_name = "Agent Probe 189"
     category = NodeCategory.AI_PROCESSING
-    description = "测试用: 由 agent 执行器接管, 本体不应被调用"
+    description = "测试用: 由 agent 执行器接管, 本体不应被调用"  # i18n: user-facing
     icon = "🤖"
     default_label = "Agent"
 
     async def execute(self, inputs: dict) -> NodeResult:
         PARALLEL_STATE["self_called"] = PARALLEL_STATE.get("self_called", 0) + 1
-        return NodeResult(status=NodeStatus.FAILED, error="agent 节点本体被直接调用")
+        return NodeResult(status=NodeStatus.FAILED, error="agent 节点本体被直接调用")  # i18n: user-facing
 
 
 @pytest.fixture(autouse=True)
@@ -271,8 +271,8 @@ class TestSerialDefault:
         assert [s.node_id for s in execution.steps] == ["a", "b", "c"]
         assert execution.executors == {"simple": 3}
         assert all(s.executor == "simple" for s in execution.steps)
-        assert "并发=1" in execution.result_summary
-        assert "执行器=simple:3" in execution.result_summary
+        assert "concurrency=1" in execution.result_summary
+        assert "executors=simple:3" in execution.result_summary
 
     async def test_default_serial_wall_is_sum(self):
         wf = _sleep_wf({"a": 0.1, "b": 0.1, "c": 0.1})
@@ -295,13 +295,13 @@ class TestWaveParallel:
 
         assert execution.status == WorkflowStatus.SUCCESS
         assert execution.concurrency == 3
-        assert wall < 0.6, f"并发未生效: {wall:.3f}s"
+        assert wall < 0.6, f"并发未生效: {wall:.3f}s"  # i18n: user-facing
         spans = PARALLEL_STATE["spans"]
         assert set(spans.keys()) == {"a", "b", "c"}
         first_end = min(end for _, end in spans.values())
         last_start = max(start for start, _ in spans.values())
-        assert last_start < first_end, "三个节点未重叠执行"
-        # 确定性: 并发完成顺序不影响步骤落盘顺序
+        assert last_start < first_end, "三个节点未重叠执行"  # i18n: user-facing
+        # Determinism: concurrent completion order does not affect step persistence order
         assert [s.node_id for s in execution.steps] == ["a", "b", "c"]
 
     async def test_concurrency_cap_respected(self):
@@ -312,7 +312,7 @@ class TestWaveParallel:
         execution = await engine.execute(wf, concurrency=2)
         assert execution.status == WorkflowStatus.SUCCESS
         assert PARALLEL_STATE["peak"] <= 2
-        assert PARALLEL_STATE["peak"] >= 2, "并发上限未被用满"
+        assert PARALLEL_STATE["peak"] >= 2, "并发上限未被用满"  # i18n: user-facing
 
     async def test_join_node_waits_for_all_preds(self):
         wf = Workflow(name="barrier-189")
@@ -329,7 +329,7 @@ class TestWaveParallel:
         c_start = spans["c"][0]
         assert c_start >= spans["a"][1]
         assert c_start >= spans["b"][1]
-        # 落盘顺序仍按拓扑序 (a, b 同层按插入顺序, c 最后)
+        # Persistence order still follows topological order (a, b same layer by insertion order, c last)
         assert execution.steps[-1].node_id == "c"
 
     async def test_env_concurrency_used_when_not_passed(self, monkeypatch):
@@ -342,11 +342,11 @@ class TestWaveParallel:
         assert execution.concurrency == 3
         # CI timing flake (#466 family): wall-clock alone raced at 0.4508 vs 0.45 —
         # prove concurrency via overlapping spans (serial floor is 0.6s) + loose bound
-        assert wall < 0.55, f"并发未生效: {wall:.3f}s"
+        assert wall < 0.55, f"并发未生效: {wall:.3f}s"  # i18n: user-facing
         spans = PARALLEL_STATE["spans"]
         first_end = min(end for _, end in spans.values())
         last_start = max(start for start, _ in spans.values())
-        assert last_start < first_end, "三个节点未重叠执行"
+        assert last_start < first_end, "三个节点未重叠执行"  # i18n: user-facing
 
     async def test_invalid_env_falls_back_to_serial(self, monkeypatch):
         monkeypatch.setenv("FUSION_COWORK_MAX_CONCURRENCY", "abc")
@@ -402,7 +402,7 @@ class TestNodeConfigExecutorFields:
         assert node.config.budget_tokens == 0
 
     def test_missing_fields_default_on_old_payload(self):
-        payload = {"id": "old", "name": "echo_189", "config": {"label": "旧节点"}}
+        payload = {"id": "old", "name": "echo_189", "config": {"label": "旧节点"}}  # i18n: user-facing
         node = _EchoNode.from_dict(payload)
         assert node.config.executor == "simple"
         assert node.config.tools == []
@@ -486,7 +486,7 @@ class TestAgentExecutorUds:
             node = _AgentProbeNode(node_id="ag1", config=_agent_config())
             result = await AgentExecutor().execute(node, {"task": "go"}, NodeExecutionContext(node_id="ag1"))
         assert result.status == NodeStatus.FAILED
-        assert "未返回 report" in result.error
+        assert "未返回 report" in result.error  # i18n: user-facing
 
     async def test_transcript_failure_does_not_fail_run(self, monkeypatch):
         async with _fake_as(monkeypatch) as server:
@@ -530,7 +530,7 @@ class TestAgentExecutorUds:
             node = _AgentProbeNode(node_id="ag1", config=NodeConfig(executor="agent"))
             result = await AgentExecutor().execute(node, {}, NodeExecutionContext(node_id="ag1"))
         assert result.status == NodeStatus.FAILED
-        assert "缺少任务文本" in result.error
+        assert "缺少任务文本" in result.error  # i18n: user-facing
         assert server.calls == []
 
     async def test_missing_socket_fails(self, monkeypatch):
@@ -539,7 +539,7 @@ class TestAgentExecutorUds:
         node = _AgentProbeNode(node_id="ag1", config=_agent_config())
         result = await AgentExecutor().execute(node, {"task": "go"}, NodeExecutionContext(node_id="ag1"))
         assert result.status == NodeStatus.FAILED
-        assert "socket 不可用" in result.error
+        assert "socket 不可用" in result.error  # i18n: user-facing
 
     async def test_rpc_error_fails_visibly(self, monkeypatch):
         async def handler(reader, writer):
@@ -623,7 +623,7 @@ class TestAgentExecutorHttp:
         with caplog.at_level("WARNING", logger=executors_mod.__name__):
             result = await AgentExecutor().execute(node, {"task": "go"}, NodeExecutionContext(node_id="ag1"))
         assert result.status == NodeStatus.SUCCESS
-        assert any("不支持逐节点覆盖" in rec.message for rec in caplog.records)
+        assert any("does not support per-node overrides" in rec.message for rec in caplog.records)
 
     async def test_http_terminal_failure(self, monkeypatch):
         def handler(request: httpx.Request) -> httpx.Response:
@@ -661,7 +661,7 @@ class TestAgentExecutorHttp:
         node = _AgentProbeNode(node_id="ag1", config=_agent_config(timeout=0.05))
         result = await AgentExecutor().execute(node, {"task": "go"}, NodeExecutionContext(node_id="ag1"))
         assert result.status == NodeStatus.FAILED
-        assert "超时" in result.error
+        assert "超时" in result.error  # i18n: user-facing
         assert cancelled == ["run-4"]
 
     async def test_http_requires_agent_or_graph_id(self, monkeypatch):
@@ -690,11 +690,11 @@ class TestAgentNodeInWorkflow:
         assert [s.node_id for s in execution.steps] == ["src", "ag1", "sink"]
         assert [s.executor for s in execution.steps] == ["simple", "agent", "simple"]
         assert execution.executors == {"simple": 2, "agent": 1}
-        assert "并发=1" in execution.result_summary
+        assert "concurrency=1" in execution.result_summary
         assert "agent:1" in execution.result_summary
         assert "simple:2" in execution.result_summary
         assert PARALLEL_STATE.get("self_called", 0) == 0
-        assert server.specs[0]["task"], "agent 节点应收到上游输出作为任务文本"
+        assert server.specs[0]["task"], "agent 节点应收到上游输出作为任务文本"  # i18n: user-facing
 
     async def test_agent_failure_stops_run(self, monkeypatch):
         run_result = {"report": {"ok": False, "error": "agent gave up", "turns": 1}}
@@ -735,7 +735,7 @@ class TestAgentNodeInWorkflow:
         assert execution.steps[0].executor == "agent"
         assert execution.steps[1].status == NodeStatus.SUCCESS
         assert execution.steps[1].input_data.get("result") == "cached agent output"
-        assert server.calls == [], "续跑不应重新调用 agent-studio"
+        assert server.calls == [], "续跑不应重新调用 agent-studio"  # i18n: user-facing
 
     async def test_unknown_executor_runs_as_simple(self):
         wf = Workflow(name="unknown-exec-189")
@@ -754,7 +754,7 @@ class TestAgentNodeInWorkflow:
         execution = await engine.execute(wf, concurrency=3)
         assert execution.status == WorkflowStatus.FAILED
         assert "boom-189" in (execution.error or "")
-        # 同波全部节点结果都要落盘, 不能因一个失败丢掉兄弟节点
+        # All sibling node results in the same wave must be persisted; one failure must not drop the others
         assert {s.node_id for s in execution.steps} == {"a", "b", "c"}
         failed = next(s for s in execution.steps if s.node_id == "b")
         assert failed.status == NodeStatus.FAILED
@@ -764,7 +764,9 @@ class TestAgentNodeInWorkflow:
 LIVE_AS = os.environ.get("FUSION_COWORK_LIVE_AGENT_STUDIO", "").strip() == "1"
 
 
-@pytest.mark.skipif(not LIVE_AS, reason="真实 agent-studio daemon 集成测试, 需 FUSION_COWORK_LIVE_AGENT_STUDIO=1")
+@pytest.mark.skipif(
+    not LIVE_AS, reason="live agent-studio daemon integration test, requires FUSION_COWORK_LIVE_AGENT_STUDIO=1"
+)
 class TestLiveAgentStudio:
     async def test_real_agent_run(self):
         node = _AgentProbeNode(

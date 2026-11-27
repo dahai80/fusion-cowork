@@ -1,7 +1,8 @@
-"""Git Worktree 隔离管理 — P2-1。
+"""Git worktree isolation management — P2-1.
 
-为工作流执行提供 git 工作树隔离: 在独立 worktree 中运行命令/节点,
-不污染主工作区。封装 git worktree add/remove/list + 在 worktree 内执行命令。
+Provides git working-tree isolation for workflow execution: run commands/nodes
+inside a separate worktree without polluting the main workspace. Wraps git
+worktree add/remove/list + command execution inside a worktree.
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ class Worktree:
 
 
 class WorktreeManager:
-    """管理 git worktree 隔离工作树。"""
+    """Manage git worktree isolated working trees."""
 
     def __init__(self, repo_root: str = ""):
         self.repo_root = Path(repo_root).resolve() if repo_root else self._detect_repo_root()
@@ -81,19 +82,19 @@ class WorktreeManager:
         source_repo: str = "",
         trusted: bool = False,
     ) -> Optional[Worktree]:
-        """创建 worktree。branch 空 → 新建分支 worktree/<name>; 否则 checkout 已有分支。
+        """Create a worktree. Empty branch -> new branch worktree/<name>; otherwise checkout the existing branch.
 
-        issue #580: source_repo 非空且 != 本仓 origin → 标记 untrusted_source,
-        exec 受信任门禁约束 (trusted=True 或 mark_trusted 解锁)。
+        issue #580: non-empty source_repo different from this repo's origin -> marked
+        untrusted_source; exec is gated by the trust gate (trusted=True or mark_trusted unlocks).
         """
         if not self.is_git_repo():
-            logger.error(f"非 git 仓库, 无法创建 worktree: {self.repo_root}")
+            logger.error(f"Not a git repository, cannot create worktree: {self.repo_root}")
             return None
         parent_dir = Path(parent) if parent else self.repo_root.parent / ".fusion-worktrees"
         parent_dir.mkdir(parents=True, exist_ok=True)
         wt_path = parent_dir / name
         if wt_path.exists():
-            logger.error(f"worktree 路径已存在: {wt_path}")
+            logger.error(f"Worktree path already exists: {wt_path}")
             return None
         new_branch = branch or f"worktree/{name}"
         if not branch:
@@ -102,7 +103,7 @@ class WorktreeManager:
             args = ["worktree", "add", str(wt_path), branch]
         res = self._git(args)
         if res.returncode != 0:
-            logger.error(f"git worktree add 失败: {res.stderr.strip()}")
+            logger.error(f"git worktree add failed: {res.stderr.strip()}")
             return None
         head = self._git(["rev-parse", "HEAD"], cwd=wt_path).stdout.strip()
         untrusted = ""
@@ -111,8 +112,8 @@ class WorktreeManager:
             if source_repo != own:
                 untrusted = source_repo
                 logger.warning(
-                    f"worktree '{name}' 来源不可信 (source={source_repo} != origin={own}): "
-                    "exec 被门禁阻止, 需显式 trust_source 解锁"
+                    f"worktree '{name}' source untrusted (source={source_repo} != origin={own}): "
+                    "exec is gated, explicit trust_source required to unlock"
                 )
         wt = Worktree(
             path=str(wt_path),
@@ -123,11 +124,11 @@ class WorktreeManager:
         )
         self._worktrees[name] = wt
         self._write_marker(wt_path, name=name, branch=wt.branch, untrusted_source=untrusted, trusted=trusted)
-        logger.info(f"worktree 已创建: {name} -> {wt_path} (branch={wt.branch}, untrusted={bool(untrusted)})")
+        logger.info(f"Worktree created: {name} -> {wt_path} (branch={wt.branch}, untrusted={bool(untrusted)})")
         return wt
 
     def _write_marker(self, wt_path: Path, name: str, branch: str, untrusted_source: str, trusted: bool) -> None:
-        # issue #580: 所有权证明 — 创建时落 marker 文件, 删除/合并前交叉校验
+        # issue #580: ownership proof — marker file written at creation, cross-checked before delete/merge
         marker = {
             "name": name,
             "branch": branch,
@@ -141,7 +142,7 @@ class WorktreeManager:
             tmp.write_text(json.dumps(marker, ensure_ascii=False), encoding="utf-8")
             tmp.replace(wt_path / MARKER_FILE)
         except Exception as e:
-            logger.error(f"worktree marker 写入失败 {wt_path}: {e}")
+            logger.error(f"Worktree marker write failed {wt_path}: {e}")
 
     def read_marker(self, wt_path: str | Path) -> Optional[Dict[str, Any]]:
         try:
@@ -156,7 +157,7 @@ class WorktreeManager:
         return [line[len("worktree ") :] for line in res.stdout.splitlines() if line.startswith("worktree ")]
 
     def _resolve(self, name: str) -> Optional[Worktree]:
-        # issue #580: 解析不信任路径尾段匹配 — 只认内存登记或 marker 名称匹配
+        # issue #580: resolution does not trust path-tail matching — only in-memory registration or marker name match
         wt = self._worktrees.get(name)
         if wt:
             return wt
@@ -169,25 +170,26 @@ class WorktreeManager:
         return None
 
     def remove(self, name: str, force: bool = False) -> bool:
-        # issue #580: 所有权证明删除 — 必须 marker 存在且 git worktree list 交叉确认;
-        # 无 marker 的目录一律拒绝 (路径尾段/前缀匹配不可信), force 只透传 git --force
+        # issue #580: ownership-proof delete — marker must exist and be cross-confirmed against
+        # git worktree list; directories without a marker are always rejected (path-tail/prefix
+        # matching is untrusted), force only forwards git --force
         wt = self._resolve(name)
         if not wt:
-            logger.warning(f"worktree 未登记或无所有权证明, 拒绝删除: {name}")
+            logger.warning(f"Worktree unregistered or lacking ownership proof, refusing to delete: {name}")
             return False
         marker = self.read_marker(wt.path)
         if not marker or marker.get("name") != name:
-            logger.warning(f"worktree marker 缺失或名称不符, 拒绝删除: {name} ({wt.path})")
+            logger.warning(f"Worktree marker missing or name mismatch, refusing to delete: {name} ({wt.path})")
             return False
         if wt.path not in self._porcelain_paths():
-            logger.warning(f"worktree 不在 git worktree list 中, 拒绝删除: {name} ({wt.path})")
+            logger.warning(f"Worktree not in git worktree list, refusing to delete: {name} ({wt.path})")
             return False
         args = ["worktree", "remove", wt.path]
         if force:
             args.append("--force")
         res = self._git(args)
         if res.returncode != 0:
-            logger.warning(f"git worktree remove 失败: {res.stderr.strip()}, 尝试强制删除目录")
+            logger.warning(f"git worktree remove failed: {res.stderr.strip()}, falling back to force directory removal")
             try:
                 shutil.rmtree(wt.path, ignore_errors=True)
             except Exception:
@@ -195,11 +197,11 @@ class WorktreeManager:
         if wt.branch.startswith("worktree/"):
             self._git(["branch", "-D", wt.branch])
         self._worktrees.pop(name, None)
-        logger.info(f"worktree 已删除: {name}")
+        logger.info(f"Worktree deleted: {name}")
         return True
 
     def is_untrusted(self, name: str) -> Optional[str]:
-        # 返回 untrusted 来源 (可信/未知 → None; 未登记也 None, 由调用方另行报错)
+        # Returns the untrusted source (trusted/unknown -> None; unregistered also None, caller reports separately)
         wt = self._resolve(name)
         if not wt:
             return None
@@ -221,9 +223,9 @@ class WorktreeManager:
             tmp.write_text(json.dumps(marker, ensure_ascii=False), encoding="utf-8")
             tmp.replace(Path(wt.path) / MARKER_FILE)
         except Exception as e:
-            logger.error(f"worktree marker 更新失败 {wt.path}: {e}")
+            logger.error(f"Worktree marker update failed {wt.path}: {e}")
             return False
-        logger.info(f"worktree 来源已信任: {name} (source={marker.get('untrusted_source')})")
+        logger.info(f"Worktree source marked trusted: {name} (source={marker.get('untrusted_source')})")
         return True
 
     def merge_back(
@@ -232,41 +234,42 @@ class WorktreeManager:
         target_branch: str = "",
         message: str = "",
     ) -> Dict[str, Any]:
-        """issue #580: 把 worktree 分支合并回基线 — 合并在基线自己的工作树
-        (repo_root 主工作树) 执行, 绝不占用 agent worktree; 目标分支切换且
-        finally 恢复原分支; 基线脏树拒绝; 失败 merge --abort 兜底。
+        """issue #580: merge the worktree branch back into the baseline — the merge runs in
+        the baseline's own working tree (repo_root main worktree), never occupying the agent
+        worktree; switches to the target branch and restores the original branch in finally;
+        rejects a dirty baseline tree; falls back to merge --abort on failure.
         """
         wt = self._resolve(name)
         if not wt:
-            return {"error": f"worktree 不存在: {name}"}
+            return {"error": f"worktree 不存在: {name}"}  # i18n: user-facing
         marker = self.read_marker(wt.path)
         if not marker or marker.get("name") != name or wt.path not in self._porcelain_paths():
-            return {"error": f"worktree 所有权证明缺失, 拒绝合并: {name}"}
+            return {"error": f"worktree 所有权证明缺失, 拒绝合并: {name}"}  # i18n: user-facing
         if self._git(["status", "--porcelain"]).stdout.strip():
-            return {"error": "基线工作树有未提交变更, 拒绝合并 (先 commit/stash)"}
+            return {"error": "基线工作树有未提交变更, 拒绝合并 (先 commit/stash)"}  # i18n: user-facing
         head_branch = self._git(["rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
         target = target_branch or head_branch
         try:
             if target != head_branch:
                 co = self._git(["checkout", target])
                 if co.returncode != 0:
-                    return {"error": f"切换目标分支失败: {co.stderr.strip()}", "target": target}
+                    return {"error": f"切换目标分支失败: {co.stderr.strip()}", "target": target}  # i18n: user-facing
             merge_args = ["merge", "--no-ff", wt.branch]
             if message:
                 merge_args += ["-m", message]
             res = self._git(merge_args)
             if res.returncode != 0:
                 self._git(["merge", "--abort"])
-                logger.warning(f"merge_back 失败已回滚: {name} -> {target}: {res.stderr.strip()}")
-                return {"error": f"合并失败 (已 abort): {res.stderr.strip()}", "target": target}
+                logger.warning(f"merge_back failed and rolled back: {name} -> {target}: {res.stderr.strip()}")
+                return {"error": f"合并失败 (已 abort): {res.stderr.strip()}", "target": target}  # i18n: user-facing
             commit = self._git(["rev-parse", "HEAD"]).stdout.strip()
-            logger.info(f"merge_back 完成: {name} ({wt.branch}) -> {target} @ {commit[:8]}")
+            logger.info(f"merge_back done: {name} ({wt.branch}) -> {target} @ {commit[:8]}")
             return {"merged": True, "branch": wt.branch, "target": target, "commit": commit}
         finally:
             if target != head_branch:
                 back = self._git(["checkout", head_branch])
                 if back.returncode != 0:
-                    logger.error(f"恢复原分支失败: {head_branch}: {back.stderr.strip()}")
+                    logger.error(f"Failed to restore original branch: {head_branch}: {back.stderr.strip()}")
 
     def list_worktrees(self) -> List[Worktree]:
         res = self._git(["worktree", "list", "--porcelain"])
@@ -311,15 +314,15 @@ class WorktreeManager:
         timeout: int = 30,
         env: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        """在指定 worktree 内执行 shell 命令。"""
+        """Execute a shell command inside the given worktree."""
         wt = self._resolve(name)
         if not wt:
-            return {"error": f"worktree 不存在: {name}"}
-        # issue #580: 不可信来源门禁 — 外部来源 worktree 的 setup/exec 阻止到显式信任
+            return {"error": f"worktree 不存在: {name}"}  # i18n: user-facing
+        # issue #580: untrusted-source gate — external-source worktree setup/exec is blocked until explicitly trusted
         untrusted = self.is_untrusted(name)
         if untrusted:
             return {
-                "error": f"worktree 来源不可信 (source={untrusted}), 拒绝执行; 需显式 trust_source 解锁",
+                "error": f"worktree 来源不可信 (source={untrusted}), 拒绝执行; 需显式 trust_source 解锁",  # i18n: user-facing
                 "untrusted_source": untrusted,
                 "command": command,
             }
@@ -341,7 +344,7 @@ class WorktreeManager:
             except TimeoutError:
                 proc.kill()
                 await proc.wait()
-                return {"error": f"执行超时 ({timeout}s)", "command": command}
+                return {"error": f"执行超时 ({timeout}s)", "command": command}  # i18n: user-facing
             return {
                 "stdout": stdout.decode("utf-8", errors="replace") if stdout else "",
                 "stderr": stderr.decode("utf-8", errors="replace") if stderr else "",
@@ -350,5 +353,5 @@ class WorktreeManager:
                 "path": wt.path,
             }
         except Exception as e:
-            logger.error(f"worktree exec 失败 {name}: {e}")
+            logger.error(f"Worktree exec failed {name}: {e}")
             return {"error": str(e)}

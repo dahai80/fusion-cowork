@@ -1,18 +1,18 @@
-"""集群模型同步 — LAN 内模型清单增量同步 + SHA256 校验 + 网络分区降级。
+"""Cluster model sync — LAN model-manifest incremental sync + SHA256 verification + network-partition degradation.
 
-迁移自 fusion-multi-node/master/cluster_sync.py (issue #61)。归属 fusion-cowork
-(工作流编排侧承载模型清单同步)。纯本地/LAN, 不出站云。
+Migrated from fusion-multi-node/master/cluster_sync.py (issue #61). Owned by fusion-cowork
+(the workflow-orchestration side carries the model manifest sync). Pure local/LAN, no outbound cloud.
 
-自包含安全 helper (内联, 不依赖 fusion-multi-node):
-- is_safe_peer_host: SSRF 防护, 拒环回/链路本地/未指定/多播/元数据主机, 放私网
-- is_safe_path_segment: 路径段校验, 防 ../ 穿越
-- build_safe_url: 出站 URL 构造, 主机走 SSRF, path 走过滤
+Self-contained security helpers (inlined, no fusion-multi-node dependency):
+- is_safe_peer_host: SSRF protection, rejects loopback/link-local/unspecified/multicast/metadata hosts, allows private nets
+- is_safe_path_segment: path-segment validation, prevents ../ traversal
+- build_safe_url: outbound URL construction, host via SSRF check, path via filtering
 
-- ModelManifest: 模型文件清单 + SHA256 哈希
-- compute_sync_diff: 仅同步差异文件
-- PartitionDetector: 心跳超时检测, 降级单机, 恢复自动同步
-- NodeLoadReport: 节点硬件负载报告
-- ClusterSyncManager: 同步管理器 (start/stop 生命周期 + 增量同步)
+- ModelManifest: model file manifest + SHA256 hashes
+- compute_sync_diff: sync only differing files
+- PartitionDetector: heartbeat-timeout detection, degrade to single machine, auto re-sync on recovery
+- NodeLoadReport: node hardware load report
+- ClusterSyncManager: sync manager (start/stop lifecycle + incremental sync)
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# SSRF 拒绝主机名 (云元数据端点等), 禁止出站
+# SSRF-rejected hostnames (cloud metadata endpoints etc.), outbound forbidden
 _SSRF_BLOCKED_HOSTNAMES = frozenset(
     {
         "metadata.google.internal",
@@ -44,12 +44,12 @@ _SSRF_BLOCKED_HOSTNAMES = frozenset(
     }
 )
 
-# 单文件同步大小上限 (64GB), 防 peer 回灌超大体致内存/磁盘 DoS
+# Per-file sync size cap (64GB), prevents oversized peer payloads from causing memory/disk DoS
 _MAX_SYNC_FILE_BYTES = 64 * 1024 * 1024 * 1024
 
 
 def is_safe_path_segment(value: str) -> bool:
-    """路径段安全校验 — 防 ../ 穿越与非法字符。仅允许字母数字 _ - 点。"""
+    """Path-segment safety check — prevents ../ traversal and illegal characters. Allows alphanumerics, _ - . only."""
     if not value or len(value) > 128:
         return False
     if "/" in value or "\\" in value or "\x00" in value:
@@ -62,7 +62,7 @@ def is_safe_path_segment(value: str) -> bool:
 
 
 def is_safe_peer_host(host: str) -> bool:
-    """出站对端 SSRF 防护 — 拒环回/链路本地/未指定/多播/元数据, 放私网 (LAN 集群)。"""
+    """Outbound peer SSRF protection — rejects loopback/link-local/unspecified/multicast/metadata, allows private nets (LAN cluster)."""
     if not host or not isinstance(host, str):
         return False
     host = host.strip()
@@ -71,7 +71,7 @@ def is_safe_peer_host(host: str) -> bool:
     if "@" in host or "/" in host or "?" in host or "#" in host:
         return False
     if host.lower() in _SSRF_BLOCKED_HOSTNAMES:
-        logger.warning(f"SSRF 拦截: 元数据主机名 {host!r}")
+        logger.warning(f"SSRF blocked: metadata hostname {host!r}")
         return False
     try:
         ip = ipaddress.ip_address(host)
@@ -79,21 +79,21 @@ def is_safe_peer_host(host: str) -> bool:
         ip = None
     if ip is not None:
         if ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip.is_reserved:
-            logger.warning(f"SSRF 拦截: 受限 IP {host!r}")
+            logger.warning(f"SSRF blocked: restricted IP {host!r}")
             return False
         if not ip.is_private:
-            logger.warning(f"SSRF 拦截: 非私网 IP, 禁止出站公网 {host!r}")
+            logger.warning(f"SSRF blocked: non-private IP, outbound to public internet forbidden {host!r}")
             return False
         return True
     if host.lower() == "localhost":
-        logger.warning(f"SSRF 拦截: localhost {host!r}")
+        logger.warning(f"SSRF blocked: localhost {host!r}")
         return False
     if not re.match(r"^[a-zA-Z0-9._\-]+$", host):
         return False
     try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror:
-        logger.warning(f"SSRF 防护: 无法解析主机名 {host!r}")
+        logger.warning(f"SSRF protection: cannot resolve hostname {host!r}")
         return False
     for info in infos:
         addr = info[4][0]
@@ -102,37 +102,37 @@ def is_safe_peer_host(host: str) -> bool:
         except ValueError:
             continue
         if ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip.is_reserved:
-            logger.warning(f"SSRF 拦截: {host!r} 解析到受限 IP {addr!r}")
+            logger.warning(f"SSRF blocked: {host!r} resolves to restricted IP {addr!r}")
             return False
         if not ip.is_private:
-            logger.warning(f"SSRF 拦截: {host!r} 解析到公网 IP {addr!r}, 禁止出站")
+            logger.warning(f"SSRF blocked: {host!r} resolves to public IP {addr!r}, outbound forbidden")
             return False
     return True
 
 
 def build_safe_url(scheme: str, host: str, port: int, path: str) -> str:
-    """出站 URL — 主机走 SSRF, path 走过滤 (拒绝 .. 穿越)。"""
+    """Outbound URL — host via SSRF check, path via filtering (rejects .. traversal)."""
     if not is_safe_peer_host(host):
-        raise ValueError(f"不安全的对端主机: {host!r}")
+        raise ValueError(f"不安全的对端主机: {host!r}")  # i18n: user-facing
     if "/.." in path or path == ".." or path.startswith("../") or "/../" in path:
-        raise ValueError(f"不安全的 path (含穿越): {path!r}")
+        raise ValueError(f"不安全的 path (含穿越): {path!r}")  # i18n: user-facing
     if not re.match(r"^/[a-zA-Z0-9._\-/]*$", path):
-        raise ValueError(f"不安全的 path: {path!r}")
+        raise ValueError(f"不安全的 path: {path!r}")  # i18n: user-facing
     return f"{scheme}://{host}:{int(port)}{path}"
 
 
 def _safe_rel_path(rel: str) -> str:
-    """校验远端 manifest 相对路径, 防穿越。规范化后须仍在 model_dir 内。"""
+    """Validate a remote-manifest relative path, preventing traversal. Must stay inside model_dir after normalization."""
     if not rel or "\x00" in rel:
-        raise ValueError(f"非法同步路径: {rel!r}")
+        raise ValueError(f"非法同步路径: {rel!r}")  # i18n: user-facing
     if rel.startswith("/") or ":" in rel.split("/")[0]:
-        raise ValueError(f"非法同步路径: {rel!r}")
+        raise ValueError(f"非法同步路径: {rel!r}")  # i18n: user-facing
     norm = os.path.normpath(rel)
     if norm.startswith("..") or "/.." in norm or norm == "..":
-        raise ValueError(f"路径穿越被拒: {rel!r}")
+        raise ValueError(f"路径穿越被拒: {rel!r}")  # i18n: user-facing
     for seg in norm.split("/"):
         if not is_safe_path_segment(seg):
-            raise ValueError(f"路径段非法: {seg!r} (in {rel!r})")
+            raise ValueError(f"路径段非法: {seg!r} (in {rel!r})")  # i18n: user-facing
     return norm
 
 
@@ -226,16 +226,16 @@ def compute_file_sha256(file_path: str) -> str:
                 h.update(chunk)
         return h.hexdigest()
     except Exception as e:
-        logger.error(f"计算文件哈希失败: {file_path}, {e}")
+        logger.error(f"Failed to hash file: {file_path}, {e}")
         return ""
 
 
 def build_manifest(model_name: str, model_dir: str, model_id: str = "") -> ModelManifest:
-    """扫描模型目录, 生成 ModelManifest。"""
+    """Scan the model directory and build a ModelManifest."""
     files = []
     total_size = 0
     if not os.path.isdir(model_dir):
-        logger.warning(f"模型目录不存在: {model_dir}")
+        logger.warning(f"Model directory does not exist: {model_dir}")
         return ModelManifest(model_name=model_name, model_id=model_id)
     for root, _dirs, filenames in os.walk(model_dir):
         for fname in filenames:
@@ -254,7 +254,7 @@ def build_manifest(model_name: str, model_dir: str, model_id: str = "") -> Model
                 )
                 total_size += stat.st_size
             except Exception as e:
-                logger.error(f"扫描文件失败: {fpath}, {e}")
+                logger.error(f"Failed to scan file: {fpath}, {e}")
     return ModelManifest(
         model_name=model_name,
         model_id=model_id,
@@ -265,7 +265,7 @@ def build_manifest(model_name: str, model_dir: str, model_id: str = "") -> Model
 
 
 def compute_sync_diff(local: ModelManifest, remote: ModelManifest) -> list[FileEntry]:
-    """对比本地与远端 manifest, 返回需同步的文件列表。"""
+    """Compare local and remote manifests, return the list of files needing sync."""
     local_map = {f.path: f for f in local.files}
     remote_map = {f.path: f for f in remote.files}
     diff_files = []
@@ -276,12 +276,12 @@ def compute_sync_diff(local: ModelManifest, remote: ModelManifest) -> list[FileE
     for path in local_map:
         if path not in remote_map:
             diff_files.append(FileEntry(path=path, sha256="__deleted__"))
-    logger.info(f"增量同步差异: {len(diff_files)}/{len(remote_map)} files need sync")
+    logger.info(f"Incremental sync diff: {len(diff_files)}/{len(remote_map)} files need sync")
     return diff_files
 
 
 class PartitionDetector:
-    """网络分区检测与降级管理。"""
+    """Network partition detection and degradation management."""
 
     def __init__(
         self,
@@ -311,7 +311,7 @@ class PartitionDetector:
     def update_heartbeat(self, node_id: str) -> None:
         self._last_heartbeat[node_id] = time.time()
         if self._degraded:
-            logger.info(f"分区恢复: 收到 {node_id} 心跳")
+            logger.info(f"Partition recovered: heartbeat received from {node_id}")
             self._degraded = False
             self._state = PartitionState.CONNECTED
             if self._on_reconnect:
@@ -326,7 +326,7 @@ class PartitionDetector:
             return
         self._running = True
         self._task = asyncio.create_task(self._check_loop())
-        logger.info(f"分区检测启动: timeout={self.heartbeat_timeout}s")
+        logger.info(f"Partition detection started: timeout={self.heartbeat_timeout}s")
 
     async def stop(self) -> None:
         self._running = False
@@ -348,13 +348,13 @@ class PartitionDetector:
         if disconnected and not self._degraded:
             self._degraded = True
             self._state = PartitionState.PARTITIONED
-            logger.warning(f"网络分区检测: {disconnected} 已断连, 降级单机运行")
+            logger.warning(f"Network partition detected: {disconnected} disconnected, degrading to single-machine mode")
             if self._on_partition:
                 self._on_partition(disconnected)
         elif not disconnected and self._degraded:
             self._degraded = False
             self._state = PartitionState.CONNECTED
-            logger.info("网络分区恢复: 所有节点已重连")
+            logger.info("Network partition recovered: all nodes reconnected")
             if self._on_reconnect:
                 self._on_reconnect()
 
@@ -376,7 +376,7 @@ class PartitionDetector:
 
 
 class ClusterSyncManager:
-    """集群模型同步管理器。"""
+    """Cluster model sync manager."""
 
     def __init__(
         self,
@@ -396,7 +396,7 @@ class ClusterSyncManager:
         self._running = True
         self._sync_task = asyncio.create_task(self._sync_loop())
         await self._partition_detector.start()
-        logger.info(f"集群同步管理器启动: cache_dir={self.model_cache_dir}")
+        logger.info(f"Cluster sync manager started: cache_dir={self.model_cache_dir}")
 
     async def stop(self) -> None:
         self._running = False
@@ -406,7 +406,7 @@ class ClusterSyncManager:
             self._sync_task = None
 
     def get_manifest(self, model_name: str) -> ModelManifest:
-        """获取本地模型的 manifest。"""
+        """Get the local model manifest."""
         model_dir = os.path.join(self.model_cache_dir, model_name)
         return build_manifest(model_name, model_dir)
 
@@ -417,17 +417,17 @@ class ClusterSyncManager:
         source_host: str,
         source_port: int = 11452,
     ) -> dict[str, Any]:
-        """增量同步: 对比 manifest, 仅下载差异文件。下载后强制 SHA256 校验, 不符即拒写。"""
+        """Incremental sync: compare manifests, download only differing files. Enforces SHA256 verification after download; mismatch rejects the write."""
         local_manifest = self.get_manifest(model_name)
         diff_files = compute_sync_diff(local_manifest, remote_manifest)
         if not diff_files:
-            logger.info(f"增量同步: {model_name} 无差异, 跳过")
+            logger.info(f"Incremental sync: {model_name} no differences, skipping")
             return {"model_name": model_name, "synced": 0, "status": "up_to_date"}
         if not is_safe_peer_host(source_host):
-            logger.warning(f"增量同步拒绝对端: {source_host!r}")
+            logger.warning(f"Incremental sync rejected peer: {source_host!r}")
             return {"model_name": model_name, "synced": 0, "total_diff": len(diff_files), "status": "rejected"}
         if not is_safe_path_segment(model_name):
-            logger.warning(f"增量同步拒绝 model_name: {model_name!r}")
+            logger.warning(f"Incremental sync rejected model_name: {model_name!r}")
             return {"model_name": model_name, "synced": 0, "total_diff": len(diff_files), "status": "rejected"}
         model_dir = os.path.normpath(os.path.join(self.model_cache_dir, model_name))
         synced = 0
@@ -444,15 +444,15 @@ class ClusterSyncManager:
                 resp.raise_for_status()
                 content = resp.content
                 if fentry.size and len(content) != fentry.size:
-                    raise ValueError(f"下载大小不符: got {len(content)} != manifest {fentry.size}")
+                    raise ValueError(f"下载大小不符: got {len(content)} != manifest {fentry.size}")  # i18n: user-facing
                 if len(content) > _MAX_SYNC_FILE_BYTES:
-                    raise ValueError(f"下载超大小上限: {len(content)} > {_MAX_SYNC_FILE_BYTES}")
+                    raise ValueError(f"下载超大小上限: {len(content)} > {_MAX_SYNC_FILE_BYTES}")  # i18n: user-facing
                 got_sha = hashlib.sha256(content).hexdigest()
                 if got_sha != fentry.sha256:
-                    raise ValueError(f"下载完整性校验失败: {got_sha} != manifest {fentry.sha256}")
+                    raise ValueError(f"下载完整性校验失败: {got_sha} != manifest {fentry.sha256}")  # i18n: user-facing
                 dest = os.path.normpath(os.path.join(model_dir, safe_rel))
                 if not dest.startswith(model_dir + os.sep) and dest != model_dir:
-                    raise ValueError(f"逃逸目标目录: {dest!r}")
+                    raise ValueError(f"逃逸目标目录: {dest!r}")  # i18n: user-facing
                 os.makedirs(os.path.dirname(dest), exist_ok=True)
                 tmp = dest + ".part"
                 with open(tmp, "wb") as f:
@@ -461,11 +461,11 @@ class ClusterSyncManager:
                 synced += 1
             except Exception as e:
                 rejected += 1
-                logger.error(f"同步文件失败: {fentry.path}, {e}")
+                logger.error(f"Failed to sync file: {fentry.path}, {e}")
             finally:
                 if client is not None:
                     await client.aclose()
-        logger.info(f"增量同步完成: {model_name}, synced={synced} rejected={rejected}/{len(diff_files)}")
+        logger.info(f"Incremental sync done: {model_name}, synced={synced} rejected={rejected}/{len(diff_files)}")
         return {
             "model_name": model_name,
             "synced": synced,
@@ -475,9 +475,9 @@ class ClusterSyncManager:
         }
 
     def trigger_sync(self, model_name: str, source_host: str, source_port: int = 11452) -> None:
-        """触发异步同步任务。"""
+        """Enqueue an async sync task."""
         self._sync_queue.put_nowait((model_name, source_host, source_port))
-        logger.info(f"同步任务入队: {model_name} from {source_host}")
+        logger.info(f"Sync task enqueued: {model_name} from {source_host}")
 
     async def _sync_loop(self) -> None:
         while self._running:
@@ -488,9 +488,9 @@ class ClusterSyncManager:
                 continue
             try:
                 if not is_safe_peer_host(source_host):
-                    raise ValueError(f"不安全对端主机: {source_host!r}")
+                    raise ValueError(f"不安全对端主机: {source_host!r}")  # i18n: user-facing
                 if not is_safe_path_segment(model_name):
-                    raise ValueError(f"非法 model_name: {model_name!r}")
+                    raise ValueError(f"非法 model_name: {model_name!r}")  # i18n: user-facing
                 client = httpx.AsyncClient(timeout=30.0)
                 url = build_safe_url("http", source_host, source_port, f"/api/models/{model_name}/manifest")
                 resp = await client.get(url)
@@ -498,13 +498,13 @@ class ClusterSyncManager:
                 remote_manifest = ModelManifest.from_dict(resp.json())
                 await self.incremental_sync(model_name, remote_manifest, source_host, source_port)
             except Exception as e:
-                logger.error(f"同步循环处理失败: {model_name}, {e}")
+                logger.error(f"Sync loop processing failed: {model_name}, {e}")
             finally:
                 if client is not None:
                     await client.aclose()
 
     def collect_load_report(self) -> NodeLoadReport:
-        """采集本节点硬件负载 (psutil 懒加载, 无则返空报告)。"""
+        """Collect this node's hardware load (psutil lazy-loaded, empty report when absent)."""
         try:
             import psutil
 
@@ -512,7 +512,7 @@ class ClusterSyncManager:
             disk = psutil.disk_usage("/")
             cpu = psutil.cpu_percent(interval=0.1)
         except ImportError:
-            logger.warning("psutil 未安装, 负载报告不可用")
+            logger.warning("psutil not installed, load report unavailable")
             return NodeLoadReport(node_id=self.node_id, reported_at=time.time())
         return NodeLoadReport(
             node_id=self.node_id,

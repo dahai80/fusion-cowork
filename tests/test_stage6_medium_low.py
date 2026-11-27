@@ -1,18 +1,18 @@
-"""Stage 6 — MEDIUM+LOW 收尾测试。
+"""Stage 6 — MEDIUM+LOW wrap-up tests.
 
-覆盖本 stage 修复:
-- MD-1: JSON-RPC batch 拒绝 + UDS 行上限 + 请求体上限
-- MD-7/8: MessageBus 队列上限 + history 上限
-- MD-11/12/13/LO-4: ConfigCenter 原子写 + 锁 + 迭代快照
-- MD-16/LO-6: 插件 URL https-only + 重定向拒 + 大小上限 + meta 未知键
-- MD-17: import_from_claude_desk command 校验
-- LO-2: headless _extract_final_output 显式 status 比较
-- LO-7: manifest.timeout_seconds 透传沙箱
-- LO-8/9: scoped_folder 单例锁 + symlink 拒
-- LO-10: rpc_bridge 显式分发
+Covers this stage's fixes:
+- MD-1: JSON-RPC batch rejection + UDS line cap + request body cap
+- MD-7/8: MessageBus queue cap + history cap
+- MD-11/12/13/LO-4: ConfigCenter atomic write + lock + iteration snapshot
+- MD-16/LO-6: plugin URL https-only + redirect rejection + size cap + meta unknown keys
+- MD-17: import_from_claude_desk command validation
+- LO-2: headless _extract_final_output explicit status comparison
+- LO-7: manifest.timeout_seconds passthrough to sandbox
+- LO-8/9: scoped_folder singleton lock + symlink rejection
+- LO-10: rpc_bridge explicit dispatch
 - LO-12: mcp_gateway spawn fail-closed
-- LO-13: collab_ws auth token + 成员校验
-- latent: desk.space.workflow.* 走 SpaceArtifactService
+- LO-13: collab_ws auth token + member check
+- latent: desk.space.workflow.* routed via SpaceArtifactService
 """
 
 import json
@@ -43,13 +43,13 @@ class TestMessageBusBounded:
     async def test_overflow_drops_not_blocks(self):
         bus = AgentMessageBus()
         q = bus.subscribe("overflow")
-        # 填满队列
+        # Fill the queue
         for i in range(_QUEUE_MAX):
             q.put_nowait({"i": i})
-        # 再发一条 — publish 应 drop 而非 await 阻塞
+        # Send one more — publish should drop rather than await/block
         msg_id = await bus.publish("sender", "overflow", {"x": 1})
         assert msg_id
-        # 队列不超 maxsize
+        # Queue does not exceed maxsize
         assert q.qsize() == _QUEUE_MAX
 
     @pytest.mark.asyncio
@@ -61,13 +61,13 @@ class TestMessageBusBounded:
         assert len(hist) <= _HISTORY_MAX
 
 
-# ── E-6: MessageBus 静默丢消息 → 错误回传 ──
+# ── E-6: MessageBus silent message drop → error propagation ──
 
 
 class TestMessageBusDeliveryFailure:
     @pytest.mark.asyncio
     async def test_send_all_full_raises(self):
-        # E-6: 点对点全部队列满 → raise MessageDeliveryError, 调用方不再拿 msg_id 当成功
+        # E-6: point-to-point with all queues full → raise MessageDeliveryError, caller no longer treats msg_id as success
         from fusion_cowork.orchestrator.comm import MessageDeliveryError
 
         bus = AgentMessageBus()
@@ -77,14 +77,14 @@ class TestMessageBusDeliveryFailure:
         with pytest.raises(MessageDeliveryError) as exc:
             await bus.send("runtime", "agent_dead", {"action": "execute"})
         assert exc.value.receiver == "agent_dead"
-        # 丢弃消息留底, 可回查
+        # Dropped messages are kept for later inspection
         dropped = bus.get_dropped()
         assert len(dropped) >= 1
         assert dropped[-1].receiver == "agent_dead"
 
     @pytest.mark.asyncio
     async def test_send_partial_delivery_ok(self):
-        # E-6: 部分投递成功 → 不 raise, 正常返回 msg_id
+        # E-6: partial delivery success → no raise, returns msg_id normally
         bus = AgentMessageBus()
         _q_full = bus.subscribe("inbox:partial")
         _q_ok = bus.subscribe("inbox:partial")
@@ -96,7 +96,7 @@ class TestMessageBusDeliveryFailure:
 
     @pytest.mark.asyncio
     async def test_publish_overflow_logs_and_tracks(self):
-        # E-6: 广播溢出不 raise (多订阅者 best-effort), 但留底可回查
+        # E-6: broadcast overflow does not raise (multi-subscriber best-effort), but is kept for later inspection
         bus = AgentMessageBus()
         q = bus.subscribe("overflow_b")
         for i in range(_QUEUE_MAX):
@@ -163,7 +163,7 @@ class TestConfigCenterAtomic:
 
         def callback(change):
             calls.append(change.key)
-            # 在 callback 内取消订阅 — 应不抛 RuntimeError (MD-11 迭代快照)
+            # Unsubscribe inside the callback — should not raise RuntimeError (MD-11 iteration snapshot)
             cfg.unobserve(obs)
 
         obs = cfg.observe(callback, keys=["k"])
@@ -182,24 +182,24 @@ class TestScopedFolderSymlink:
         reset_scoped_folder_manager()
 
     def test_singleton_double_init_safe(self):
-        # 并发 from_config 不应产生多实例/抛错
+        # Concurrent from_config must not produce multiple instances / raise
         m1 = get_scoped_folder_manager()
         m2 = get_scoped_folder_manager()
         assert m1 is m2
 
     def test_symlink_escape_rejected(self, tmp_path):
-        # scope 内目录
+        # Directory inside scope
         scope_dir = tmp_path / "scope"
         scope_dir.mkdir()
-        # scope 外文件
+        # File outside scope
         outside = tmp_path / "outside.txt"
         outside.write_text("secret")
-        # symlink 指向 scope 外
+        # Symlink pointing outside scope
         link = scope_dir / "escape"
         try:
             os.symlink(outside, link)
         except OSError:
-            pytest.skip("symlink 创建失败 (权限/平台)")
+            pytest.skip("symlink 创建失败 (权限/平台)")  # i18n: user-facing
         mgr = ScopedFolderManager(scoped_folders=[str(scope_dir)], enforce=True)
         assert not mgr.is_allowed(str(link))
 
@@ -367,8 +367,8 @@ class TestRpcBridgeDispatch:
 
     @pytest.mark.asyncio
     async def test_unknown_plugins_method_rejected_32601(self):
-        # LO-10: 斜杠前缀宽匹配 (plugins/nonexistent 命中 startswith("plugins/")) → 委托 MCPHandler
-        # 依赖在 → handler -32601 (unknown method); 依赖缺 → ImportError → -32603
+        # LO-10: slash-prefix wide match (plugins/nonexistent hits startswith("plugins/")) → delegate to MCPHandler
+        # Dependency present → handler -32601 (unknown method); dependency missing → ImportError → -32603
         from fusion_cowork.server.rpc_bridge import dispatch_rpc, is_plugins_available
 
         resp = await dispatch_rpc({"jsonrpc": "2.0", "id": 1, "method": "plugins/nonexistent"})
@@ -397,13 +397,13 @@ class TestMcpGatewaySpawn:
         from fusion_cowork.server.mcp_gateway import MCPGateway
 
         gw = MCPGateway()
-        # 开了 flag, 过门控; 实际拉进程会因命令不存在/transport 抛 — 但非 PermissionError
+        # Flag enabled, passes the gate; actual spawn will raise from missing command/transport — but not PermissionError
         try:
             await gw.spawn("n", "nonexistent_cmd_xyz", [], {}, transport=None)
         except PermissionError:
-            pytest.fail("不应抛 PermissionError (flag 已开)")
+            pytest.fail("不应抛 PermissionError (flag 已开)")  # i18n: user-facing
         except Exception:
-            pass  # 进程拉起失败属预期
+            pass  # process spawn failure is expected
 
 
 # ── LO-13: collab_ws auth + member ──
@@ -420,12 +420,12 @@ class TestCollabWsAuth:
 
     @pytest.mark.asyncio
     async def test_auth_token_mismatch_rejected(self):
-        # 直接验证 serve_ws _handler 的认证分支逻辑 (不启真实 websockets server)
+        # Directly verify serve_ws _handler's auth branch logic (no real websockets server started)
         from fusion_cowork.server.collab_ws import CollabHub
 
         hub = CollabHub(auth_token="secret")
         hello = {"token": "wrong", "space_id": "s", "user_id": "u"}
-        # 复刻 _handler 认证判定
+        # Replicate the _handler auth decision
         token = str(hello.get("token", ""))
         rejected = hub._auth_token and token != hub._auth_token
         assert rejected
@@ -437,8 +437,8 @@ class TestCollabWsAuth:
 
         store = AsyncMock()
         store.get_member = AsyncMock(return_value=None)
-        # A-5: get_space 返回 Space dataclass, 非 dict — 旧 mock 返 dict 假绿,
-        # 掩盖生产 space.get("owner_id") AttributeError。改用真实 Space。
+        # A-5: get_space returns a Space dataclass, not a dict — old mock returned a dict giving a false green,
+        # masking the production space.get("owner_id") AttributeError. Use a real Space instead.
         store.get_space = AsyncMock(return_value=Space(id="s1", name="s", owner_id="other"))
         hub = CollabHub(space_store=store)
         member = await hub._space_store.get_member("s1", "intruder")
@@ -463,7 +463,7 @@ class TestCollabWsAuth:
         assert not rejected
 
 
-# ── MD-1: JSON-RPC batch rejection (mcp_http 3 端点 + desk_rpc 常量) ──
+# ── MD-1: JSON-RPC batch rejection (mcp_http 3 endpoints + desk_rpc constants) ──
 
 
 @pytest.fixture
@@ -531,7 +531,7 @@ class TestDeskRpcBatchConstant:
         assert _RPC_READ_TIMEOUT == 5.0
 
 
-# ── latent: desk.space.workflow.* 走 SpaceArtifactService (不再 AttributeError) ──
+# ── latent: desk.space.workflow.* routed via SpaceArtifactService (no more AttributeError) ──
 
 
 class TestSpaceWorkflowHandlersFixed:
@@ -542,7 +542,7 @@ class TestSpaceWorkflowHandlersFixed:
         store = AsyncMock()
         store.get_space = AsyncMock(return_value=MagicMock(owner_id="owner1"))
         server = DeskRPCServer(space_store=store)
-        # mock _get_artifact_svc 返回 AsyncMock service
+        # mock _get_artifact_svc to return an AsyncMock service
         svc = AsyncMock()
         svc.list_artifacts = AsyncMock(return_value=[{"id": "wf1", "name": "n"}])
         server._get_artifact_svc = MagicMock(return_value=(svc, None))

@@ -1,7 +1,7 @@
-"""issue #527: HITL 审批闸门接入共享内核 HumanGate 契约 (fusion-harness #66)。
+"""issue #527: HITL approval gate wired to the shared kernel HumanGate contract (fusion-harness #66).
 
-park 点 = ask(policy="block", ttl_s) + wait(); 审批侧 = resolve() 单赢家;
-ttl 到期惰性过期; 审批路由策略 (guard/闸门工具/journal/once) 仍全部在 cowork。
+park point = ask(policy="block", ttl_s) + wait(); approval side = resolve() single winner;
+ttl expiry is lazy; approval routing policy (guard/gate tool/journal/once) still lives entirely in cowork.
 """
 
 from __future__ import annotations
@@ -97,7 +97,7 @@ class TestParkPoint:
         assert q.payload["node_id"]
         assert q.payload["tool_name"] == HITL_NODE
         assert not eng._cancel_flags.get(exec_id)
-        # 收尾: 批准放行 (一次性 — 自定义高风险节点无持久规则, 复查必拒)
+        # Wrap up: approve and let through (once-only — custom high-risk node has no persistent rule, re-check would deny)
         assert eng.resolve_hitl(exec_id, True, once=True)
         execution = await asyncio.wait_for(task, timeout=5)
         assert execution.status == WorkflowStatus.SUCCESS
@@ -118,13 +118,13 @@ class TestApproverSide:
         task = asyncio.create_task(eng.execute(_wf(), execution_id=exec_id))
         assert await _wait_hitl(eng, exec_id)
         qid = await _wait_question(eng, gate, exec_id)
-        # 第一次决定生效 — 内核问题被 answer, 回复存档
+        # First decision wins — kernel question answered, reply archived
         assert eng.resolve_hitl(exec_id, True, once=True) is True
         answered = [q for q in gate.list_questions() if q.id == qid]
         assert len(answered) == 1 and answered[0].status == "answered"
         assert answered[0].reply["approved"] is True
         assert answered[0].reply["once"] is True
-        # 单赢家: 第二个 resolve 被内核拒绝, 决定不被覆盖 (不翻盘成拒绝)
+        # Single winner: second resolve rejected by the kernel, decision not overwritten (no flip to denial)
         assert eng.resolve_hitl(exec_id, False) is False
         execution = await asyncio.wait_for(task, timeout=5)
         assert execution.status == WorkflowStatus.SUCCESS
@@ -136,8 +136,8 @@ class TestApproverSide:
         task = asyncio.create_task(eng.execute(_wf(), execution_id=exec_id))
         assert await _wait_hitl(eng, exec_id)
         qid = await _wait_question(eng, gate, exec_id)
-        # 内核层直接 resolve 占坑 — 引擎侧 resolve_hitl 必须被单赢家拒绝;
-        # 引擎采纳内核 answer (approved+once) 继续跑
+        # Kernel-level resolve claims the slot directly — engine-side resolve_hitl must be rejected by the single winner;
+        # engine adopts the kernel answer (approved+once) and keeps running
         res = gate.resolve(qid, {"approved": True, "once": True})
         assert res["resolved"] is True
         assert eng.resolve_hitl(exec_id, False) is False
@@ -159,7 +159,7 @@ class TestExpiry:
         execution = await asyncio.wait_for(task, timeout=5)
         assert execution.status == WorkflowStatus.FAILED
         assert _ProbeNode.calls == 0
-        # ttl 到期惰性过期 — 内核队列不留 pending
+        # ttl lazy expiry — kernel queue keeps no pending entry
         statuses = {x.id: x.status for x in gate.list_questions()}
         assert statuses[qid] == "expired"
         assert gate.pending() == []
@@ -172,7 +172,7 @@ class TestW8Bridges:
         assert await _wait_hitl(eng, exec_id)
         qid1 = await _wait_question(eng, gate, exec_id)
         assert eng.resume(exec_id) is True
-        # resume 不合成决定 — 内核问题被取消并重问, 继续等
+        # resume does not synthesize a decision — kernel question canceled and re-asked, keep waiting
         for _ in range(250):
             qid2 = eng._hitl_questions.get(exec_id)
             if qid2 and qid2 != qid1:
@@ -184,7 +184,7 @@ class TestW8Bridges:
         statuses = {x.id: x.status for x in gate.list_questions()}
         assert statuses[qid1] == "cancelled"
         assert eng.hitl_pending(exec_id)
-        # 决定照常生效 (一次性批准 — 无持久规则)
+        # Decision still takes effect (once-only approval — no persistent rule)
         assert eng.resolve_hitl(exec_id, True, once=True) is True
         execution = await asyncio.wait_for(task, timeout=5)
         assert execution.status == WorkflowStatus.SUCCESS
@@ -213,6 +213,6 @@ class TestPersistence:
         assert (gate_dir / "human_gate_queue.json").exists()
         eng.cancel(exec_id)
         await asyncio.wait_for(task, timeout=5)
-        # 重建 gate — 队列从盘恢复, 无 pending 残留
+        # Rebuild gate — queue restored from disk, no pending residue
         gate2 = HumanGate(str(gate_dir))
         assert gate2.pending() == []

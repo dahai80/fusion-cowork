@@ -1,4 +1,4 @@
-// issue #261: 画布助手纯函数 — schema 字段推导 / 输入形态 / run 状态着色
+// issue #261: canvas helper pure functions — schema field derivation / input kinds / run status coloring
 import { describe, expect, it } from 'bun:test';
 import { fieldKind, isTrueish, runStatusByNode, schemaFields, toneColor, toneFor } from '../src/canvas';
 

@@ -1,11 +1,11 @@
-"""Issue #48 — /rpc 端点 + plugins/* 委托测试。
+"""Issue #48 — /rpc endpoint + plugins/* delegation tests.
 
-覆盖:
-- rpc_bridge.dispatch_rpc 路由 plugins/* + 拒绝非 plugins 方法
-- mcp_http /rpc 路由 (plugins.ping / plugins/list / plugins/config.get)
-- 节点发现 (list_nodes_for_plugins 返回 NodeRegistry.list)
-- 依赖缺失降级
-- JSON 解析错误
+Covers:
+- rpc_bridge.dispatch_rpc routing plugins/* + rejecting non-plugins methods
+- mcp_http /rpc route (plugins.ping / plugins/list / plugins/config.get)
+- node discovery (list_nodes_for_plugins returns NodeRegistry.list)
+- dependency-missing degradation
+- JSON parse errors
 """
 
 import pytest
@@ -34,12 +34,12 @@ async def test_dispatch_rpc_rejects_non_plugins_method():
     assert resp["jsonrpc"] == "2.0"
     assert resp["id"] == 1
     assert resp["error"]["code"] == -32601
-    assert "/rpc 仅托管 plugins/*" in resp["error"]["message"]
+    assert "/rpc 仅托管 plugins/*" in resp["error"]["message"]  # i18n: user-facing
 
 
 @pytest.mark.asyncio
 async def test_dispatch_rpc_unknown_plugins_method():
-    # LO-10: 点格式非白名单方法 (plugins.bogus) → guard 层 -32601, 不进 handler
+    # LO-10: dot-format non-whitelisted method (plugins.bogus) → guard layer -32601, never reaches handler
     # (guard: method in PLUGINS_METHODS or method.startswith("plugins/"))
     resp = await dispatch_rpc({"jsonrpc": "2.0", "id": 2, "method": "plugins.bogus", "params": {}})
     assert resp["jsonrpc"] == "2.0"
@@ -49,8 +49,8 @@ async def test_dispatch_rpc_unknown_plugins_method():
 
 @pytest.mark.asyncio
 async def test_dispatch_rpc_rejects_slash_unknown_plugins():
-    # LO-10: 斜杠前缀宽匹配 (plugins/bogus 命中 startswith("plugins/")) → 委托 MCPHandler
-    # 依赖在 → handler 返回 -32601 (unknown method); 依赖缺 → ImportError → -32603
+    # LO-10: slash-prefix wide match (plugins/bogus hits startswith("plugins/")) → delegate to MCPHandler
+    # Dependency present → handler returns -32601 (unknown method); dependency missing → ImportError → -32603
     resp = await dispatch_rpc({"jsonrpc": "2.0", "id": 9, "method": "plugins/bogus", "params": {}})
     assert resp["jsonrpc"] == "2.0"
     assert resp["id"] == 9
@@ -61,7 +61,7 @@ async def test_dispatch_rpc_rejects_slash_unknown_plugins():
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(not is_plugins_available(), reason="需要 fusion-plugins-ecosystem")
+@pytest.mark.skipif(not is_plugins_available(), reason="需要 fusion-plugins-ecosystem")  # i18n: user-facing
 async def test_dispatch_rpc_plugins_ping():
     resp = await dispatch_rpc({"jsonrpc": "2.0", "id": 3, "method": "plugins.ping", "params": {}})
     assert resp["jsonrpc"] == "2.0"
@@ -70,24 +70,24 @@ async def test_dispatch_rpc_plugins_ping():
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(not is_plugins_available(), reason="需要 fusion-plugins-ecosystem")
+@pytest.mark.skipif(not is_plugins_available(), reason="需要 fusion-plugins-ecosystem")  # i18n: user-facing
 async def test_dispatch_rpc_plugins_list():
     resp = await dispatch_rpc({"jsonrpc": "2.0", "id": 4, "method": "plugins/list", "params": {}})
     assert resp["jsonrpc"] == "2.0"
     assert resp["id"] == 4
     assert "plugins" in resp["result"]
     assert isinstance(resp["result"]["plugins"], list)
-    # issue #52: register_builtin 后内置插件可发现 (非空)
+    # issue #52: after register_builtin, built-in plugins are discoverable (non-empty)
     assert len(resp["result"]["plugins"]) > 0
     ids = {p["id"] for p in resp["result"]["plugins"]}
     assert "caveman_compress" in ids
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(not is_plugins_available(), reason="需要 fusion-plugins-ecosystem")
+@pytest.mark.skipif(not is_plugins_available(), reason="需要 fusion-plugins-ecosystem")  # i18n: user-facing
 async def test_dispatch_rpc_auto_mount_defaults():
-    # issue #52: 首次 dispatch 后 default_mounted 插件应已 enable,
-    # state.get 返回 enabled (而非 disabled/unknown)
+    # issue #52: after the first dispatch, default_mounted plugins should be enabled,
+    # state.get returns enabled (not disabled/unknown)
     resp = await dispatch_rpc(
         {"jsonrpc": "2.0", "id": 6, "method": "plugins/state.get", "params": {"plugin_id": "caveman_compress"}}
     )
@@ -96,13 +96,13 @@ async def test_dispatch_rpc_auto_mount_defaults():
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(not is_plugins_available(), reason="需要 fusion-plugins-ecosystem")
+@pytest.mark.skipif(not is_plugins_available(), reason="需要 fusion-plugins-ecosystem")  # i18n: user-facing
 async def test_dispatch_rpc_plugins_config_get():
     resp = await dispatch_rpc({"jsonrpc": "2.0", "id": 5, "method": "plugins/config.get", "params": {}})
     assert resp["jsonrpc"] == "2.0"
     assert resp["id"] == 5
     cfg = resp["result"]
-    # Studio 7 字段投影
+    # Studio 7-field projection
     for key in (
         "sandbox_mode",
         "auto_update",
@@ -116,7 +116,7 @@ async def test_dispatch_rpc_plugins_config_get():
 
 
 def test_list_nodes_for_plugins_returns_registry():
-    # 确保节点模块已注册 (触发 @register_node)
+    # Ensure node modules are registered (triggers @register_node)
     import fusion_cowork.nodes.io.file_io
     import fusion_cowork.nodes.macos.system_nodes
     import fusion_cowork.nodes.tools.tool_nodes  # noqa: F401
@@ -128,13 +128,13 @@ def test_list_nodes_for_plugins_returns_registry():
     assert "file_input" in names or "FileInputNode" in names or any("input" in n.lower() for n in names)
 
 
-# ── HTTP /rpc 路由 ──
+# ── HTTP /rpc route ──
 
 
 class TestRpcHttpRoute:
     @pytest.fixture
     def app(self):
-        pytest.importorskip("fastapi", reason="需要 [web] 依赖")
+        pytest.importorskip("fastapi", reason="需要 [web] 依赖")  # i18n: user-facing
         from fusion_cowork.server.mcp_http import create_http_app
         from fusion_cowork.server.mcp_server import MCPToolRegistry
 
@@ -163,7 +163,7 @@ class TestRpcHttpRoute:
             assert resp.json()["error"]["code"] == -32601
 
     @pytest.mark.asyncio
-    @pytest.mark.skipif(not is_plugins_available(), reason="需要 fusion-plugins-ecosystem")
+    @pytest.mark.skipif(not is_plugins_available(), reason="需要 fusion-plugins-ecosystem")  # i18n: user-facing
     async def test_rpc_plugins_ping(self, client):
         async with client as c:
             resp = await c.post("/rpc", json={"jsonrpc": "2.0", "id": 1, "method": "plugins.ping", "params": {}})
@@ -174,7 +174,7 @@ class TestRpcHttpRoute:
             assert body["result"] == {"pong": True}
 
     @pytest.mark.asyncio
-    @pytest.mark.skipif(not is_plugins_available(), reason="需要 fusion-plugins-ecosystem")
+    @pytest.mark.skipif(not is_plugins_available(), reason="需要 fusion-plugins-ecosystem")  # i18n: user-facing
     async def test_rpc_plugins_list(self, client):
         async with client as c:
             resp = await c.post("/rpc", json={"jsonrpc": "2.0", "id": 2, "method": "plugins/list", "params": {}})
@@ -186,5 +186,5 @@ class TestRpcHttpRoute:
         async with client as c:
             resp = await c.get("/health")
             assert resp.status_code == 200
-            # v0.4.0 Stage 4: 深度 /health, 上游未起 → degraded 不阻断
+            # v0.4.0 Stage 4: deep /health, upstream not up → degraded without blocking
             assert resp.json()["status"] in ("ok", "degraded")

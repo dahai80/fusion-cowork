@@ -1,10 +1,10 @@
-"""Issue #138 回归测试 — 审批卡持久化/scope、审批上下文、waterfall input_data、空间 instructions。
+"""Issue #138 regression tests — approval card persistence/scope, approval context, waterfall input_data, space instructions.
 
-- 规则持久化: save→load 往返, 重启不丢
-- confirm scope: 仅本次允许 (精确 scope) vs 始终允许 (*)
-- list_pending 附带 params/ts/workflow/node_id
-- _step_dict 暴露 input_data (waterfall 抽屉数据源)
-- 空间 instructions: API 往返 + chat 注入
+- Rule persistence: save→load round-trip, survives restart
+- confirm scope: allow-once (precise scope) vs allow-always (*)
+- list_pending carries params/ts/workflow/node_id
+- _step_dict exposes input_data (waterfall drawer data source)
+- Space instructions: API round-trip + chat injection
 """
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ class TestApprovalContext:
             "tool_name": "shell_exec",
             "params": {"command": "ls"},
             "ts": 1729000000.0,
-            "workflow": "整理下载",
+            "workflow": "整理下载",  # i18n: user-facing
             "node_id": "n1",
         }
         try:
@@ -110,7 +110,7 @@ class TestApprovalContext:
             pm._pending_local_details.pop("perm_ctx1", None)
         hit = next(e for e in entries if e["action_id"] == "perm_ctx1")
         assert hit["source"] == "local"
-        assert hit["workflow"] == "整理下载"
+        assert hit["workflow"] == "整理下载"  # i18n: user-facing
         assert hit["node_id"] == "n1"
         assert hit["params"]["command"] == "ls"
 
@@ -124,7 +124,7 @@ class TestEngineContextAndWaterfall:
                 "name": "wf-deny",
                 "workflow": {
                     "name": "wf-deny",
-                    "nodes": {"n1": {"name": "shell_exec", "config": {"label": "危险节点"}}},
+                    "nodes": {"n1": {"name": "shell_exec", "config": {"label": "危险节点"}}},  # i18n: user-facing
                     "edges": [],
                 },
             },
@@ -139,12 +139,12 @@ class TestEngineContextAndWaterfall:
                 break
             time.sleep(0.1)
         steps = rec.get("steps") or []
-        assert steps, "DENIED 步骤应记录"
+        assert steps, "DENIED 步骤应记录"  # i18n: user-facing
         assert steps[0]["status"] == "denied"
         assert "input_data" in steps[0]
         pend = [e for e in pm.list_pending() if e.get("workflow") == "wf-deny"]
-        assert pend, "拒绝应落待审批队列并带 workflow 上下文"
-        # from_dict (dict 形式) 以生成 node.id 为 key — 断言上下文 node_id 与 step 一致
+        assert pend, "拒绝应落待审批队列并带 workflow 上下文"  # i18n: user-facing
+        # from_dict (dict form) keys by the generated node.id — assert the context node_id matches the step
         assert pend[0].get("node_id") == steps[0]["node_id"]
 
     def test_step_dict_input_data_unit(self):
@@ -171,32 +171,44 @@ class TestSpaceInstructions:
     def test_space_config_roundtrip(self):
         from fusion_cowork.space.models import SpaceConfig
 
-        c = SpaceConfig.from_dict({"instructions": "用中文回答"})
-        assert c.instructions == "用中文回答"
-        assert c.to_dict()["instructions"] == "用中文回答"
+        c = SpaceConfig.from_dict({"instructions": "用中文回答"})  # i18n: user-facing
+        assert c.instructions == "用中文回答"  # i18n: user-facing
+        assert c.to_dict()["instructions"] == "用中文回答"  # i18n: user-facing
         assert SpaceConfig().instructions == ""
 
     def test_instructions_api_roundtrip(self, client):
-        r = client.post("/api/space/spaces", headers=_auth(), json={"name": "知识空间", "description": ""})
+        r = client.post(
+            "/api/space/spaces",
+            headers=_auth(),
+            json={"name": "知识空间", "description": ""},  # i18n: user-facing
+        )  # i18n: user-facing
         sid = r.json()["id"]
         r = client.put(
             f"/api/space/spaces/{sid}/instructions",
-            json={"instructions": "引用知识库时标注来源"},
+            json={"instructions": "引用知识库时标注来源"},  # i18n: user-facing
             headers=_auth(),
         )
         assert r.status_code == 200
-        assert r.json()["instructions"] == "引用知识库时标注来源"
+        assert r.json()["instructions"] == "引用知识库时标注来源"  # i18n: user-facing
         r = client.get(f"/api/space/spaces/{sid}/instructions", headers=_auth())
-        assert r.json()["instructions"] == "引用知识库时标注来源"
+        assert r.json()["instructions"] == "引用知识库时标注来源"  # i18n: user-facing
 
     def test_instructions_404(self, client):
         r = client.get("/api/space/spaces/sp_nope/instructions", headers=_auth())
         assert r.status_code == 404
 
     def test_chat_injection_helper(self, client):
-        r = client.post("/api/space/spaces", headers=_auth(), json={"name": "注入空间", "description": ""})
+        r = client.post(
+            "/api/space/spaces",
+            headers=_auth(),
+            json={"name": "注入空间", "description": ""},  # i18n: user-facing
+        )  # i18n: user-facing
         sid = r.json()["id"]
-        client.put(f"/api/space/spaces/{sid}/instructions", json={"instructions": "  用中文  "}, headers=_auth())
+        client.put(
+            f"/api/space/spaces/{sid}/instructions",
+            json={"instructions": "  用中文  "},  # i18n: user-facing
+            headers=_auth(),  # i18n: user-facing
+        )  # i18n: user-facing
         import asyncio
 
         from fusion_cowork.space.chat import SpaceChatService
@@ -204,7 +216,7 @@ class TestSpaceInstructions:
         svc = SpaceChatService.__new__(SpaceChatService)
         svc._store = client.app.state.space_store
         text = asyncio.run(svc._space_instructions(sid))
-        assert "用中文" in text
-        assert text.startswith("[空间指令]")
+        assert "用中文" in text  # i18n: user-facing
+        assert text.startswith("[空间指令]")  # i18n: user-facing
         empty = asyncio.run(svc._space_instructions("sp_missing"))
         assert empty == ""

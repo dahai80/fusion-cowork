@@ -1,11 +1,10 @@
-"""issue #177: shell 心跳携带 manifest — 网关 #284 刷新契约模块侧采纳。
+"""issue #177: shell heartbeat carries the manifest — module-side adoption of gateway #284 refresh contract.
 
 Contract:
-- 心跳 POST body 携带 manifest (含 id), 网关据此 HeartbeatWithManifest 收敛 ext 字段。
-- 每拍重读磁盘 manifest — 磁盘编辑 (增删 pages) 一个心跳周期内收敛, 无需重启。
-- 重读失败 (文件损坏/缺失) 沿用注册时版本, 心跳不中断。
-- fm- 密钥鉴权路径不变 (401 → 重注册)。
-"""
+- The heartbeat POST body carries the manifest (including id); the gateway converges ext fields via HeartbeatWithManifest.
+- The on-disk manifest is re-read every beat — disk edits (adding/removing pages) converge within one heartbeat interval, no restart needed.
+- If re-reading fails (corrupt/missing file), the registration-time copy is used and the heartbeat continues.
+- fm- key auth path unchanged (401 -> re-register)."""
 
 import asyncio
 import json
@@ -78,7 +77,7 @@ class TestHeartbeatCarriesManifest:
         manifest = shell_registry.load_manifest()
         await _drive(client, manifest)
         beats = _heartbeats(client.calls)
-        assert beats, "注册成功后应有心跳"
+        assert beats, "注册成功后应有心跳"  # i18n: user-facing
         for beat in beats:
             assert beat["json"]["id"] == "fusion-cowork"
             assert beat["json"]["upstream"] == "http://127.0.0.1:11461"
@@ -88,7 +87,7 @@ class TestHeartbeatCarriesManifest:
         manifest = shell_registry.load_manifest()
         drive_task = asyncio.create_task(shell_registry._registry_loop_body(client, manifest, interval=0.02))
         await asyncio.sleep(0.1)
-        # 磁盘新增一页, 不重启 — 下一拍心跳体应携带新 pages
+        # Add a page on disk without restarting — the next beat's heartbeat body should carry the new pages
         _write_manifest(manifest_env, [{"route": "/workflows"}, {"route": "/probe"}])
         await asyncio.sleep(0.15)
         drive_task.cancel()
@@ -98,15 +97,15 @@ class TestHeartbeatCarriesManifest:
             pass
         beats = _heartbeats(client.calls)
         routes = [{p["route"] for p in b["json"]["pages"]} for b in beats]
-        assert routes[0] == {"/workflows"}, "首拍携带旧 manifest"
-        assert any("/probe" in r for r in routes), "磁盘编辑后应在一个心跳周期内收敛"
+        assert routes[0] == {"/workflows"}, "首拍携带旧 manifest"  # i18n: user-facing
+        assert any("/probe" in r for r in routes), "磁盘编辑后应在一个心跳周期内收敛"  # i18n: user-facing
 
     async def test_reread_failure_falls_back_to_registration_copy(self, manifest_env):
         client = _FakeClient()
         manifest = shell_registry.load_manifest()
         drive_task = asyncio.create_task(shell_registry._registry_loop_body(client, manifest, interval=0.02))
         await asyncio.sleep(0.1)
-        manifest_env.unlink()  # 磁盘 manifest 消失
+        manifest_env.unlink()  # on-disk manifest disappears
         await asyncio.sleep(0.1)
         drive_task.cancel()
         try:
@@ -114,10 +113,10 @@ class TestHeartbeatCarriesManifest:
         except asyncio.CancelledError:
             pass
         beats = _heartbeats(client.calls)
-        assert beats, "manifest 重读失败不应中断心跳"
+        assert beats, "manifest 重读失败不应中断心跳"  # i18n: user-facing
         late = beats[-1]["json"]
         assert late["id"] == "fusion-cowork"
-        assert {p["route"] for p in late["pages"]} == {"/workflows"}, "回退到注册时版本"
+        assert {p["route"] for p in late["pages"]} == {"/workflows"}, "回退到注册时版本"  # i18n: user-facing
 
     async def test_heartbeat_401_with_issued_key_reregisters(self, manifest_env):
         class _UnauthorizedClient:
@@ -142,9 +141,9 @@ class TestHeartbeatCarriesManifest:
         await _drive(client, manifest, seconds=0.15)
         urls = [c["url"] for c in client.calls]
         assert "/heartbeat" in urls[1]
-        assert urls[2].endswith("/shell/manifests"), "401 后重注册"
+        assert urls[2].endswith("/shell/manifests"), "401 后重注册"  # i18n: user-facing
         assert client.calls[2]["headers"]["Authorization"] == "Bearer admin-secret"
-        # 重注册后的心跳体仍然携带 manifest
+        # Heartbeat bodies after re-registration still carry the manifest
         later_beats = _heartbeats(client.calls)[1:]
         for beat in later_beats:
             assert beat["json"]["id"] == "fusion-cowork"

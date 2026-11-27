@@ -60,11 +60,11 @@ export function GovernancePage() {
             // launch with schema defaults; owner fills real values via the
             // TemplatesPage #294 form when defaults do not apply
             const res = await api.launchTemplate(tplId, params);
-            sdk.toast.show({ level: 'success', message: t(`已启动: ${res.run_id}`, `Launched: ${res.run_id}`) });
+            sdk.toast.show({ level: 'success', message: t(`已启动: ${res.run_id}`, `Launched: ${res.run_id}`) }); // i18n: user-facing
             window.location.hash = `#/runs/${res.run_id}`;
         } catch (e) {
             console.error('[cowork-web] governance launch failed', e);
-            sdk.toast.show({ level: 'error', message: t('启动失败', 'Launch failed') });
+            sdk.toast.show({ level: 'error', message: t('启动失败', 'Launch failed') }); // i18n: user-facing
         }
     }
 
@@ -85,10 +85,12 @@ export function GovernancePage() {
 
     return (
         <div className="mx-auto max-w-5xl space-y-6 p-4">
-            <h1 className="text-lg font-semibold">{t('治理', 'Governance')}</h1>
+            <h1 className="text-lg font-semibold">{t('治理', 'Governance') /* i18n: user-facing */}</h1>
 
             <section className="space-y-2">
-                <h2 className="text-sm font-medium text-text-secondary">{t('启动', 'Launch')}</h2>
+                <h2 className="text-sm font-medium text-text-secondary">
+                    {t('启动', 'Launch') /* i18n: user-facing */}
+                </h2>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                     {LAUNCH_IDS.map((id) => (
                         <div key={id} className="rounded-xl border border-border bg-bg p-4 shadow-sm">
@@ -98,13 +100,18 @@ export function GovernancePage() {
                                 className="mt-3 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
                                 onClick={() => launch(id)}
                             >
-                                {t('启动模板', 'Launch template')}
+                                {t('启动模板', 'Launch template') /* i18n: user-facing */}
                             </button>
                         </div>
                     ))}
                 </div>
                 <p className="text-xs text-text-secondary">
-                    {t('带参数启动请到模板页', 'For parameterized launch use the Templates page')}{' '}
+                    {
+                        t(
+                            '带参数启动请到模板页', // i18n: user-facing
+                            'For parameterized launch use the Templates page'
+                        ) /* i18n: user-facing */
+                    }{' '}
                     <a className="text-indigo-500 underline" href="#/templates">
                         #/templates
                     </a>
@@ -112,9 +119,11 @@ export function GovernancePage() {
             </section>
 
             <section className="space-y-2">
-                <h2 className="text-sm font-medium text-text-secondary">{t('我的治理运行', 'My governance runs')}</h2>
+                <h2 className="text-sm font-medium text-text-secondary">
+                    {t('我的治理运行', 'My governance runs') /* i18n: user-facing */}
+                </h2>
                 {runs.length === 0 ? (
-                    <EmptyState title={t('暂无治理运行', 'No governance runs yet')} />
+                    <EmptyState title={t('暂无治理运行', 'No governance runs yet') /* i18n: user-facing */} />
                 ) : (
                     <div className="space-y-2">
                         {runs.slice(0, 12).map((r) => {
@@ -149,7 +158,7 @@ export function GovernancePage() {
                                     </span>
                                     {d?.hitl_pending ? (
                                         <a className="text-xs text-indigo-500 underline" href="#/approvals">
-                                            {t('去批 ↗', 'Approve ↗')}
+                                            {t('去批 ↗', 'Approve ↗') /* i18n: user-facing */}
                                         </a>
                                     ) : null}
                                     <button
@@ -157,10 +166,10 @@ export function GovernancePage() {
                                         className="text-xs text-indigo-500 underline"
                                         onClick={() => downloadTrajectory(r.run_id)}
                                     >
-                                        {t('轨迹↓', 'Trajectory↓')}
+                                        {t('轨迹↓', 'Trajectory↓') /* i18n: user-facing */}
                                     </button>
                                     <a className="text-xs text-indigo-500 underline" href={`#/runs/${r.run_id}`}>
-                                        {t('详情↗', 'Detail↗')}
+                                        {t('详情↗', 'Detail↗') /* i18n: user-facing */}
                                     </a>
                                 </div>
                             );
@@ -171,7 +180,9 @@ export function GovernancePage() {
 
             {terminal.length > 0 ? (
                 <section className="space-y-2">
-                    <h2 className="text-sm font-medium text-text-secondary">{t('已完成', 'Completed')}</h2>
+                    <h2 className="text-sm font-medium text-text-secondary">
+                        {t('已完成', 'Completed') /* i18n: user-facing */}
+                    </h2>
                     {terminal.slice(0, 5).map((r) => {
                         const d = details[r.run_id];
                         const attr = (d?.steps ?? []).flatMap((s) =>
@@ -187,17 +198,17 @@ export function GovernancePage() {
                                     {r.status}
                                 </span>
                                 <span className="text-xs text-text-secondary">
-                                    {t('审批台账', 'Approval ledger')} × {attr.length}
+                                    {t('审批台账', 'Approval ledger') /* i18n: user-facing */} × {attr.length}
                                 </span>
                                 <a className="text-xs text-indigo-500 underline" href={`#/runs/${r.run_id}`}>
-                                    {t('详情↗', 'Detail↗')}
+                                    {t('详情↗', 'Detail↗') /* i18n: user-facing */}
                                 </a>
                                 <button
                                     type="button"
                                     className="text-xs text-indigo-500 underline"
                                     onClick={() => downloadTrajectory(r.run_id)}
                                 >
-                                    {t('轨迹↓', 'Trajectory↓')}
+                                    {t('轨迹↓', 'Trajectory↓') /* i18n: user-facing */}
                                 </button>
                             </div>
                         );
@@ -206,10 +217,13 @@ export function GovernancePage() {
             ) : null}
 
             <section className="space-y-2">
-                <h2 className="text-sm font-medium text-text-secondary">{t('审计摘要', 'Audit summary')}</h2>
+                <h2 className="text-sm font-medium text-text-secondary">
+                    {t('审计摘要', 'Audit summary') /* i18n: user-facing */}
+                </h2>
                 <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-bg px-4 py-3 text-sm shadow-sm">
                     <span>
-                        {t('决定数', 'Decisions')}: <span className="font-mono">{audit.decisions}</span>
+                        {t('决定数', 'Decisions') /* i18n: user-facing */}:{' '}
+                        <span className="font-mono">{audit.decisions}</span>
                     </span>
                     {Object.entries(audit.byDecidedBy).map(([who, n]) => (
                         <span key={who} className="text-xs text-text-secondary">
@@ -217,7 +231,7 @@ export function GovernancePage() {
                         </span>
                     ))}
                     <a className="text-xs text-indigo-500 underline" href="#/governance?tab=audit">
-                        {t('审批台账 ↗', 'Approval ledger ↗')}
+                        {t('审批台账 ↗', 'Approval ledger ↗') /* i18n: user-facing */}
                     </a>
                 </div>
             </section>

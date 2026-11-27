@@ -58,7 +58,7 @@ export function RunViewPage({ runId }: { runId: string }) {
     const { data, error, loading } = useAutoRetry(() => api.run(runId), [runId, reloadKey]);
     const [live, setLive] = useState<RunRecord | null>(null);
     const [sseOk, setSseOk] = useState(false);
-    // issue #240 R1: ＠ 面板补齐目录/任务引用 — 与首页一致的三类来源
+    // issue #240 R1: @ reference panel adds directory/task sources — same three kinds as the home page
     const workspacesRes = useAutoRetry(() => api.workspaces(), []);
     const recentRunsRes = useAutoRetry(() => api.runs(), []);
     const [openStep, setOpenStep] = useState('');
@@ -66,11 +66,11 @@ export function RunViewPage({ runId }: { runId: string }) {
     const [hintDismissed, setHintDismissed] = useState(true);
     const [instruction, setInstruction] = useState('');
     const [sending, setSending] = useState(false);
-    // issue #187/#224: HITL 审批卡 + 交付审查在 run 视图内闭环 (UC-2 打断全链路)
+    // issue #187/#224: HITL approval card + delivery review closed loop inside the run view (UC-2 interrupt chain)
     const [hitlApprovals, setHitlApprovals] = useState<GuardApproval[]>([]);
     const [hitlBusy, setHitlBusy] = useState('');
     const [reviewNote, setReviewNote] = useState('');
-    // issue #422 F-1: 历史项目比对判定卡 — 改判按钮提交 override_output 改向指令
+    // issue #422 F-1: historical project match verdict card — re-verdict button submits an override_output redirect directive
     const [matchBusy, setMatchBusy] = useState('');
 
     useEffect(() => {
@@ -90,7 +90,7 @@ export function RunViewPage({ runId }: { runId: string }) {
         }
     }
 
-    // W13/B2: 步骤 SSE 实时推送, 失败回落轮询 (与 RunsPage 同源数据)
+    // W13/B2: step SSE live push, falls back to polling on failure (same data source as RunsPage)
     useEffect(() => {
         const ac = new AbortController();
         setLive(null);
@@ -127,7 +127,7 @@ export function RunViewPage({ runId }: { runId: string }) {
         }
     }, [record, sseOk]);
 
-    // issue #187: HITL 等待时轮询审批卡 (按 execution_id 过滤), 2s
+    // issue #187: poll HITL approval cards while waiting (filtered by execution_id), 2s
     useEffect(() => {
         if (!record?.hitl_pending) {
             setHitlApprovals([]);
@@ -156,22 +156,22 @@ export function RunViewPage({ runId }: { runId: string }) {
         return (
             <ErrorState
                 message={error.message}
-                retryLabel={t('重试', 'Retry')}
+                retryLabel={t('重试', 'Retry')} // i18n: user-facing
                 onRetry={() => setReloadKey((k) => k + 1)}
             />
         );
     if (!record) return null;
 
     const steerable = record.status === 'running' || record.status === 'paused';
-    // issue #226: 终态 run 只读 — 重跑/派生动作仅在终态开放 (集合与 WorkflowStatus 对齐)
+    // issue #226: terminal runs are read-only — resume/derive actions only open in terminal states (set aligned with WorkflowStatus)
     const historyActions = runHistoryActions(record.status);
     const totalTokens = (record.steps ?? []).reduce((n, s) => n + (s.tokens?.total_tokens ?? 0), 0);
     const waves = computeWaves(record.workflow_def ?? {});
-    // issue #303: 闸门进度条 + blocked→终态 同节点步骤合并状态机
+    // issue #303: gate progress bar + blocked→terminal same-node step merged state machine
     const gates = gateProgress(record.workflow_def, record.steps ?? []);
     const caps = capabilitiesInUse(record.steps ?? []);
     const correctionLines = (record.steps ?? []).filter((s) => s.user_correction);
-    // issue #422 F-1: 改判指令回显 — override_output payload 覆盖判定卡显示 (引擎边界生效语义)
+    // issue #422 F-1: re-verdict directive echo — override_output payload overrides the verdict card display (takes effect at the engine boundary)
     const matchOverrides = new Map<string, Record<string, unknown>>();
     for (const d of record.directives ?? []) {
         const payload = d.payload as { node_id?: unknown; merge?: unknown } | undefined;
@@ -185,18 +185,18 @@ export function RunViewPage({ runId }: { runId: string }) {
             matchOverrides.set(payload.node_id, payload.merge as Record<string, unknown>);
         }
     }
-    // issue #225: 审批卡内联到被闸节点位置; 无法定位的卡片浮在顶部 (fallback)
+    // issue #225: approval cards inline at the gated node position; cards that cannot be located float at the top (fallback)
     const waveNodeIds = new Set(waves.flatMap((w) => w.nodes.map((n) => n.id)));
     const inlineApprovals = hitlApprovals.filter((a) => a.node_id && waveNodeIds.has(a.node_id));
     const floatingApprovals = hitlApprovals.filter((a) => !a.node_id || !waveNodeIds.has(a.node_id));
 
-    // issue #231 (FCS-1 §6): 审批等待变体 — 上下文条徽标 + composer 禁用, 不另造替代 UI
+    // issue #231 (FCS-1 §6): approval-waiting variant — context bar badge + composer disabled, no separate substitute UI
     const approvalVariant = composerApprovalVariant(!!record.hitl_pending);
     const runContextChips: ComposerChip[] = buildContextChips({
         waitingApproval: approvalVariant.waitingApproval,
-        waitingLabel: t('等待审批', 'Awaiting approval'),
+        waitingLabel: t('等待审批', 'Awaiting approval'), // i18n: user-facing
     });
-    // issue #240 R1: ＠ 引用面板 — 目录/任务/产物三类 (首页同款), 产物来自本 run 步骤
+    // issue #240 R1: @ reference panel — directory/task/artifact kinds (same as home page), artifacts come from this run's steps
     function insertRunRef(token: string) {
         setInstruction((p) => insertRefToken(p, token));
     }
@@ -255,22 +255,22 @@ export function RunViewPage({ runId }: { runId: string }) {
                 message: approved
                     ? once
                         ? editedParams
-                            ? t('已批准并应用编辑参数', 'Approved with edited params')
-                            : t('已批准 (本次)', 'Approved (once)')
-                        : t('已批准并记住', 'Approved and remembered')
-                    : t('已拒绝', 'Denied'),
+                            ? t('已批准并应用编辑参数', 'Approved with edited params') // i18n: user-facing
+                            : t('已批准 (本次)', 'Approved (once)') // i18n: user-facing
+                        : t('已批准并记住', 'Approved and remembered') // i18n: user-facing
+                    : t('已拒绝', 'Denied'), // i18n: user-facing
             });
             setReloadKey((k) => k + 1);
         } catch (e) {
             console.error('[cowork-web] hitl confirm failed', e);
-            sdk.toast.show({ level: 'error', message: t('审批失败', 'Approval failed') });
+            sdk.toast.show({ level: 'error', message: t('审批失败', 'Approval failed') }); // i18n: user-facing
         } finally {
             setHitlBusy('');
         }
     }
 
-    // issue #422 F-1: 改判 — extend/base 判定翻转为 new (downstream 插值取新值);
-    // new 不可反改为 extend (卡片无候选项目可接), base→extend 违反跨客户红线, 均不提供
+    // issue #422 F-1: re-verdict — extend/base verdicts flip to new (downstream interpolation takes the new value);
+    // new cannot be reverted to extend (card has no candidate project to attach to), base→extend violates the cross-customer red line — neither is offered
     async function reverdictMatch(nodeId: string) {
         setMatchBusy(nodeId);
         try {
@@ -281,52 +281,52 @@ export function RunViewPage({ runId }: { runId: string }) {
             });
             sdk.toast.show({
                 level: 'success',
-                message: t('已改判: 新建项目', 'Re-verdicted: new project'),
+                message: t('已改判: 新建项目', 'Re-verdicted: new project'), // i18n: user-facing
             });
             setReloadKey((k) => k + 1);
         } catch (e) {
             console.error('[cowork-web] re-verdict failed', e);
-            sdk.toast.show({ level: 'error', message: t('改判失败', 'Re-verdict failed') });
+            sdk.toast.show({ level: 'error', message: t('改判失败', 'Re-verdict failed') }); // i18n: user-facing
         } finally {
             setMatchBusy('');
         }
     }
 
-    // W9: 交付审查 — pending_review → approved/rejected
+    // W9: delivery review — pending_review → approved/rejected
     async function reviewRun(approved: boolean) {
         try {
             await api.reviewRun(runId, approved, reviewNote);
             sdk.toast.show({
                 level: 'success',
-                message: approved ? t('审查通过', 'Approved') : t('已退回', 'Rejected'),
+                message: approved ? t('审查通过', 'Approved') : t('已退回', 'Rejected'), // i18n: user-facing
             });
             setReviewNote('');
             setReloadKey((k) => k + 1);
         } catch (e) {
             console.error('[cowork-web] run review failed', e);
-            sdk.toast.show({ level: 'error', message: t('审查失败', 'Review failed') });
+            sdk.toast.show({ level: 'error', message: t('审查失败', 'Review failed') }); // i18n: user-facing
         }
     }
 
-    // issue #226: 从指定步骤重跑 — 新 run 链回原 run, 跳转新 run 视图
+    // issue #226: resume from a given step — the new run chains back to the original run and jumps to the new run view
     async function resumeFromStep(nodeId: string) {
         try {
             const r = await api.resumeRunFrom(runId, nodeId);
             sdk.toast.show({
                 level: 'success',
                 message: t(
-                    `已从该步骤重跑 (${r.snapshot_steps} 步快照续跑)`,
+                    `已从该步骤重跑 (${r.snapshot_steps} 步快照续跑)`, // i18n: user-facing
                     `Resumed (${r.snapshot_steps} steps replayed)`
                 ),
             });
             window.location.hash = `#/runs/${r.run_id}`;
         } catch (e) {
             console.error('[cowork-web] resume-from failed', e);
-            sdk.toast.show({ level: 'error', message: t('重跑失败', 'Resume failed') });
+            sdk.toast.show({ level: 'error', message: t('重跑失败', 'Resume failed') }); // i18n: user-facing
         }
     }
 
-    // issue #226: 派生新任务 — 预填首页 composer (任务 + 上次结果上下文)
+    // issue #226: derive new task — prefill the home composer (task + last result context)
     function deriveNewTask() {
         if (!record) return;
         try {
@@ -339,7 +339,7 @@ export function RunViewPage({ runId }: { runId: string }) {
                 })
             );
         } catch {
-            // storage 不可用 — 直接回首页不带预填
+            // storage unavailable — go straight back home without prefill
         }
         window.location.hash = '#/home';
     }
@@ -352,13 +352,13 @@ export function RunViewPage({ runId }: { runId: string }) {
             await api.directive(runId, { action: 'inject', instruction: text });
             sdk.toast.show({
                 level: 'success',
-                message: t('指令已排队，下一节点边界生效', 'Queued — lands at the next node boundary'),
+                message: t('指令已排队，下一节点边界生效', 'Queued — lands at the next node boundary'), // i18n: user-facing
             });
             setInstruction('');
             setReloadKey((k) => k + 1);
         } catch (e) {
             console.error('[cowork-web] inject failed', e);
-            sdk.toast.show({ level: 'error', message: t('指令发送失败', 'Failed to send') });
+            sdk.toast.show({ level: 'error', message: t('指令发送失败', 'Failed to send') }); // i18n: user-facing
         } finally {
             setSending(false);
         }
@@ -366,7 +366,7 @@ export function RunViewPage({ runId }: { runId: string }) {
 
     return (
         <div className="mx-auto flex h-full max-w-6xl flex-col gap-3">
-            {/* 头部: 返回 + run 身份 + 控制 */}
+            {/* header: back + run identity + controls */}
             <div className="flex flex-wrap items-center gap-2">
                 <button
                     type="button"
@@ -375,7 +375,7 @@ export function RunViewPage({ runId }: { runId: string }) {
                         window.location.hash = '#/runs';
                     }}
                 >
-                    ← {t('运行列表', 'Runs')}
+                    ← {t('运行列表', 'Runs') /*// i18n: user-facing*/}
                 </button>
                 <span className="font-mono text-sm text-text-primary">{record.run_id}</span>
                 <span className="text-xs text-text-secondary">{record.workflow_name || record.workflow_id}</span>
@@ -388,7 +388,12 @@ export function RunViewPage({ runId }: { runId: string }) {
                 ) : null}
                 {correctionLines.length > 0 ? (
                     <span className="rounded border border-accent px-1.5 py-0.5 text-[10px] text-accent">
-                        {t(`已修正 ×${correctionLines.length}`, `${correctionLines.length} corrections`)}
+                        {
+                            t(
+                                `已修正 ×${correctionLines.length}`, // i18n: user-facing
+                                `${correctionLines.length} corrections`
+                            ) /*// i18n: user-facing*/
+                        }
                     </span>
                 ) : null}
                 <div className="flex-1" />
@@ -396,18 +401,18 @@ export function RunViewPage({ runId }: { runId: string }) {
                     <button
                         type="button"
                         className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
-                        onClick={() => void steer(() => api.pauseRun(runId), t('暂停失败', 'Pause failed'))}
+                        onClick={() => void steer(() => api.pauseRun(runId), t('暂停失败', 'Pause failed'))} // i18n: user-facing
                     >
-                        ⏸ {t('暂停', 'Pause')}
+                        ⏸ {t('暂停', 'Pause') /*// i18n: user-facing*/}
                     </button>
                 ) : null}
                 {record.status === 'paused' ? (
                     <button
                         type="button"
                         className="rounded-md border border-success px-2 py-1 text-xs text-success hover:bg-success/10"
-                        onClick={() => void steer(() => api.resumeRun(runId), t('恢复失败', 'Resume failed'))}
+                        onClick={() => void steer(() => api.resumeRun(runId), t('恢复失败', 'Resume failed'))} // i18n: user-facing
                     >
-                        ▶ {t('继续', 'Resume')}
+                        ▶ {t('继续', 'Resume') /*// i18n: user-facing*/}
                     </button>
                 ) : null}
                 {record.space_id ? (
@@ -416,7 +421,7 @@ export function RunViewPage({ runId }: { runId: string }) {
                         className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted"
                         onClick={() => setDrawerOpen(!drawerOpen)}
                     >
-                        📁 {t('工作区', 'Workspace')}
+                        📁 {t('工作区', 'Workspace') /*// i18n: user-facing*/}
                     </button>
                 ) : null}
                 {isPipelineRun(record.workflow_name) ? (
@@ -427,7 +432,7 @@ export function RunViewPage({ runId }: { runId: string }) {
                             window.location.hash = `#/pipeline/${runId}`;
                         }}
                     >
-                        ⇶ {t('管线视图', 'Pipeline view')}
+                        ⇶ {t('管线视图', 'Pipeline view') /*// i18n: user-facing*/}
                     </button>
                 ) : null}
                 {historyActions.deriveNewTask ? (
@@ -436,7 +441,7 @@ export function RunViewPage({ runId }: { runId: string }) {
                         className="rounded-md border border-accent px-2 py-1 text-xs text-accent hover:bg-accent/10"
                         onClick={deriveNewTask}
                     >
-                        ✚ {t('派生新任务', 'Derive new task')}
+                        ✚ {t('派生新任务', 'Derive new task') /*// i18n: user-facing*/}
                     </button>
                 ) : null}
                 {record.labels?.artifact_ref ? (
@@ -444,7 +449,7 @@ export function RunViewPage({ runId }: { runId: string }) {
                         title={record.labels.artifact_ref}
                         className="rounded border border-border px-1.5 py-0.5 text-[10px] text-text-secondary"
                     >
-                        ▦ {t('来自 Artifacts', 'From Artifacts')} ·{' '}
+                        ▦ {t('来自 Artifacts', 'From Artifacts') /*// i18n: user-facing*/} ·{' '}
                         {record.labels.artifact_name || record.labels.artifact_ref.slice(0, 12)}
                     </span>
                 ) : null}
@@ -457,7 +462,7 @@ export function RunViewPage({ runId }: { runId: string }) {
                             window.location.hash = `#/runs/${record.labels?.resume_of}`;
                         }}
                     >
-                        ↻ {t('重跑自', 'resumed from')} {record.labels.resume_of.slice(0, 12)}
+                        ↻ {t('重跑自', 'resumed from') /*// i18n: user-facing*/} {record.labels.resume_of.slice(0, 12)}
                     </button>
                 ) : null}
             </div>
@@ -466,7 +471,7 @@ export function RunViewPage({ runId }: { runId: string }) {
                 <div className="rounded-md border border-border bg-bg-surface px-3 py-2 text-xs">
                     <div className="text-[10px] font-medium text-text-muted">
                         {t(
-                            '失败归因 · 边级候选 (kernel 确定性启发)',
+                            '失败归因 · 边级候选 (kernel 确定性启发)', // i18n: user-facing
                             'Failure attribution · handoff candidates (kernel heuristics)'
                         )}
                     </div>
@@ -484,11 +489,16 @@ export function RunViewPage({ runId }: { runId: string }) {
             ) : null}
             {record.result?.summary ? <div className="text-xs text-text-secondary">{record.result.summary}</div> : null}
 
-            {/* 首次教育提示 (可关) */}
+            {/* first-run educational hint (dismissible) */}
             {!hintDismissed ? (
                 <div className="flex items-center justify-between rounded-md border border-accent/50 bg-accent/5 px-3 py-1.5 text-xs text-text-secondary">
                     <span>
-                        {t('每一步可见 · 随时可追加指令或打断', 'Every step visible · redirect or interrupt any time')}
+                        {
+                            t(
+                                '每一步可见 · 随时可追加指令或打断', // i18n: user-facing
+                                'Every step visible · redirect or interrupt any time'
+                            ) /*// i18n: user-facing*/
+                        }
                     </span>
                     <button type="button" className="text-text-muted hover:text-text-primary" onClick={dismissHint}>
                         ✕
@@ -496,7 +506,7 @@ export function RunViewPage({ runId }: { runId: string }) {
                 </div>
             ) : null}
 
-            {/* issue #187/#225: HITL 审批卡 — 内联到被闸步骤位, 定位不到的浮在顶部 */}
+            {/* issue #187/#225: HITL approval cards — inlined at the gated step position; ones that cannot be located float at the top */}
             {record.hitl_pending
                 ? floatingApprovals.map((a) => (
                       <InlineApprovalCard
@@ -509,13 +519,13 @@ export function RunViewPage({ runId }: { runId: string }) {
                   ))
                 : null}
 
-            {/* W9: 交付审查 — pending_review 在 run 视图内通过/退回 */}
+            {/* W9: delivery review — approve/reject pending_review inside the run view */}
             {record.review?.status === 'pending_review' ? (
                 <div className="rounded-md border border-border p-2">
                     <div className="flex items-center gap-2">
                         <input
                             className="flex-1 rounded-md border border-border bg-bg px-2 py-1 text-xs text-text-primary"
-                            placeholder={t('审查意见 (可选)', 'Review note (optional)')}
+                            placeholder={t('审查意见 (可选)', 'Review note (optional)')} // i18n: user-facing
                             value={reviewNote}
                             onChange={(e) => setReviewNote(e.target.value)}
                         />
@@ -524,32 +534,32 @@ export function RunViewPage({ runId }: { runId: string }) {
                             className="rounded-md border border-success px-2 py-1 text-xs text-success hover:bg-success/10"
                             onClick={() => void reviewRun(true)}
                         >
-                            {t('通过交付', 'Approve')}
+                            {t('通过交付', 'Approve') /*// i18n: user-facing*/}
                         </button>
                         <button
                             type="button"
                             className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-error/10"
                             onClick={() => void reviewRun(false)}
                         >
-                            {t('退回', 'Reject')}
+                            {t('退回', 'Reject') /*// i18n: user-facing*/}
                         </button>
                     </div>
                 </div>
             ) : null}
 
-            {/* 主体: 时间线 + 右栏 (能力清单/工作区抽屉) */}
+            {/* body: timeline + right rail (capabilities / workspace drawer) */}
             <div className="flex min-h-0 flex-1 gap-3">
                 <div className="min-w-0 flex-1 space-y-3 overflow-y-auto pr-1">
                     {waves.length === 0 ? (
-                        <EmptyState title={t('暂无步骤', 'No steps yet')} />
+                        <EmptyState title={t('暂无步骤', 'No steps yet')} /> // i18n: user-facing
                     ) : (
                         waves.map((wave) => (
                             <div key={wave.depth}>
                                 <div className="pb-1 text-[10px] font-medium uppercase tracking-wide text-text-muted">
                                     {t(
                                         wave.nodes.length > 1
-                                            ? `并行 ${wave.nodes.length} 路`
-                                            : `阶段 ${wave.depth + 1}`,
+                                            ? `并行 ${wave.nodes.length} 路` // i18n: user-facing
+                                            : `阶段 ${wave.depth + 1}`, // i18n: user-facing
                                         wave.nodes.length > 1
                                             ? `parallel ×${wave.nodes.length}`
                                             : `stage ${wave.depth + 1}`
@@ -560,15 +570,15 @@ export function RunViewPage({ runId }: { runId: string }) {
                                     style={{ gridTemplateColumns: `repeat(${wave.nodes.length}, minmax(0, 1fr))` }}
                                 >
                                     {wave.nodes.map((wn) => {
-                                        // issue #303: 同节点 blocked→终态 合并为一行状态机
-                                        // (queued→waiting→passed/failed) — 闸门节点不再出两行
+                                        // issue #303: same-node blocked→terminal steps merged into a one-row state machine
+                                        // (queued→waiting→passed/failed) — gate nodes no longer render two rows
                                         const nodeSteps = (record.steps ?? []).filter(
                                             (s) => s.node_id === wn.id && !s.user_correction
                                         );
                                         const blockedStep = nodeSteps.find((s) => s.status === 'blocked');
                                         const terminalStep = nodeSteps.find((s) => s.status !== 'blocked');
                                         const step = terminalStep ?? blockedStep;
-                                        // issue #225: 审批卡内联在暂停步骤位 (M7 badge)
+                                        // issue #225: approval card inlined at the paused step position (M7 badge)
                                         const approval = record.hitl_pending
                                             ? inlineApprovals.find((a) => a.node_id === wn.id)
                                             : undefined;
@@ -589,11 +599,12 @@ export function RunViewPage({ runId }: { runId: string }) {
                                                     key={wn.id}
                                                     className="rounded-md border border-dashed border-border p-2 text-[11px] text-text-muted"
                                                 >
-                                                    {wn.label || wn.name} · {t('等待', 'pending')}
+                                                    {wn.label || wn.name} ·{' '}
+                                                    {t('等待', 'pending') /*// i18n: user-facing*/}
                                                 </div>
                                             );
                                         }
-                                        // issue #303: 等待审批且无审批卡可内联 → 等待行 (倒计时 + 去批入口)
+                                        // issue #303: waiting approval with no inlinable card → waiting row (countdown + review-approvals entry)
                                         if (step.status === 'blocked' && record.hitl_pending && !approval) {
                                             return (
                                                 <WaitingGateCard
@@ -603,7 +614,7 @@ export function RunViewPage({ runId }: { runId: string }) {
                                                 />
                                             );
                                         }
-                                        // issue #422 F-1: 历史项目比对步骤渲染为判定卡
+                                        // issue #422 F-1: historical project match steps render as a verdict card
                                         const matchView = applyMatchOverrides(
                                             matchVerdictView(step),
                                             matchOverrides.get(wn.id)
@@ -637,26 +648,30 @@ export function RunViewPage({ runId }: { runId: string }) {
                             </div>
                         ))
                     )}
-                    {/* 修正行 — #227 inject 标记步渲染为对话线 */}
+                    {/* correction rows — #227 inject marker steps render as conversation lines */}
                     {correctionLines.map((s, i) => (
                         <div
                             key={`corr-${i}`}
                             className="rounded-md border border-accent/40 bg-accent/5 px-3 py-1.5 text-xs"
                         >
-                            <span className="text-accent">👤 {t('用户修正', 'User correction')}</span>
+                            <span className="text-accent">
+                                👤 {t('用户修正', 'User correction') /*// i18n: user-facing*/}
+                            </span>
                             <span className="pl-2 text-text-secondary">{s.summary}</span>
                         </div>
                     ))}
                 </div>
 
-                {/* 右栏: 能力清单 (M10 rail) */}
+                {/* right rail: capabilities in use (M10 rail) */}
                 <div className="w-56 shrink-0 space-y-2 overflow-y-auto">
                     <div className="rounded-md border border-border p-2">
                         <div className="pb-1 text-[10px] font-medium uppercase tracking-wide text-text-muted">
-                            {t('使用中的能力', 'Capabilities in use')}
+                            {t('使用中的能力', 'Capabilities in use') /*// i18n: user-facing*/}
                         </div>
                         {caps.length === 0 ? (
-                            <div className="text-[11px] text-text-muted">{t('暂无', 'None yet')}</div>
+                            <div className="text-[11px] text-text-muted">
+                                {t('暂无', 'None yet') /*// i18n: user-facing*/}
+                            </div>
                         ) : (
                             caps.map((c) => (
                                 <div key={`${c.kind}:${c.label}:${c.detail ?? ''}`} className="py-0.5 text-[11px]">
@@ -680,7 +695,7 @@ export function RunViewPage({ runId }: { runId: string }) {
                             ))
                         )}
                     </div>
-                    {/* W10/B5: run 产物预览 — 右栏实时随步骤输出刷新 */}
+                    {/* W10/B5: run artifact preview — right rail refreshes live with step outputs */}
                     <RunArtifactPane
                         runId={runId}
                         active={record.status === 'running' || record.status === 'pending'}
@@ -688,14 +703,14 @@ export function RunViewPage({ runId }: { runId: string }) {
                     />
                 </div>
 
-                {/* 工作区抽屉 (M6) — run 归属目录的 Space 产物 */}
+                {/* workspace drawer (M6) — Space artifacts of the directory the run belongs to */}
                 {drawerOpen && record.space_id ? (
                     <WorkspaceDrawer spaceId={record.space_id} onClose={() => setDrawerOpen(false)} />
                 ) : null}
             </div>
 
-            {/* M5: 底部打断 composer — issue #231: FCS-1 五区标准;
-                §6 审批等待变体: record.hitl_pending 时禁用 + 上下文条 "等待审批" 徽标 */}
+            {/* M5: bottom interrupt composer — issue #231: FCS-1 five-zone standard;
+                    §6 approval-waiting variant: disabled while record.hitl_pending + "awaiting approval" context-bar badge */}
             {steerable ? (
                 <Composer
                     value={instruction}
@@ -705,24 +720,24 @@ export function RunViewPage({ runId }: { runId: string }) {
                     disabled={approvalVariant.disabled}
                     placeholder={
                         record.hitl_pending
-                            ? t('等待审批处理后再输入指令', 'Composing resumes after the approval is resolved')
+                            ? t('等待审批处理后再输入指令', 'Composing resumes after the approval is resolved') // i18n: user-facing
                             : t(
-                                  '追加指令，如「跳过差旅类目」— 在下一节点边界并入',
+                                  '追加指令，如「跳过差旅类目」— 在下一节点边界并入', // i18n: user-facing
                                   'Add an instruction, e.g. "skip travel" — lands at the next node boundary'
                               )
                     }
-                    ariaLabel={t('运行指令输入框', 'Run instruction composer')}
+                    ariaLabel={t('运行指令输入框', 'Run instruction composer')} // i18n: user-facing
                     hint={
                         record.hitl_pending
-                            ? t('等待审批 — 处理后恢复输入', 'Awaiting approval — composing resumes after resolution')
-                            : t('Enter 发送 · Shift+Enter 换行', 'Enter to send · Shift+Enter new line')
+                            ? t('等待审批 — 处理后恢复输入', 'Awaiting approval — composing resumes after resolution') // i18n: user-facing
+                            : t('Enter 发送 · Shift+Enter 换行', 'Enter to send · Shift+Enter new line') // i18n: user-facing
                     }
-                    sendLabel={t('发送指令', 'Send instruction')}
-                    stopLabel={t('停止', 'Stop')}
+                    sendLabel={t('发送指令', 'Send instruction')} // i18n: user-facing
+                    stopLabel={t('停止', 'Stop')} // i18n: user-facing
                     contextChips={runContextChips}
                     references={{
                         items: runReferenceItems,
-                        emptyLabel: t('暂无可引用项', 'No references yet'),
+                        emptyLabel: t('暂无可引用项', 'No references yet'), // i18n: user-facing
                     }}
                 />
             ) : null}
@@ -730,7 +745,7 @@ export function RunViewPage({ runId }: { runId: string }) {
     );
 }
 
-// issue #225: 内联审批卡 — 渲染在被闸步骤位 (M7), 四动作: 拒绝 / 编辑参数 / 本次允许 / 总是允许
+// issue #225: inline approval card — rendered at the gated step position (M7), four actions: reject / edit params / allow once / always allow
 function InlineApprovalCard({
     approval,
     deadline,
@@ -752,7 +767,7 @@ function InlineApprovalCard({
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState('');
     const [draftError, setDraftError] = useState('');
-    // issue #328: 拒绝附评审意见 — 修订回路 (on_reject=revise) 重跑时并入产出节点输入
+    // issue #328: reject with review note — merged into the producing node's input on revision rerun (on_reject=revise)
     const [rejecting, setRejecting] = useState(false);
     const [rejectNote, setRejectNote] = useState('');
 
@@ -763,8 +778,8 @@ function InlineApprovalCard({
     }
 
     function submitReject() {
-        // issue #337: 拒绝是一次性决定 — once=true 出队唤醒 run, 不落永久 deny 规则
-        // (否则一条 deny 规则会预拒后续所有 run 的同类型 HITL 闸门, 卡片都不再出现)
+        // issue #337: rejection is a one-shot decision — once=true dequeues and wakes the run, no permanent deny rule is written
+        // (otherwise a single deny rule would pre-deny every later run's same-type HITL gates and the cards would stop appearing)
         void onConfirm(approval.action_id, false, true, undefined, rejectNote.trim() || undefined);
     }
 
@@ -773,8 +788,8 @@ function InlineApprovalCard({
         if (!parsed.ok) {
             setDraftError(
                 parsed.error === 'invalid_json'
-                    ? t('JSON 解析失败', 'Invalid JSON')
-                    : t('参数须为 JSON 对象', 'Params must be a JSON object')
+                    ? t('JSON 解析失败', 'Invalid JSON') // i18n: user-facing
+                    : t('参数须为 JSON 对象', 'Params must be a JSON object') // i18n: user-facing
             );
             return;
         }
@@ -785,7 +800,8 @@ function InlineApprovalCard({
         <div className="rounded-md border border-warning/60 bg-warning/5 p-2">
             <div className="flex items-center justify-between text-xs">
                 <span className="font-medium text-text-primary">
-                    {approval.node_id ?? approval.tool_name} · {t('等待审批', 'Awaiting approval')}
+                    {approval.node_id ?? approval.tool_name} ·{' '}
+                    {t('等待审批', 'Awaiting approval') /*// i18n: user-facing*/}
                 </span>
                 {deadline ? <HitlCountdown deadline={deadline} /> : null}
             </div>
@@ -794,7 +810,9 @@ function InlineApprovalCard({
             </div>
             {(approval.artifacts ?? []).length > 0 ? (
                 <div className="mt-2 space-y-1.5">
-                    <div className="text-[10px] text-text-muted">{t('上游产出', 'Upstream output')}</div>
+                    <div className="text-[10px] text-text-muted">
+                        {t('上游产出', 'Upstream output') /*// i18n: user-facing*/}
+                    </div>
                     {(approval.artifacts ?? []).map((ev) => (
                         <div key={ev.node_id} className="rounded-md border border-border bg-bg px-2 py-1.5">
                             <div className="text-[10px] font-medium text-text-secondary">
@@ -828,14 +846,14 @@ function InlineApprovalCard({
                             className="rounded-md border border-success px-2 py-1 text-xs text-success hover:bg-success/10 disabled:opacity-50"
                             onClick={submitEdit}
                         >
-                            {t('按此参数执行', 'Run with these params')}
+                            {t('按此参数执行', 'Run with these params') /*// i18n: user-facing*/}
                         </button>
                         <button
                             type="button"
                             className="rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-bg-muted"
                             onClick={() => setEditing(false)}
                         >
-                            {t('取消', 'Cancel')}
+                            {t('取消', 'Cancel') /*// i18n: user-facing*/}
                         </button>
                     </div>
                 </div>
@@ -846,7 +864,7 @@ function InlineApprovalCard({
                         className="min-h-12 w-full resize-y rounded-md border border-border bg-bg p-2 font-mono text-[11px] text-text-primary"
                         value={rejectNote}
                         placeholder={t(
-                            '评审意见 (修订重跑时带给产出节点)',
+                            '评审意见 (修订重跑时带给产出节点)', // i18n: user-facing
                             'Review comments (passed to the producing node on revision)'
                         )}
                         onChange={(e) => setRejectNote(e.target.value)}
@@ -858,14 +876,14 @@ function InlineApprovalCard({
                             className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-error/10 disabled:opacity-50"
                             onClick={submitReject}
                         >
-                            {t('确认拒绝', 'Confirm reject')}
+                            {t('确认拒绝', 'Confirm reject') /*// i18n: user-facing*/}
                         </button>
                         <button
                             type="button"
                             className="rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-bg-muted"
                             onClick={() => setRejecting(false)}
                         >
-                            {t('取消', 'Cancel')}
+                            {t('取消', 'Cancel') /*// i18n: user-facing*/}
                         </button>
                     </div>
                 </div>
@@ -877,7 +895,7 @@ function InlineApprovalCard({
                     className="rounded-md border border-error px-2 py-1 text-xs text-error hover:bg-error/10 disabled:opacity-50"
                     onClick={() => setRejecting(true)}
                 >
-                    {t('拒绝', 'Reject')}
+                    {t('拒绝', 'Reject') /*// i18n: user-facing*/}
                 </button>
                 <button
                     type="button"
@@ -885,7 +903,7 @@ function InlineApprovalCard({
                     className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted disabled:opacity-50"
                     onClick={startEdit}
                 >
-                    {t('编辑参数', 'Edit params')}
+                    {t('编辑参数', 'Edit params') /*// i18n: user-facing*/}
                 </button>
                 <button
                     type="button"
@@ -893,7 +911,7 @@ function InlineApprovalCard({
                     className="rounded-md border border-success px-2 py-1 text-xs text-success hover:bg-success/10 disabled:opacity-50"
                     onClick={() => void onConfirm(approval.action_id, true, true)}
                 >
-                    {t('本次允许', 'Allow once')}
+                    {t('本次允许', 'Allow once') /*// i18n: user-facing*/}
                 </button>
                 <button
                     type="button"
@@ -901,15 +919,15 @@ function InlineApprovalCard({
                     className="rounded-md border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-muted disabled:opacity-50"
                     onClick={() => void onConfirm(approval.action_id, true, false)}
                 >
-                    {t('总是允许', 'Always allow')}
+                    {t('总是允许', 'Always allow') /*// i18n: user-facing*/}
                 </button>
             </div>
         </div>
     );
 }
 
-// issue #233: artifact 卡片 — 渲染时重新拉取 (版本 bump 保持新鲜),
-// 引擎不可用时降级为纯文本引用 (不阻塞时间线); 点击跨 iframe 深链到产物详情
+// issue #233: artifact card — refetched at render time (stays fresh across version bumps),
+// degrades to a plain-text reference when the engine is unavailable (does not block the timeline); click deep-links across the iframe to the artifact detail
 function ArtifactCard({ artifactId, fallbackName }: { artifactId: string; fallbackName: string }) {
     const t = useT();
     const [card, setCard] = useState<ArtifactCardData | null>(null);
@@ -931,7 +949,8 @@ function ArtifactCard({ artifactId, fallbackName }: { artifactId: string; fallba
     if (failed) {
         return (
             <div className="rounded border border-dashed border-border px-2 py-1 text-[10px] text-text-muted">
-                ▦ {t('产物', 'Artifact')} {fallbackName || artifactId} · {t('卡片不可用', 'card unavailable')}
+                ▦ {t('产物', 'Artifact') /*// i18n: user-facing*/} {fallbackName || artifactId} ·{' '}
+                {t('卡片不可用', 'card unavailable')}
             </div>
         );
     }
@@ -959,7 +978,7 @@ function ArtifactCard({ artifactId, fallbackName }: { artifactId: string; fallba
     );
 }
 
-// issue #303: 等待审批行 — 状态机 waiting 态 (倒计时 + 去批入口), 无审批卡时的兜底
+// issue #303: waiting-approval row — state machine waiting state (countdown + review-approvals entry), fallback when no approval card exists
 function WaitingGateCard({ step, deadline }: { step: RunStep; deadline?: number }) {
     const t = useT();
     const [now, setNow] = useState(Date.now() / 1000);
@@ -974,7 +993,7 @@ function WaitingGateCard({ step, deadline }: { step: RunStep; deadline?: number 
             <div className="flex items-center gap-2">
                 <span className="truncate text-xs text-text-primary">{step.node_display_name || step.node_name}</span>
                 <span className="rounded border border-warning/40 px-1 text-[9px] text-warning">
-                    {t('等待审批', 'waiting')}
+                    {t('等待审批', 'waiting') /*// i18n: user-facing*/}
                 </span>
                 {mm ? <span className="ml-auto font-mono text-[10px] text-text-muted">⏳ {mm}</span> : null}
             </div>
@@ -985,15 +1004,15 @@ function WaitingGateCard({ step, deadline }: { step: RunStep; deadline?: number 
                     window.location.hash = '#/approvals';
                 }}
             >
-                {t('去批 ↗', 'Review approvals ↗')}
+                {t('去批 ↗', 'Review approvals ↗') /*// i18n: user-facing*/}
             </button>
         </div>
     );
 }
 
-// 步骤卡: 状态/耗时 + M10 能力标注 + 展开 input/output (复用 RunsPage StepDrawer)
-// issue #226: 终态 run 可从本步骤重跑 (新 run 链回原 run)
-// issue #233: 步骤输出含 artifact 引用时渲染卡片 (payload 保持轻量 ref)
+// step card: status/duration + M10 capability annotation + expandable input/output (reuses the RunsPage StepDrawer)
+// issue #226: terminal runs can resume from this step (new run chains back to the original run)
+// issue #233: steps whose output contains artifact references render cards (payload stays a lightweight ref)
 function StepCard({
     step,
     waited,
@@ -1013,7 +1032,7 @@ function StepCard({
     const cap = stepCapability(step);
     const denied = step.status === 'denied';
     const arefs = stepArtifactRefs(step);
-    // issue #303: 决定来源 — webhook/web 审批写入 blocked 步骤 output_data
+    // issue #303: decision source — webhook/web approvals write into the blocked step's output_data
     const attribution = (step.output_data as { hitl_attribution?: Record<string, string> } | null)?.hitl_attribution;
     return (
         <div
@@ -1027,19 +1046,19 @@ function StepCard({
                     <StatusBadge status={statusKind(step.status) as StatusKind} label={step.status} />
                     {waited ? (
                         <span className="rounded border border-border px-1 text-[9px] text-text-muted">
-                            {t('曾等待审批', 'waited for approval')}
+                            {t('曾等待审批', 'waited for approval') /*// i18n: user-facing*/}
                         </span>
                     ) : null}
                 </div>
                 {cap ? (
                     <div className="truncate text-[10px] text-text-muted">
-                        {t('经由', 'via')}{' '}
+                        {t('经由', 'via') /*// i18n: user-facing*/}{' '}
                         {cap.kind === 'connector'
-                            ? t('连接器', 'Connector')
+                            ? t('连接器', 'Connector') // i18n: user-facing
                             : cap.kind === 'subagent'
-                              ? t('子代理', 'Sub-agent')
+                              ? t('子代理', 'Sub-agent') // i18n: user-facing
                               : cap.kind === 'skill'
-                                ? t('技能', 'Skill')
+                                ? t('技能', 'Skill') // i18n: user-facing
                                 : 'AI'}
                         {cap.detail ? ` · ${cap.detail}` : ''}
                     </div>
@@ -1061,7 +1080,7 @@ function StepCard({
                         window.location.hash = '#/governance?tab=audit';
                     }}
                 >
-                    {t('审批台账', 'Approval ledger')} · {attribution.decided_by || 'unknown'}
+                    {t('审批台账', 'Approval ledger') /*// i18n: user-facing*/} · {attribution.decided_by || 'unknown'}
                     {attribution.approval_id ? ` · ${attribution.approval_id}` : ''} ↗
                 </button>
             ) : null}
@@ -1079,7 +1098,7 @@ function StepCard({
                         className="rounded-md border border-border px-2 py-1 text-[11px] text-text-secondary hover:bg-bg-muted"
                         onClick={() => onResumeFrom(step.node_id)}
                     >
-                        ↻ {t('从这里重跑', 'Resume from this step')}
+                        ↻ {t('从这里重跑', 'Resume from this step') /*// i18n: user-facing*/}
                     </button>
                 </div>
             ) : null}
@@ -1087,7 +1106,7 @@ function StepCard({
     );
 }
 
-// M6 工作区抽屉 — run 归属 Space 的产物列表 + 预览 + 全量入口
+// M6 workspace drawer — artifact list + preview + full-space entry for the run's Space
 function WorkspaceDrawer({ spaceId, onClose }: { spaceId: string; onClose: () => void }) {
     const t = useT();
     const { data, error } = useAutoRetry(() => api.spaceArtifacts(spaceId), [spaceId]);
@@ -1098,7 +1117,9 @@ function WorkspaceDrawer({ spaceId, onClose }: { spaceId: string; onClose: () =>
     return (
         <div className="flex w-72 shrink-0 flex-col rounded-md border border-border p-2">
             <div className="flex items-center justify-between pb-1">
-                <div className="text-xs font-medium text-text-primary">{t('工作区产物', 'Workspace artifacts')}</div>
+                <div className="text-xs font-medium text-text-primary">
+                    {t('工作区产物', 'Workspace artifacts') /*// i18n: user-facing*/}
+                </div>
                 <button type="button" className="text-xs text-text-muted hover:text-text-primary" onClick={onClose}>
                     ✕
                 </button>
@@ -1110,12 +1131,12 @@ function WorkspaceDrawer({ spaceId, onClose }: { spaceId: string; onClose: () =>
                     window.location.hash = '#/spaces';
                 }}
             >
-                {t('打开完整空间 →', 'Open full space →')}
+                {t('打开完整空间 →', 'Open full space →') /*// i18n: user-facing*/}
             </button>
             {error ? (
-                <ErrorState message={error.message} retryLabel={t('重试', 'Retry')} onRetry={() => undefined} />
+                <ErrorState message={error.message} retryLabel={t('重试', 'Retry')} onRetry={() => undefined} /> // i18n: user-facing
             ) : artifacts.length === 0 ? (
-                <EmptyState title={t('暂无产物', 'No artifacts yet')} />
+                <EmptyState title={t('暂无产物', 'No artifacts yet')} /> // i18n: user-facing
             ) : (
                 <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
                     <div className="flex flex-wrap gap-1">
@@ -1148,9 +1169,9 @@ function WorkspaceDrawer({ spaceId, onClose }: { spaceId: string; onClose: () =>
     );
 }
 
-// issue #422 F-1: 历史项目比对判定卡 — 判定三态 + 分数 + 缺口 + 明细展开 +
-// 体验已有项目 (仅 extend) + 改判新建 (extend/base, 经 override_output 指令)。
-// base 判定按隐私红线只展示 "命中其他客户项目" — 项目名/能力不可见。
+// issue #422 F-1: historical project match verdict card — three verdict states + score + gaps + expandable details +
+// try existing project (extend only) + re-verdict to new (extend/base, via an override_output directive).
+// base verdicts show only "matched another customer project" per the privacy red line — project name/capabilities are hidden.
 function MatchVerdictCard({
     view,
     steerable,
@@ -1166,10 +1187,10 @@ function MatchVerdictCard({
     const [detailOpen, setDetailOpen] = useState(false);
     const verdictLabel =
         view.verdict === 'extend'
-            ? t('扩展已有项目', 'Extend existing project')
+            ? t('扩展已有项目', 'Extend existing project') // i18n: user-facing
             : view.verdict === 'base'
-              ? t('基于成熟方案定制', 'Customize from a mature solution')
-              : t('新建项目', 'New project');
+              ? t('基于成熟方案定制', 'Customize from a mature solution') // i18n: user-facing
+              : t('新建项目', 'New project'); // i18n: user-facing
     const pct = Math.round(view.score * 100);
     const repoUrl = view.matchedRepo ? `https://github.com/${view.matchedRepo}` : '';
     const visible = view.matchedVisible ?? {};
@@ -1178,29 +1199,29 @@ function MatchVerdictCard({
         <div className="rounded-md border border-border bg-bg-muted/40 p-2">
             <div className="flex items-center justify-between text-xs">
                 <span className="font-medium text-text-primary">
-                    🧭 {t('历史项目比对', 'Historical project match')}
+                    🧭 {t('历史项目比对', 'Historical project match') /*// i18n: user-facing*/}
                 </span>
                 <span className="rounded border border-border bg-bg px-1.5 py-0.5 text-[10px] text-text-secondary">
                     {verdictLabel}
                 </span>
             </div>
             <div className="mt-1 text-[11px] text-text-secondary">
-                {t('匹配', 'Match')} <b className="text-text-primary">{pct}%</b>
+                {t('匹配', 'Match') /*// i18n: user-facing*/} <b className="text-text-primary">{pct}%</b>
                 <span className="pl-1 text-text-muted">
-                    ({t('阈值', 'threshold')} {Math.round(view.threshold * 100)}% {view.candidatesScanned}{' '}
-                    {t('个候选', 'candidates')})
+                    ({t('阈值', 'threshold') /*// i18n: user-facing*/} {Math.round(view.threshold * 100)}%{' '}
+                    {view.candidatesScanned} {t('个候选', 'candidates') /*// i18n: user-facing*/})
                 </span>
             </div>
             {view.gaps.length > 0 ? (
                 <div className="mt-1 text-[11px] text-text-secondary">
-                    {t('能力缺口', 'Capability gaps')}:{' '}
+                    {t('能力缺口', 'Capability gaps') /*// i18n: user-facing*/}:{' '}
                     <span className="font-mono text-text-primary">{view.gaps.join(', ')}</span>
                 </div>
             ) : null}
             {view.verdict === 'base' ? (
                 <div className="mt-1 text-[11px] text-warning">
                     {t(
-                        '命中其他客户项目 — 项目名不可见; 公共能力沉淀基座后新仓继承, 不跨客户改仓',
+                        '命中其他客户项目 — 项目名不可见; 公共能力沉淀基座后新仓继承, 不跨客户改仓', // i18n: user-facing
                         'Matched another customer project — name hidden; shared capabilities distill into the base product, never cross-customer writes'
                     )}
                 </div>
@@ -1212,7 +1233,7 @@ function MatchVerdictCard({
                         className="rounded-md border border-border bg-bg px-2 py-0.5 text-[11px] text-text-secondary hover:text-text-primary"
                         onClick={() => setDetailOpen((v) => !v)}
                     >
-                        {t('详细介绍已有项目', 'Project details')}
+                        {t('详细介绍已有项目', 'Project details') /*// i18n: user-facing*/}
                     </button>
                 ) : null}
                 {view.verdict === 'extend' && repoUrl ? (
@@ -1222,7 +1243,7 @@ function MatchVerdictCard({
                         rel="noreferrer"
                         className="rounded-md border border-border bg-bg px-2 py-0.5 text-[11px] text-text-secondary hover:text-text-primary"
                     >
-                        ▶ {t('体验已有项目', 'Try existing project')}
+                        ▶ {t('体验已有项目', 'Try existing project') /*// i18n: user-facing*/}
                     </a>
                 ) : null}
                 {view.verdict !== 'new' ? (
@@ -1232,15 +1253,17 @@ function MatchVerdictCard({
                         title={
                             steerable
                                 ? t(
-                                      '改判为新建项目, 下游步骤按新判定执行',
+                                      '改判为新建项目, 下游步骤按新判定执行', // i18n: user-facing
                                       'Re-verdict to a new project; downstream steps follow'
                                   )
-                                : t('仅运行/暂停状态可改判', 'Only while running or paused')
+                                : t('仅运行/暂停状态可改判', 'Only while running or paused') // i18n: user-facing
                         }
                         className="rounded-md border border-border bg-bg px-2 py-0.5 text-[11px] text-text-secondary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
                         onClick={onReverdict}
                     >
-                        {busy ? t('改判中…', 'Re-verdicting…') : t('改判：新建项目', 'Re-verdict: new project')}
+                        {busy
+                            ? t('改判中…', 'Re-verdicting…') /*// i18n: user-facing*/
+                            : t('改判：新建项目', 'Re-verdict: new project')}
                     </button>
                 ) : null}
             </div>
@@ -1252,23 +1275,31 @@ function MatchVerdictCard({
                             {repoUrl ? <div className="font-mono text-[10px]">{repoUrl}</div> : null}
                             {visibleCaps.length > 0 ? (
                                 <div className="mt-0.5">
-                                    {t('已有能力', 'Capabilities')}:{' '}
+                                    {t('已有能力', 'Capabilities') /*// i18n: user-facing*/}:{' '}
                                     <span className="font-mono">{visibleCaps.join(' · ')}</span>
                                 </div>
                             ) : null}
                             {visible.stack ? (
                                 <div className="mt-0.5">
-                                    {t('技术栈', 'Stack')}: <span className="font-mono">{String(visible.stack)}</span>
+                                    {t('技术栈', 'Stack') /*// i18n: user-facing*/}:{' '}
+                                    <span className="font-mono">{String(visible.stack)}</span>
                                 </div>
                             ) : null}
                             {visible.health ? (
                                 <div className="mt-0.5">
-                                    {t('健康度', 'Health')}: {String(visible.health)}
+                                    {t('健康度', 'Health') /*// i18n: user-facing*/}: {String(visible.health)}
                                 </div>
                             ) : null}
                         </>
                     ) : (
-                        <div>{t('项目详情已按隐私策略隐藏', 'Project details hidden by privacy policy')}</div>
+                        <div>
+                            {
+                                t(
+                                    '项目详情已按隐私策略隐藏', // i18n: user-facing
+                                    'Project details hidden by privacy policy'
+                                ) /* i18n: user-facing */
+                            }
+                        </div>
                     )}
                 </div>
             ) : null}

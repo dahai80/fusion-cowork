@@ -1,8 +1,8 @@
-"""issue #216: HITL 一次性拒绝 (once=true + approved=false) 必须唤醒暂停中的 run。
+"""issue #216: HITL one-shot reject (once=true + approved=false) must wake the paused run.
 
-旧代码 released and approved 才唤醒 — 拒绝路径卡片出队后落入 confirm_guard,
-条目已不在, confirmed=False, run 挂到 HITL 超时。拒绝也要 resolve_hitl(exec, False),
-只是不落 once-grant、不落持久拒绝规则。
+Legacy code only woke on released and approved — the deny-path card left the queue and fell into
+confirm_guard, where the entry was already gone, confirmed=False, and the run hung until HITL timeout.
+A deny must also call resolve_hitl(exec, False), just without recording a once-grant or a persistent deny rule.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ class _ProbeNode(BaseNode):
     name = HITL_NODE
     display_name = "HITL Probe 216"
     category = NodeCategory.TOOL
-    description = "测试用: 高风险探针 (#216)"
+    description = "测试用: 高风险探针 (#216)"  # i18n: user-facing
     icon = "🧪"
     default_label = "Probe"
 
@@ -40,7 +40,7 @@ class _LowNode(BaseNode):
     name = LOW_NODE
     display_name = "Low Probe 216"
     category = NodeCategory.TOOL
-    description = "测试用: 低风险探针"
+    description = "测试用: 低风险探针"  # i18n: user-facing
     icon = "1️⃣"
     default_label = "Low"
 
@@ -115,13 +115,13 @@ class TestRejectOnceWakesRun:
             assert body["approved"] is False
             assert body["confirmed"] is True
             assert body["once"] is True
-            # 卡片已出队
+            # card is dequeued
             assert client.get("/api/permissions/pending", headers=auth).json()["approvals"] == []
-            # run 立即到达终态 (拒绝 + 无 continue_on_error → failed), 不等 1800s 超时
+            # run reaches terminal immediately (deny + no continue_on_error -> failed), without waiting for the 1800s timeout
             detail = _wait_terminal(client, run_id, auth)
             assert detail["status"] == "failed", detail
             assert _ProbeNode.calls == 0
-            # 一次性拒绝不落持久规则 — 同一工作流再跑仍暂停
+            # one-shot deny does not persist a rule — rerunning the same workflow still pauses
             _ProbeNode.calls = 0
             run2 = client.post("/api/runs", json={"workflow_id": wf_id}, headers=auth).json()["run_id"]
             hitl2 = False
@@ -130,8 +130,8 @@ class TestRejectOnceWakesRun:
                     hitl2 = True
                     break
                 time.sleep(0.05)
-            assert hitl2, "once 拒绝不应持久化规则"
-            # 收尾 run2, 避免悬挂任务
+            assert hitl2, "once 拒绝不应持久化规则"  # i18n: user-facing
+            # wrap up run2 to avoid a dangling task
             action2 = client.get("/api/permissions/pending", headers=auth).json()["approvals"][0]["action_id"]
             client.post(f"/api/permissions/pending/{action2}/confirm", json={"approved": False}, headers=auth)
             _wait_terminal(client, run2, auth)

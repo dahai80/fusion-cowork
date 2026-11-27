@@ -1,8 +1,8 @@
-"""LSP 代码智能客户端 — P2-3。
+"""LSP code intelligence client — P2-3.
 
-通用 Language Server Protocol (LSP 3.17) 客户端, JSON-RPC over stdio。
-支持 definition / references / hover / completion。自动探测可用 server:
-Python: pylsp > pyright > pyrefly; 未安装则降级报错。
+Generic Language Server Protocol (LSP 3.17) client, JSON-RPC over stdio.
+Supports definition / references / hover / completion. Auto-detects an available
+server: Python: pylsp > pyright > pyrefly; degrades to an error when none installed.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ def _uri_to_path(uri: str) -> str:
 
 
 class LSPClient:
-    """LSP 客户端 — 与 language server 经 stdio 通信。"""
+    """LSP client — talks to the language server over stdio."""
 
     def __init__(self, command: List[str], root_uri: str, workspace_folders: Optional[List[str]] = None):
         self.command = command
@@ -58,9 +58,9 @@ class LSPClient:
         ):
             exe = _which(name)
             if exe:
-                logger.info(f"LSP 探测到 server: {name} ({exe})")
+                logger.info(f"LSP detected server: {name} ({exe})")
                 return [exe, *args]
-        raise RuntimeError("无可用 Python LSP server, 请安装 pylsp/pyright/pyrefly")
+        raise RuntimeError("无可用 Python LSP server, 请安装 pylsp/pyright/pyrefly")  # i18n: user-facing
 
     async def start(self) -> None:
         env = os.environ.copy()
@@ -73,7 +73,7 @@ class LSPClient:
         )
         self._reader_task = asyncio.create_task(self._reader_loop())
         await self._initialize()
-        logger.info(f"LSPClient 已启动: {self.command}")
+        logger.info(f"LSPClient started: {self.command}")
 
     async def _reader_loop(self) -> None:
         assert self._proc and self._proc.stdout
@@ -85,7 +85,7 @@ class LSPClient:
                 self._buffer += chunk
                 self._consume_buffer()
         except Exception as e:
-            logger.error(f"LSP reader 异常: {e}")
+            logger.error(f"LSP reader error: {e}")
 
     def _consume_buffer(self) -> None:
         while b"\r\n\r\n" in self._buffer:
@@ -135,7 +135,7 @@ class LSPClient:
             return await asyncio.wait_for(fut, timeout=30)
         except TimeoutError:
             self._pending.pop(req_id, None)
-            raise RuntimeError(f"LSP 请求超时: {method}") from None
+            raise RuntimeError(f"LSP 请求超时: {method}") from None  # i18n: user-facing
 
     async def _send_notification(self, method: str, params: Optional[Dict[str, Any]] = None) -> None:
         msg = {"jsonrpc": "2.0", "method": method, "params": params or {}}
@@ -246,7 +246,7 @@ class LSPClient:
                 except Exception:
                     pass
         self._initialized = False
-        logger.info("LSPClient 已停止")
+        logger.info("LSPClient stopped")
 
 
 def _which(name: str) -> Optional[str]:
@@ -305,7 +305,7 @@ async def query(
     character: int,
     root: str = "",
 ) -> Dict[str, Any]:
-    """便捷入口: 启动 LSP → 打开文档 → 查询 → 停止。"""
+    """Convenience entry: start LSP -> open document -> query -> stop."""
     root = root or str(Path(path).resolve().parent)
     try:
         client = LSPClient.for_python(root)
@@ -322,9 +322,9 @@ async def query(
             return {"hover": await client.hover(path, line, character)}
         elif action == "completion":
             return {"completion": await client.completion(path, line, character)}
-        return {"error": f"未知 action: {action}"}
+        return {"error": f"未知 action: {action}"}  # i18n: user-facing
     except Exception as e:
-        logger.error(f"LSP query 失败: {e}")
+        logger.error(f"LSP query failed: {e}")
         return {"error": str(e)}
     finally:
         await client.stop()

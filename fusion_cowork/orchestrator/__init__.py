@@ -1,4 +1,4 @@
-"""Fusion-Cowork 多智能体编排模块。"""
+"""Fusion-Cowork multi-agent orchestration module."""
 
 from .agent_runtime import AgentRuntime
 from .comm import AgentMessage, AgentMessageBus

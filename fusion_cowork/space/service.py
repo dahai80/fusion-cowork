@@ -1,11 +1,11 @@
-"""协作空间服务层 — Space CRUD + archive + delete。
+"""Collaboration space service layer — Space CRUD + archive + delete.
 
-业务逻辑:
-- create: 创建空间 + 自动将 owner 加入成员表
-- get/list: 查询空间
-- update: 更新空间属性
-- archive: 标记空间为 archived
-- delete: 物理删除空间及关联数据
+Business logic:
+- create: create a space + automatically add the owner to the member table
+- get/list: query spaces
+- update: update space attributes
+- archive: mark the space as archived
+- delete: physically delete the space and its associated data
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class SpaceService:
-    """空间服务 — 封装空间 CRUD 业务逻辑。"""
+    """Space service — encapsulates space CRUD business logic."""
 
     def __init__(self, store: SpaceStore):
         self._store = store

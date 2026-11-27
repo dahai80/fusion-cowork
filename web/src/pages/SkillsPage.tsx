@@ -3,8 +3,8 @@ import { useState } from 'react';
 import { type SkillPackageInfo, type SkillRunResult, api } from '../api';
 import { useT } from '../i18n';
 
-// issue #155: markdown skill 包 — 列表 + 参数表单 (由 frontmatter params 渲染) + 执行结果。
-// issue #255: 用户目录包 (~/.fusion-cowork/skills) 新建/编辑/删除; 内置包只读。
+// issue #155: markdown skill packs — list + param form (rendered from frontmatter params) + run result.
+// issue #255: user-directory packs (~/.fusion-cowork/skills) create/edit/delete; built-in packs are read-only.
 
 interface EditorState {
     markdown: string;
@@ -79,7 +79,7 @@ export function SkillsPage() {
     }
 
     async function removePkg(pkg: SkillPackageInfo) {
-        if (!window.confirm(t(`删除技能 ${pkg.name}?`, `Delete skill ${pkg.name}?`))) return;
+        if (!window.confirm(t(`删除技能 ${pkg.name}?`, `Delete skill ${pkg.name}?`))) return; // i18n: user-facing
         setEditorError(null);
         try {
             await api.deleteSkillPackage(pkg.name);
@@ -94,26 +94,28 @@ export function SkillsPage() {
             <div className="mx-auto max-w-3xl space-y-3">
                 <div className="flex items-center justify-between">
                     <div className="text-sm font-medium text-text-primary">
-                        {editor.name === null
-                            ? t('新建技能', 'New skill')
-                            : t(`编辑 ${editor.name}`, `Edit ${editor.name}`)}
+                        {
+                            editor.name === null
+                                ? t('新建技能', 'New skill') // i18n: user-facing
+                                : t(`编辑 ${editor.name}`, `Edit ${editor.name}`) /*// i18n: user-facing*/
+                        }
                     </div>
                     <button
                         type="button"
                         className="text-xs text-text-secondary hover:underline"
                         onClick={() => setEditor(null)}
                     >
-                        {t('返回技能列表', 'Back to skills')}
+                        {t('返回技能列表', 'Back to skills') /*// i18n: user-facing*/}
                     </button>
                 </div>
                 <div className="text-xs text-text-muted">
                     {t(
-                        'markdown + frontmatter (name/title/description/params 等), 保存到 ~/.fusion-cowork/skills 后立即生效',
+                        'markdown + frontmatter (name/title/description/params 等), 保存到 ~/.fusion-cowork/skills 后立即生效', // i18n: user-facing
                         'Markdown with frontmatter (name/title/description/params); saved to ~/.fusion-cowork/skills and effective immediately'
                     )}
                 </div>
                 <textarea
-                    aria-label={t('技能包内容', 'Skill pack source')}
+                    aria-label={t('技能包内容', 'Skill pack source')} // i18n: user-facing
                     className="h-96 w-full rounded-lg border border-border bg-bg-elevated p-3 font-mono text-xs text-text-primary"
                     spellCheck={false}
                     value={editor.markdown}
@@ -127,14 +129,14 @@ export function SkillsPage() {
                         disabled={saving || !editor.markdown.trim()}
                         onClick={() => void saveEditor()}
                     >
-                        {saving ? t('保存中…', 'Saving…') : t('保存', 'Save')}
+                        {saving ? t('保存中…', 'Saving…') /*// i18n: user-facing*/ : t('保存', 'Save')}
                     </button>
                     <button
                         type="button"
                         className="rounded-md border border-border px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-muted"
                         onClick={() => setEditor(null)}
                     >
-                        {t('取消', 'Cancel')}
+                        {t('取消', 'Cancel') /*// i18n: user-facing*/}
                     </button>
                 </div>
             </div>
@@ -149,7 +151,7 @@ export function SkillsPage() {
                     className="text-xs text-text-secondary hover:underline"
                     onClick={() => setSelected(null)}
                 >
-                    {t('返回技能列表', 'Back to skills')}
+                    {t('返回技能列表', 'Back to skills') /*// i18n: user-facing*/}
                 </button>
                 <div className="text-sm font-medium text-text-primary">
                     {sdkText(selected.title, selected.title_en, t)}
@@ -202,7 +204,7 @@ export function SkillsPage() {
                     disabled={running}
                     onClick={() => void run()}
                 >
-                    {running ? t('执行中…', 'Running…') : t('执行', 'Run')}
+                    {running ? t('执行中…', 'Running…') /*// i18n: user-facing*/ : t('执行', 'Run')}
                 </button>
                 {result ? (
                     result.error ? (
@@ -227,7 +229,7 @@ export function SkillsPage() {
         <div className="mx-auto max-w-2xl space-y-2">
             <div className="flex items-center justify-between">
                 <div className="text-sm font-medium text-text-primary">
-                    {t('技能', 'Skills')} ({packages.length})
+                    {t('技能', 'Skills') /*// i18n: user-facing*/} ({packages.length})
                 </div>
                 <button
                     type="button"
@@ -241,12 +243,12 @@ export function SkillsPage() {
                         });
                     }}
                 >
-                    ＋ {t('新建技能', 'New skill')}
+                    ＋ {t('新建技能', 'New skill') /*// i18n: user-facing*/}
                 </button>
             </div>
             {editorError ? <div className="text-xs text-error">{editorError}</div> : null}
             {packages.length === 0 ? (
-                <EmptyState title={t('暂无技能', 'No skills')} />
+                <EmptyState title={t('暂无技能', 'No skills')} /> // i18n: user-facing
             ) : (
                 packages.map((pkg) => (
                     <div
@@ -275,14 +277,14 @@ export function SkillsPage() {
                                     className="rounded-md border border-border px-2 py-1 text-[10px] text-text-secondary hover:bg-bg-muted"
                                     onClick={() => void editPkg(pkg)}
                                 >
-                                    {t('编辑', 'Edit')}
+                                    {t('编辑', 'Edit') /*// i18n: user-facing*/}
                                 </button>
                                 <button
                                     type="button"
                                     className="rounded-md border border-error/40 px-2 py-1 text-[10px] text-error hover:bg-bg-muted"
                                     onClick={() => void removePkg(pkg)}
                                 >
-                                    {t('删除', 'Delete')}
+                                    {t('删除', 'Delete') /*// i18n: user-facing*/}
                                 </button>
                             </div>
                         ) : null}

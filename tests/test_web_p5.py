@@ -1,12 +1,11 @@
-"""W8 运行改向 (migration doc §6): 引擎按执行粒度暂停/恢复 + web 路由。
+"""W8 run redirection (migration doc §6): engine pause/resume at execution granularity + web routes.
 
 Contract:
-- WorkflowEngine.pause/resume/is_paused: 执行暂停在下一节点检查点, 恢复后
-  继续完成; cancel 唤醒暂停中的执行。
-- POST /api/runs/{id}/pause|resume: 409 非运行态/非暂停态; 暂停后记录
-  status=paused, 恢复回 running。
-- 追加指令 (append-instruction) 属 orchestrator 交互协议 (I2), 本批不含。
-"""
+- WorkflowEngine.pause/resume/is_paused: execution pauses at the next node checkpoint and
+  continues to completion after resume; cancel wakes a paused execution.
+- POST /api/runs/{id}/pause|resume: 409 when not running/not paused; while paused the record
+  shows status=paused, back to running after resume.
+- Append-instruction belongs to the orchestrator interaction protocol (I2), not in this batch."""
 
 from __future__ import annotations
 
@@ -19,8 +18,10 @@ STATIC_KEY = "fc-web-test-p5"
 
 class P5Node:
     name = "p5_node"
+    # i18n: user-facing
     display_name = "P5 暂停测试节点"
     category = None
+    # i18n: user-facing
     description = "测试用"
     icon = "🧪"
     default_label = "p5"
@@ -39,6 +40,7 @@ def _make_node_class(name: str, delay: float):
     _Node.name = name
     _Node.display_name = name
     _Node.category = NodeCategory.TOOL
+    # i18n: user-facing
     _Node.description = "测试用"
     _Node.icon = "🧪"
     _Node.default_label = name
@@ -91,7 +93,7 @@ class TestEnginePauseResume:
             task = asyncio.create_task(engine.execute(wf, execution_id="exec-p5"))
             await asyncio.sleep(0.01)
             assert engine.pause("exec-p5") is True
-            # 等 n1 完成 (0.02s) + 余量 — 暂停挂起在 n2 检查点
+            # Wait for n1 to finish (0.02s) plus margin — the pause holds at the n2 checkpoint
             await asyncio.sleep(0.1)
             execution = engine.get_execution("exec-p5")
             done_nodes = [s.node_id for s in execution.steps if s.status.value == "success"]

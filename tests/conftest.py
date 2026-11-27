@@ -5,16 +5,16 @@ import pytest
 
 from fusion_cowork import config_center as _cc_mod
 
-# issue #187: HITL 默认 ON — 测试套件整体按 headless 跑 (deny-fast 语义不变),
-# HITL 专属测试文件在自己的 fixture 里 monkeypatch.delenv 恢复默认 ON 语义
+# issue #187: HITL defaults ON — the suite runs headless overall (deny-fast semantics unchanged);
+# HITL-specific test files restore default-ON semantics via monkeypatch.delenv in their own fixtures
 os.environ.setdefault("FUSION_COWORK_HITL_PAUSE", "0")
 
-# issue #527: 引擎 HITL 队列走内核 HumanGate (持久 JSON 队列) — 套件级指向临时目录,
-# 不读写真机 ~/.fusion-cowork/hitl_gate
+# issue #527: the engine HITL queue uses the kernel HumanGate (persistent JSON queue) — point the
+# suite at a temp dir instead of reading/writing the real ~/.fusion-cowork/hitl_gate
 os.environ.setdefault("FUSION_COWORK_HITL_GATE_DIR", tempfile.mkdtemp(prefix="fc_hitl_gate_"))
 
-# issue #429: CI 按 pytest-split 分片跑 — 分片不再保证含有 import_all_nodes()
-# 的测试文件被收集, 节点注册表断言 (72 节点等) 需要套件级完整注册
+# issue #429: CI runs shards via pytest-split — a shard no longer guarantees collecting the test
+# files that call import_all_nodes(), so node-registry assertions (72 nodes etc.) need suite-level full registration
 from fusion_cowork.nodes import import_all_nodes
 
 import_all_nodes()
@@ -39,9 +39,9 @@ def _isolate_config_center():
 
 @pytest.fixture(autouse=True)
 def _isolate_permission_rules(monkeypatch, tmp_path):
-    # issue #266: 权限规则持久化在 ~/.fusion-cowork/permissions.json — create_web_app
-    # 启动 load() 会读真机规则 (如本机已批准 shell_exec scope=*), 任何依赖权限
-    # 拒绝语义的测试都会被真机状态污染。套件级指向临时文件。
+    # issue #266: permission rules persist in ~/.fusion-cowork/permissions.json — create_web_app
+    # calls load() at startup and would read real machine rules (e.g. an already-approved
+    # shell_exec scope=*), polluting any test that depends on deny semantics. Point the suite at a temp file.
     from fusion_cowork.engine import permission_manager as _pm_mod
 
     monkeypatch.setattr(_pm_mod, "_PERMISSIONS_FILE", str(tmp_path / "permissions.json"))

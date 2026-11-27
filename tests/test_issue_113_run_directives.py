@@ -1,11 +1,10 @@
-"""#113 W8/B1: 运行改向指令注入协议。
+"""#113 W8/B1: run redirection directive injection protocol.
 
 Contract:
-- WorkflowEngine.add_directive: set_params / insert_node / skip_remaining 在
-  下一节点边界生效; 未知 action 或未知执行返回 False。
-- 改向指令落轨迹 (TrajectoryRecorder.record_directive, event=directive)。
-- POST /api/runs/{id}/directive: 202 已排队, 400 非法 action, 409 非运行态。
-"""
+- WorkflowEngine.add_directive: set_params / insert_node / skip_remaining take effect at the
+  next node boundary; unknown action or unknown execution returns False.
+- Redirection directives land on the trajectory (TrajectoryRecorder.record_directive, event=directive).
+- POST /api/runs/{id}/directive: 202 queued, 400 invalid action, 409 not running."""
 
 from __future__ import annotations
 
@@ -34,6 +33,7 @@ def _make_value_node(name: str, delay: float = 0.02):
     _Node.name = name
     _Node.display_name = name
     _Node.category = NodeCategory.TOOL
+    # i18n: user-facing
     _Node.description = "测试用"
     _Node.icon = "🧪"
     _Node.default_label = name
@@ -156,7 +156,7 @@ class TestEngineDirectives:
 
         assert execution.status.value == "success"
         assert [s.status.value for s in execution.steps] == ["success", "skipped"]
-        assert execution.steps[1].summary == "运行改向: 跳过剩余节点"
+        assert execution.steps[1].summary == "运行改向: 跳过剩余节点"  # i18n: user-facing
 
     def test_invalid_directive_rejected(self):
         from fusion_cowork.engine.workflow import WorkflowEngine

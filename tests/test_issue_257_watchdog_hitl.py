@@ -1,4 +1,4 @@
-"""issue #257: guard 拒绝入待审批队列 + 节点默认看门狗 + 心跳事件。"""
+"""issue #257: guard denials enter the pending-approval queue + node default watchdog + heartbeat events."""
 
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ class TestNodeWatchdog:
         wf.add_node(SlowNode("n1"))
         execution = await eng.execute(wf)
         assert execution.status.value == "failed"
-        assert "超时" in (execution.error or "")
+        assert "超时" in (execution.error or "")  # i18n: user-facing
         assert execution.steps[-1].status == NodeStatus.FAILED
 
     @pytest.mark.asyncio

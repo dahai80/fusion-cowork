@@ -1,12 +1,12 @@
-"""P0 web 迁移批次 (migration doc §6): 模板目录 + 调度任务 REST。
+"""P0 web migration batch (migration doc §6): template catalog + scheduler task REST.
 
 Contract:
-- GET /api/templates 列表 (内置模板非空), /api/templates/{id} 详情含 workflow 体,
-  未知 id 404。
-- POST /api/scheduler/tasks: cron 与 interval 两条创建路径; 缺参 400; 双触发器 400;
-  未知工作流 404; 非法 cron 400。list/pause/resume/delete 全生命周期。
-- scheduler 经 create_web_app(scheduler=...) 注入并隔离 task_store_path
-  (issue #98 同类: 不允许落 home 目录)。
+- GET /api/templates lists (built-in templates non-empty); /api/templates/{id} detail includes the workflow body;
+  unknown id 404.
+- POST /api/scheduler/tasks: both cron and interval creation paths; missing params 400; dual triggers 400;
+  unknown workflow 404; invalid cron 400. list/pause/resume/delete full lifecycle.
+- scheduler injected via create_web_app(scheduler=...) with an isolated task_store_path
+  (same class as issue #98: must not land in the home directory).
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
-// issue #226: 终态集合与 WorkflowStatus 对齐 — 页面不得各自维护不一致的子集。
+// issue #226: terminal-status set aligned with WorkflowStatus — pages must not each maintain inconsistent subsets.
 // WorkflowStatus: pending / running / success / failed / cancelled / partial /
-// completed_with_denials; completed/canceled 为历史兼容别名。
+// completed_with_denials; completed/canceled are legacy compatibility aliases.
 
 export const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set([
     'success',
@@ -16,7 +16,7 @@ export function isTerminalRunStatus(status: string): boolean {
     return TERMINAL_RUN_STATUSES.has(status);
 }
 
-// issue #226: run 视图的两个历史动作共享同一终态门 — 一处判定, 两处使用。
+// issue #226: the run view's two history actions share one terminal-status gate — judged in one place, used in two.
 export function runHistoryActions(status: string): { resumeFromStep: boolean; deriveNewTask: boolean } {
     const terminal = isTerminalRunStatus(status);
     return { resumeFromStep: terminal, deriveNewTask: terminal };

@@ -1,10 +1,10 @@
-"""跨设备协同 — 通过 WebSocket 实现多设备间的工作流同步与协作。
+"""Cross-device sync — workflow synchronization and collaboration across devices over WebSocket.
 
-V0.3 特性：
-- WebSocket 实时同步
-- 设备发现与配对
-- 工作流跨设备执行
-- 状态实时推送
+V0.3 features:
+- Real-time WebSocket sync
+- Device discovery and pairing
+- Cross-device workflow execution
+- Real-time status push
 """
 
 from __future__ import annotations
@@ -23,13 +23,13 @@ logger = logging.getLogger(__name__)
 
 
 def cross_sync_from_env() -> Optional[CrossDeviceSync]:
-    """#123: web_serve 注入接缝 — FUSION_COWORK_CROSS_SYNC=1 时构建同步引擎。
+    """#123: web_serve injection seam — build the sync engine when FUSION_COWORK_CROSS_SYNC=1.
 
-    参数: FUSION_COWORK_SYNC_HOST/PORT/TOKEN/CERT/KEY (默认 127.0.0.1:11437)。
-    未启用返回 None (/api/deliver 保持诚实 503)。
+    Config: FUSION_COWORK_SYNC_HOST/PORT/TOKEN/CERT/KEY (default 127.0.0.1:11437).
+    Returns None when disabled (/api/deliver keeps its honest 503).
     """
     if os.environ.get("FUSION_COWORK_CROSS_SYNC") != "1":
-        logger.info("跨设备同步未启用 (FUSION_COWORK_CROSS_SYNC!=1), /api/deliver 返回 503")
+        logger.info("Cross-device sync disabled (FUSION_COWORK_CROSS_SYNC!=1), /api/deliver returns 503")
         return None
     instance = CrossDeviceSync(
         host=os.environ.get("FUSION_COWORK_SYNC_HOST", "127.0.0.1"),
@@ -38,7 +38,7 @@ def cross_sync_from_env() -> Optional[CrossDeviceSync]:
         ssl_cert=os.environ.get("FUSION_COWORK_SYNC_CERT") or None,
         ssl_key=os.environ.get("FUSION_COWORK_SYNC_KEY") or None,
     )
-    logger.info(f"跨设备同步已启用 (FUSION_COWORK_CROSS_SYNC=1): {instance.host}:{instance.port}")
+    logger.info(f"Cross-device sync enabled (FUSION_COWORK_CROSS_SYNC=1): {instance.host}:{instance.port}")
     return instance
 
 
@@ -50,7 +50,7 @@ class DeviceStatus(Enum):
 
 @dataclass
 class Device:
-    """设备信息。"""
+    """Device info."""
 
     device_id: str
     name: str
@@ -64,24 +64,24 @@ class Device:
 
 @dataclass
 class SyncMessage:
-    """同步消息。"""
+    """Sync message."""
 
     msg_id: str
     msg_type: str  # workflow_sync | status_update | file_transfer | command
     sender: str
-    receiver: str  # broadcast 表示广播
+    receiver: str  # broadcast means send to all devices
     payload: Dict[str, Any] = field(default_factory=dict)
     timestamp: float = 0.0
 
 
 class CrossDeviceSync:
-    """跨设备同步引擎 — 通过 WebSocket 实现多设备协作。
+    """Cross-device sync engine — multi-device collaboration over WebSocket.
 
-    支持：
-    - 设备发现与配对
-    - 工作流同步
-    - 状态实时推送
-    - 文件传输
+    Supports:
+    - Device discovery and pairing
+    - Workflow sync
+    - Real-time status push
+    - File transfer
     """
 
     def __init__(
@@ -106,29 +106,29 @@ class CrossDeviceSync:
         self._server: Optional[asyncio.AbstractServer] = None
         self._ws_server = None
         self._ws_clients: set = set()
-        # R-7: 记录各 workflow 最近同步 updated_at, 接收端据此拒旧版本 (冲突解决)。
+        # R-7: track each workflow's latest synced updated_at; receivers reject stale versions based on it (conflict resolution).
         self._last_workflow_sync: Dict[str, float] = {}
 
     def register_device(self, device: Device) -> None:
-        """注册设备。"""
+        """Register a device."""
         device.status = DeviceStatus.ONLINE
         device.last_seen = time.time()
         self._devices[device.device_id] = device
-        logger.info(f"设备注册: {device.name} ({device.device_id})")
+        logger.info(f"Device registered: {device.name} ({device.device_id})")
 
     def unregister_device(self, device_id: str) -> None:
-        """注销设备。"""
+        """Unregister a device."""
         self._devices.pop(device_id, None)
-        logger.info(f"设备注销: {device_id}")
+        logger.info(f"Device unregistered: {device_id}")
 
     def get_online_devices(self) -> List[Device]:
-        """获取在线设备。"""
+        """Get online devices."""
         now = time.time()
         return [d for d in self._devices.values() if d.status == DeviceStatus.ONLINE and now - d.last_seen < 30]
 
     def _touch_device(self, sender_id: str) -> None:
-        # R-7: 收消息时刷新 last_seen + 置 ONLINE — 旧版仅 register_device 设 last_seen,
-        # 活跃设备 30s 不重注册就被 get_online_devices 判离线 → 广播丢目标。
+        # R-7: refresh last_seen + set ONLINE when a message arrives — the old code only set last_seen in register_device,
+        # so an active device that skipped re-registration for 30s was judged offline by get_online_devices → broadcasts lost their target.
         if not sender_id:
             return
         dev = self._devices.get(sender_id)
@@ -137,15 +137,15 @@ class CrossDeviceSync:
             dev.status = DeviceStatus.ONLINE
 
     def on_message(self, msg_type: str, handler: Callable) -> None:
-        """注册消息处理器。"""
+        """Register a message handler."""
         self._message_handlers.setdefault(msg_type, []).append(handler)
 
     async def send_message(self, msg: SyncMessage) -> bool:
-        """发送消息。"""
+        """Send a message."""
         msg.timestamp = time.time()
 
         if msg.receiver == "broadcast":
-            # 广播给所有在线设备
+            # Broadcast to all online devices
             tasks = []
             for device in self.get_online_devices():
                 if device.device_id != msg.sender:
@@ -159,9 +159,10 @@ class CrossDeviceSync:
             return False
 
     async def _send_to_device(self, device: Device, msg: SyncMessage) -> bool:
-        """发送消息到指定设备。"""
-        # R-7: 旧版每条消息新 TCP, 一次失败即丢 (对端瞬断 5s 全丢)。加重试: 连接级瞬态失败
-        # 退避重试, 覆盖对端重启/网络抖动窗口; 持久队列非本补丁范围 (离线>重试窗口仍丢, 记 WARN)。
+        """Send a message to a specific device."""
+        # R-7: the old code opened a fresh TCP connection per message and dropped it on the first failure (a 5s peer blip lost everything).
+        # Add retries: connection-level transient failures retry with backoff, covering peer restarts/network jitter windows;
+        # a durable queue is out of scope for this patch (messages still lost when offline > retry window, logged as WARN).
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
             try:
@@ -175,8 +176,10 @@ class CrossDeviceSync:
                         ssl_ctx.check_hostname = True
                         ssl_ctx.verify_mode = ssl.CERT_REQUIRED
                     else:
-                        # 仅用于自签名证书的开发环境
-                        logger.warning("SSL 验证已禁用 — 仅用于开发环境自签名证书")
+                        # Dev environments with self-signed certificates only
+                        logger.warning(
+                            "SSL verification disabled — for dev environments with self-signed certificates only"
+                        )
                         ssl_ctx.check_hostname = False
                         ssl_ctx.verify_mode = ssl.CERT_NONE
 
@@ -202,33 +205,35 @@ class CrossDeviceSync:
             except (TimeoutError, OSError, asyncio.CancelledError) as e:
                 if attempt < max_attempts:
                     backoff = 0.5 * attempt
-                    logger.warning(f"发送消息失败 {device.name} (第{attempt}次): {e}, {backoff}s 后重试")
+                    logger.warning(
+                        f"Send message failed {device.name} (attempt {attempt}): {e}, retrying in {backoff}s"
+                    )
                     await asyncio.sleep(backoff)
                 else:
                     logger.warning(
-                        f"发送消息失败 {device.name} (重试{max_attempts}次仍失败): {e}, 消息 {msg.msg_id} 丢弃"
+                        f"Send message failed {device.name} (still failing after {max_attempts} retries): {e}, message {msg.msg_id} dropped"
                     )
                     return False
             except Exception as e:
-                logger.debug(f"发送消息失败 {device.name}: {e}")
+                logger.debug(f"Send message failed {device.name}: {e}")
                 return False
         return False
 
     async def _handle_message(self, data: dict) -> None:
-        """处理接收到的消息。"""
+        """Handle a received message."""
         if self.token:
             incoming_token = data.get("token", "")
-            # Stage 2: JWT 优先, 静态 token fallback
+            # Stage 2: JWT first, static token fallback
             from fusion_cowork.auth import verify_any_token
 
             if verify_any_token(incoming_token, self.token) is None:
-                logger.warning("消息认证失败: token 无效")
+                logger.warning("Message authentication failed: invalid token")
                 return
         msg_type = data.get("msg_type", "")
-        # R-7: 收消息刷新发送方 last_seen (活跃设备不被误判离线)
+        # R-7: refresh the sender's last_seen on incoming messages (active devices not misjudged as offline)
         self._touch_device(data.get("sender", ""))
-        # R-7: workflow_sync 冲突解决 — 旧版 last-writer-wins 静默丢数据 (并发写同 workflow)。
-        # 以 payload.updated_at 为准, 旧版本直接拒收 (不覆盖本地较新版本)。
+        # R-7: workflow_sync conflict resolution — the old last-writer-wins silently lost data (concurrent writes to the same workflow).
+        # payload.updated_at is authoritative; stale versions are rejected outright (never overwriting a locally newer version).
         if msg_type == "workflow_sync":
             payload = data.get("payload", {}) or {}
             wf_id = str(payload.get("id") or payload.get("workflow_id") or "")
@@ -237,7 +242,7 @@ class CrossDeviceSync:
                 local_ts = self._last_workflow_sync.get(wf_id, 0.0)
                 if incoming_ts < local_ts:
                     logger.warning(
-                        f"workflow_sync 冲突: {wf_id} 本地 updated_at={local_ts} 比入站 {incoming_ts} 新, 拒收旧版本"
+                        f"workflow_sync conflict: {wf_id} local updated_at={local_ts} is newer than inbound {incoming_ts}, rejecting stale version"
                     )
                     return
                 self._last_workflow_sync[wf_id] = incoming_ts
@@ -249,19 +254,19 @@ class CrossDeviceSync:
                 else:
                     handler(data)
             except Exception as e:
-                logger.error(f"消息处理器异常: {e}")
+                logger.error(f"Message handler error: {e}")
 
-    # ── 工作流同步 ──
+    # ── Workflow sync ──
 
     async def sync_workflow(
         self,
         workflow_data: Dict[str, Any],
         target_devices: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """同步工作流到其他设备。"""
+        """Sync a workflow to other devices."""
         targets = target_devices or [d.device_id for d in self.get_online_devices()]
 
-        # R-7: 确保 payload 带 updated_at (冲突解决依据)。缺则补发送时刻。
+        # R-7: make sure the payload carries updated_at (the conflict-resolution basis). Fill in the send time if missing.
         if isinstance(workflow_data, dict) and not workflow_data.get("updated_at"):
             workflow_data = {**workflow_data, "updated_at": time.time()}
         wf_id = (
@@ -296,7 +301,7 @@ class CrossDeviceSync:
         return results
 
     async def sync_status(self, status_data: Dict[str, Any]) -> None:
-        """广播当前状态。"""
+        """Broadcast the current status."""
         msg = SyncMessage(
             msg_id=f"status_{uuid.uuid4().hex[:8]}",
             msg_type="status_update",
@@ -306,31 +311,31 @@ class CrossDeviceSync:
         )
         await self.send_message(msg)
 
-    # ── 生命周期 ──
+    # ── Lifecycle ──
 
     async def start(self) -> None:
-        """启动同步服务 — 监听 WebSocket 接收入站连接。"""
+        """Start the sync service — listen on WebSocket for inbound connections."""
         self._running = True
-        logger.info(f"跨设备同步启动: {self.host}:{self.port}")
+        logger.info(f"Cross-device sync started: {self.host}:{self.port}")
         try:
             import websockets
 
             async def _ws_handler(websocket):
                 self._ws_clients.add(websocket)
                 remote = websocket.remote_address if hasattr(websocket, "remote_address") else "?"
-                logger.info(f"WS 设备连入: {remote}")
+                logger.info(f"WS device connected: {remote}")
                 try:
                     async for raw in websocket:
                         try:
                             data = json.loads(raw)
-                            # 认证校验 (与 _handle_message 一致): 配了 token 则逐条验
+                            # Auth check (same as _handle_message): verify each message when a token is configured
                             if self.token:
                                 from fusion_cowork.auth import verify_any_token
 
                                 if verify_any_token(data.get("token", ""), self.token) is None:
-                                    logger.warning(f"WS 消息认证失败: {remote}, token 无效")
+                                    logger.warning(f"WS message authentication failed: {remote}, invalid token")
                                     continue
-                            # R-7: WS 路径同样刷新发送方 last_seen
+                            # R-7: the WS path refreshes the sender's last_seen too
                             self._touch_device(data.get("sender", ""))
                             msg = SyncMessage(
                                 msg_id=data.get("msg_id", f"msg_{uuid.uuid4().hex[:8]}"),
@@ -347,29 +352,31 @@ class CrossDeviceSync:
                                     if asyncio.iscoroutine(res):
                                         await res
                                 except Exception as he:
-                                    logger.error(f"WS 消息处理器异常: {he}")
+                                    logger.error(f"WS message handler error: {he}")
                         except (json.JSONDecodeError, KeyError) as je:
-                            logger.warning(f"WS 消息解析失败: {je}")
+                            logger.warning(f"WS message parse failed: {je}")
                 except Exception as e:
-                    logger.debug(f"WS 连接结束: {e}")
+                    logger.debug(f"WS connection ended: {e}")
                 finally:
                     self._ws_clients.discard(websocket)
 
             ssl_ctx = self._build_server_ssl_context()
             self._ws_server = await websockets.serve(_ws_handler, self.host, self.port, ssl=ssl_ctx)
             scheme = "wss" if ssl_ctx else "ws"
-            logger.info(f"WebSocket 同步服务监听: {scheme}://{self.host}:{self.port}")
+            logger.info(f"WebSocket sync service listening: {scheme}://{self.host}:{self.port}")
         except ImportError:
-            logger.warning("websockets 库未安装 (pip install websockets), WS 入站监听降级关闭")
+            logger.warning(
+                "websockets library not installed (pip install websockets), WS inbound listening degraded off"
+            )
         except OSError as oe:
-            # R-7: 旧版仅 log, _running 留 True + _ws_server 为 None → 半死态, 调用方误以为成功。
-            # fail-visible: 回滚 _running, 抛出让调用方知启动失败。
+            # R-7: the old code only logged, leaving _running True + _ws_server None → half-dead state, callers wrongly assumed success.
+            # fail-visible: roll back _running and raise so callers know startup failed.
             self._running = False
-            logger.error(f"WebSocket 监听启动失败: {oe}")
+            logger.error(f"WebSocket listener failed to start: {oe}")
             raise
 
     async def stop(self) -> None:
-        """停止同步服务。"""
+        """Stop the sync service."""
         self._running = False
         if self._ws_server:
             self._ws_server.close()
@@ -378,13 +385,13 @@ class CrossDeviceSync:
         if self._server:
             self._server.close()
             await self._server.wait_closed()
-        logger.info("跨设备同步已停止")
+        logger.info("Cross-device sync stopped")
 
     def _build_server_ssl_context(self):
-        """构造入站 WS 服务端 TLS ssl_context — HI-12。
+        """Build the inbound WS server TLS ssl_context — HI-12.
 
-        fail-closed: 配了 ssl_cert/ssl_key 但加载失败 → raise, 不降级明文。
-        未配 → None (明文)。
+        fail-closed: when ssl_cert/ssl_key are set but loading fails → raise, never degrade to plaintext.
+        Not configured → None (plaintext).
         """
         if not self.ssl_cert or not self.ssl_key:
             return None
@@ -393,14 +400,17 @@ class CrossDeviceSync:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         try:
             ctx.load_cert_chain(certfile=self.ssl_cert, keyfile=self.ssl_key)
-            logger.info(f"CrossDeviceSync 入站 TLS 已启用: cert={self.ssl_cert}")
+            logger.info(f"CrossDeviceSync inbound TLS enabled: cert={self.ssl_cert}")
             return ctx
         except Exception as e:
-            logger.error(f"CrossDeviceSync 入站 TLS 证书加载失败, 拒绝降级明文 (fail-closed): {e}")
+            logger.error(
+                f"CrossDeviceSync inbound TLS certificate load failed, refusing plaintext fallback (fail-closed): {e}"
+            )
+            # i18n: user-facing
             raise RuntimeError(f"入站 TLS 证书加载失败, 拒绝降级明文: {e}") from e
 
     def get_connected_devices(self) -> List[Dict[str, Any]]:
-        """获取连接的设备列表。"""
+        """Get the list of connected devices."""
         return [
             {
                 "device_id": d.device_id,

@@ -72,7 +72,7 @@ class TestProductLifecycleTemplate:
         assert p["max_tokens"] == "${param.dispatch_max_tokens}"
 
     def test_task_issue_ready_label(self):
-        # issue #427: extension 标签按判定插值 (github_api 过滤空串), 装配期含占位符
+        # issue #427: extension label interpolated by verdict (github_api filters empty strings), placeholders present at assembly time
         n6 = next(n for n in _tpl()["workflow"]["nodes"] if n["id"] == "n6")
         assert n6["config"]["params"]["labels"] == ["state:ready", "${step.n4m.extension_label}"]
 
@@ -90,7 +90,7 @@ class TestProductLifecycleTemplate:
         )
         assert wf is not None
         assert wf.nodes["n1"].config.params["graph_id"] == "g-ba"
-        # issue #320: 显式 graph_id 优先 — agent 缺省被清空 (二选一)
+        # issue #320: explicit graph_id wins — the agent default is blanked (either-or)
         assert wf.nodes["n1"].config.params["agent_id"] == ""
         assert wf.nodes["n3"].config.params["graph_id"] == "g-arch"
         assert wf.nodes["n5"].config.params["slug"] == "demo"
@@ -99,7 +99,7 @@ class TestProductLifecycleTemplate:
 
 
 class TestAgentSeats:
-    # issue #320: GUI Builder 部署的是 agent (非 graph) — 模板必须支持 agent 座位
+    # issue #320: the GUI Builder deploys agents (not graphs) — the template must support agent seats
 
     def test_required_params_trimmed(self):
         from fusion_cowork.templates.template_manager import TemplateManager
@@ -153,7 +153,7 @@ class TestRepoScaffold:
 
     @pytest.mark.asyncio
     async def test_refuses_existing_dir(self, tmp_path):
-        # issue #352: 非空目录且未传 overwrite=true 仍拒绝, 但报错带补救提示; 空目录自动复用
+        # issue #352: a non-empty dir without overwrite=true is still refused, but the error carries a remediation hint; empty dirs are reused automatically
         target = tmp_path / "ai-demo"
         target.mkdir()
         (target / "keep.txt").write_text("x")
@@ -161,7 +161,7 @@ class TestRepoScaffold:
         node.config.params = {"slug": "demo", "base_dir": str(tmp_path)}
         res = await node.execute({})
         assert res.status.value == "failed"
-        assert "已存在" in res.error
+        assert "已存在" in res.error  # i18n: user-facing
         assert "overwrite=true" in res.error
 
     @pytest.mark.asyncio

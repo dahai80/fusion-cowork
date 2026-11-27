@@ -1,5 +1,5 @@
-# RunRegistry × memory_bridge 集成测试 (issue #157)。
-# 验收对齐 fusion-memory#20: 开 → 写回+注入闭环; 关 → 零 RPC 零痕迹; 桥挂 → run 不炸。
+# RunRegistry x memory_bridge integration tests (issue #157).
+# Acceptance aligned with fusion-memory#20: on -> write-back + injection loop; off -> zero RPC, zero trace; bridge down -> run survives.
 
 import json
 
@@ -10,7 +10,7 @@ from fusion_cowork.engine.workflow import Workflow, WorkflowEngine
 from fusion_cowork.server.web_api import RunRegistry
 from tests.test_engine import MockSuccessNode
 
-MARKER = "上周产出: 财报摘要 v2"
+MARKER = "上周产出: 财报摘要 v2"  # i18n: user-facing
 
 
 def _patch_transport(monkeypatch, handler):
@@ -25,7 +25,7 @@ def _patch_transport(monkeypatch, handler):
 
 
 def _ok_transport_handler(retrieve_text: str, commit_ids=None):
-    # retrieve 返 MARKER 块; commit 返新契约 memory_ids。记录收到的方法序列。
+    # retrieve returns the MARKER block; commit returns the new-contract memory_ids. Records the received method sequence.
     calls = {"methods": []}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -55,7 +55,7 @@ def _ok_transport_handler(retrieve_text: str, commit_ids=None):
 def _make_registry_and_def():
     engine = WorkflowEngine()
     registry = RunRegistry(engine)
-    wf = Workflow(name="财报任务", description="整理季度财报")
+    wf = Workflow(name="财报任务", description="整理季度财报")  # i18n: user-facing
     wf.add_node(MockSuccessNode(node_id="n1"))
     return registry, wf.to_dict()
 
@@ -73,14 +73,14 @@ async def test_run_memory_on_inject_and_write_back(monkeypatch):
     _patch_transport(monkeypatch, handler)
     registry, wf_def = _make_registry_and_def()
 
-    ret = registry.start(wf_def, workflow_id="wf1", workflow_name="财报任务", memory=True)
+    ret = registry.start(wf_def, workflow_id="wf1", workflow_name="财报任务", memory=True)  # i18n: user-facing
     record = await _wait_run(registry, ret["run_id"])
 
     assert record["status"] == "success"
-    # 注入: 首节点输入含 memory_context (MockSuccessNode 回显 inputs)
+    # injection: first node input contains memory_context (MockSuccessNode echoes inputs)
     assert record["memory_context"] == MARKER
     assert record["steps"][0]["output_data"]["input"]["memory_context"] == MARKER
-    # 写回: retrieve + commit 各一次, run record 可见
+    # write-back: retrieve + commit once each, visible in the run record
     assert calls["methods"] == ["retrieve", "commit"]
     assert record["memory_writeback"] == "ok"
     assert record["memory_ids"] == ["mem-1"]
@@ -88,14 +88,14 @@ async def test_run_memory_on_inject_and_write_back(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_memory_off_zero_trace(monkeypatch):
-    # 开关关: 即使 key 已配也不发任何 RPC, run record 无记忆痕迹
+    # switch off: no RPC even with a key configured; run record carries no memory trace
     monkeypatch.delenv("FUSION_MEMORY_BASE_URL", raising=False)
     monkeypatch.setenv("FUSION_MEMORY_API_KEY", "k1")
     handler, calls = _ok_transport_handler(MARKER)
     _patch_transport(monkeypatch, handler)
     registry, wf_def = _make_registry_and_def()
 
-    ret = registry.start(wf_def, workflow_id="wf1", workflow_name="财报任务", memory=False)
+    ret = registry.start(wf_def, workflow_id="wf1", workflow_name="财报任务", memory=False)  # i18n: user-facing
     record = await _wait_run(registry, ret["run_id"])
 
     assert record["status"] == "success"
@@ -108,14 +108,14 @@ async def test_run_memory_off_zero_trace(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_memory_unconfigured_key_silent_skip(monkeypatch):
-    # 未配 key: 桥整体关闭, 零 RPC, 行为与旧版一致
+    # no key configured: bridge entirely off, zero RPC, behavior matches the legacy version
     monkeypatch.delenv("FUSION_MEMORY_API_KEY", raising=False)
     monkeypatch.delenv("FUSION_MEMORY_BASE_URL", raising=False)
     handler, calls = _ok_transport_handler(MARKER)
     _patch_transport(monkeypatch, handler)
     registry, wf_def = _make_registry_and_def()
 
-    ret = registry.start(wf_def, workflow_id="wf1", workflow_name="财报任务", memory=True)
+    ret = registry.start(wf_def, workflow_id="wf1", workflow_name="财报任务", memory=True)  # i18n: user-facing
     record = await _wait_run(registry, ret["run_id"])
 
     assert record["status"] == "success"
@@ -125,7 +125,7 @@ async def test_run_memory_unconfigured_key_silent_skip(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_memory_bridge_down_run_survives(monkeypatch):
-    # fusion-memory 挂: retrieve/commit 全 500 → run 照常成功, 写回状态 fail-visible
+    # fusion-memory down: retrieve/commit all 500 -> run still succeeds, write-back status fail-visible
     monkeypatch.delenv("FUSION_MEMORY_BASE_URL", raising=False)
     monkeypatch.setenv("FUSION_MEMORY_API_KEY", "k1")
 
@@ -135,7 +135,7 @@ async def test_run_memory_bridge_down_run_survives(monkeypatch):
     _patch_transport(monkeypatch, handler)
     registry, wf_def = _make_registry_and_def()
 
-    ret = registry.start(wf_def, workflow_id="wf1", workflow_name="财报任务", memory=True)
+    ret = registry.start(wf_def, workflow_id="wf1", workflow_name="财报任务", memory=True)  # i18n: user-facing
     record = await _wait_run(registry, ret["run_id"])
 
     assert record["status"] == "success"
@@ -146,17 +146,17 @@ async def test_run_memory_bridge_down_run_survives(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_memory_failed_run_no_writeback(monkeypatch):
-    # 失败 run 不写回 (只沉淀有效产出), 但启动召回仍执行
+    # failed run is not written back (only valid output settles), but startup recall still runs
     from fusion_cowork.engine.node import BaseNode, NodeCategory, NodeResult, NodeStatus, register_node
 
     @register_node
     class MockBoomNode(BaseNode):
         name = "mock_boom_memory_test"
-        display_name = "Mock 爆炸"
+        display_name = "Mock 爆炸"  # i18n: user-facing
         category = NodeCategory.IO
-        description = "测试用：总是失败"
+        description = "测试用：总是失败"  # i18n: user-facing
         icon = "🧪"
-        default_label = "Mock 爆炸"
+        default_label = "Mock 爆炸"  # i18n: user-facing
 
         async def execute(self, inputs: dict) -> NodeResult:
             return NodeResult(status=NodeStatus.FAILED, error="boom", summary="boom")
@@ -167,10 +167,10 @@ async def test_run_memory_failed_run_no_writeback(monkeypatch):
     _patch_transport(monkeypatch, handler)
     engine = WorkflowEngine()
     registry = RunRegistry(engine)
-    wf = Workflow(name="会炸任务", description="")
+    wf = Workflow(name="会炸任务", description="")  # i18n: user-facing
     wf.add_node(MockBoomNode(node_id="n1"))
 
-    ret = registry.start(wf.to_dict(), workflow_id="wf2", workflow_name="会炸任务", memory=True)
+    ret = registry.start(wf.to_dict(), workflow_id="wf2", workflow_name="会炸任务", memory=True)  # i18n: user-facing
     record = await _wait_run(registry, ret["run_id"])
 
     assert record["status"] == "failed"

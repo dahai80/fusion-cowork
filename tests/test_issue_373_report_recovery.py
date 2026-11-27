@@ -1,9 +1,9 @@
-"""issue #373: env-mock 座位轮次耗尽但交付物已落盘 — report-only 续跑回收。
+"""issue #373: env-mock seat turns exhausted but deliverables already on disk — report-only resume recovery.
 
-- seat_max_turns 缺省 24 → 48 (live 证据 run_e5d4d34da020: 24/24 耗尽 report_len=0)
-- studio_run 终态 failed 且 last_error 含 "Max iterations" → 自动补一轮
-  report-only 续跑 (不重做工作, 只写最终报告), 成功则 SUCCESS + report_recovery
-- 非轮次耗尽失败 / recovery 关闭 / 续跑仍失败 → 原失败原样上抛
+- seat_max_turns default 24 → 48 (live evidence run_e5d4d34da020: 24/24 exhausted report_len=0)
+- studio_run terminal failed and last_error contains "Max iterations" → automatically add one
+  report-only resume round (no work redone, only the final report written); on success SUCCESS + report_recovery
+- Non-turn-exhaustion failure / recovery disabled / resume fails again → original failure re-raised as-is
 """
 
 import json
@@ -74,7 +74,7 @@ class TestReportRecovery:
         assert res.data["recovered_from"] == "r1"
         assert res.data["run_id"] == "r2"
         assert "report-only recovery run" in res.summary
-        # 两次提交 — 续跑 goal 为 report-only 指令, 且不带原 run 幂等键
+        # Two submissions — resume goal is the report-only directive, and the original run idempotency key is absent
         assert len(_POSTS) == 2
         assert "REPORT ONLY" in _POSTS[1]["goal"]
         assert "r1" in _POSTS[1]["goal"]

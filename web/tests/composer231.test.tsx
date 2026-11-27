@@ -9,7 +9,7 @@ import {
     insertRefToken,
 } from '../src/composer';
 
-// issue #231: cowork 接线契约 — FCS-1 五区 / 审批禁用变体 / ＠ 三类引用 / 固定发送标签
+// issue #231: cowork wiring contract — FCS-1 five zones / approval-disabled variant / three @ ref kinds / fixed send label
 
 const BASE = { value: 'hello', onChange: () => {}, onSubmit: () => {} };
 
@@ -30,16 +30,16 @@ describe('buildReferenceItems (@ palette)', () => {
         const tokens: string[] = [];
         const items = buildReferenceItems(sources, (t) => tokens.push(t));
         for (const item of items) item.onClick?.();
-        expect(tokens).toEqual(['@目录:Finance', '@任务:October reconciliation', '@产物:Q3 Report']);
+        expect(tokens).toEqual(['@目录:Finance', '@任务:October reconciliation', '@产物:Q3 Report']); // i18n: user-facing
     });
 });
 
 describe('insertRefToken', () => {
     it('adds a separating space and trailing space only when needed', () => {
-        expect(insertRefToken('', '@产物:A')).toBe('@产物:A ');
-        expect(insertRefToken('do it', '@产物:A')).toBe('do it @产物:A ');
-        expect(insertRefToken('do it ', '@产物:A')).toBe('do it @产物:A ');
-        expect(insertRefToken('line\n', '@产物:A')).toBe('line\n@产物:A ');
+        expect(insertRefToken('', '@产物:A')).toBe('@产物:A '); // i18n: user-facing
+        expect(insertRefToken('do it', '@产物:A')).toBe('do it @产物:A '); // i18n: user-facing
+        expect(insertRefToken('do it ', '@产物:A')).toBe('do it @产物:A '); // i18n: user-facing
+        expect(insertRefToken('line\n', '@产物:A')).toBe('line\n@产物:A '); // i18n: user-facing
     });
 });
 

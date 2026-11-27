@@ -1,8 +1,9 @@
-"""issue #460: 会话级检查点 — 步快照携带 session_id, resume 采纳原会话。
+"""issue #460: session-level checkpoints — step snapshots carry session_id, resume adopts the original session.
 
-agent 座位节点 (studio_run 等) 多轮对话历史存于 SessionStore; 步快照带
-session_id 后, resume 不新建会话而是续用原会话, 下游节点输入注入 _session_id。
-旧快照 (无 session_id) resume 行为不变。
+Agent seat nodes (studio_run etc.) keep multi-turn conversation history in the SessionStore; once
+step snapshots carry a session_id, resume reuses the original session instead of creating a new
+one, and downstream node inputs get _session_id injected.
+Old snapshots (without session_id) keep unchanged resume behavior.
 """
 
 from __future__ import annotations
@@ -71,7 +72,7 @@ class TestStepSessionField:
         assert exec_result.status.value == "success"
         sids = {s.session_id for s in exec_result.steps}
         assert len(sids) == 1 and all(sids), sids
-        # 会话 steps_snapshot 同步归因
+        # Session steps_snapshot attributes in sync
         sess = eng._session_store.get(next(iter(sids)))
         assert sess is not None
         assert all(st.get("session_id") == next(iter(sids)) for st in sess.steps_snapshot)
@@ -87,7 +88,7 @@ class TestResumeAdoption:
         db = str(tmp_path / "s.db")
         eng1 = WorkflowEngine(permission_manager=PermissionManager(), session_store=SessionStore(db))
         exec1 = await eng1.execute(_wf_two_nodes(), initial_input={"seed": "a"})
-        # 模拟 n2 处失败: 快照只含 n1
+        # Simulate a failure at n2: snapshot contains only n1
         snap = [
             {
                 "node_id": s.node_id,
@@ -100,14 +101,14 @@ class TestResumeAdoption:
             if s.node_id == "n1"
         ]
         old_sid = exec1.steps[0].session_id
-        # 新引擎 (模拟重启) + 同一 session 库
+        # New engine (simulated restart) + same session store
         eng2 = WorkflowEngine(permission_manager=PermissionManager(), session_store=SessionStore(db))
         exec2 = await eng2.execute(_wf_two_nodes(), initial_input={"seed": "a"}, resume_steps=snap)
         assert exec2.status.value == "success"
-        # 会话被采纳: 新执行步骤同一 session_id 且等于原会话
+        # Session adopted: new execution steps share one session_id equal to the original session
         sids = {s.session_id for s in exec2.steps}
         assert sids == {old_sid}, sids
-        # n2 (probe460) 输入收到 _session_id = 原会话 id
+        # n2 (probe460) input received _session_id = the original session id
         n2 = next(s for s in exec2.steps if s.node_id == "n2")
         assert n2.output_data.get("sid") == old_sid, n2.output_data
 
@@ -122,7 +123,7 @@ class TestResumeAdoption:
         eng2 = WorkflowEngine(permission_manager=PermissionManager(), session_store=SessionStore(db))
         exec2 = await eng2.execute(_wf_two_nodes(), initial_input={"seed": "b"}, resume_steps=snap)
         assert exec2.status.value == "success"
-        # 旧快照无 session_id → 新建会话, id 与原不同
+        # Old snapshot without session_id → a new session is created, id differs from the original
         new_sids = {s.session_id for s in exec2.steps}
         assert len(new_sids) == 1
         assert new_sids != {exec1.steps[0].session_id}

@@ -1,8 +1,9 @@
-"""issue #409: 管线节点加固 — studio_run 等待可配 + github_api 搜索 q 256 上限。
+"""issue #409: pipeline node hardening — configurable studio_run wait + github_api search q 256 limit.
 
-- studio_run timeout 缺省 900 → 1800 (并发 mlx 争抢下 900s 不够); 模板参数
-  studio_wait_timeout 装配进 n1/n3/n9
-- github_api issue_create 去重搜索 q > 256 会 422 — 长标题截断 (建 issue 用完整标题)
+- studio_run timeout default 900 -> 1800 (900s is not enough under concurrent mlx contention);
+  template param studio_wait_timeout wired into n1/n3/n9
+- github_api issue_create dedup search q > 256 returns 422 — long titles truncated
+  (issue creation uses the full title)
 """
 
 from __future__ import annotations
@@ -59,7 +60,7 @@ class TestSearchQCap:
         assert res.status.value == "success", res.error
         assert len(qs) == 1
         assert len(qs[0]) <= 256
-        # 建 issue 用完整标题 — 截断只作用于 best-effort 去重搜索
+        # Issue creation uses the full title — truncation only applies to the best-effort dedup search
         assert res.data["result"]["title"] == long_title
 
     async def test_short_title_q_untouched(self, monkeypatch):

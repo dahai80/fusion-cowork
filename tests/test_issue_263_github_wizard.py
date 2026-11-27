@@ -1,4 +1,4 @@
-"""issue #263: GitHub 仓库 onboarding 向导 — preview/apply/teardown 幂等 + REST 路由 (MockTransport 离线)。"""
+"""issue #263: GitHub repo onboarding wizard — preview/apply/teardown idempotency + REST routes (offline MockTransport)."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def _file(path: str, content: str) -> Dict[str, Any]:
 
 
 def make_wizard(state: Dict[str, Any]) -> GithubWizard:
-    """state: labels dict / files dict / protection bool / applied log — 全离线 MockTransport。"""
+    """state: labels dict / files dict / protection bool / applied log — fully offline MockTransport."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         m, path = request.method, request.url.path
@@ -122,7 +122,7 @@ class TestWizardService:
         assert n_first >= len(DEFAULT_LABELS) + len(ISSUE_FORMS) + 2
         assert (WIZARD_AUDIT_PATH) in state["files"]
         second = await w.apply(ORG, [REPO])
-        # 幂等 — 第二轮只剩审计清单 1 个文件写
+        # Idempotent — the second round has only 1 remaining file write, the audit checklist
         assert len(second[0]["applied"]) == 1
 
     @pytest.mark.asyncio

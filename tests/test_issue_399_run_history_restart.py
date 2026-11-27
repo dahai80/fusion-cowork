@@ -1,8 +1,8 @@
-"""issue #399: RunRegistry.list() 只读内存 — 重启后运行历史从 /api/runs 消失 (F3)。
+"""issue #399: RunRegistry.list() is memory-only — after a restart run history disappears from /api/runs (F3).
 
-- run_summaries schema v4: +space_id 列 (v3 库幂等迁移)
-- list() 兜底合并持久化终态摘要 (内存优先, 上限 100, space_id 过滤生效)
-- 形状对齐内存行 (review=None + summary_row 标记)
+- run_summaries schema v4: +space_id column (idempotent migration from v3 databases)
+- list() merges persisted terminal summaries as a fallback (memory first, cap 100, space_id filter effective)
+- Shape aligned with in-memory rows (review=None + summary_row marker)
 """
 
 import sqlite3
@@ -45,7 +45,7 @@ class TestSchemaV4:
         store.close()
 
     def test_v3_db_migrates_idempotent(self, tmp_path):
-        # 手造 v3 库 (run_summaries 无 space_id) → 打开即迁移, 数据保留
+        # Hand-build a v3 database (run_summaries without space_id) → migrating on open, data preserved
         p = tmp_path / "v3.db"
         conn = sqlite3.connect(str(p))
         conn.executescript(
@@ -89,7 +89,7 @@ class TestListFallback:
         store = RunStateStore(path)
         store.save_summary(_summary_record("run_hist1"))
         store.close()
-        # "重启": 全新 store + 空 registry, 只共享同一 db 文件
+        # "Restart": brand-new store + empty registry, sharing only the same db file
         registry = self._registry(RunStateStore(path))
         items = registry.list()
         assert [r["run_id"] for r in items] == ["run_hist1"]
@@ -191,8 +191,8 @@ class TestListFallback:
 
 class TestEndToEndWithApi:
     def test_runs_api_lists_history_after_restart(self, tmp_path, monkeypatch):
-        # 全链路: run 终态落摘要 → 新 create_web_app 同 store_root (模拟重启) →
-        # GET /api/runs 列表可见历史 run
+        # Full path: run terminal state persists a summary → fresh create_web_app with the same store_root (simulated restart) →
+        # GET /api/runs lists the historical run
         from fastapi.testclient import TestClient
 
         from fusion_cowork.server.web_api import create_web_app

@@ -1,4 +1,4 @@
-"""M4 里程碑测试 — DeskRPC事件/会话/权限 + Computer Use + 远程控制 + 结构化输出。"""
+"""M4 milestone tests — DeskRPC events/sessions/permissions + Computer Use + remote control + structured output."""
 
 import json
 import os
@@ -28,7 +28,7 @@ class _OkNode(BaseNode):
         return NodeResult(status=NodeStatus.SUCCESS, data={"content": "ok"})
 
 
-# ── DeskRPC 事件 ──
+# ── DeskRPC events ──
 
 
 class TestDeskRPCEvents:
@@ -67,7 +67,7 @@ class TestDeskRPCEvents:
         assert result["count"] == 1
 
 
-# ── DeskRPC 会话 ──
+# ── DeskRPC sessions ──
 
 
 class TestDeskRPCSession:
@@ -109,7 +109,7 @@ class TestDeskRPCSession:
         assert "error" in result
 
 
-# ── DeskRPC 权限 ──
+# ── DeskRPC permissions ──
 
 
 class TestDeskRPCPermission:
@@ -157,7 +157,7 @@ class TestDeskRPCPermission:
         assert "error" in result
 
 
-# ── DeskRPC 构造器 ──
+# ── DeskRPC constructor ──
 
 
 class TestDeskRPCConstructor:
@@ -182,15 +182,15 @@ class TestDeskRPCConstructor:
         assert len(rpc._handlers) >= 20
 
 
-# ── DeskRPC nodes 序列化 (issue #40) ──
+# ── DeskRPC nodes serialization (issue #40) ──
 
 
 class TestDeskRPCNodesSerialization:
-    """regression #40: desk.nodes.list / categories 曾返回 0 bytes (NodeCategory 不可序列化)。"""
+    """regression #40: desk.nodes.list / categories used to return 0 bytes (NodeCategory not serializable)."""
 
     @pytest.mark.asyncio
     async def test_nodes_list_json_serializable(self):
-        # 确保节点模块已注册
+        # Ensure node modules are registered
         import fusion_cowork.nodes.ai
         import fusion_cowork.nodes.io
         import fusion_cowork.nodes.logic
@@ -200,7 +200,7 @@ class TestDeskRPCNodesSerialization:
         rpc = DeskRPCServer()
         result = await rpc._handle_nodes_list({})
         assert result["count"] >= 1
-        # 关键: 整个 result 必须可 JSON 序列化 (否则 _write_response 抛异常 → 0 bytes)
+        # Key: the whole result must be JSON-serializable (otherwise _write_response raises -> 0 bytes)
         serialized = json.dumps(result, ensure_ascii=False)
         decoded = json.loads(serialized)
         assert decoded["count"] == result["count"]
@@ -230,7 +230,7 @@ class TestDeskRPCNodesSerialization:
         import fusion_cowork.nodes.io  # noqa: F401
 
         rpc = DeskRPCServer()
-        # 取一个已注册节点名
+        # Pick a registered node name
         name = next(iter(NodeRegistry._registry.keys()))
         result = await rpc._handle_nodes_info({"name": name})
         assert "error" not in result
@@ -246,13 +246,13 @@ class TestDeskRPCNodesSerialization:
             NodeRegistry._registry.clear()
             result = await rpc._handle_nodes_list({})
             assert result == {"nodes": [], "count": 0}
-            # 空结果也必须可序列化
+            # Empty results must also be serializable
             json.dumps(result)
         finally:
             NodeRegistry._registry.update(saved)
 
     async def test_write_response_serialization_failure_sends_error_frame(self):
-        """_write_response 遇不可序列化对象时应降级错误帧, 不静默断连。"""
+        """_write_response should degrade to an error frame on non-serializable objects, not silently disconnect."""
 
         rpc = DeskRPCServer()
 
@@ -270,7 +270,7 @@ class TestDeskRPCNodesSerialization:
                 return None
 
         writer = FakeWriter()
-        # 含 Enum 的 dict 不可 JSON 序列化
+        # A dict containing an Enum is not JSON-serializable
         bad = {"jsonrpc": "2.0", "id": 1, "result": {"cat": NodeStatus.SUCCESS}}
         await rpc._write_response(writer, bad)
         payload = b"".join(writer.chunks)
@@ -281,7 +281,7 @@ class TestDeskRPCNodesSerialization:
         assert frame["error"]["code"] == -32603
 
 
-# ── CLI 权限命令 ──
+# ── CLI permission commands ──
 
 
 class TestCLIPermission:
@@ -305,7 +305,7 @@ class TestCLIPermission:
         assert result.exit_code == 0
 
 
-# ── M4: Computer Use 输入节点 ──
+# ── M4: Computer Use input nodes ──
 
 from fusion_cowork.engine.schema import OutputSchema
 from fusion_cowork.nodes.macos.input_nodes import (
@@ -419,7 +419,7 @@ class TestKeyMap:
         assert _MOD_MAP["cmd"] == "command"
 
 
-# ── M4: 远程控制 ──
+# ── M4: remote control ──
 
 from fusion_cowork.server.remote import RemoteControlClient, RemoteControlServer
 
@@ -466,7 +466,7 @@ class TestRemoteControlClient:
             await client._request("status")
 
 
-# ── P2-10: TLS + 命名会话 attach ──
+# ── P2-10: TLS + named-session attach ──
 
 
 class TestRemoteControlTLS:
@@ -480,8 +480,8 @@ class TestRemoteControlTLS:
         cert.write_text("not a cert")
         key.write_text("not a key")
         server = RemoteControlServer(tls_cert=str(cert), tls_key=str(key))
-        # HI-3 fail-closed: 配了证书但加载失败 → raise, 不降级明文
-        with pytest.raises(RuntimeError, match="拒绝降级明文"):
+        # HI-3 fail-closed: cert configured but load fails -> raise, no plaintext fallback
+        with pytest.raises(RuntimeError, match="拒绝降级明文"):  # i18n: user-facing
             server._build_ssl_context()
 
     def test_build_ssl_context_valid_cert_returns_context(self, tmp_path):
@@ -489,7 +489,7 @@ class TestRemoteControlTLS:
 
         cert = tmp_path / "cert.pem"
         key = tmp_path / "key.pem"
-        # 生成自签名证书 (仅测试用)
+        # Generate a self-signed certificate (test-only)
         subprocess.run(
             [
                 "openssl",
@@ -555,7 +555,7 @@ class TestRemoteControlAttachSession:
         assert server._session_attachments[sess.id] == "c1"
 
 
-# ── M4: 结构化输出 ──
+# ── M4: structured output ──
 
 
 class TestOutputSchema:
@@ -605,7 +605,7 @@ class TestNodeResultValidate:
         assert NodeResult(status=NodeStatus.SUCCESS, data={"x": "bad"}, schema=schema).validate() is False
 
 
-# ── M4: CLI 命令 ──
+# ── M4: CLI commands ──
 
 
 class TestCLICommandsM4:
@@ -666,24 +666,25 @@ class TestLazyImportsM4:
     def test_node_name_aliases_m4(self):
         from fusion_cowork import NODE_NAME_ALIASES
 
-        assert NODE_NAME_ALIASES.get("鼠标移动") == "mouse_move"
+        assert NODE_NAME_ALIASES.get("鼠标移动") == "mouse_move"  # i18n: user-facing
         assert NODE_NAME_ALIASES.get("Computer Use") == "computer_use_loop"
 
 
 class TestComputerUseVisionP0:
-    # P0 回归: ComputerUseLoopNode 必须把截图以 image_url 多模态格式传给模型, 而非纯文本
+    # P0 regression: ComputerUseLoopNode must pass the screenshot to the model as
+    # image_url multimodal content, not plain text
 
     def test_build_vision_user_content_multimodal(self, tmp_path):
         from fusion_cowork.nodes.macos.input_nodes import _build_vision_user_content
 
         img = tmp_path / "shot.png"
         img.write_bytes(b"\x89PNG\r\n\x1a\nfake-png-bytes")
-        content = _build_vision_user_content("分析截图", str(img))
+        content = _build_vision_user_content("分析截图", str(img))  # i18n: user-facing
 
         assert isinstance(content, list)
         assert len(content) == 2
         assert content[0]["type"] == "text"
-        assert content[0]["text"] == "分析截图"
+        assert content[0]["text"] == "分析截图"  # i18n: user-facing
         assert content[1]["type"] == "image_url"
         url = content[1]["image_url"]["url"]
         assert url.startswith("data:image/png;base64,")
@@ -694,7 +695,7 @@ class TestComputerUseVisionP0:
         from fusion_cowork.engine.node import NodeConfig
         from fusion_cowork.nodes.macos.input_nodes import ComputerUseLoopNode
 
-        # 伪截图文件
+        # Fake screenshot file
         shot = tmp_path / "cap.png"
         shot.write_bytes(b"\x89PNG\r\n\x1a\nfake")
 
@@ -718,14 +719,15 @@ class TestComputerUseVisionP0:
         def fake_capture_factory(config=None):
             return FakeCapture()
 
-        # ComputerUseLoopNode 在 execute 内做局部 import: from ...ai import FusionMLXClient
-        # 和 from .system_nodes import ScreenCaptureNode, 故 patch 源模块
+        # ComputerUseLoopNode does local imports inside execute: from ...ai import FusionMLXClient
+        # and from .system_nodes import ScreenCaptureNode, so patch the source modules
         import fusion_cowork.ai as ai_mod
         import fusion_cowork.nodes.macos.system_nodes as sys_mod
 
         monkeypatch.setattr(ai_mod, "FusionMLXClient", FakeClient, raising=False)
         monkeypatch.setattr(sys_mod, "ScreenCaptureNode", fake_capture_factory, raising=False)
 
+        # i18n: user-facing
         node = ComputerUseLoopNode(config=NodeConfig(params={"task": "打开 Safari", "max_steps": 1, "step_delay": 0}))
         result = await node.execute({})
 
@@ -734,7 +736,7 @@ class TestComputerUseVisionP0:
         user_msg = captured_messages[0][0]
         assert user_msg["role"] == "user"
         content = user_msg["content"]
-        assert isinstance(content, list), "P0 回归: content 必须是多模态列表, 不能是纯文本"
+        assert isinstance(content, list), "P0 回归: content 必须是多模态列表, 不能是纯文本"  # i18n: user-facing
         types = [c["type"] for c in content]
-        assert "image_url" in types, "P0 回归: 截图必须以 image_url 传给模型"
+        assert "image_url" in types, "P0 回归: 截图必须以 image_url 传给模型"  # i18n: user-facing
         assert "text" in types

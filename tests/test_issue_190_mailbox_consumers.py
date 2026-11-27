@@ -1,11 +1,11 @@
-"""issue #190 回归测试 — durable 团队信箱 + daemon 常驻消费池。
+"""issue #190 regression tests — durable team mailbox + daemon resident consumer pool.
 
-覆盖验收点:
-1. 消息落 SQLite, 重启不丢 (新建实例读未 ack 消息);
-2. at-least-once: 派发成功才 ack, 派发失败不 ack 且下一 tick 重投;
-3. 常驻消费: 花名册 agent 自动消费, 无需外部 RPC 拉动; 本地发送推送唤醒;
-4. 指标: consumed / replies_sent / depth / oldest_unacked_age 可观测, 计数不重复累加;
-5. mailbox 表与 agent-studio durable_roster 同构 (跨仓互通协议)。
+Acceptance coverage:
+1. Messages persist to SQLite, survive restart (a new instance reads un-acked messages);
+2. at-least-once: ack only after dispatch succeeds; failed dispatch is not acked and is redelivered next tick;
+3. Resident consumption: roster agents consume automatically without an external RPC pull; local sends push a wakeup;
+4. Metrics: consumed / replies_sent / depth / oldest_unacked_age observable, counters not double-accumulated;
+5. mailbox table isomorphic to agent-studio durable_roster (cross-repo interop protocol).
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ class TestTeamMailbox:
         assert [m["body"] for m in mb.inbox("carol")] == ["for carol"]
 
     def test_restart_keeps_unacked_messages(self, tmp_path):
-        # 进程重启 = 新实例; 未 ack 消息仍在 (durable, 非内存队列)
+        # Process restart = new instance; un-acked messages persist (durable, not an in-memory queue)
         from fusion_cowork.orchestrator.team_mailbox import TeamMailbox
 
         path = str(tmp_path / "team.db")
@@ -105,7 +105,7 @@ class TestTeamMailbox:
         assert mb.oldest_unacked_age() == 0.0
 
     def test_cross_repo_schema_compat(self, tmp_path):
-        # agent-studio 侧用同构 SQL 写消息, cowork 侧可读可 ack
+        # agent-studio side writes messages with isomorphic SQL; cowork side can read and ack
         from fusion_cowork.orchestrator.team_mailbox import TeamMailbox
 
         path = str(tmp_path / "shared.db")
@@ -169,7 +169,7 @@ class TestCoworkRoster:
             roster.register("agent-a", "")
 
     def test_register_does_not_pollute_agent_studio_roster_table(self, tmp_path):
-        # 两个 daemon 共用一个库: cowork 只写 cowork_roster, 不抢 AS 的 roster 行
+        # Both daemons share one DB: cowork only writes cowork_roster, never touches AS roster rows
         from fusion_cowork.orchestrator.team_mailbox import CoworkRoster
 
         path = str(tmp_path / "shared.db")
@@ -254,7 +254,7 @@ class TestRunnerPool:
         pool = self._pool(tmp_path, dispatch, get_run=get_run)
         sent = pool.mailbox.send("alice", "agent-a", "x")
         await pool.tick()
-        # 对端已经把 ack 抹掉 (或消息重复可见) 也不重复派发
+        # Peer already wiped the ack (or message visibly duplicated) — still no duplicate dispatch
         with sqlite3.connect(pool.mailbox.path) as conn:
             conn.execute("UPDATE mailbox SET acked_at = 0 WHERE message_id = ?", (sent["message_id"],))
         await pool.tick()
@@ -326,8 +326,8 @@ class TestRunnerPool:
         await pool.start()
         try:
             pool.mailbox.send("alice", "agent-a", "pushed")
-            # 轮询 consumed 而非 calls: dispatch 返回后 ack/consumed 计数还在途,
-            # 提前 stop() 会在中途取消 _dispatch_one, 慢机上 consumed 恒 0 (CI flake)
+            # Poll consumed rather than calls: after dispatch returns, ack/consumed counters are still in flight;
+            # an early stop() cancels _dispatch_one mid-flight, so consumed stays 0 on slow machines (CI flake)
             for _ in range(100):
                 if pool.metrics["consumed"]:
                     break
@@ -338,7 +338,7 @@ class TestRunnerPool:
         assert pool.metrics["consumed"] == 1
 
     async def test_wake_during_tick_not_lost(self, tmp_path, monkeypatch):
-        # tick 期间到达的 send 不能被随后的 clear 吞掉 (macOS CI 慢机曾等满 poll_interval)
+        # A send arriving during a tick must not be swallowed by the subsequent clear (macOS CI slow machine once waited a full poll_interval)
         calls = []
         pushed = []
 
@@ -359,8 +359,8 @@ class TestRunnerPool:
         monkeypatch.setattr(pool, "_refresh_metrics", _refresh)
         await pool.start()
         try:
-            # 轮询 consumed (而非 calls): 在 ack/consumed 落定后才 stop,
-            # 否则慢机上 stop() 恰好取消 ack 途中的 _dispatch_one (CI flake)
+            # Poll consumed (not calls): only stop() after ack/consumed settle;
+            # otherwise on slow machines stop() cancels _dispatch_one mid-ack (CI flake)
             for _ in range(100):
                 if pool.metrics["consumed"]:
                     break
@@ -527,7 +527,7 @@ class TestTeamWebApi:
 
         def _record_start(
             workflow_def, workflow_id="", workflow_name="", memory=True, message_input=None, **kwargs
-        ):  # **kwargs: 兼容 runs_create 新增透传 (source/labels/space_id)
+        ):  # **kwargs: compat with new passthrough fields added to runs_create (source/labels/space_id)
             started.append(
                 {
                     "workflow_id": workflow_id,
@@ -571,7 +571,7 @@ class TestTeamWebApi:
                 deadline = time.time() + 10
                 while time.time() < deadline and not started:
                     time.sleep(0.05)
-                assert started, "消费池未派发消息"
+                assert started, "消费池未派发消息"  # i18n: user-facing
 
                 payload = started[0]["message_input"]
                 assert started[0]["workflow_id"] == "wf-1"
@@ -589,7 +589,7 @@ class TestTeamWebApi:
                     if replies:
                         break
                     time.sleep(0.05)
-                assert replies, "run 成功后应有回信"
+                assert replies, "run 成功后应有回信"  # i18n: user-facing
                 assert replies[0]["kind"] == "reply"
                 assert "done by agent" in replies[0]["body"]
 
@@ -632,7 +632,7 @@ class TestCliTeamGroup:
 
         sent = runner.invoke(cli, ["team", "send", "--from", "alice", "--to", "agent-a", "hello"])
         assert sent.exit_code == 0, sent.output
-        message_id = sent.output.split("已投递: ")[1].split(" ")[0]
+        message_id = sent.output.split("已投递: ")[1].split(" ")[0]  # i18n: user-facing
 
         inbox = runner.invoke(cli, ["team", "inbox", "agent-a"])
         assert message_id in inbox.output
@@ -640,4 +640,4 @@ class TestCliTeamGroup:
 
         removed = runner.invoke(cli, ["team", "remove", "agent-a"])
         assert removed.exit_code == 0
-        assert "已移除" in removed.output
+        assert "已移除" in removed.output  # i18n: user-facing

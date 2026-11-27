@@ -20,11 +20,13 @@ def skills_dir(tmp_path):
 def test_save_and_list_skill_pack(skills_dir):
     pack = SkillPack(
         name="/my-clean",
+        # i18n: user-facing
         description="自定义清理",
         category="custom",
         type="node",
         node="desktop_clean",
         params={"organize_by_type": True},
+        # i18n: user-facing
         aliases=["我的清理"],
     )
     pdir = save_skill_pack(pack, skills_dir)
@@ -33,6 +35,7 @@ def test_save_and_list_skill_pack(skills_dir):
     assert len(packs) == 1
     assert packs[0].name == "/my-clean"
     assert packs[0].node == "desktop_clean"
+    # i18n: user-facing
     assert "我的清理" in packs[0].aliases
 
 
@@ -57,6 +60,7 @@ def test_register_user_packs_and_execute(skills_dir):
         type="node",
         node="shell_exec",
         params={"command": "echo pack_ok"},
+        # i18n: user-facing
         aliases=["回显"],
     )
     save_skill_pack(pack, skills_dir)
@@ -66,6 +70,7 @@ def test_register_user_packs_and_execute(skills_dir):
     names = register_user_packs(registry, skills_dir)
     assert "/echo-skill" in names
     assert registry.get("/echo-skill") is not None
+    # i18n: user-facing
     assert registry.get("回显") is not None
     result = asyncio.run(registry.execute("/echo-skill"))
     assert isinstance(result, dict)

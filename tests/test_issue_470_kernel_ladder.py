@@ -40,6 +40,7 @@ class _EchoProbe(BaseNode):
     name = ECHO_470
     display_name = "Ladder Echo 470"
     category = NodeCategory.LOGIC
+    # i18n: user-facing
     description = "测试用: 回显 probe (#470)"
     icon = "🧪"
     default_label = "Echo470"
@@ -58,6 +59,7 @@ class _FailProbe(BaseNode):
     name = FAIL_470
     display_name = "Ladder Fail 470"
     category = NodeCategory.LOGIC
+    # i18n: user-facing
     description = "测试用: 失败 probe (#470)"
     icon = "🧪"
     default_label = "Fail470"
@@ -71,6 +73,7 @@ class _CountProbe(BaseNode):
     name = "ladder_count_470"
     display_name = "Ladder Count 470"
     category = NodeCategory.LOGIC
+    # i18n: user-facing
     description = "测试用: 执行计数 probe (#470)"
     icon = "🧪"
     default_label = "Count470"
@@ -87,6 +90,7 @@ class _SlowProbe(BaseNode):
     name = "ladder_slow_470"
     display_name = "Ladder Slow 470"
     category = NodeCategory.LOGIC
+    # i18n: user-facing
     description = "测试用: 慢 probe (#470 超时)"
     icon = "🧪"
     default_label = "Slow470"
@@ -138,11 +142,11 @@ class TestKernelCheckpointBinder:
             assert state.permission_mode == "workflow"
             assert json.loads(state.messages[0]["content"]) == {"data": 1}
             assert len(binder.list_checkpoints("run_ck_1")) == 1
-            # 第二个节点推进 — latest 跟随最新节点 (失败 run 定位点)
+            # Second node advances — latest follows the newest node (failure run localization)
             binder.save_node_checkpoint("run_ck_1", "n2", "python_repl", {}, {})
             assert binder.latest_checkpoint("run_ck_1").metadata["node_id"] == "n2"
             assert binder.latest_checkpoint("run_ck_1").metadata["node_name"] == "python_repl"
-            # 空 run 无检查点
+            # Empty run has no checkpoint
             assert binder.latest_checkpoint("run_ck_none") is None
         finally:
             binder.close()
@@ -158,11 +162,11 @@ class TestKernelCheckpointBinder:
             assert binder.has_receipt("run_rc_1", "n1") is True
             replay = binder.replay_receipt("run_rc_1", "n1")
             assert replay == {"out": 42}
-            # 重复记录同 key = 回放不覆盖 (first-wins 幂等)
+            # Recording the same key again = replay not overwritten (first-wins idempotency)
             result2, replayed2 = binder.record_receipt("run_rc_1", "n1", {"out": "changed"})
             assert replayed2 is True
             assert result2 == {"out": 42}
-            # 非 JSON 安全输出也落得进去 (default=str 兜底)
+            # Non-JSON-safe output is also persisted (default=str fallback)
             import datetime
 
             binder.record_receipt("run_rc_1", "n2", {"ts": datetime.datetime(2026, 11, 14)})
@@ -184,7 +188,7 @@ class TestEngineCheckpointSeam:
             ex1 = await eng.execute(wf, execution_id="run_470_replay")
             assert ex1.status.value == "success"
             assert _CountProbe.calls == 1
-            # 同 execution_id 重派发 — 回执命中, 节点不重执行, 输出重放
+            # Same execution_id re-dispatched — receipt hit, node not re-executed, output replayed
             ex2 = await eng.execute(wf, execution_id="run_470_replay")
             assert ex2.status.value == "success"
             assert _CountProbe.calls == 1
@@ -192,7 +196,7 @@ class TestEngineCheckpointSeam:
             assert replay_step.status.value == "skipped"
             assert "replayed from kernel checkpoint" in (replay_step.summary or "")
             assert replay_step.output_data == {"calls": 1}
-            # 检查点逐节点落盘 (pre-state)
+            # Checkpoints persisted per node (pre-state)
             cps = binder.list_checkpoints("run_470_replay")
             assert len(cps) == 1
         finally:
@@ -293,7 +297,7 @@ class TestWorkflowLadderNode:
         assert res.status.value == "failed"
         assert "s2" in res.error
         assert "bad" in res.error
-        # 失败阶段前的阶段结果保留在 data (部分可见)
+        # Stage results before the failed stage stay in data (partially visible)
         assert res.data["stages"][0]["name"] == "s1"
 
     async def test_allow_partial_continues(self):
@@ -310,7 +314,7 @@ class TestWorkflowLadderNode:
         res = await node.execute({})
         assert res.status.value == "success"
         assert res.data["failed"] == 1
-        assert res.error  # 失败计数诚实暴露
+        assert res.error  # failure count exposed honestly
 
     async def test_missing_stages_param(self):
         node = _make("workflow_ladder", {})
@@ -342,6 +346,7 @@ class TestWorkflowLadderNode:
         )
         res = await node.execute({})
         assert res.status.value == "failed"
+        # i18n: user-facing
         assert "超时" in res.error
 
     async def test_harness_missing_loud_error(self, monkeypatch):
@@ -368,5 +373,8 @@ class TestWorkflowLadderNode:
     def test_chinese_aliases(self):
         from fusion_cowork import NODE_NAME_ALIASES
 
+        # i18n: user-facing
+        # i18n: user-facing
         assert NODE_NAME_ALIASES.get("阶梯编排") == "workflow_ladder"
+        # i18n: user-facing
         assert NODE_NAME_ALIASES.get("工作流阶梯") == "workflow_ladder"

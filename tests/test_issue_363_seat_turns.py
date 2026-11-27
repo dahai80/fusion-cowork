@@ -1,8 +1,8 @@
-"""issue #363: studio_run 座位轮次预算 — 显式 spec.max_turns 传入 /v1/runs。
+"""issue #363: studio_run seat turn budget — explicit spec.max_turns passed to /v1/runs.
 
-studio 默认 8 轮会饿死多产物角色 (env-mock/architect, live run_ddeaa4d693e9
-"Max iterations exceeded" turns=8); product_lifecycle 模板暴露 seat_max_turns
-(缺省 24) 透传三个 studio_run 座位节点。
+studio's default 8 turns starves multi-artifact roles (env-mock/architect, live run_ddeaa4d693e9
+"Max iterations exceeded" turns=8); the product_lifecycle template exposes seat_max_turns
+(default 24) and forwards it to the three studio_run seat nodes.
 """
 
 import json

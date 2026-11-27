@@ -1,8 +1,8 @@
-"""StudioRunNode 单元测试 — fusion-agent-studio HTTP 节点 (issue #133)。
+"""StudioRunNode unit tests — fusion-agent-studio HTTP node (issue #133).
 
-测注册 / 别名 / 参数校验 / async 提交 / sync graph execute / sync run 轮询
-终态 / 超时不取消 (detach, #351) / 可选鉴权头 / env 覆盖 (httpx MockTransport 离线桩,
-不连真 agent-studio, 符合离线测试约束)。
+Covers registration / aliases / param validation / async submit / sync graph execute / sync run
+polling to terminal / timeout without cancel (detach, #351) / optional auth header / env overrides
+(httpx MockTransport offline stub; never connects to a real agent-studio, per the offline test constraint).
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import json
 import httpx
 import pytest
 
-import fusion_cowork.nodes.ecosystem  # noqa: F401  触发 @register_node
+import fusion_cowork.nodes.ecosystem  # noqa: F401  triggers @register_node
 from fusion_cowork import NODE_NAME_ALIASES
 from fusion_cowork.engine.node import NodeCategory, NodeConfig, NodeRegistry, NodeStatus
 from fusion_cowork.engine.permission_manager import HIGH_RISK_NODES
@@ -31,8 +31,8 @@ def test_studio_run_in_high_risk_nodes():
 
 
 def test_aliases_registered():
-    assert NODE_NAME_ALIASES.get("运行Studio") == "studio_run"
-    assert NODE_NAME_ALIASES.get("Studio运行") == "studio_run"
+    assert NODE_NAME_ALIASES.get("运行Studio") == "studio_run"  # i18n: user-facing
+    assert NODE_NAME_ALIASES.get("Studio运行") == "studio_run"  # i18n: user-facing
 
 
 def test_params_schema_required_fields():
@@ -87,7 +87,7 @@ async def test_both_targets_fails(monkeypatch):
     node = _make_node(graph_id="g1", agent_id="a1")
     result = await node.execute({})
     assert result.status == NodeStatus.FAILED
-    assert "二选一" in result.error
+    assert "二选一" in result.error  # i18n: user-facing
 
 
 @pytest.mark.asyncio
@@ -117,7 +117,7 @@ async def test_sync_graph_execute_collects_events(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/graphs/g1/execute"
         payload = json.loads(request.content)
-        # issue #135 F-1: 上游 GraphExecuteRequest 必填 body graph_id
+        # issue #135 F-1: upstream GraphExecuteRequest requires graph_id in the body
         assert payload["graph_id"] == "g1"
         assert payload["input_text"] == "summarize inbox"
         return httpx.Response(
@@ -217,7 +217,8 @@ async def test_sync_agent_failed_terminal_fails(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_sync_timeout_detaches_without_cancel(monkeypatch):
-    # issue #351: 超时不取消 — 取消会丢弃健康 run 已完成的产物; run 保留在上游, 凭 run_id 可回收
+    # issue #351: timeout does not cancel — cancelling would discard artifacts a healthy run already produced;
+    # the run stays upstream and remains recoverable by run_id
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1/runs":
             return httpx.Response(200, json={"run_id": "run-9", "status": "pending", "deduped": False})
@@ -231,15 +232,15 @@ async def test_sync_timeout_detaches_without_cancel(monkeypatch):
     node = _make_node(agent_id="a2", poll_interval=0.01, timeout=0.05)
     result = await node.execute({})
     assert result.status == NodeStatus.FAILED
-    assert "超时" in result.error
-    assert "未取消" in result.error
+    assert "超时" in result.error  # i18n: user-facing
+    assert "未取消" in result.error  # i18n: user-facing
     assert result.data["run_id"] == "run-9"
     assert result.data["detached"] is True
 
 
 @pytest.mark.asyncio
 async def test_default_timeout_env_override(monkeypatch):
-    # issue #351: 参数缺省时 FUSION_COWORK_STUDIO_RUN_TIMEOUT 生效 (此处借小值触发超时路径验证)
+    # issue #351: FUSION_COWORK_STUDIO_RUN_TIMEOUT applies when the param is absent (small value here triggers the timeout path)
     monkeypatch.setenv("FUSION_COWORK_STUDIO_RUN_TIMEOUT", "0.05")
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -253,7 +254,7 @@ async def test_default_timeout_env_override(monkeypatch):
     node = _make_node(agent_id="a3", poll_interval=0.01)
     result = await node.execute({})
     assert result.status == NodeStatus.FAILED
-    assert "超时" in result.error
+    assert "超时" in result.error  # i18n: user-facing
     assert result.data["detached"] is True
 
 
