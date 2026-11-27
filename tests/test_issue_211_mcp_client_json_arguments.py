@@ -89,7 +89,7 @@ class TestJsonStringArguments:
         node = _bind(_make_node({"url": "http://127.0.0.1:11483/mcp", "tool": "t2"}), handler)
         result = await node.execute({"arguments": "not json"})
         assert result.status.value == "failed"
-        assert "JSON 字符串解析失败" in result.error
+        assert "JSON string parse failed" in result.error
         assert calls == []
 
     async def test_json_string_non_object_rejected(self):
@@ -97,7 +97,7 @@ class TestJsonStringArguments:
         node = _bind(_make_node({"url": "http://127.0.0.1:11483/mcp", "tool": "t2"}), handler)
         result = await node.execute({"arguments": "[1, 2]"})
         assert result.status.value == "failed"
-        assert result.error == "arguments 须为 JSON 对象"
+        assert result.error == "arguments must be a JSON object"
         assert calls == []
 
     async def test_non_string_non_dict_rejected(self):
@@ -105,7 +105,7 @@ class TestJsonStringArguments:
         node = _bind(_make_node({"url": "http://127.0.0.1:11483/mcp", "tool": "t2"}), handler)
         result = await node.execute({"arguments": ["a"]})
         assert result.status.value == "failed"
-        assert result.error == "arguments 须为 JSON 对象"
+        assert result.error == "arguments must be a JSON object"
         assert calls == []
 
 

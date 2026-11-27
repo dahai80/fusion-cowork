@@ -129,7 +129,7 @@ async def test_missing_bin_fails_visibly():
     )
     result = await node.execute({})
     assert result.status == NodeStatus.FAILED
-    assert "fusion-trainer CLI 未找到" in result.error
+    assert "fusion-trainer CLI not found" in result.error
     assert _MISSING_BIN in result.error
 
 
@@ -141,7 +141,7 @@ async def test_grpo_missing_bin_fails_visibly():
     )
     result = await node.execute({})
     assert result.status == NodeStatus.FAILED
-    assert "fusion-trainer CLI 未找到" in result.error
+    assert "fusion-trainer CLI not found" in result.error
 
 
 def test_params_schema_required_fields():

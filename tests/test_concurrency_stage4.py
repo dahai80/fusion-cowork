@@ -250,10 +250,10 @@ class TestHI8CancelAndKill:
         ex = ShellExecutor()
         # 启动 sleep 30, timeout 0.3 — 超时应杀进程
         out = await ex({"command": "sleep 30", "timeout": 0.3})
-        assert "error" in out and "超时" in out["error"]
+        assert "error" in out and "timed out" in out["error"]
         # 确认无残留 sleep 进程 (best-effort: ps 不应含我们的 sleep 30)
         # 注: 仅验证返回结构, 进程清理由 proc.kill() 保证
-        assert out["error"] == "命令超时 (0.3s)"
+        assert out["error"] == "command timed out (0.3s)"
 
 
 # ── HI-9: WorkflowExecutor 注入父运行时 ──
@@ -337,7 +337,7 @@ class TestHI16CycleAndResumeValidation:
                 {"source_id": "n2", "target_id": "n1"},
             ],
         }
-        with pytest.raises(ValueError, match="含环"):
+        with pytest.raises(ValueError, match="contains a cycle"):
             Workflow.from_dict(d)
 
     async def test_resume_stale_node_id_logged_not_crash(self):
@@ -367,7 +367,7 @@ class TestHI19BudgetAbort:
         engine = WorkflowEngine(budget_tracker=tracker)
         result = await engine.execute(wf)
         assert result.status == WorkflowStatus.FAILED
-        assert "预算" in (result.error or "")
+        assert "budget exhausted" in (result.error or "")
 
     async def test_no_budget_tracker_runs_normally(self):
         wf = Workflow(name="nobudget")
@@ -387,7 +387,7 @@ class TestHI20DepthLimit:
         coord = CoordinatorExecutor(orchestrator=object())  # 任意绑定
         # depth=999 超 MAX_DEPTH(5)
         out = await coord({"prompt": "deep", "subtask_type": "node", "_depth": 999})
-        assert "超限" in out["error"]
+        assert "delegation depth exceeded" in out["error"]
 
     async def test_depth_zero_submits_with_incremented_child(self):
         from fusion_cowork.orchestrator import AgentOrchestrator

@@ -83,7 +83,7 @@ def test_load_warns_missing_executor_but_task_restored(tmp_path, caplog):
     with caplog.at_level(logging.WARNING):
         sched2.load_tasks()
     assert sched2.get_task(tid) is not None, "无 executor 也应恢复任务定义"
-    assert any("暂无 executor" in r.message for r in caplog.records), "应记 WARN 提示重注册"
+    assert any("has no executor yet" in r.message for r in caplog.records), "must log a WARN asking for re-registration"
 
 
 def test_register_executor_makes_task_runnable(tmp_path, caplog):
@@ -96,7 +96,7 @@ def test_register_executor_makes_task_runnable(tmp_path, caplog):
     sched2.load_tasks()
     with caplog.at_level(logging.INFO):
         sched2.register_executor(tid, lambda: None)
-    assert any("executor 已注册" in r.message for r in caplog.records)
+    assert any("executor registered" in r.message for r in caplog.records)
 
 
 def test_pause_resume_persists_status(tmp_path):
@@ -161,7 +161,7 @@ def test_load_corrupt_json_returns_zero(tmp_path, caplog):
     sched = _make_scheduler(store)
     with caplog.at_level(logging.WARNING):
         assert sched.load_tasks() == 0
-    assert any("加载调度任务失败" in r.message for r in caplog.records)
+    assert any("Failed to load scheduled tasks" in r.message for r in caplog.records)
 
 
 def test_default_store_path_when_empty():

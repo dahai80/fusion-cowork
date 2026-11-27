@@ -35,13 +35,13 @@ class TestCapabilityMatrix:
     def test_categories(self):
         m = CapabilityMatrix()
         cats = m.categories()
-        assert "桌面自动化" in cats
-        assert "AI 能力" in cats
-        assert "离线/隐私" in cats
+        assert "Desktop automation" in cats
+        assert "AI capabilities" in cats
+        assert "Offline/privacy" in cats
 
     def test_by_category(self):
         m = CapabilityMatrix()
-        ai = m.by_category("AI 能力")
+        ai = m.by_category("AI capabilities")
         assert len(ai) == 4
 
     def test_parity_score(self):
@@ -197,25 +197,25 @@ class TestReportRenderer:
         r = ReportRenderer(CapabilityMatrix())
         md = r.render_markdown()
         assert "Claude Cowork vs Fusion-Cowork" in md
-        assert "总览" in md
+        assert "Overview" in md
 
     def test_markdown_has_categories(self):
         r = ReportRenderer(CapabilityMatrix())
         md = r.render_markdown()
-        assert "桌面自动化" in md
-        assert "AI 能力" in md
+        assert "Desktop automation" in md
+        assert "AI capabilities" in md
 
     def test_markdown_has_desk_unique(self):
         r = ReportRenderer(CapabilityMatrix())
         md = r.render_markdown()
-        assert "Fusion-Cowork 独有优势" in md
+        assert "Fusion-Cowork Unique Strengths" in md
 
     def test_markdown_with_benchmark(self):
         runner = BenchmarkRunner(warmup=0, repeats=1)
         runner._results.append(BenchmarkResult(node_name="test", status="success", latency_ms=42.5))
         r = ReportRenderer(CapabilityMatrix(), runner=runner)
         md = r.render_markdown()
-        assert "性能基准" in md
+        assert "Performance Benchmarks" in md
         assert "42.5" in md
 
     def test_html_report(self):

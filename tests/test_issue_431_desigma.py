@@ -306,7 +306,7 @@ class TestDesignContextNode:
         allow_env.setattr(node, "_spawn", fake_spawn)
         result = asyncio.run(node.execute({}))
         assert result.status == NodeStatus.FAILED
-        assert "desigma-mcp 导出失败" in result.error
+        assert "desigma-mcp export failed" in result.error
 
 
 class TestTemplateWiring:

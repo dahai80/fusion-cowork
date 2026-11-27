@@ -693,7 +693,7 @@ class TestHI4RpcBridgeParamSchema:
         resp = await dispatch_rpc({"jsonrpc": "2.0", "id": 3, "method": "plugins/state.get", "params": "not-a-dict"})
         # params 非 dict → -32602
         assert resp["error"]["code"] == -32602
-        assert "非对象" in resp["error"]["message"] or "缺失" in resp["error"]["message"]
+        assert "missing or not an object" in resp["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_config_get_no_required_params_passes_schema(self):

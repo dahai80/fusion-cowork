@@ -78,13 +78,13 @@ class TestEngineWatchdogFloor:
         engine, wf = _engine_and_run("mock_slow_378", node_timeout_s=1.0)
         exec_res = await engine.execute(wf)
         assert exec_res.status == WorkflowStatus.FAILED
-        assert "超时" in (exec_res.steps[0].error or "")
+        assert "timed out" in (exec_res.steps[0].error or "")
 
     async def test_broken_floor_degrades_to_engine_default(self):
         engine, wf = _engine_and_run("mock_broken_floor_378", node_timeout_s=1.0)
         exec_res = await engine.execute(wf)
         assert exec_res.status == WorkflowStatus.FAILED
-        assert "超时" in (exec_res.steps[0].error or "")
+        assert "timed out" in (exec_res.steps[0].error or "")
 
 
 class TestDispatchWatchdogFloorResolution:
@@ -161,7 +161,7 @@ class TestDispatchTimeoutOutcome:
         assert res.data["outcome"] == "detached_session_still_running"
         assert res.data["detached"] is True
         assert res.data["pid"] == 4321
-        assert "超时" in res.error
+        assert "timed out" in res.error
         # 收尾: 结束后台 comm 任务 + watcher, 不留悬挂任务
         for t in asyncio.all_tasks():
             if t is not asyncio.current_task():
@@ -177,7 +177,7 @@ class TestDispatchTimeoutOutcome:
         task.cancel()
         with caplog.at_level(logging.WARNING), pytest.raises(asyncio.CancelledError):
             await task
-        assert "被看门狗取消" in caplog.text
+        assert "cancelled by watchdog" in caplog.text
         assert "node_deadline=3600s" in caplog.text
         assert "4321" in caplog.text
         for t in asyncio.all_tasks():

@@ -116,7 +116,7 @@ class TestRunsCreateEdgeShape:
             headers=_auth(),
         )
         assert r.status_code == 400
-        assert "环" in r.json()["detail"]["message"]
+        assert "cycle" in r.json()["detail"]["message"]
 
     def test_valid_workflow_still_202(self, client):
         r = client.post(

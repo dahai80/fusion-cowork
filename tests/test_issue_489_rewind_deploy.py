@@ -336,7 +336,7 @@ class TestDeployService:
         res = await node.execute({})
         assert res.status.value == "failed"
         assert res.data["stages"][0]["stage"] == "pull"
-        assert "plist 不存在" in res.data["stages"][0]["error"]
+        assert "plist not found" in res.data["stages"][0]["error"]
         assert ran == []  # 未执行任何命令
 
     async def test_script_target_healthcheck_fail(self, monkeypatch):

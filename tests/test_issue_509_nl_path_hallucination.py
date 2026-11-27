@@ -103,4 +103,4 @@ class TestGeneratorEndToEnd:
     def test_system_prompt_has_path_rule(self):
         from fusion_cowork.ai.nl_parser import SYSTEM_PROMPT
 
-        assert "严禁编造" in SYSTEM_PROMPT
+        assert "strictly forbidden" in SYSTEM_PROMPT

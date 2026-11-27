@@ -110,7 +110,7 @@ class TestCdpWaitForGate:
 
         c = CDPClient(host="127.0.0.1", port=9222)
         for expr in ["x}", "x;", "x`y", "eval(1)", "Function(1)", "new Function", "x=>{y"]:
-            with pytest.raises(ValueError, match="危险标记"):
+            with pytest.raises(ValueError, match="dangerous marker"):
                 await c.wait_for_function(expr, timeout=0.1)
 
     @pytest.mark.asyncio

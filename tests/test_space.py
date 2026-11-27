@@ -539,7 +539,7 @@ class TestSpaceMemberService:
         sp = await store.create_space(_make_space("me", "u1"))
         await store.add_member(_make_member(sp.id, "u1", SpaceRole.OWNER))
         code = await member_svc.invite(sp.id, "u1", role=SpaceRole.MEMBER.value, expires_hours=-1)
-        with pytest.raises(ValueError, match="过期"):
+        with pytest.raises(ValueError, match="invite code expired"):
             await member_svc.join(code, user_id="u2")
 
     @pytest.mark.asyncio
@@ -548,7 +548,7 @@ class TestSpaceMemberService:
         await store.add_member(_make_member(sp.id, "u1", SpaceRole.OWNER))
         code = await member_svc.invite(sp.id, "u1", role=SpaceRole.MEMBER.value, max_uses=1)
         await member_svc.join(code, user_id="u2")
-        with pytest.raises(ValueError, match="已用完"):
+        with pytest.raises(ValueError, match="invite code fully used"):
             await member_svc.join(code, user_id="u3")
 
     @pytest.mark.asyncio
@@ -790,7 +790,7 @@ class TestSpaceKBService:
     async def test_upload_no_kb_bound(self, kb_svc, store):
         sp = await store.create_space(_make_space("kbun", "u1"))
         await store.add_member(_make_member(sp.id, "u1", SpaceRole.MEMBER))
-        with pytest.raises(ValueError, match="尚未绑定知识库"):
+        with pytest.raises(ValueError, match="has no knowledge base bound yet"):
             await kb_svc.upload_document(sp.id, "u1", "/tmp/test.pdf")
 
     @pytest.mark.asyncio
@@ -1183,10 +1183,10 @@ class TestFusionMLXClientEnhancements:
             mock_resp = MagicMock()
             mock_resp.status_code = 200
             mock_resp.raise_for_status = MagicMock()
-            mock_resp.json.return_value = {"error": "no choices"}  # 无 choices 键
+            mock_resp.json.return_value = {"error": "no choices"}  # no choices key
             client._client = MagicMock()
             client._client.post = AsyncMock(return_value=mock_resp)
-            with pytest.raises(RuntimeError, match="无 choices"):
+            with pytest.raises(RuntimeError, match="no choices"):
                 await client.chat(model="test", messages=[{"role": "user", "content": "hi"}])
         finally:
             mc._HAS_FUSION_CORE = saved_flag

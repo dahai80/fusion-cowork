@@ -107,7 +107,7 @@ class TestNodeWatchdog:
         wf.add_node(SlowNode("n1"))
         execution = await eng.execute(wf)
         assert execution.status.value == "failed"
-        assert "超时" in (execution.error or "")
+        assert "timed out" in (execution.error or "")
         assert execution.steps[-1].status == NodeStatus.FAILED
 
     @pytest.mark.asyncio

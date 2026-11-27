@@ -152,7 +152,7 @@ class TestEngineLogs:
         eng = WorkflowEngine(permission_manager=_DenyAll())
         execution = await eng.execute(_wf("echo_120"), execution_id="run-120-deny")
         warns = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-        assert any("verdict=gated" in m and "权限拒绝" in m for m in warns)
+        assert any("verdict=gated" in m and "permission denied" in m for m in warns)
         assert execution.status.value == "failed"
 
 

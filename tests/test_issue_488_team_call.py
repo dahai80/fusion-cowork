@@ -239,7 +239,7 @@ class TestTeamCallGuards:
             {"team": "alpha", "member": "ba", "task_title": "t", "timeout": 0.15, "poll_interval": 0.05}
         ).execute({})
         assert res.status.value == "failed"
-        assert "超时" in res.error
+        assert "timed out" in res.error
         assert res.data["detached"] is True
         assert res.data["task_id"].startswith("task-")
 

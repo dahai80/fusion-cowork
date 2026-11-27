@@ -34,7 +34,7 @@ async def test_dispatch_rpc_rejects_non_plugins_method():
     assert resp["jsonrpc"] == "2.0"
     assert resp["id"] == 1
     assert resp["error"]["code"] == -32601
-    assert "/rpc 仅托管 plugins/*" in resp["error"]["message"]
+    assert "/rpc only hosts plugins/*" in resp["error"]["message"]
 
 
 @pytest.mark.asyncio

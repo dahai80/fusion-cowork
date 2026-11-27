@@ -168,7 +168,7 @@ class TestCodeExecutorConformance:
             executor.execute("import subprocess\nresult = 1", {})
 
     def test_bad_namespace_identifier_raises(self):
-        with pytest.raises(ValueError, match="非法"):
+        with pytest.raises(ValueError, match="Invalid variable name"):
             _repl_executor().execute("result = 1", {"__dunder__": 1})
 
     def test_non_json_namespace_raises(self):

@@ -145,7 +145,7 @@ def test_node_reports_clear_error_without_browser(monkeypatch):
     node = NodeRegistry.create("managed_browser", config=NodeConfig(params={"action": "launch"}))
     result = asyncio.run(node.execute({}))
     assert result.status == NodeStatus.FAILED
-    assert "不存在" in result.error
+    assert "non-existent" in result.error
     mb.reset_managed_browser()
 
 

@@ -141,7 +141,7 @@ class TestSubWorkflowNode:
             initial_input={},
         )
         assert exec_result.status.value == "failed"
-        assert "嵌套超限" in (exec_result.error or ""), exec_result.error
+        assert "nesting over limit" in (exec_result.error or ""), exec_result.error
 
     async def test_depth_cap_success_at_boundary(self):
         _setup()
@@ -170,7 +170,7 @@ class TestSubWorkflowNode:
         node.config.params = {"workflow": _child_def()}
         res = await node.execute({})
         assert res.status.value == "failed"
-        assert "引擎" in res.error
+        assert "inside an engine-executed node" in res.error
 
     async def test_invalid_def_fails(self):
         _setup()
@@ -187,4 +187,4 @@ class TestSubWorkflowNode:
             initial_input={},
         )
         assert exec_result.status.value == "failed"
-        assert "超时" in (exec_result.error or ""), exec_result.error
+        assert "timed out" in (exec_result.error or ""), exec_result.error

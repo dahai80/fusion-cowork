@@ -1350,7 +1350,7 @@ class TestCLICommandsM3:
         runner = CliRunner()
         result = runner.invoke(cli, ["plugin", "--help"])
         assert result.exit_code == 0
-        assert "插件管理" in result.output
+        assert "Plugin management" in result.output
 
     def test_skill_group_exists(self):
         from click.testing import CliRunner
@@ -1360,7 +1360,7 @@ class TestCLICommandsM3:
         runner = CliRunner()
         result = runner.invoke(cli, ["skill", "--help"])
         assert result.exit_code == 0
-        assert "技能管理" in result.output
+        assert "Skill management" in result.output
 
     def test_cdp_group_exists(self):
         from click.testing import CliRunner
@@ -1379,8 +1379,8 @@ class TestCLICommandsM3:
 
         runner = CliRunner()
         result = runner.invoke(cli, ["plugin", "list"])
-        # May show "没有发现插件" which is fine
-        assert result.exit_code == 0 or "插件" in result.output
+        # May show "No plugins found" which is fine
+        assert result.exit_code == 0 or "Plugin list" in result.output
 
     def test_skill_list_command(self):
         from click.testing import CliRunner

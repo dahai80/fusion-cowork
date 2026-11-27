@@ -61,7 +61,7 @@ class TestLinkedExistingPrDelivery:
         binp = _fake_claude(tmp_path, _result_json(out))
         res = await _node(tmp_path, binp).execute({})
         assert res.status.value == "failed"
-        assert "校验未通过" in res.error
+        assert "failed verification" in res.error
 
     async def test_closed_pr_fails(self, tmp_path, monkeypatch):
         _patch_api(monkeypatch, pr={"state": "closed", "number": 18, "body": "Closes #9"})
@@ -75,7 +75,7 @@ class TestLinkedExistingPrDelivery:
         binp = _fake_claude(tmp_path, _result_json("no pr this time"))
         res = await _node(tmp_path, binp).execute({})
         assert res.status.value == "failed"
-        assert "会话未产出 PR" in res.error
+        assert "Session produced no PR" in res.error
 
     async def test_new_pr_delivery_unchanged(self, tmp_path, monkeypatch):
         _patch_api(monkeypatch)

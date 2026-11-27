@@ -124,7 +124,7 @@ class TestRemoteTLSFailClosed:
         cert.write_text("not a cert")
         key.write_text("not a key")
         server = RemoteControlServer(tls_cert=str(cert), tls_key=str(key))
-        with pytest.raises(RuntimeError, match="拒绝降级明文"):
+        with pytest.raises(RuntimeError, match="refusing plaintext fallback"):
             server._build_ssl_context()
 
     def test_no_cert_returns_none(self):
@@ -145,7 +145,7 @@ class TestSyncTLSFailClosed:
         cert.write_text("not a cert")
         key.write_text("not a key")
         sync = CrossDeviceSync(ssl_cert=str(cert), ssl_key=str(key))
-        with pytest.raises(RuntimeError, match="拒绝降级明文"):
+        with pytest.raises(RuntimeError, match="refusing plaintext fallback"):
             sync._build_server_ssl_context()
 
     def test_no_cert_returns_none(self):

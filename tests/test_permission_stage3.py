@@ -211,7 +211,7 @@ class TestApplyEditScope:
         )
         result = await node.execute({})
         assert result.status == NodeStatus.FAILED
-        assert "越界" in result.error or "沙箱" in result.error
+        assert "out of bounds" in result.error or "Sandbox" in result.error
 
     @pytest.mark.asyncio
     async def test_apply_edit_in_scope_dry_run_works(self, tmp_path):

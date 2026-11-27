@@ -238,7 +238,7 @@ class TestTakeoverWs:
         with client.websocket_connect(f"/ws/takeover/run_missing?token={STATIC_KEY}") as ws:
             frame = ws.receive_json()
             assert frame["event"] == "error"
-            assert "不存在" in frame["message"]
+            assert "Run not found" in frame["message"]
 
 
 # ── 管理台 ─────────────────────────────────────────────────────────────────

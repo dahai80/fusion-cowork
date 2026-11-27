@@ -161,7 +161,7 @@ class TestRepoScaffold:
         node.config.params = {"slug": "demo", "base_dir": str(tmp_path)}
         res = await node.execute({})
         assert res.status.value == "failed"
-        assert "已存在" in res.error
+        assert "already exists" in res.error
         assert "overwrite=true" in res.error
 
     @pytest.mark.asyncio

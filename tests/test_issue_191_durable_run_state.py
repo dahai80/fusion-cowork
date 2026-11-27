@@ -139,7 +139,7 @@ class TestRunStateStore:
         with caplog.at_level("WARNING"):
             rows = store.load_active()
         assert [r["run_id"] for r in rows] == ["run_b"]
-        assert "终态残留行" in caplog.text
+        assert "leftover terminal rows" in caplog.text
         assert store.count() == 1
         store.close()
 
@@ -151,7 +151,7 @@ class TestRunStateStore:
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
         conn.commit()
         conn.close()
-        with pytest.raises(RuntimeError, match="拒绝静默降级读取"):
+        with pytest.raises(RuntimeError, match="refusing to silently degrade reads"):
             RunStateStore(path)
 
 
@@ -220,7 +220,7 @@ class TestCrashRecovery:
         engine2, reg2 = _stack(RunStateStore(db), pm_no_guard)
         with caplog.at_level(logging.INFO, logger="fusion_cowork.server.web_api"):
             assert await reg2.recover_persisted() == 1
-        assert "恢复期间重放改向指令 1 条" in caplog.text
+        assert "replayed 1 redirection directives during recovery" in caplog.text
         queued = engine2._directives.get(run_id, [])
         assert len(queued) == 1
         assert queued[0].get("params") == {"foo": "bar"}

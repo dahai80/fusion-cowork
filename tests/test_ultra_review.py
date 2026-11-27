@@ -109,14 +109,14 @@ def test_run_ultra_review_llm_fail_degrades(tmp_path):
 def test_run_ultra_review_no_paths():
     report = asyncio.run(run_ultra_review([]))
     assert report.error != ""
-    assert "未指定" in report.error
+    assert "No review target specified" in report.error
 
 
 def test_run_ultra_review_invalid_lens(tmp_path):
     report = asyncio.run(run_ultra_review([str(tmp_path)], lenses=["nonexistent"]))
-    assert "未知审查视角" in report.error
+    assert "Unknown review lens" in report.error
 
 
 def test_run_ultra_review_nonexistent_file(tmp_path):
     report = asyncio.run(run_ultra_review([str(tmp_path / "nope.py")], mlx_client=MagicMock()))
-    assert "无可审查文件" in report.error
+    assert "No reviewable files" in report.error

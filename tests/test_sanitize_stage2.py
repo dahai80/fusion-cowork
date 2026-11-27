@@ -145,15 +145,15 @@ class TestReplVarValidation:
 
     def test_rejects_non_identifier(self):
         err = _validate_repl_variables({"bad name": 1})
-        assert err is not None and "标识符" in err
+        assert err is not None and "not a legal identifier" in err
 
     def test_rejects_digit_start(self):
         err = _validate_repl_variables({"1var": 1})
-        assert err is not None and "标识符" in err
+        assert err is not None and "not a legal identifier" in err
 
     def test_rejects_injection_chars(self):
         err = _validate_repl_variables({"x; rm -rf /": 1})
-        assert err is not None and "标识符" in err
+        assert err is not None and "not a legal identifier" in err
 
     @pytest.mark.asyncio
     async def test_repl_node_rejects_bad_var_name(self):
@@ -267,7 +267,7 @@ class TestCDPSecurity:
     def test_host_rejected_non_localhost(self):
         from fusion_cowork.nodes.browser.cdp_client import CDPClient
 
-        with pytest.raises(ValueError, match="非本机"):
+        with pytest.raises(ValueError, match="is not local"):
             CDPClient(host="192.168.1.1", port=9222)
 
     def test_localhost_hosts_allowed(self):
@@ -312,7 +312,7 @@ class TestCDPSecurity:
         from fusion_cowork.nodes.browser.cdp_client import CDPClient
 
         c = CDPClient(host="127.0.0.1", port=9222)
-        with pytest.raises(PermissionError, match="确认"):
+        with pytest.raises(PermissionError, match="requires permission confirmation"):
             await c.evaluate_js("1+1")
 
     def test_confirm_js_eval_sets_flag(self):
@@ -332,7 +332,7 @@ class TestCDPSecurity:
         # 不连真 CDP, allow_js 缺省 False → 在连接前即被拒
         result = await node.execute({})
         assert result.status == NodeStatus.FAILED
-        assert "授权" in result.error or "确认" in result.error
+        assert "explicit confirmation" in result.error
 
     @pytest.mark.asyncio
     async def test_get_ws_url_sends_token_header(self, tmp_path, monkeypatch):

@@ -437,7 +437,7 @@ class TestSharePersistence:
     @pytest.mark.asyncio
     async def test_invalid_code_rejected(self, artifact_setup):
         svc, _ = artifact_setup
-        with pytest.raises(ValueError, match="无效"):
+        with pytest.raises(ValueError, match="invalid share code"):
             await svc.resolve_share("share_sp", "share_nope")
 
     @pytest.mark.asyncio
@@ -687,7 +687,7 @@ class TestAtomicMemberCapacity:
             joined_at="2026-01-01T00:00:00",
             last_active="2026-01-01T00:00:00",
         )
-        with pytest.raises(ValueError, match="已满"):
+        with pytest.raises(ValueError, match="is full"):
             await member_store.add_member_checked(m3, max_members=2)
 
 
@@ -1100,7 +1100,7 @@ class TestSchemeFiveRoles:
         assert "shell_operator" in reg.role_ids()
         assert reg.executor_for("shell_operator") == "executor_shell"
         catalog = reg.prompt_catalog()
-        assert "默认验收人" in catalog and "交付物" in catalog
+        assert "default acceptor" in catalog and "deliverables" in catalog
 
     def test_registry_rejects_unknown_executor(self):
         from fusion_cowork.orchestrator.role_registry import BusinessRole, RoleRegistry
@@ -1322,7 +1322,7 @@ class TestPlannerRetryHardening:
         orch.register_executor("planner", AlwaysBad())
         result = await orch.run_standard_pipeline({"prompt": "always-bad drill", "description": "always-bad"})
         # no fake success: loud failure with the accumulated schema problems
-        assert "Planner 未产出可解析的任务拆解" in str(result.get("error", ""))
+        assert "Planner produced no parseable task decomposition" in str(result.get("error", ""))
         assert "schema" in str(result.get("error", ""))
         # all three attempts ran; v4 方案③ drops superseded plans from
         # _plans, so verify via the final plan's transferred history

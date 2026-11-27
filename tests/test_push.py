@@ -32,7 +32,7 @@ def test_resolved_provider_auto():
 def test_push_empty_message():
     result = asyncio.run(push("t", ""))
     assert result.success is False
-    assert "不能为空" in result.error
+    assert "push message must not be empty" in result.error
 
 
 def test_push_bark_success():
@@ -94,4 +94,4 @@ def test_push_node_empty_message():
     node = NodeRegistry.create("push", config=NodeConfig(params={"provider": "local"}))
     r = asyncio.run(node.execute({"title": "t", "message": ""}))
     assert r.status.value == "failed"
-    assert "不能为空" in r.error
+    assert "Push message must not be empty" in r.error

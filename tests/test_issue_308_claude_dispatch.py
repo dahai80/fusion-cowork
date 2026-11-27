@@ -126,7 +126,7 @@ class TestClaudeDispatch:
         binp = _fake_claude(tmp_path, ["echo 'no pr here'"], sleep=0.6)
         res = await _node(tmp_path, binp, timeout=0.3).execute({})
         assert res.status.value == "failed"
-        assert "超时" in res.error
+        assert "timed out" in res.error
         assert res.data["detached"] is True
         assert res.data["pid"] > 0
         assert requests == []  # 标签不立即回退 — 会话仍在跑, 防重复派发
@@ -165,7 +165,7 @@ class TestClaudeDispatch:
         node.config.params["repo"] = "org/other"
         res = await node.execute({})
         assert res.status.value == "failed"
-        assert "白名单" in res.error
+        assert "not in allowed_repos allowlist" in res.error
 
     def test_high_risk_registration(self):
         assert "claude_dispatch" in HIGH_RISK_NODES

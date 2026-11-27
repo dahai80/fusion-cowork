@@ -108,7 +108,7 @@ class TestUntrustedGate:
         assert mgr.is_untrusted("wt-s") == "https://github.com/evil/fork.git"
         result = asyncio.run(mgr.exec_in("wt-s", "echo pwn", timeout=10))
         assert "error" in result
-        assert "不可信" in result["error"]
+        assert "untrusted" in result["error"]
         assert "pwn" not in result.get("stdout", "")
         mgr.remove("wt-s", force=True)
 
@@ -170,7 +170,7 @@ class TestUntrustedGate:
         )
         r = asyncio.run(node.execute({}))
         assert r.status.value == "failed"
-        assert "不可信" in r.error
+        assert "untrusted" in r.error
         mgr.remove("wt-s", force=True)
 
 
@@ -219,7 +219,7 @@ class TestMergeBack:
         (git_repo / "dirty.txt").write_text("uncommitted\n", encoding="utf-8")
         result = mgr.merge_back("wt-s")
         assert "error" in result
-        assert "未提交" in result["error"]
+        assert "uncommitted changes" in result["error"]
         mgr.remove("wt-s", force=True)
 
     def test_merge_back_unowned_refused(self, git_repo):
@@ -230,7 +230,7 @@ class TestMergeBack:
         (Path(wt.path) / MARKER_FILE).unlink()
         result = mgr.merge_back("wt-s")
         assert "error" in result
-        assert "所有权" in result["error"]
+        assert "proof of ownership missing" in result["error"]
         (Path(wt.path) / MARKER_FILE).write_text(
             json.dumps({"name": "wt-s", "branch": wt.branch, "repo_root": str(git_repo)}), encoding="utf-8"
         )

@@ -342,7 +342,7 @@ class TestWorkflowLadderNode:
         )
         res = await node.execute({})
         assert res.status.value == "failed"
-        assert "超时" in res.error
+        assert "timed out" in res.error
 
     async def test_harness_missing_loud_error(self, monkeypatch):
         import builtins

@@ -122,7 +122,7 @@ class TestWaitForEventNode:
     async def test_timeout_structured_failure(self):
         res = await self._node(event="ghost", timeout=0.05).execute({})
         assert res.status.value == "failed"
-        assert "超时" in res.error and "ghost" in res.error
+        assert "timed out" in res.error and "ghost" in res.error
 
     async def test_missing_event_param(self):
         res = await self._node().execute({})

@@ -127,4 +127,4 @@ def test_run_deep_research_llm_fail_degrades():
 def test_run_deep_research_empty_question():
     report = asyncio.run(run_deep_research(""))
     assert report.error != ""
-    assert "不能为空" in report.error
+    assert "must not be empty" in report.error

@@ -54,7 +54,7 @@ class TestTemplateResolution:
         with caplog.at_level(logging.WARNING, logger="fusion_cowork.nodes.tools.http_request_node"):
             out = resolve_template("Bearer ${missing.token}", {"a": 1})
         assert out == "Bearer ${missing.token}"
-        assert any("模板变量未命中" in r.message for r in caplog.records)
+        assert any("template variable miss" in r.message for r in caplog.records)
 
     def test_lookup_scalar_dict_list(self):
         assert _lookup("a", {"a": 1}, "${a}") == "1"
@@ -138,17 +138,17 @@ class TestHttpRequestExecution:
         node = _make_node({})
         r1 = await node.execute({})
         assert r1.status.value == "failed"
-        assert "缺少 url" in r1.error
+        assert "Missing url param" in r1.error
         node2 = _make_node({"url": "file:///etc/passwd"})
         r2 = await node2.execute({})
         assert r2.status.value == "failed"
-        assert "非法 URL" in r2.error
+        assert "Invalid URL" in r2.error
 
     async def test_unsupported_method(self):
         node = _make_node({"url": "http://127.0.0.1:11480/api", "method": "TRACE"})
         result = await node.execute({})
         assert result.status.value == "failed"
-        assert "不支持的 HTTP 方法" in result.error
+        assert "Unsupported HTTP method" in result.error
 
     async def test_timeout_failure(self):
         def handler(request: httpx.Request) -> httpx.Response:
@@ -158,7 +158,7 @@ class TestHttpRequestExecution:
         _bind(node, handler)
         result = await node.execute({})
         assert result.status.value == "failed"
-        assert "超时" in result.error
+        assert "timed out" in result.error
 
     async def test_connection_failure(self):
         def handler(request: httpx.Request) -> httpx.Response:
@@ -168,7 +168,7 @@ class TestHttpRequestExecution:
         _bind(node, handler)
         result = await node.execute({})
         assert result.status.value == "failed"
-        assert "连接失败" in result.error
+        assert "connection failed" in result.error
 
     async def test_inputs_url_overrides_params(self):
         seen = {}

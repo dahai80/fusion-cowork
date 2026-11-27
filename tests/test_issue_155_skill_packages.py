@@ -83,7 +83,7 @@ def test_unknown_package_run():
 
     reset_package_registry()
     result = asyncio.run(get_package_registry().run("/nope", {}))
-    assert "未知 skill 包" in result["error"]
+    assert "Unknown skill package" in result["error"]
 
 
 class _FakeLLM:

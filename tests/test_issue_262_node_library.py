@@ -50,7 +50,7 @@ class TestAgentExec:
             "agent_exec", {"command": [sys.executable, "-c", "import time; time.sleep(5)"], "timeout": 0.3}
         )
         assert res.status == NodeStatus.FAILED
-        assert "超时" in res.error
+        assert "timed out" in res.error
 
     @pytest.mark.asyncio
     async def test_bad_command_shape(self):
@@ -61,7 +61,7 @@ class TestAgentExec:
     async def test_missing_cwd(self):
         res = await _run_node("agent_exec", {"command": [sys.executable, "-c", "pass"], "cwd": "/no/such/dir-262"})
         assert res.status == NodeStatus.FAILED
-        assert "不存在" in res.error
+        assert "does not exist" in res.error
 
 
 class FakeGHClient:
@@ -103,7 +103,7 @@ class TestGitHubApi:
             "github_api", {"op": "issue_create", "repo": "evil/x", "allowed_repos": ["org/ok"], "title": "t"}
         )
         assert res.status == NodeStatus.FAILED
-        assert "白名单" in res.error
+        assert "not in allowed_repos allowlist" in res.error
 
     @pytest.mark.asyncio
     async def test_token_missing(self, monkeypatch):
@@ -173,7 +173,7 @@ class TestCommandEvidence:
             {"command": [str(fake), "-s", "http://x"], "allowlist": ["python *"], "evidence_dir": str(tmp_path / "ev")},
         )
         assert res.status == NodeStatus.FAILED
-        assert "白名单" in res.error
+        assert "not in allowlist" in res.error
 
     @pytest.mark.asyncio
     async def test_allowlist_match_archives_scrubbed(self, tmp_path):
@@ -192,7 +192,7 @@ class TestCommandEvidence:
             {"command": [sys.executable, "-c", "pass"], "allowlist": ["git *"], "evidence_dir": str(tmp_path)},
         )
         assert res.status == NodeStatus.FAILED
-        assert "白名单" in res.error
+        assert "not in allowlist" in res.error
 
     @pytest.mark.asyncio
     async def test_empty_allowlist_refused(self, tmp_path):
@@ -315,7 +315,7 @@ class TestHttpWebhook:
             "http_webhook", {"url": "https://x.example/hook", "headers": {"Authorization": "${T262_MISSING}"}}
         )
         assert res.status == NodeStatus.FAILED
-        assert "环境变量" in res.error
+        assert "Environment variable" in res.error
 
 
 class TestApprovalGate:

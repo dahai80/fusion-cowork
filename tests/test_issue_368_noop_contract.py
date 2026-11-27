@@ -190,7 +190,7 @@ class TestLinkedPrClosedNoop:
         _patch_gh_client(monkeypatch, handler)
         res = await _api_node("linked_pr", issue_number=5, require=True).execute({})
         assert res.status.value == "failed"
-        assert "先提 PR" in res.error
+        assert "Open a PR before acceptance" in res.error
 
     async def test_state_fetch_failure_still_blocks(self, monkeypatch):
         def handler(request: httpx.Request) -> httpx.Response:

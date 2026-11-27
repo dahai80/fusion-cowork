@@ -93,7 +93,7 @@ class TestLinkedPrOp:
             {"op": "linked_pr", "repo": "org/x", "issue_number": 5, "require": True}, {"timeline": TIMELINE_NO_PR}
         )
         assert res.status.value == "failed"
-        assert "先提 PR 再进验收" in res.error
+        assert "Open a PR before acceptance" in res.error
         assert res.data["found"] is False
 
     def test_require_true_passes_with_pr(self):

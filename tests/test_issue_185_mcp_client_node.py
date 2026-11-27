@@ -128,7 +128,7 @@ class TestMcpClientNode:
         node._client = lambda timeout: httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=timeout)
         result = await node.execute(inputs)
         assert result.status.value == "failed"
-        assert "MCP 连接失败" in result.error
+        assert "MCP connection failed" in result.error
 
     async def test_missing_params_fail_fast(self):
         node, inputs = _make_node({"tool": "task_list"})
@@ -137,7 +137,7 @@ class TestMcpClientNode:
         node2, _ = _make_node({"url": "ftp://x/mcp", "tool": "t"})
         result2 = await node2.execute({})
         assert result2.status.value == "failed"
-        assert "非法 URL" in result2.error
+        assert "invalid URL" in result2.error
 
     async def test_extra_headers_forwarded(self):
         seen = {}

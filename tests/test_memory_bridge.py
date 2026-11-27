@@ -116,8 +116,8 @@ def test_build_interaction_caps_and_defaults():
     )
     assert len(ix["turns"][0]["tool_calls"]) == 64
     assert all(len(tc["result_summary"]) <= 4000 for tc in ix["turns"][0]["tool_calls"])
-    # 空 summary/结果 → "(无输出)"
-    assert ix["turns"][0]["assistant_message"] == "(无输出)"
+    # 空 summary/结果 → "(no output)"
+    assert ix["turns"][0]["assistant_message"] == "(no output)"
     # 空 workflow_id 回落 execution_id... 此处都空 → node_id 空串不崩
     assert "node_id" in ix["metadata"]
 

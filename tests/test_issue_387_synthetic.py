@@ -53,7 +53,7 @@ class TestGitHubDryRun:
         node.config.params["allowed_repos"] = ["o/other"]
         res = await node.execute({})
         assert res.status.value == "failed"
-        assert "白名单" in res.error
+        assert "not in allowed_repos allowlist" in res.error
 
     async def test_dry_run_false_keeps_token_gate(self, monkeypatch):
         # 缺省 (false) 行为不变: 无 token 仍失败
@@ -96,7 +96,7 @@ class TestDispatchDryRun:
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         res = await self._node(cwd="/nonexistent-dir-387", dry_run=True).execute({})
         assert res.status.value == "failed"
-        assert "工作目录不存在" in res.error
+        assert "Working directory does not exist" in res.error
 
     async def test_whitelist_still_enforced(self, monkeypatch, tmp_path):
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
@@ -104,7 +104,7 @@ class TestDispatchDryRun:
         node.config.params["allowed_repos"] = ["o/other"]
         res = await node.execute({})
         assert res.status.value == "failed"
-        assert "白名单" in res.error
+        assert "not in allowed_repos allowlist" in res.error
 
 
 def _studio_node(**extra):

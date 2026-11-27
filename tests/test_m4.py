@@ -481,7 +481,7 @@ class TestRemoteControlTLS:
         key.write_text("not a key")
         server = RemoteControlServer(tls_cert=str(cert), tls_key=str(key))
         # HI-3 fail-closed: 配了证书但加载失败 → raise, 不降级明文
-        with pytest.raises(RuntimeError, match="拒绝降级明文"):
+        with pytest.raises(RuntimeError, match="refusing plaintext fallback"):
             server._build_ssl_context()
 
     def test_build_ssl_context_valid_cert_returns_context(self, tmp_path):

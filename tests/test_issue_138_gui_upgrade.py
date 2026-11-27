@@ -205,6 +205,6 @@ class TestSpaceInstructions:
         svc._store = client.app.state.space_store
         text = asyncio.run(svc._space_instructions(sid))
         assert "用中文" in text
-        assert text.startswith("[空间指令]")
+        assert text.startswith("[Space instructions]")
         empty = asyncio.run(svc._space_instructions("sp_missing"))
         assert empty == ""

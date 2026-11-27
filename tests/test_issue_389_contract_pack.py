@@ -87,7 +87,7 @@ class TestParamContract:
             },
         }
         errors = validate_template_placeholders(tpl)
-        assert any("缺少字段路径" in e for e in errors)
+        assert any("missing a field path" in e for e in errors)
 
 
 class TestOutputContract:

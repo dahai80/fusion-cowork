@@ -156,7 +156,7 @@ class TestEngineDirectives:
 
         assert execution.status.value == "success"
         assert [s.status.value for s in execution.steps] == ["success", "skipped"]
-        assert execution.steps[1].summary == "运行改向: 跳过剩余节点"
+        assert execution.steps[1].summary == "run redirect: skipping remaining nodes"
 
     def test_invalid_directive_rejected(self):
         from fusion_cowork.engine.workflow import WorkflowEngine

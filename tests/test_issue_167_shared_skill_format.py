@@ -122,19 +122,19 @@ class TestSchemaParamsCoerceAndRun:
             "/contract-review",
             {"contract_path": "~/c.md", "max_issues": "5", "deep": "yes", "tags": "a, b", "strictness": "high"},
         )
-        assert "error" not in result or result.get("error") != "参数校验失败"
+        assert "error" not in result or result.get("error") != "Parameter validation failed"
 
     async def test_missing_required_param_rejected(self):
         registry = SkillPackageRegistry()
         registry.register(parse_markdown(SHARED_PACK))
         result = await registry.run("/contract-review", {})
-        assert result.get("error") == "参数校验失败"
+        assert result.get("error") == "Parameter validation failed"
 
     async def test_enum_out_of_range_rejected(self):
         registry = SkillPackageRegistry()
         registry.register(parse_markdown(SHARED_PACK))
         result = await registry.run("/contract-review", {"contract_path": "c.md", "strictness": "banana"})
-        assert result.get("error") == "参数校验失败"
+        assert result.get("error") == "Parameter validation failed"
 
 
 class TestBuiltinContractReviewSharedFormat:

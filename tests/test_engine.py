@@ -301,7 +301,7 @@ class TestWorkflow:
         wf = Workflow()
         errors = wf.validate()
         assert len(errors) > 0
-        assert any("没有节点" in e for e in errors)
+        assert any("workflow has no nodes" in e for e in errors)
 
     def test_validate_isolated_nodes(self):
         wf = Workflow()
@@ -440,7 +440,7 @@ class TestWorkflowEngine:
         # n1 跳过, 状态 SKIPPED
         assert execution.steps[0].node_id == "n1"
         assert execution.steps[0].status == NodeStatus.SKIPPED
-        assert execution.steps[0].summary == "恢复自快照, 跳过重跑"
+        assert execution.steps[0].summary == "restored from snapshot, rerun skipped"
         # n2 实际执行, 收到 n1 的缓存输出作为输入
         assert execution.steps[1].node_id == "n2"
         assert execution.steps[1].status == NodeStatus.SUCCESS

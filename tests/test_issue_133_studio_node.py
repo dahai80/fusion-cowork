@@ -87,7 +87,7 @@ async def test_both_targets_fails(monkeypatch):
     node = _make_node(graph_id="g1", agent_id="a1")
     result = await node.execute({})
     assert result.status == NodeStatus.FAILED
-    assert "二选一" in result.error
+    assert "exactly one" in result.error
 
 
 @pytest.mark.asyncio
@@ -231,8 +231,8 @@ async def test_sync_timeout_detaches_without_cancel(monkeypatch):
     node = _make_node(agent_id="a2", poll_interval=0.01, timeout=0.05)
     result = await node.execute({})
     assert result.status == NodeStatus.FAILED
-    assert "超时" in result.error
-    assert "未取消" in result.error
+    assert "timed out waiting for run" in result.error
+    assert "not cancelled" in result.error
     assert result.data["run_id"] == "run-9"
     assert result.data["detached"] is True
 
@@ -253,7 +253,7 @@ async def test_default_timeout_env_override(monkeypatch):
     node = _make_node(agent_id="a3", poll_interval=0.01)
     result = await node.execute({})
     assert result.status == NodeStatus.FAILED
-    assert "超时" in result.error
+    assert "timed out waiting for run" in result.error
     assert result.data["detached"] is True
 
 

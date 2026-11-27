@@ -632,7 +632,7 @@ class TestCliTeamGroup:
 
         sent = runner.invoke(cli, ["team", "send", "--from", "alice", "--to", "agent-a", "hello"])
         assert sent.exit_code == 0, sent.output
-        message_id = sent.output.split("已投递: ")[1].split(" ")[0]
+        message_id = sent.output.split("delivered: ")[1].split(" ")[0]
 
         inbox = runner.invoke(cli, ["team", "inbox", "agent-a"])
         assert message_id in inbox.output
@@ -640,4 +640,4 @@ class TestCliTeamGroup:
 
         removed = runner.invoke(cli, ["team", "remove", "agent-a"])
         assert removed.exit_code == 0
-        assert "已移除" in removed.output
+        assert "removed" in removed.output

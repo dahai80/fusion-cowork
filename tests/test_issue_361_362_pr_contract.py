@@ -110,7 +110,7 @@ class TestPrLinkStrength:
         monkeypatch.setattr(GitHubNode, "_client", _gh_node("Found while working on #8"))
         res = await _api_node("linked_pr", require_closing_link=True).execute({})
         assert res.status.value == "failed"
-        assert "关闭关键词" in res.error
+        assert "closing-keyword link" in res.error
         assert "PR#9" in res.error
         assert res.data["pr_link_strength"] == "mention"
 
