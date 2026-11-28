@@ -1,3 +1,19 @@
+---
+doc_id: fusion-cowork/readme
+product: fusion-cowork
+class: platform
+entry: developer
+doc_type: readme
+title: {zh: "失败模式库", en: "Failure Modes Library"}
+audience: engineer
+status: draft
+version: 0.1.0
+updated: 2026-11-28
+owner: "@dahai80"
+source_of_truth:
+  - docs/failure-modes/README.md
+---
+
 # Failure Modes Library
 
 Institutional source: `insight/fusion-claude-insight-1102.md` §6.3 step 1
