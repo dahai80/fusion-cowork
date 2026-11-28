@@ -7,7 +7,7 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.151
+version: 0.5.152
 updated: 2026-11-28
 owner: "@dahai"
 source_of_truth:
@@ -16,6 +16,15 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.152 (acceptance review fixes: #643/#644/#645 + compile fidelity #646/#649)
+
+- **#643 (PR #647)**: health check upstream probe always failed — `HealthCheck.check_upstream` unpacked `asyncio.open_connection` into 3 targets (it returns `(reader, writer)`), so every probe raised `ValueError` masked as `upstream error: ValueError` and `/health` was permanently `degraded` regardless of upstream state. Unpack fixed; regression test probes a live local `asyncio.start_server` listener asserting `ok: True` (test avoids `server.wait_closed()`, which hangs on Python 3.12 with an immediate-return handler).
+- **#644 (PR #651)**: start.sh lifecycle hardening — atomic mkdir single-instance start lock with stale-lock recovery (owner pid gone + 60s age); concurrent starts refused instead of half-booting and dying on `Errno 48`; foreign process holding the HTTP port refused up front with holder pid. `is_running()` no longer trusts stale pid files (dead pid / empty / pid reused by an unrelated process are reported and cleaned). Stop paths log the requester (`do_stop`/`stop_web`: invoking shell pid + parent command; desk rpc handler: `sig= pid= ppid= pgid= sid=`). Web plane (`fusion-cowork web serve :11461`) now lifecycle-managed: started by default with desk RPC (`FUSION_COWORK_START_WEB=0` opts out), auth key generated + persisted 0600 when unset, health-gated startup, covered by status/stop/doctor; registry self-check generalized to service+port (`fusion-cowork-web` checked before web start). Tests `tests/test_issue_644_start_lifecycle.py` (10 cases).
+- **#645 (PR #652)**: demand LLM draft arm operator drill path — `POST /api/demand/leads/{lead_id}/draft` runs match (if the lead was never scored) + dual_draft for exactly one lead with zero mailbox involvement, status → `drafted`, making the `drafted→approve`/edit-distance metric path exercisable on demand. Params: `threshold` (default 3.0), `force` (draft parked/no-capability leads anyway), `local_model`, `catalog_path`, `portfolio_links`, `notify`. Already-drafted leads return idempotently; spam/discarded refused 409; both model sides failing is 502 with recorded errors. Shared `draft_one_lead` helper in `demand/draft.py`. Tests `tests/test_issue_645_per_lead_draft.py` (8 cases).
+- **#638 compile fidelity round 2 (PRs #646/#649)**: routed ports recorded at runtime, not inferred by the LLM — engine `POST_NODE_EXECUTE` payload carries `input_bindings` (target port → `[source_id, source_output]`, default whole-output edges excluded); `compile.py::steps_from_jsonl` recovers them; `build_evidence`/`extract_plan` propagate recorded bindings onto plan steps deterministically; `plan_to_workflow` emits routed edges from the `inputs` port map (first declared input port default; unknown upstream refs ignored safely).
+- Behavior changes: `start.sh start` now also brings up the web plane on :11461 by default (opt-out `FUSION_COWORK_START_WEB=0`); `/health` no longer reports permanent `degraded` when fusion-mlx is healthy; concurrent `start.sh start` invocations are refused with a clear error instead of racing.
+
 
 ## v0.5.151 (issue #623 — English-only source batch 2)
 
