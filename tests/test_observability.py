@@ -158,6 +158,21 @@ class TestHealth:
         assert r["ok"] is True
 
     @pytest.mark.asyncio
+    async def test_check_upstream_live_listener_ok(self):
+        # issue #643: open_connection returns a 2-tuple; probe against a live
+        # local TCP listener must return ok=True (unpack regression guard)
+        server = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        try:
+            r = await HealthCheck.check_upstream(f"http://127.0.0.1:{port}", timeout=2.0)
+        finally:
+            server.close()
+            # no await server.wait_closed(): hangs on Python 3.12 (gh-104344
+            # semantics) with an immediate-return handler
+        assert r["ok"] is True, r
+        assert "reachable" in r["detail"]
+
+    @pytest.mark.asyncio
     async def test_run_all_degraded(self):
         r = await HealthCheck.run_all(store=None, upstreams={"mlx": "http://127.0.0.1:1"}, disk_threshold=1)
         assert r["status"] in ("degraded", "down")

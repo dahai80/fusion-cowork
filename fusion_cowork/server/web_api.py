@@ -6508,6 +6508,124 @@ def create_web_app(
         logger.info(f"[demand] lead {lead_id} discarded reason={reason[:80]}")
         return updated
 
+    @app.post("/api/demand/leads/{lead_id}/draft")
+    async def demand_lead_draft(lead_id: int, request: Request):
+        # issue #645: operator per-lead draft trigger — match (if needed) +
+        # dual_draft for exactly this lead, zero mailbox involvement. Approve
+        # requires status=drafted, so this endpoint makes the approve/edit-
+        # distance metric path exercisable on demand (demo/verify flow).
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        threshold = float(body.get("threshold", 3.0))
+        force = bool(body.get("force", False))
+        notify = bool(body.get("notify", False))
+        catalog_path = str(body.get("catalog_path") or "")
+        portfolio = [str(p) for p in (body.get("portfolio_links") or []) if isinstance(p, str)]
+        async with _demand_store() as store:
+            lead = await store.get_lead(lead_id)
+            if lead is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"code": "not_found", "message": f"lead 不存在: {lead_id}"},  # i18n: user-facing
+                )
+            if lead.get("status") in ("spam", "discarded"):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "invalid_status",
+                        "message": f"spam/discarded 线索不可起草, 当前: {lead.get('status')}",  # i18n: user-facing
+                    },
+                )
+            # already drafted (restart-safe, mirrors the node's skip rule)
+            if lead.get("draft_a") or lead.get("draft_b"):
+                return lead
+            # match first when the lead was never scored against the catalog
+            if not lead.get("catalog_version"):
+                from ..demand.catalog import load_catalog, match_lead
+
+                path = catalog_path or (_demand_catalog_file() if Path(_demand_catalog_file()).exists() else "")
+                catalog = load_catalog(path)
+                result = match_lead(lead, catalog, threshold=threshold)
+                top = result["match_details"][0] if result["match_details"] else None
+                fields = {
+                    "matched_capabilities": result["matched_capabilities"],
+                    "match_score": result["match_score"],
+                    "match_reason": result["match_reason"],
+                    "catalog_version": result["catalog_version"],
+                    "status": "parked" if result["parked"] else "matched",
+                }
+                if not lead.get("budget_hint") and top:
+                    fields["budget_hint"] = f"{top['price_cny']} CNY"
+                await store.update_lead(lead_id, fields)
+                lead = await store.get_lead(lead_id)
+                if result["parked"] and not force:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "code": "match_parked",
+                            "message": f"匹配分 {result['match_score']} 低于阈值 {threshold}, 不自动起草 (force=true 可强制)",  # i18n: user-facing
+                        },
+                    )
+            if not lead.get("matched_capabilities") and not force:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "not_matched",
+                        "message": "lead 无匹配能力, 不可起草 (force=true 可强制)",
+                    },  # i18n: user-facing
+                )
+            from ..demand.catalog import load_catalog
+            from ..demand.draft import CloudGLMClient, draft_one_lead, notify_ntfy
+
+            catalog = load_catalog(catalog_path)
+            price_by_cap = {c["id"]: int(c.get("price_cny", 0)) for c in catalog.get("capabilities", [])}
+            local_client = None
+            local_model = str(body.get("local_model") or "")
+            try:
+                from ..ai.mlx_client import FusionMLXClient
+                from ..ai.nl_parser import _pick_chat_model
+
+                local_client = FusionMLXClient()
+                if not local_model:
+                    local_model = _pick_chat_model(await local_client.list_models())
+            except Exception as e:
+                logger.warning(f"[demand] per-lead draft local client unavailable: {e}")
+                local_client = None
+            cloud = CloudGLMClient()
+            try:
+                draft = await draft_one_lead(lead, local_client, local_model, cloud, price_by_cap, portfolio)
+            finally:
+                try:
+                    await cloud.close()
+                except Exception:
+                    pass
+            if not draft["draft_a"] and not draft["draft_b"]:
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "code": "draft_failed",
+                        "message": f"双侧模型起草失败: {'; '.join(draft['meta'].get('errors', []))[:200]}",  # i18n: user-facing
+                    },
+                )
+            await store.update_lead(
+                lead_id,
+                {
+                    "draft_a": draft["draft_a"],
+                    "draft_b": draft["draft_b"],
+                    "draft_meta": draft["meta"],
+                    "status": "drafted",
+                },
+            )
+            updated = await store.get_lead(lead_id)
+        if notify:
+            await notify_ntfy(
+                f"Drafts ready: {updated.get('title', '')[:60]}", f"lead #{lead_id} - review in demand inbox"
+            )
+        logger.info(f"[demand] lead {lead_id} drafted via operator trigger (per-lead)")
+        return updated
+
     @app.get("/api/demand/metrics")
     async def demand_metrics():
         async with _demand_store() as store:

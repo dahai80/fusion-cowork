@@ -17,8 +17,16 @@ else
 fi
 ACTIVATE="${VENV}/bin/activate"
 LOG_DIR="${PROJ_DIR}/logs"
-PID_FILE="${PROJ_DIR}/.fusion-cowork.pid"
+# issue #644: pid/lock paths overridable so lifecycle tests can isolate in tmp dirs
+PID_FILE="${FUSION_PID_FILE:-${PROJ_DIR}/.fusion-cowork.pid}"
+WEB_PID_FILE="${FUSION_WEB_PID_FILE:-${PROJ_DIR}/.fusion-cowork-web.pid}"
+START_LOCK="${FUSION_START_LOCK:-${PROJ_DIR}/.start.lock}"
 SOCK_FILE="/tmp/fusion-cowork.sock"
+# issue #644: operator web plane (fusion-cowork web serve) lifecycle-managed
+WEB_PORT="${FUSION_WEB_PORT:-11461}"
+# default ON: start.sh now manages the web plane like desk-rpc; FUSION_COWORK_START_WEB=0 opts out
+START_WEB="${FUSION_COWORK_START_WEB:-1}"
+WEB_KEY_FILE="${FUSION_WEB_KEY_FILE:-${PROJ_DIR}/.fusion-cowork.web.key}"
 # issue #189: ready-set 波次并发 — 服务进程默认 4 路并行 (代码默认 1 = 旧串行),
 # 运维可用同名环境变量覆盖, 设为 1 即完全退回串行调度。
 export FUSION_COWORK_MAX_CONCURRENCY="${FUSION_COWORK_MAX_CONCURRENCY:-4}"
@@ -42,6 +50,8 @@ ensure_venv() {
 }
 
 # ── Check if server is running ──────────────────────────────────────
+# issue #644: a dead or pid-reused pid file is reported and cleaned instead
+# of being trusted (status previously printed "Running" for a gone process).
 is_running() {
     if [[ ! -f "${PID_FILE}" ]]; then
         return 1
@@ -49,14 +59,91 @@ is_running() {
     local pid
     pid=$(cat "${PID_FILE}" 2>/dev/null || echo "")
     if [[ -z "${pid}" ]]; then
+        log_warn "Stale PID file (empty) — removing ${PID_FILE}"
+        rm -f "${PID_FILE}"
         return 1
     fi
-    kill -0 "${pid}" 2>/dev/null
+    if ! kill -0 "${pid}" 2>/dev/null; then
+        log_warn "Stale PID file (pid ${pid} not running) — removing ${PID_FILE}"
+        rm -f "${PID_FILE}"
+        return 1
+    fi
+    # pid alive but reused by an unrelated process — treat as stale
+    local cmd
+    cmd=$(ps -p "${pid}" -o command= 2>/dev/null || echo "")
+    if [[ "${cmd}" != *fusion_cowork* && "${cmd}" != *fusion-cowork* ]]; then
+        log_warn "Stale PID file (pid ${pid} reused by unrelated process: ${cmd:-unknown}) — removing ${PID_FILE}"
+        rm -f "${PID_FILE}"
+        return 1
+    fi
+    return 0
 }
 
 get_pid() {
     if [[ -f "${PID_FILE}" ]]; then
         cat "${PID_FILE}" 2>/dev/null
+    fi
+}
+
+# web plane equivalent (issue #644): same staleness rules, different pid file
+web_running() {
+    if [[ ! -f "${WEB_PID_FILE}" ]]; then
+        return 1
+    fi
+    local pid
+    pid=$(cat "${WEB_PID_FILE}" 2>/dev/null || echo "")
+    if [[ -z "${pid}" ]] || ! kill -0 "${pid}" 2>/dev/null; then
+        rm -f "${WEB_PID_FILE}"
+        return 1
+    fi
+    local cmd
+    cmd=$(ps -p "${pid}" -o command= 2>/dev/null || echo "")
+    if [[ "${cmd}" != *fusion_cowork* && "${cmd}" != *fusion-cowork* ]]; then
+        log_warn "Stale web PID file (pid ${pid} reused: ${cmd:-unknown}) — removing ${WEB_PID_FILE}"
+        rm -f "${WEB_PID_FILE}"
+        return 1
+    fi
+    return 0
+}
+
+get_web_pid() {
+    if [[ -f "${WEB_PID_FILE}" ]]; then
+        cat "${WEB_PID_FILE}" 2>/dev/null
+    fi
+}
+
+port_in_use() {
+    lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+# ── Single-instance start guard (issue #644) ────────────────────────
+# Atomic mkdir lock: two near-simultaneous starts raced before, the loser
+# half-booted and died on Errno 48 after registering scheduler tasks.
+acquire_start_lock() {
+    if mkdir "${START_LOCK}" 2>/dev/null; then
+        echo "$$" > "${START_LOCK}/owner"
+        return 0
+    fi
+    # stale-lock recovery: recorded holder is gone and the lock is older than 60s
+    local owner="" mtime=0 age=0
+    owner=$(cat "${START_LOCK}/owner" 2>/dev/null || echo "")
+    mtime=$(stat -f %m "${START_LOCK}" 2>/dev/null || stat -c %Y "${START_LOCK}" 2>/dev/null || echo 0)
+    age=$(( $(date +%s) - mtime ))
+    if [[ -n "${owner}" ]] && ! kill -0 "${owner}" 2>/dev/null && (( age > 60 )); then
+        log_warn "Removing stale start lock (owner pid ${owner} gone, ${age}s old)"
+        rm -rf "${START_LOCK}"
+        if mkdir "${START_LOCK}" 2>/dev/null; then
+            echo "$$" > "${START_LOCK}/owner"
+            return 0
+        fi
+    fi
+    log_error "Another start.sh invocation holds the start lock (${START_LOCK}, owner pid ${owner:-unknown}) — refusing concurrent start"
+    return 1
+}
+
+release_start_lock() {
+    if [[ -f "${START_LOCK}/owner" ]] && [[ "$(cat "${START_LOCK}/owner" 2>/dev/null)" == "$$" ]]; then
+        rm -rf "${START_LOCK}" 2>/dev/null || true
     fi
 }
 
@@ -81,8 +168,8 @@ wait_healthy() {
 # 而不是事后被 CI check-ports 抓到。缺登记文件 = warn 放行 (独立部署);
 # FUSION_SKIP_REGISTRY_CHECK=1 可显式跳过。
 registry_selfcheck() {
-    local service="fusion-cowork"
-    local port="${FUSION_PORT:-11438}"
+    local service="${1:-fusion-cowork}"
+    local port="${2:-${FUSION_PORT:-11438}}"
     local registry="${FUSION_REGISTRY:-$HOME/fusion/architecture/port-registry.yaml}"
     if [[ ! -f "${registry}" ]]; then
         log_warn "port-registry.yaml not found at ${registry} — registry self-check skipped"
@@ -130,13 +217,42 @@ preflight() {
 # ── start ───────────────────────────────────────────────────────────
 do_start() {
     if is_running; then
-        log_warn "Server already running (PID $(get_pid))"
+        log_warn "Server already running (PID $(get_pid)) — no-op (issue #644 single-instance)"
         wait_healthy 5
+        start_web_if_enabled
+        return 0
+    fi
+
+    if ! acquire_start_lock; then
+        exit 1
+    fi
+    trap release_start_lock EXIT
+
+    # Re-check after acquiring the lock (the racing winner may have started it)
+    if is_running; then
+        log_warn "Server already running (PID $(get_pid)) — no-op"
+        release_start_lock
+        trap - EXIT
+        start_web_if_enabled
         return 0
     fi
 
     if ! preflight; then
+        release_start_lock
+        trap - EXIT
         return 0
+    fi
+
+    # Foreign process holding the HTTP port would half-boot the server and
+    # die on Errno 48 after registering scheduler tasks — refuse up front
+    local port="${FUSION_PORT:-11438}"
+    if port_in_use "${port}"; then
+        local holder
+        holder=$(lsof -nP -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null | head -1 || echo "?")
+        log_error "HTTP port ${port} already held by pid ${holder} — refusing to half-boot; stop that process or set FUSION_PORT"
+        release_start_lock
+        trap - EXIT
+        return 1
     fi
 
     log_step "Starting fusion-cowork desk RPC"
@@ -152,13 +268,108 @@ do_start() {
 
     if wait_healthy 30; then
         log_info "Fusion-Cowork started successfully"
+        release_start_lock
+        trap - EXIT
+        start_web_if_enabled
         show_status
     else
         log_error "Start failed. Check logs: ${LOG_DIR}/stderr.log"
         tail -20 "${LOG_DIR}/stderr.log" 2>/dev/null || true
         rm -f "${PID_FILE}"
+        release_start_lock
+        trap - EXIT
         exit 1
     fi
+}
+
+# ── web plane (issue #644) ──────────────────────────────────────────
+ensure_web_key() {
+    # web serve without a key is open on localhost only; still, generate and
+    # persist one so the lifecycle-managed plane is authenticated by default
+    if [[ -n "${FUSION_COWORK_WEB_API_KEY:-}" ]]; then
+        return 0
+    fi
+    if [[ -s "${WEB_KEY_FILE}" ]]; then
+        FUSION_COWORK_WEB_API_KEY="$(cat "${WEB_KEY_FILE}")"
+        export FUSION_COWORK_WEB_API_KEY
+        return 0
+    fi
+    FUSION_COWORK_WEB_API_KEY="$(openssl rand -hex 24 2>/dev/null || python3 -c "import secrets; print(secrets.token_hex(24))")"
+    umask 077
+    printf "%s" "${FUSION_COWORK_WEB_API_KEY}" > "${WEB_KEY_FILE}"
+    umask 022
+    export FUSION_COWORK_WEB_API_KEY
+    log_info "Generated web API key: ${WEB_KEY_FILE} (0600)"
+}
+
+start_web_if_enabled() {
+    if [[ "${START_WEB}" != "1" ]]; then
+        return 0
+    fi
+    if web_running; then
+        return 0
+    fi
+    log_step "Starting fusion-cowork web plane (:${WEB_PORT})"
+    if port_in_use "${WEB_PORT}"; then
+        local holder
+        holder=$(lsof -nP -tiTCP:"${WEB_PORT}" -sTCP:LISTEN 2>/dev/null | head -1 || echo "?")
+        log_warn "Web port ${WEB_PORT} already held by pid ${holder} — skipping web start"
+        return 1
+    fi
+    ensure_web_key
+    if ! registry_selfcheck fusion-cowork-web "${WEB_PORT}"; then
+        log_error "web plane port ${WEB_PORT} not registered — skipping web start (FUSION_SKIP_REGISTRY_CHECK=1 bypasses)"
+        return 1
+    fi
+    local python_bin="${VENV}/bin/python"
+    nohup "${python_bin}" -m fusion_cowork web serve --port "${WEB_PORT}" \
+        >> "${LOG_DIR}/webserve.log" \
+        2>> "${LOG_DIR}/webserve.err.log" &
+    local pid=$!
+    echo "${pid}" > "${WEB_PID_FILE}"
+    log_info "Web API PID: ${pid}"
+    local elapsed=0
+    while (( elapsed < 30 )); do
+        if curl -sf "http://127.0.0.1:${WEB_PORT}/health" >/dev/null 2>&1; then
+            log_info "Web plane healthy (:${WEB_PORT}, took ${elapsed}s)"
+            return 0
+        fi
+        if ! kill -0 "${pid}" 2>/dev/null; then
+            log_error "Web API process died — check ${LOG_DIR}/webserve.err.log"
+            rm -f "${WEB_PID_FILE}"
+            return 1
+        fi
+        sleep 1
+        (( elapsed += 1 ))
+    done
+    log_warn "Web plane not healthy within 30s — check ${LOG_DIR}/webserve.err.log"
+    return 1
+}
+
+stop_web() {
+    if ! web_running; then
+        rm -f "${WEB_PID_FILE}"
+        return 0
+    fi
+    local pid
+    pid=$(get_web_pid)
+    log_step "Stopping web plane (PID ${pid}) — requested by shell PID $$ (parent: $(ps -o command= -p "${PPID}" 2>/dev/null || echo unknown))"
+    kill -TERM "${pid}" 2>/dev/null || true
+    local waited=0
+    while (( waited < 15 )); do
+        if ! kill -0 "${pid}" 2>/dev/null; then
+            log_info "Web plane stopped"
+            rm -f "${WEB_PID_FILE}"
+            return 0
+        fi
+        sleep 1
+        (( waited += 1 ))
+    done
+    log_warn "Web plane graceful shutdown timed out, force killing..."
+    kill -KILL "${pid}" 2>/dev/null || true
+    sleep 1
+    rm -f "${WEB_PID_FILE}"
+    log_info "Web plane force-stopped"
 }
 
 # ── stop ────────────────────────────────────────────────────────────
@@ -166,12 +377,14 @@ do_stop() {
     if ! is_running; then
         log_warn "Server not running"
         rm -f "${PID_FILE}" "${SOCK_FILE}"
+        stop_web
         return 0
     fi
 
     local pid
     pid=$(get_pid)
-    log_step "Stopping fusion-cowork (PID ${pid})"
+    # issue #644: log the requester so a mystery SIGTERM can be traced
+    log_step "Stopping fusion-cowork (PID ${pid}) — requested by shell PID $$ (parent: $(ps -o command= -p "${PPID}" 2>/dev/null || echo unknown))"
 
     # Graceful: SIGTERM
     kill -TERM "${pid}" 2>/dev/null || true
@@ -180,6 +393,7 @@ do_stop() {
         if ! kill -0 "${pid}" 2>/dev/null; then
             log_info "Server stopped gracefully"
             rm -f "${PID_FILE}" "${SOCK_FILE}"
+            stop_web
             return 0
         fi
         sleep 1
@@ -192,6 +406,7 @@ do_stop() {
     sleep 1
     rm -f "${PID_FILE}" "${SOCK_FILE}"
     log_info "Server force-stopped"
+    stop_web
 }
 
 # ── restart ─────────────────────────────────────────────────────────
@@ -231,6 +446,19 @@ show_status() {
         printf "  Uptime: %s\n" "${uptime}"
     else
         printf "${RED}● Stopped${NC}\n"
+    fi
+
+    # Web plane (issue #644)
+    if web_running; then
+        local web_pid
+        web_pid=$(get_web_pid)
+        if curl -sf "http://127.0.0.1:${WEB_PORT}/health" >/dev/null 2>&1; then
+            printf "${GREEN}● Web plane${NC}  PID=%s :%s (healthy)\n" "${web_pid}" "${WEB_PORT}"
+        else
+            printf "${YELLOW}● Web plane${NC}  PID=%s :%s (not responding)\n" "${web_pid}" "${WEB_PORT}"
+        fi
+    else
+        printf "${RED}● Web plane${NC}  Stopped (:%s)\n" "${WEB_PORT}"
     fi
 
     # Disk usage
@@ -281,6 +509,14 @@ do_clean() {
     if [[ -S "${SOCK_FILE}" ]] && ! is_running; then
         rm -f "${SOCK_FILE}"
         log_info "Removed stale socket"
+    fi
+    if [[ -f "${WEB_PID_FILE}" ]] && ! web_running; then
+        rm -f "${WEB_PID_FILE}"
+        log_info "Removed stale web PID file"
+    fi
+    if [[ -d "${START_LOCK}" ]] && ! kill -0 "$(cat "${START_LOCK}/owner" 2>/dev/null)" 2>/dev/null; then
+        rm -rf "${START_LOCK}"
+        log_info "Removed stale start lock"
     fi
 
     log_info "Clean done"
@@ -339,6 +575,13 @@ do_doctor() {
         printf "${YELLOW}!${NC} HTTP channel: 11438/health not reachable (desk rpc 需 [web] 依赖)\n"
     fi
 
+    # Check web plane (issue #644)
+    if curl -sf "http://127.0.0.1:${WEB_PORT}/health" >/dev/null 2>&1; then
+        printf "${GREEN}✓${NC} Web plane: %s/health reachable (fusion-cowork-web)\n" "${WEB_PORT}"
+    else
+        printf "${YELLOW}!${NC} Web plane: %s/health not reachable (start.sh start 默认拉起, FUSION_COWORK_START_WEB=0 关闭)\n" "${WEB_PORT}"
+    fi
+
     # Check plugins runtime (fusion-plugins-ecosystem, /rpc plugins.* 前置依赖)
     if "${VENV}/bin/python" -c "import fusion_plugins_ecosystem" 2>/dev/null; then
         local pver
@@ -384,10 +627,10 @@ start.sh — fusion-cowork lifecycle manager
 Usage: start.sh <command> [args]
 
 Commands:
-  start      Start fusion-cowork desk RPC daemon
-  stop       Graceful stop (SIGTERM → SIGKILL fallback)
+  start      Start fusion-cowork desk RPC daemon + web plane (:11461, default on)
+  stop       Graceful stop (SIGTERM → SIGKILL fallback), desk RPC + web plane
   restart    Stop + start
-  status     Show PID, socket, memory, uptime
+  status     Show PID, socket, memory, uptime (desk RPC + web plane)
   log [N|-f] Tail server log (default 50 lines, -f to follow)
   clean      Rotate old logs, clear __pycache__, remove stale PID/socket
   doctor     Health check (venv, CLI, socket, upstream services)
@@ -399,6 +642,9 @@ Environment:
   SOCK_FILE          Unix Domain Socket path (default: /tmp/fusion-cowork.sock)
   FUSION_BIND_HOST   bind host (default: 127.0.0.1, single-machine)
   FUSION_PORT        HTTP 端口 (default: 11438; registry self-check 对此端口)
+  FUSION_WEB_PORT    Web plane 端口 (default: 11461; port-registry: fusion-cowork-web)
+  FUSION_COWORK_START_WEB  set to 0 to skip the web plane on start (default: 1)
+  FUSION_COWORK_WEB_API_KEY  web plane auth key (generated+persisted to .fusion-cowork.web.key if unset)
   FUSION_REGISTRY    port-registry.yaml path (default: $HOME/fusion/architecture/port-registry.yaml)
   FUSION_SKIP_REGISTRY_CHECK  set to 1 to bypass the registry self-check
 EOF

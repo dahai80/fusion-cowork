@@ -81,12 +81,18 @@ def steps_from_jsonl(path: Any, run_id: str = "") -> List[Dict[str, Any]]:
                 # recording — node_id (fallback type name) keys the plan, the
                 # upstream list carries the DAG shape for plan_to_workflow
                 upstream = data.get("upstream_node_ids")
+                bindings = data.get("input_bindings")
                 step = {
                     "node_name": str(payload.get("node_name", "") or ""),
                     "node_id": str(
                         rec.get("node_id", "") or data.get("node_id", "") or payload.get("node_name", "") or ""
                     ),
                     "upstream": [str(u) for u in upstream if isinstance(u, str)] if isinstance(upstream, list) else [],
+                    "input_bindings": {
+                        str(port): [str(pair[0]), str(pair[1])]
+                        for port, pair in (bindings if isinstance(bindings, dict) else {}).items()
+                        if isinstance(pair, (list, tuple)) and len(pair) == 2
+                    },
                     "status": str(rec.get("status", "") or ""),
                     "output_data": out if isinstance(out, dict) else {},
                     "error": str(payload.get("error", "") or data.get("error", "") or ""),
