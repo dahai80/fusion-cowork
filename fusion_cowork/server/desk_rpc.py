@@ -158,6 +158,7 @@ class DeskRPCServer:
             "desk.workflow.run": self._handle_workflow_run,
             "desk.workflow.status": self._handle_workflow_status,
             "desk.workflow.cancel": self._handle_workflow_cancel,
+            "desk.workflow.compile": self._handle_workflow_compile,
             # Templates
             "desk.template.list": self._handle_template_list,
             "desk.template.get": self._handle_template_get,
@@ -911,6 +912,27 @@ class DeskRPCServer:
             if ids is not None:
                 out["memory_ids"] = ids
         return out
+
+    async def _handle_workflow_compile(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        # issue #623: flywheel compile over DeskRPC — same shared surface as
+        # POST /api/trajectory/compile (trajectory.compile.compile_trajectory).
+        # session_id (+run_id) reads the kernel trajectory JSONL, or an inline
+        # snapshot; one LLM condition-extraction call returns an executable
+        # Workflow dict (skip_if landed in node configs).
+        from ..engine.node import NodeRegistry
+        from ..trajectory.compile import CompileError, compile_trajectory
+
+        def create_node(name: str):
+            node = NodeRegistry.create(name)
+            if node is None:
+                raise CompileError("unknown_node", f"轨迹引用了未注册节点: {name}")
+            return node
+
+        try:
+            return await compile_trajectory(params, self._get_mlx_client(), create_node)
+        except CompileError as e:
+            logger.warning("desk.workflow.compile rejected: code=%s msg=%s", e.code, e.message)
+            return {"error": e.message, "code": e.code}
 
     async def _handle_workflow_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "idle", "running_workflows": 0}
