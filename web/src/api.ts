@@ -878,6 +878,14 @@ export const api = {
             : post<{ running: boolean }>('/api/team/pool/stop', {}),
     forkSession: (id: string, fromStep = 0) =>
         post<{ session_id: string }>(`/api/sessions/${encodeURIComponent(id)}/fork`, { from_step: fromStep }),
+    // flywheel compile: trajectory JSONL -> executable workflow (one condition-extraction LLM call)
+    compileTrajectory: (body: { session_id: string; run_id?: string; workflow_name?: string; model?: string }) =>
+        post<{
+            plan: { steps?: unknown[] } | unknown[];
+            node_ids: string[];
+            steps_used: number;
+            workflow: { name?: string };
+        }>('/api/trajectory/compile', body),
     cleanupSessions: (days: number) => post<{ removed: number; days: number }>('/api/sessions/cleanup', { days }),
     dbBackup: (body: { dsn?: string; dest?: string }) => post<{ path: string }>('/api/admin/db/backup', body),
     speechConfig: () => get<{ url: string; token: string; ingress_enabled: boolean }>('/api/speech/config'),

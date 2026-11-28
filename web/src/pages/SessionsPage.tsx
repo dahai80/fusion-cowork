@@ -48,6 +48,28 @@ export function SessionsPage() {
         }
     }
 
+    // Flywheel compile: distill a session trajectory into an executable workflow
+    // (one condition-extraction LLM call; runs appear under Workflows).
+    async function compileSession() {
+        const sid = prompt(t('会话 ID', 'Session ID')); // i18n: user-facing
+        if (!sid) return;
+        const nameRaw = prompt(t('工作流名称 (留空自动)', 'Workflow name (blank = auto)'), ''); // i18n: user-facing
+        try {
+            const resp = await api.compileTrajectory({
+                session_id: sid.trim(),
+                workflow_name: nameRaw?.trim() || undefined,
+            });
+            setNote(
+                t(
+                    `已编译工作流 ${resp.workflow?.name || ''} (${resp.node_ids?.length ?? 0} 节点 / ${resp.steps_used} 步)`,
+                    `Compiled workflow ${resp.workflow?.name || ''} (${resp.node_ids?.length ?? 0} nodes / ${resp.steps_used} steps)`
+                )
+            ); // i18n: user-facing
+        } catch (e) {
+            setNote(e instanceof Error ? e.message : String(e));
+        }
+    }
+
     if (retry.loading && !retry.data) return <SkeletonLines rows={5} />;
     if (retry.error) return <ErrorState message={retry.error.message} onRetry={retry.manualRetry} />;
 
@@ -144,6 +166,13 @@ export function SessionsPage() {
                     onClick={() => void cleanupSessions()}
                 >
                     {t('清理过期会话', 'Cleanup expired') /*// i18n: user-facing*/}
+                </button>
+                <button
+                    type="button"
+                    className="rounded-md border border-border px-3 py-1 text-xs text-text-secondary hover:bg-bg-muted"
+                    onClick={() => void compileSession()}
+                >
+                    {t('编译轨迹为工作流', 'Compile to workflow') /*// i18n: user-facing*/}
                 </button>
                 {note && <span className="text-xs text-text-muted">{note}</span>}
             </div>
