@@ -1923,6 +1923,16 @@ def create_web_app(
         approval_journal = ApprovalJournal(Path(store_root) / "approval_journal.db" if store_root else None)
         engine._approval_journal = approval_journal
         logger.info("issue #463 approval journal attached (durable HITL)")
+    # issue #650: per-stage evidence store — attach to the engine (never overrides an
+    # engine-provided one; tests can inject a temp store) so node outputs are
+    # fingerprinted + sealed and the evidence API can serve them
+    evidence_store = getattr(engine, "evidence_store", None)
+    if evidence_store is None:
+        from ..engine.evidence import EvidenceStore
+
+        evidence_store = EvidenceStore(Path(store_root) / "evidence" if store_root else None)
+        engine.evidence_store = evidence_store
+        logger.info("issue #650 evidence store attached (per-stage artifacts)")
     # issue #404: HITL email notification — enabled when SMTP_HOST is set;
     # fire-and-forget, failure logs a warning only. Never overrides an injected notifier.
     if getattr(engine, "hitl_notifier", None) is None:
@@ -2807,6 +2817,70 @@ def create_web_app(
             )  # i18n: user-facing
         artifacts = record.get("artifacts") or []
         return {"artifacts": artifacts, "count": len(artifacts), "review": record.get("review")}
+
+    # ── issue #650 per-stage evidence — fingerprinted artifacts grouped by node stage ──
+    @app.get("/api/runs/{run_id}/evidence")
+    async def runs_evidence(run_id: str):
+        record = runs.get(run_id)
+        if not record:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "not_found", "message": f"运行不存在: {run_id}"},  # i18n: user-facing
+            )
+        store = getattr(engine, "evidence_store", None)
+        records = store.list_for_run(run_id) if store is not None else []
+        stages: dict = {}
+        for rec in records:
+            nid = rec.get("node_id", "")
+            stage = stages.setdefault(
+                nid,
+                {
+                    "node_id": nid,
+                    "node_name": (rec.get("meta") or {}).get("node_name", ""),
+                    "sealed": store.is_sealed(run_id, nid) if store is not None else False,
+                    "evidence": [],
+                },
+            )
+            stage["evidence"].append(rec)
+        stage_list = sorted(stages.values(), key=lambda s: s["node_id"])
+        return {"run_id": run_id, "stages": stage_list, "count": len(records)}
+
+    @app.get("/api/runs/{run_id}/evidence/{evidence_id}/raw")
+    async def runs_evidence_raw(run_id: str, evidence_id: str):
+        record = runs.get(run_id)
+        if not record:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "not_found", "message": f"运行不存在: {run_id}"},  # i18n: user-facing
+            )
+        store = getattr(engine, "evidence_store", None)
+        if store is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": "evidence store not bound"})
+        from ..engine.evidence import EvidenceIntegrityError, EvidenceNotFoundError
+
+        try:
+            rec = store.get(evidence_id)
+            if rec.get("run_id") != run_id:
+                raise EvidenceNotFoundError(evidence_id)
+            content = store.read_raw(evidence_id)
+        except EvidenceNotFoundError:
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": f"evidence not found: {evidence_id}"}
+            ) from None
+        except EvidenceIntegrityError as ie:
+            logger.error(f"evidence integrity failure on raw fetch: {ie}")
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "integrity_violation", "message": f"evidence fingerprint mismatch: {ie}"},
+            ) from ie
+        return Response(
+            content=content,
+            media_type="application/octet-stream",
+            headers={
+                "X-Evidence-Fingerprint": rec.get("fingerprint", ""),
+                "X-Evidence-Type": rec.get("artifact_type", ""),
+            },
+        )
 
     # ── B2 run step-log SSE — events.py bus → frontend real-time steps (polling is the fallback) ──
     @app.get("/api/runs/{run_id}/events")

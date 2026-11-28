@@ -436,6 +436,15 @@ fusion-cowork collab serve --port 11439
 | **Agent-Studio** | HTTP API (:11442) + workflow import | `studio_run` node submits graph/agent runs; advanced pre-built workflows |
 | **Model-Hub** | Model dispatch | Auto-select optimal local model |
 
+### Per-Stage Evidence Artifacts (issue #650)
+
+Every successful node completion records a fingerprinted evidence artifact into a content-addressed store (`EvidenceStore`, `fusion_cowork/engine/evidence.py`): sha256 of the canonical JSON output, blob stored under `<store>/blobs/<fp[:2]>/<fp>`, append-only JSONL index. The stage seals right after recording — any later append for the same `(run_id, node_id)` raises `EvidenceSealedError` (immutability after stage completion). `read_raw()` re-verifies the fingerprint on every fetch and raises `EvidenceIntegrityError` on blob tampering.
+
+- `WorkflowEngine(evidence_store=...)` seam — `None` keeps zero behavior change; `create_web_app` attaches a default store (under `store_root/evidence`, honoring the standard path override) when the engine lacks one.
+- Gate transitions are evidence-backed: a `decision_gate` node whose upstream stages lack sealed evidence is rejected with an explicit `no sealed evidence` error before execution.
+- API: `GET /api/runs/{run_id}/evidence` (stages with sealed flag + evidence list, fingerprints, meta) and `GET /api/runs/{run_id}/evidence/{evidence_id}/raw` (byte-identical body, `X-Evidence-Fingerprint`/`X-Evidence-Type` headers, 409 `integrity_violation` on hash mismatch).
+- Tests: `tests/test_issue_650_evidence.py` (21 cases: fingerprint stability, immutability, seal persistence, raw byte-identity + tamper detection, gate rejection, API routes).
+
 ### Run-Scoped Execution Logs (v0.5.19, issue #120)
 
 `WorkflowEngine` emits structured, run-scoped log lines so a failed run is diagnosable from logs alone — `grep "[<run_id>]"` reconstructs the full execution timeline:
