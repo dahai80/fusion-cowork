@@ -66,7 +66,7 @@ class HealthCheck:
             host = p.hostname or "localhost"
             port = p.port or (443 if p.scheme == "https" else 80)
             try:
-                _, reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
+                reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
                 writer.close()
                 await writer.wait_closed()
             except (socket.gaierror, ConnectionRefusedError, TimeoutError) as e:
