@@ -1611,7 +1611,8 @@ def plugin_list():
         return
     console.print_header(f"插件列表 ({len(discovered)} 个)")  # i18n: user-facing
     rows = []
-    for name, manifest in discovered.items():
+    for manifest in discovered:
+        name = manifest.name
         loaded = "✅" if name in loader._loaded else "⏸️"
         nodes = ", ".join(manifest.nodes[:3])
         if len(manifest.nodes) > 3:
