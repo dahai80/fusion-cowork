@@ -17,7 +17,7 @@ Compile one static plan: an ordered list of steps. Each step: {"node": "<node_ty
 {"var": "<instance_id>.<output.path>", "gte": number} | {"var": "...", "lte": number} | {"var": "...", "eq": value} | {"var": "...", "neq": value}
 The referenced var is the output of an earlier step's instance. A step with a "when" condition runs only if the condition holds; if the var is missing, the step is skipped. Steps without "when" always run.
 
-Rules: "id" is the trajectory record's instance id (unique per node instance) and "node" is the node type used to instantiate it; copy both from the evidence. "upstream" copies the recorded upstream instance ids — preserve the recorded fan-out/fan-in shape exactly (two steps sharing the same upstream form a fan-out; a step listing two upstreams is a merge). If a record has no id, use its node name as the id and omit "upstream". Include only instances that appear in the trajectories. Order steps so every var referenced by a "when" is produced by an earlier step. Guard error-prone nodes with conditions inferred from the failure evidence. Reply with JSON only: {"steps": [...]}"""
+Rules: "id" is the trajectory record's instance id (unique per node instance) and "node" is the node type used to instantiate it; copy both from the evidence. "upstream" copies the recorded upstream instance ids — preserve the recorded fan-out/fan-in shape exactly (two steps sharing the same upstream form a fan-out; a step listing two upstreams is a merge). If a record has no id, use its node name as the id and omit "upstream". When an instance consumed one specific output field of an upstream (the field name is visible in the upstream's evidence output), add "input": "<upstream_id>.<output_key>" on the consuming step; the compiler resolves the target port from the node's declared inputs. Omit "input" when the instance merges whole upstream outputs. Include only instances that appear in the trajectories. Order steps so every var referenced by a "when" is produced by an earlier step. Guard error-prone nodes with conditions inferred from the failure evidence. Reply with JSON only: {"steps": [...]}"""
 
 
 def build_evidence(steps: List[Any], run_success: bool) -> List[Dict[str, Any]]:
@@ -146,9 +146,33 @@ def plan_to_workflow(plan: Dict[str, Any], create_node: Any, workflow: Any) -> L
         order.append(added)
         if has_dag_shape:
             upstream = [str(u) for u in (step.get("upstream") or []) if str(u) in node_ids]
+            # issue #638 follow-up: explicit port routing. "input" names the
+            # upstream output field this step consumed; the target port is
+            # resolved deterministically from the node's declared inputs
+            # (first declared input port). Upstreams with no routing keep the
+            # default whole-output merge edge. "inputs" (port->var map) is
+            # also honored for callers that know the port names.
+            routing: Dict[str, Dict[str, str]] = {}
+            declared = [i.get("key") for i in (getattr(node, "inputs", None) or []) if isinstance(i, dict) and i.get("key")]
+            single = step.get("input")
+            if isinstance(single, str) and "." in single:
+                src_key, out_key = single.split(".", 1)
+                if src_key in node_ids:
+                    routing.setdefault(src_key, {})[declared[0] if declared else "data"] = out_key
+            for port, var in (step.get("inputs") or {}).items():
+                if not isinstance(var, str) or "." not in var:
+                    continue
+                src_key, out_key = var.split(".", 1)
+                if src_key in node_ids:
+                    routing.setdefault(src_key, {})[port] = out_key
             if upstream:
                 for u in upstream:
-                    workflow.connect(node_ids[u], added)
+                    mapped = routing.get(u, {})
+                    if mapped:
+                        for port, out_key in mapped.items():
+                            workflow.connect(node_ids[u], added, source_output=out_key, target_input=port)
+                    else:
+                        workflow.connect(node_ids[u], added)
             elif prev_id:
                 # no recorded upstream (or upstream outside the plan) — chain to the
                 # previous compiled node so the step stays reachable in topo order
