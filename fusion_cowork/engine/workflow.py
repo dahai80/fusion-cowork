@@ -2131,7 +2131,14 @@ class WorkflowEngine:
             # Hook: POST_NODE_EXECUTE
             if self._hook_manager:
                 # issue #638: upstream ids ride in the payload so trajectory
-                # records can reconstruct fan-out/fan-in DAG shape on compile
+                # records can reconstruct fan-out/fan-in DAG shape on compile;
+                # input bindings record the routed ports so compile can restore
+                # port routing deterministically (no LLM inference needed)
+                input_bindings = {
+                    e.target_input: [e.source_id, e.source_output]
+                    for e in workflow.edges
+                    if e.target_id == node_id and e.target_input != "input"
+                }
                 await self._hook_manager.fire(
                     HookEvent.POST_NODE_EXECUTE,
                     {
@@ -2139,6 +2146,7 @@ class WorkflowEngine:
                         "node_id": node_id,
                         "node_name": node.name,
                         "upstream_node_ids": workflow.get_upstream_nodes(node_id),
+                        "input_bindings": input_bindings,
                         "result": result,
                     },
                 )
