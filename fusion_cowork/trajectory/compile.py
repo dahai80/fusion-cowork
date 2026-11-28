@@ -3,6 +3,7 @@ import logging
 from typing import Any, Dict, List, Tuple
 
 from fusion_cowork.trajectory.cond_distill import build_evidence, extract_plan, plan_to_workflow
+from fusion_cowork.trajectory.plan_cache import cached_compile, plan_signature
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,14 @@ async def compile_workflow(
     if not evidence:
         logger.warning("flywheel_compile: no steps in input, empty plan")
         return {"steps": []}, []
-    plan = await extract_plan(client, evidence, model=model)
+    # plan cache (opt-in FUSION_COWORK_PLAN_CACHE=1): deterministic node-name
+    # signature retrieval ahead of the LLM extraction call; a valid hit pays
+    # zero tokens, a miss falls through to full extraction and stores.
+    plan, _from_cache = await cached_compile(
+        steps,
+        plan_signature(steps),
+        lambda: extract_plan(client, evidence, model=model),
+    )
     if not plan.get("steps"):
         logger.warning("flywheel_compile: extraction produced empty plan")
         return plan, []
