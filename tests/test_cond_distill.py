@@ -46,7 +46,17 @@ class TestBuildEvidence:
     def test_from_dicts(self):
         steps = [{"node_name": "a", "status": "success", "output_data": {"x": 1}, "error": ""}]
         ev = build_evidence(steps, run_success=True)
-        assert ev == [{"node": "a", "id": "a", "upstream": [], "status": "success", "output": {"x": 1}, "error": ""}]
+        assert ev == [
+            {
+                "node": "a",
+                "id": "a",
+                "upstream": [],
+                "input_bindings": {},
+                "status": "success",
+                "output": {"x": 1},
+                "error": "",
+            }
+        ]
 
     def test_from_step_objects(self):
         s = SimpleNamespace(node_name="b", status="failed", output_data=None, error="boom")
@@ -71,6 +81,23 @@ class TestExtractPlan:
         plan = await extract_plan(Stub(), [{"node": "risk_probe"}])
         assert len(plan["steps"]) == 2
         assert plan["steps"][1]["when"]["gte"] == 6
+
+    async def test_input_bindings_annotated_deterministically(self):
+        # issue #638 follow-up: routed ports come from recorded bindings, not
+        # LLM inference — extract_plan copies them onto the plan steps
+        class Stub:
+            async def chat(self, model, messages, temperature=0.0, max_tokens=0, **kw):
+                return SimpleNamespace(content='{"steps": [{"node": "sink", "id": "s1"}]}')
+
+        evidence = [
+            {
+                "node": "sink",
+                "id": "s1",
+                "input_bindings": {"data": ["f1", "passed"]},
+            }
+        ]
+        plan = await extract_plan(Stub(), evidence)
+        assert plan["steps"][0]["inputs"] == {"data": "f1.passed"}
 
     @pytest.mark.asyncio
     async def test_junk_reply_is_empty_plan(self):

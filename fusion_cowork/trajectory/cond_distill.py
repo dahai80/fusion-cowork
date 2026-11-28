@@ -17,7 +17,7 @@ Compile one static plan: an ordered list of steps. Each step: {"node": "<node_ty
 {"var": "<instance_id>.<output.path>", "gte": number} | {"var": "...", "lte": number} | {"var": "...", "eq": value} | {"var": "...", "neq": value}
 The referenced var is the output of an earlier step's instance. A step with a "when" condition runs only if the condition holds; if the var is missing, the step is skipped. Steps without "when" always run.
 
-Rules: "id" is the trajectory record's instance id (unique per node instance) and "node" is the node type used to instantiate it; copy both from the evidence. "upstream" copies the recorded upstream instance ids — preserve the recorded fan-out/fan-in shape exactly (two steps sharing the same upstream form a fan-out; a step listing two upstreams is a merge). If a record has no id, use its node name as the id and omit "upstream". When an instance consumed one specific output field of an upstream (the field name is visible in the upstream's evidence output), add "input": "<upstream_id>.<output_key>" on the consuming step; the compiler resolves the target port from the node's declared inputs. Omit "input" when the instance merges whole upstream outputs. Include only instances that appear in the trajectories. Order steps so every var referenced by a "when" is produced by an earlier step. Guard error-prone nodes with conditions inferred from the failure evidence. Reply with JSON only: {"steps": [...]}"""
+Rules: "id" is the trajectory record's instance id (unique per node instance) and "node" is the node type used to instantiate it; copy both from the evidence. "upstream" copies the recorded upstream instance ids — preserve the recorded fan-out/fan-in shape exactly (two steps sharing the same upstream form a fan-out; a step listing two upstreams is a merge). If a record has no id, use its node name as the id and omit "upstream". Include only instances that appear in the trajectories. Order steps so every var referenced by a "when" is produced by an earlier step. Guard error-prone nodes with conditions inferred from the failure evidence. Reply with JSON only: {"steps": [...]}"""
 
 
 def build_evidence(steps: List[Any], run_success: bool) -> List[Dict[str, Any]]:
@@ -38,6 +38,7 @@ def build_evidence(steps: List[Any], run_success: bool) -> List[Dict[str, Any]]:
                 "node": str(get("node_name", "") or ""),
                 "id": str(get("node_id", "") or get("node_name", "") or ""),
                 "upstream": [str(u) for u in (get("upstream", None) or [])],
+                "input_bindings": dict(get("input_bindings", None) or {}),
                 "status": str(get("status", "") or ""),
                 "output": _json_safe_output(get("output_data", None)),
                 "error": str(get("error", "") or "")[:300],
@@ -89,6 +90,16 @@ async def extract_plan(client: Any, evidence: List[Dict[str, Any]], model: str =
     if not isinstance(steps, list):
         return {"steps": []}
     clean = [s for s in steps if isinstance(s, dict) and str(s.get("node", "") or "")]
+    # issue #638 follow-up: port routing is deterministic, not an LLM decision.
+    # Recorded input bindings (port -> [source_id, source_output]) are copied
+    # onto the plan steps; plan_to_workflow emits routed edges from them.
+    bindings_by_id = {
+        str(e.get("id", "") or ""): e.get("input_bindings") or {} for e in evidence if isinstance(e, dict)
+    }
+    for s in clean:
+        b = bindings_by_id.get(str(s.get("id", "") or ""), {})
+        if b:
+            s["inputs"] = {str(port): f"{src}.{out}" for port, (src, out) in b.items()}
     logger.info("cond_distill: compiled %s steps", len(clean))
     return {"steps": clean}
 
@@ -153,7 +164,9 @@ def plan_to_workflow(plan: Dict[str, Any], create_node: Any, workflow: Any) -> L
             # default whole-output merge edge. "inputs" (port->var map) is
             # also honored for callers that know the port names.
             routing: Dict[str, Dict[str, str]] = {}
-            declared = [i.get("key") for i in (getattr(node, "inputs", None) or []) if isinstance(i, dict) and i.get("key")]
+            declared = [
+                i.get("key") for i in (getattr(node, "inputs", None) or []) if isinstance(i, dict) and i.get("key")
+            ]
             single = step.get("input")
             if isinstance(single, str) and "." in single:
                 src_key, out_key = single.split(".", 1)

@@ -96,6 +96,28 @@ class TestEngineHookUpstream:
         assert captured.get("upstream_node_ids") == ["n1"]
         assert captured.get("node_name") == "mock_dag"
 
+    async def test_post_hook_payload_carries_input_bindings(self):
+        # issue #638 follow-up: routed edges land in the POST payload so the
+        # compile path can restore port routing deterministically
+        wf = Workflow(name="routed")
+        wf.add_node(MockDagNode(node_id="n1"))
+        wf.add_node(MockDagNode(node_id="n2"))
+        wf.connect("n1", "n2", source_output="passed", target_input="data")
+        wf.connect("n1", "n2")  # default edge must NOT appear in bindings
+
+        captured = {}
+
+        async def spy(ctx):
+            if ctx.data.get("node_id") == "n2":
+                captured.update(ctx.data)
+
+        hm = HookManager()
+        hm.register(HookEvent.POST_NODE_EXECUTE, spy)
+        engine = WorkflowEngine(hook_manager=hm)
+        execution = await engine.execute(wf)
+        assert execution.status == WorkflowStatus.SUCCESS
+        assert captured.get("input_bindings") == {"data": ["n1", "passed"]}
+
 
 class TestStepsFromJsonl:
     async def test_recovers_instance_id_and_upstream(self, tmp_path):
@@ -113,6 +135,15 @@ class TestStepsFromJsonl:
         assert [s["node_id"] for s in steps] == ["filter_json", "filter_txt", "merge"]
         assert steps[0]["node_name"] == "filter"
         assert steps[2]["upstream"] == ["filter_json", "filter_txt"]
+
+    async def test_recovers_input_bindings(self, tmp_path):
+        # issue #638 follow-up: routed ports survive recording -> recovery
+        path = tmp_path / "exec_bind.jsonl"
+        rec = _kernel_record("file_output", "file_output", ["filter_json"])
+        rec["payload"]["data"]["input_bindings"] = {"data": ["filter_json", "passed"]}
+        _write_jsonl(path, [rec])
+        steps = steps_from_jsonl(path, run_id="exec_dag")
+        assert steps[0]["input_bindings"] == {"data": ["filter_json", "passed"]}
 
     async def test_missing_upstream_defaults_empty(self, tmp_path):
         path = tmp_path / "exec_lin.jsonl"
