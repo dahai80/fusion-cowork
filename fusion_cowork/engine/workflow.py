@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from ..observability.ops_telemetry import failure_signature, workflow_definition_hash
 from ..observability.trace import set_trace_id
 from ._harness_guard import harness_import_error
+from .evidence import canonical_output_bytes as _evidence_bytes
 from .executors import NodeExecutionContext, executor_for_node, executor_names
 from .hooks import HookEvent
 from .kernel_gates import (
@@ -820,6 +821,7 @@ class WorkflowEngine:
         hitl_gate=None,
         ops_telemetry=None,
         repair_client=None,
+        evidence_store=None,
     ):
         self._executions: Dict[str, WorkflowExecution] = {}
         self._cancel_flags: Dict[str, bool] = {}
@@ -900,6 +902,10 @@ class WorkflowEngine:
         # exp/dynamic-orchestration: LLM-informed one-shot node repair (docs/pr-repair-step.md)
         # None = lazily built FusionMLXClient, only touched when a node sets on_error_repair=True; tests may inject a stub
         self._repair_client = repair_client
+        # issue #650: per-stage evidence store — None = off at zero cost; when injected, every
+        # successful node completion records a fingerprinted evidence artifact and seals the stage
+        # (append-only), and decision_gate transitions require upstream evidence
+        self.evidence_store = evidence_store
         # exec_id -> current parked kernel question id — resolve single winner + resume/cancel bridging
         self._hitl_questions: Dict[str, str] = {}
         # issue #554: kernel destructive_gate — issue a single-redeem token once the approval passes;
@@ -1672,6 +1678,37 @@ class WorkflowEngine:
             step.execution_time = 0
             return [step], "continue", ""
 
+        # issue #650: gate transition validation — a decision_gate transition requires every
+        # upstream stage to have sealed evidence; without it the gate is rejected with an
+        # explicit error (no evidence, no pass). Only active when an evidence store is bound.
+        if self.evidence_store is not None and node.name == "decision_gate":
+            missing = [
+                up_id
+                for up_id in workflow.get_upstream_nodes(node_id)
+                if not self.evidence_store.has_evidence(exec_id, up_id)
+            ]
+            if missing:
+                gate_err = (
+                    f"gate transition rejected: upstream stage(s) {missing} have no sealed evidence "
+                    f"(issue #650: evidence-backed gate transitions)"
+                )
+                logger.warning(f"[{exec_id}] {gate_err}")
+                step = WorkflowStep(
+                    node_id=node_id,
+                    node_name=node.name,
+                    node_display_name=node.config.label or node.display_name,
+                    status=NodeStatus.FAILED,
+                    started_at=time.time(),
+                    input_data=node_input,
+                    executor=executor.name,
+                )
+                step.completed_at = time.time()
+                step.execution_time = 0
+                step.error = gate_err
+                if not node.config.continue_on_error:
+                    return [step], "fail", gate_err
+                return [step], "continue", ""
+
         # Permission check — issue #189: HITL gates serialize within a run, preventing multiple nodes from sharing
         # _hitl_decisions[exec_id] and cross-contaminating approval decisions
         if self._permission_manager:
@@ -2211,6 +2248,26 @@ class WorkflowEngine:
                     step.error = result.error
                     if not node.config.continue_on_error:
                         return [step], "fail", result.error
+
+            # issue #650: record per-stage evidence — the node output is fingerprinted (sha256 of
+            # canonical JSON) and stored; the stage seals right after, making the evidence append-only.
+            # Store failures never affect the run (loud warning only, mirrors the outbox pattern).
+            if self.evidence_store is not None:
+                try:
+                    if result.status == NodeStatus.SUCCESS:
+                        rec = self.evidence_store.append(
+                            exec_id,
+                            node_id,
+                            "node_output",
+                            _evidence_bytes(result.data or {}),
+                            meta={"node_name": node.name, "summary": result.summary or ""},
+                        )
+                        logger.info(
+                            f"[{exec_id}] stage evidence recorded: node={node.name} evidence_id={rec['evidence_id']}"
+                        )
+                    self.evidence_store.seal_stage(exec_id, node_id)
+                except Exception as ev_err:
+                    logger.warning(f"[{exec_id}] evidence record failed (ignored): node={node.name}: {ev_err}")
 
             # notify progress
             verdict = _node_verdict(result.status, result.data)
