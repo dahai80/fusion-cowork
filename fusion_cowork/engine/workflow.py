@@ -39,6 +39,7 @@ from .kernel_gates import (
     is_spec_failure,
     json_repairs_in_step,
 )
+from .multi_repo import multi_repo_enabled
 from .node import BaseNode, NodeConfig, NodeRegistry, NodeResult, NodeStatus, _coerce_bool
 from .permission_manager import (
     HITL_GATE_TOOLS,
@@ -1042,6 +1043,17 @@ class WorkflowEngine:
         # issue #464: OTel spine — one trace_id for the whole run (the exec_id), shared by LLM outbound headers/wave spans/
         # and trajectory records; execute isolates per task context, no cross-run leakage
         set_trace_id(exec_id)
+        # issue #653: multi-repo admission — when the feature flag is on, workflows
+        # carrying params.repo blocks are validated up front (shape, credential-literal
+        # rejection, waits_on_artifact edge verification); violation fails admission
+        if multi_repo_enabled():
+            from .multi_repo import validate_multi_repo_workflow
+
+            self._multi_repo_specs = validate_multi_repo_workflow(workflow)
+            if self._multi_repo_specs:
+                logger.info(
+                    f"[{exec_id}] multi-repo admission ok: repos={sorted({s.url for s in self._multi_repo_specs.values()})}"
+                )
         effective_concurrency = self._resolve_concurrency(concurrency)
         execution = WorkflowExecution(
             id=exec_id,

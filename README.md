@@ -436,6 +436,16 @@ fusion-cowork collab serve --port 11439
 | **Agent-Studio** | HTTP API (:11442) + workflow import | `studio_run` node submits graph/agent runs; advanced pre-built workflows |
 | **Model-Hub** | Model dispatch | Auto-select optimal local model |
 
+### Multi-Repo Workflow Orchestration (issue #653, spec-first)
+
+Spec: `docs/multi-repo-orchestration.md` — closes the Droid 2.0 parity gap behind `FUSION_COWORK_MULTI_REPO=1` (default OFF, zero behavior change).
+
+- Nodes declare a target repo via `params.repo` (`url` / `ref` / `token_source`); per-repo isolation is a worktree/clone cache keyed by URL hash.
+- Cross-repo dependencies ride ordinary DAG edges plus `waits_on_artifact: "<node>:<key>"` — admission verifies the edge exists, so repo B simply starts after repo A's artifact and a repo A failure skips repo B cleanly.
+- Secrets never live in workflow YAML: credential-looking keys in `params.repo` are rejected at admission (fail-closed); `token_source` (`identity://...`) resolves short-lived repo tokens via fusion-identity at execution time (`fusion_cowork/engine/multi_repo.py::resolve_repo_token`).
+- Run records aggregate per-repo stage timings (`multi_repo.repo_timings`, pure function over execution steps — feeds bench#70 / commerce#16).
+- Tests: `tests/test_issue_653_multi_repo.py` (10 cases: synthetic 2-repo wait/cancel, credential rejection, flag-off regression, resolver seam).
+
 ### Per-Stage Evidence Artifacts (issue #650)
 
 Every successful node completion records a fingerprinted evidence artifact into a content-addressed store (`EvidenceStore`, `fusion_cowork/engine/evidence.py`): sha256 of the canonical JSON output, blob stored under `<store>/blobs/<fp[:2]>/<fp>`, append-only JSONL index. The stage seals right after recording — any later append for the same `(run_id, node_id)` raises `EvidenceSealedError` (immutability after stage completion). `read_raw()` re-verifies the fingerprint on every fetch and raises `EvidenceIntegrityError` on blob tampering.
