@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 
 CONDITION_SYSTEM_PROMPT = """You are a workflow compiler. You receive per-run trajectories from a workflow engine: ordered node executions with outputs (errors included) and the final run status. Nodes have hidden preconditions you must infer.
 
-Compile one static plan: an ordered list of steps. Each step: {"node": "<node_name>", "when": <condition or null>}. A condition is one of:
-{"var": "<node_name>.<output.path>", "gte": number} | {"var": "...", "lte": number} | {"var": "...", "eq": value} | {"var": "...", "neq": value}
-The referenced var is the output of an earlier step's node. A step with a "when" condition runs only if the condition holds; if the var is missing, the step is skipped. Steps without "when" always run.
+Compile one static plan: an ordered list of steps. Each step: {"node": "<node_type>", "id": "<instance_id>", "upstream": ["<instance_id>", ...], "when": <condition or null>}. A condition is one of:
+{"var": "<instance_id>.<output.path>", "gte": number} | {"var": "...", "lte": number} | {"var": "...", "eq": value} | {"var": "...", "neq": value}
+The referenced var is the output of an earlier step's instance. A step with a "when" condition runs only if the condition holds; if the var is missing, the step is skipped. Steps without "when" always run.
 
-Rules: include only node names that appear in the trajectories. Order steps so every var referenced by a "when" is produced by an earlier step. Guard error-prone nodes with conditions inferred from the failure evidence. Reply with JSON only: {"steps": [...]}"""
+Rules: "id" is the trajectory record's instance id (unique per node instance) and "node" is the node type used to instantiate it; copy both from the evidence. "upstream" copies the recorded upstream instance ids — preserve the recorded fan-out/fan-in shape exactly (two steps sharing the same upstream form a fan-out; a step listing two upstreams is a merge). If a record has no id, use its node name as the id and omit "upstream". Include only instances that appear in the trajectories. Order steps so every var referenced by a "when" is produced by an earlier step. Guard error-prone nodes with conditions inferred from the failure evidence. Reply with JSON only: {"steps": [...]}"""
 
 
 def build_evidence(steps: List[Any], run_success: bool) -> List[Dict[str, Any]]:
@@ -36,6 +36,8 @@ def build_evidence(steps: List[Any], run_success: bool) -> List[Dict[str, Any]]:
         out.append(
             {
                 "node": str(get("node_name", "") or ""),
+                "id": str(get("node_id", "") or get("node_name", "") or ""),
+                "upstream": [str(u) for u in (get("upstream", None) or [])],
                 "status": str(get("status", "") or ""),
                 "output": _json_safe_output(get("output_data", None)),
                 "error": str(get("error", "") or "")[:300],
@@ -92,26 +94,44 @@ async def extract_plan(client: Any, evidence: List[Dict[str, Any]], model: str =
 
 
 def plan_to_workflow(plan: Dict[str, Any], create_node: Any, workflow: Any) -> List[str]:
-    # Compile a condition-DSL plan into an existing Workflow: linear chain of
-    # nodes, with "when" conditions inverted into NodeConfig.skip_if
+    # Compile a condition-DSL plan into an existing Workflow: nodes with "when"
+    # conditions inverted into NodeConfig.skip_if
     # ({"source": producer_node_id, "path": ..., gte/lte/eq/neq, negate: true})
     # so the engine's data-driven skip (issue #422) executes the branch.
+    # issue #638: steps carrying instance ids + recorded upstream lists compile
+    # back as the recorded DAG (fan-out/fan-in preserved); steps without them
+    # keep the legacy linear chain (prev_id chaining).
     # create_node(name) -> BaseNode instance (caller wires the registry).
+    steps = [
+        s
+        for s in (plan.get("steps") if isinstance(plan, dict) else None) or []
+        if isinstance(s, dict) and str(s.get("node", "") or "")
+    ]
+    has_dag_shape = any(str(s.get("id", "") or "") or s.get("upstream") for s in steps)
     node_ids: Dict[str, str] = {}
+    name_index: Dict[str, str] = {}
+    order: List[str] = []
     prev_id = ""
-    steps = plan.get("steps") if isinstance(plan, dict) else None
-    for step in steps or []:
+    for step in steps:
         name = str(step.get("node", "") or "")
-        if not name:
+        inst_id = str(step.get("id", "") or "") or name
+        if has_dag_shape and inst_id in node_ids:
+            # duplicate instance id — impossible in a recorded trajectory; skip the replay
+            logger.warning("cond_distill: duplicate instance id %s in plan, skipped", inst_id)
             continue
         node = create_node(name)
+        if has_dag_shape and inst_id:
+            # instance identity must survive compilation: engine ids are
+            # generated (node_<hex>) — pin the recorded instance id so edges
+            # and skip_if sources resolve (issue #638)
+            node.id = inst_id
         cond = step.get("when")
         if isinstance(cond, dict) and cond.get("var"):
             var = _extract_condition_var(cond)
             parts = var.split(".", 1)
-            source_name = parts[0]
+            source_key = parts[0]
             path = parts[1] if len(parts) > 1 else ""
-            source_id = node_ids.get(source_name, "")
+            source_id = node_ids.get(source_key, "") or name_index.get(source_key, "")
             inv: Dict[str, Any] = {"path": path, "negate": True}
             if source_id:
                 inv["source"] = source_id
@@ -120,9 +140,21 @@ def plan_to_workflow(plan: Dict[str, Any], create_node: Any, workflow: Any) -> L
                     inv[op] = cond[op]
                     break
             node.config.skip_if = [inv]
-        node_ids[name] = workflow.add_node(node)
-        if prev_id:
-            workflow.connect(prev_id, node_ids[name])
-        prev_id = node_ids[name]
-    logger.info("cond_distill: workflow compiled with %s nodes", len(node_ids))
-    return list(node_ids.values())
+        added = workflow.add_node(node)
+        node_ids[inst_id] = added
+        name_index.setdefault(name, added)
+        order.append(added)
+        if has_dag_shape:
+            upstream = [str(u) for u in (step.get("upstream") or []) if str(u) in node_ids]
+            if upstream:
+                for u in upstream:
+                    workflow.connect(node_ids[u], added)
+            elif prev_id:
+                # no recorded upstream (or upstream outside the plan) — chain to the
+                # previous compiled node so the step stays reachable in topo order
+                workflow.connect(prev_id, added)
+        elif prev_id:
+            workflow.connect(prev_id, added)
+        prev_id = added
+    logger.info("cond_distill: workflow compiled with %s nodes (dag_shape=%s)", len(order), has_dag_shape)
+    return order

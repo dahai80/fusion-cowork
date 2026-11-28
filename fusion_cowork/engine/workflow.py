@@ -2130,12 +2130,15 @@ class WorkflowEngine:
 
             # Hook: POST_NODE_EXECUTE
             if self._hook_manager:
+                # issue #638: upstream ids ride in the payload so trajectory
+                # records can reconstruct fan-out/fan-in DAG shape on compile
                 await self._hook_manager.fire(
                     HookEvent.POST_NODE_EXECUTE,
                     {
                         "execution_id": exec_id,
                         "node_id": node_id,
                         "node_name": node.name,
+                        "upstream_node_ids": workflow.get_upstream_nodes(node_id),
                         "result": result,
                     },
                 )
