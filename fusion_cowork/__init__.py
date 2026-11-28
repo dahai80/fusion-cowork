@@ -10,7 +10,7 @@ The architecture adopts the Squish Lazy Import pattern (__getattr__ deferred imp
 
 from __future__ import annotations
 
-__version__ = "0.5.151"
+__version__ = "0.5.152"
 __app_name__ = "Fusion-Cowork"
 
 # ── Node tool name mapping table (adopted from Squish tool_name_map.py) ──
