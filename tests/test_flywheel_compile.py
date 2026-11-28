@@ -123,7 +123,9 @@ class TestStepsFromSnapshot:
     def test_maps_snapshot_shape(self):
         snap = [{"node_name": "a", "status": "success", "error": "", "summary": "ok"}]
         steps = steps_from_snapshot(snap)
-        assert steps == [{"node_name": "a", "status": "success", "output_data": {}, "error": ""}]
+        assert steps == [
+            {"node_name": "a", "node_id": "a", "upstream": [], "status": "success", "output_data": {}, "error": ""}
+        ]
         assert steps_from_snapshot([]) == []
 
 

@@ -77,8 +77,16 @@ def steps_from_jsonl(path: Any, run_id: str = "") -> List[Dict[str, Any]]:
                 if not isinstance(result, dict):
                     result = {}
                 out = result.get("data")
+                # issue #638: instance identity + recorded fan-out edges survive
+                # recording — node_id (fallback type name) keys the plan, the
+                # upstream list carries the DAG shape for plan_to_workflow
+                upstream = data.get("upstream_node_ids")
                 step = {
                     "node_name": str(payload.get("node_name", "") or ""),
+                    "node_id": str(
+                        rec.get("node_id", "") or data.get("node_id", "") or payload.get("node_name", "") or ""
+                    ),
+                    "upstream": [str(u) for u in upstream if isinstance(u, str)] if isinstance(upstream, list) else [],
                     "status": str(rec.get("status", "") or ""),
                     "output_data": out if isinstance(out, dict) else {},
                     "error": str(payload.get("error", "") or data.get("error", "") or ""),
@@ -114,6 +122,10 @@ def steps_from_snapshot(snapshot: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         out.append(
             {
                 "node_name": str(s.get("node_name", "") or ""),
+                "node_id": str(s.get("node_id", "") or s.get("node_name", "") or ""),
+                "upstream": [str(u) for u in s.get("upstream", []) if isinstance(u, str)]
+                if isinstance(s.get("upstream"), list)
+                else [],
                 "status": str(s.get("status", "") or ""),
                 "output_data": {},
                 "error": str(s.get("error", "") or ""),

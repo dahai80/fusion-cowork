@@ -46,7 +46,7 @@ class TestBuildEvidence:
     def test_from_dicts(self):
         steps = [{"node_name": "a", "status": "success", "output_data": {"x": 1}, "error": ""}]
         ev = build_evidence(steps, run_success=True)
-        assert ev == [{"node": "a", "status": "success", "output": {"x": 1}, "error": ""}]
+        assert ev == [{"node": "a", "id": "a", "upstream": [], "status": "success", "output": {"x": 1}, "error": ""}]
 
     def test_from_step_objects(self):
         s = SimpleNamespace(node_name="b", status="failed", output_data=None, error="boom")
@@ -102,6 +102,62 @@ class TestPlanToWorkflow:
         assert created == ["risk_probe", "sink"]
         assert len(ids) == 2
         assert wf.nodes[ids[1]].config.skip_if == [{"path": "risk", "negate": True, "source": ids[0], "gte": 6}]
+
+    def test_fan_out_fan_in_preserved(self):
+        # issue #638: recorded upstream lists compile back as the DAG shape
+        wf = Workflow(name="compiled")
+        created = []
+
+        def create_node(name):
+            n = _Sink(node_id=name)
+            created.append(name)
+            return n
+
+        plan = {
+            "steps": [
+                {"node": "src", "id": "src", "upstream": []},
+                {"node": "br_a", "id": "br_a", "upstream": ["src"]},
+                {"node": "br_b", "id": "br_b", "upstream": ["src"]},
+                {"node": "join", "id": "join", "upstream": ["br_a", "br_b"]},
+            ]
+        }
+        ids = plan_to_workflow(plan, create_node, wf)
+        edge_pairs = {(e.source_id, e.target_id) for e in wf.edges}
+        assert (ids[0], ids[1]) in edge_pairs
+        assert (ids[0], ids[2]) in edge_pairs
+        assert (ids[1], ids[3]) in edge_pairs
+        assert (ids[2], ids[3]) in edge_pairs
+        # no spurious linear chain edge src -> br_b or src -> join
+        assert (ids[0], ids[3]) not in edge_pairs
+
+    def test_dag_step_without_upstream_chains_to_prev(self):
+        # upstream outside the plan falls back to prev-chaining so the step stays reachable
+        wf = Workflow(name="compiled")
+
+        def create_node(name):
+            return _Sink(node_id=name)
+
+        plan = {
+            "steps": [
+                {"node": "a", "id": "a", "upstream": []},
+                {"node": "b", "id": "b", "upstream": ["ghost"]},
+            ]
+        }
+        ids = plan_to_workflow(plan, create_node, wf)
+        assert [(e.source_id, e.target_id) for e in wf.edges] == [(ids[0], ids[1])]
+
+    def test_duplicate_instance_id_skipped(self):
+        wf = Workflow(name="compiled")
+        calls = []
+
+        def create_node(name):
+            calls.append(name)
+            return _Sink(node_id=name)
+
+        plan = {"steps": [{"node": "a", "id": "x", "upstream": []}, {"node": "a", "id": "x", "upstream": []}]}
+        ids = plan_to_workflow(plan, create_node, wf)
+        assert calls == ["a"]
+        assert len(ids) == 1
 
 
 class TestSkipIfNumericOps:
