@@ -110,7 +110,7 @@ jobs:
           # dump per-step outcomes for debugging either way
           curl -sf -H "Authorization: Bearer $KEY" "http://127.0.0.1:11461/api/runs/$RUN_ID" | \
             python3 -c "import json, sys; r = json.load(sys.stdin); [print(s.get('node_id'), s.get('node_name'), s.get('status'), (s.get('error') or '')[:200]) for s in r.get('steps', [])]"
-          if [ "$status" != "completed" ]; then
+          if [ "$status" != "success" ] && [ "$status" != "completed" ]; then
             echo "::error::synthetic E2E did not complete: final_status=$status"
             exit 1
           fi
