@@ -18,16 +18,26 @@ jobs:
       - name: Preflight local services
         run: |
           set -e
+          SV=/Users/dahai/fusion/fusion-supervisor/target/release/fusion-sv
+          # start-then-check: a stopped service is recovered, not a red run
+          # (self-hosted runner shares this machine's service state; the
+          # nightly drill must not fail just because a daemon was down)
+          declare -A SVC_SV=([cowork]=fusion-cowork-web [gateway]=fusion-gateway [studio]=fusion-agent-studio [mlx]=fusion-mlx)
           for svc in "cowork http://127.0.0.1:11461/health" \
                      "gateway http://127.0.0.1:11432/health" \
                      "studio http://127.0.0.1:11442/health" \
                      "mlx http://127.0.0.1:11434/health"; do
             name=$(echo "$svc" | cut -d' ' -f1)
             url=$(echo "$svc" | cut -d' ' -f2)
+            if ! curl -sf -m 5 "$url" > /dev/null; then
+              echo "$name not healthy — attempting fusion-sv recovery"
+              "$SV" up "${SVC_SV[$name]}" || true
+              sleep 8
+            fi
             if curl -sf -m 5 "$url" > /dev/null; then
               echo "$name: healthy"
             else
-              echo "::error::$name not healthy at $url"
+              echo "::error::$name not healthy at $url (recovery attempted)"
               exit 1
             fi
           done
