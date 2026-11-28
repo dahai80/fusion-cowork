@@ -146,6 +146,30 @@ async def dual_draft(
     return {"draft_a": draft_a, "draft_b": draft_b, "meta": meta}
 
 
+async def draft_one_lead(
+    lead: Dict[str, Any],
+    local_client: Any,
+    local_model: str,
+    cloud_client: Any,
+    price_by_cap: Dict[str, int],
+    portfolio: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Draft a single lead (issue #645 operator trigger): price resolved from
+    the matched capabilities against the catalog price table, local slot falls
+    back to the cloud client when the local model is unavailable. Shared by
+    the DualDraftNode loop and the per-lead HTTP route."""
+    caps = lead.get("matched_capabilities") or []
+    price = next((price_by_cap[c] for c in caps if c in price_by_cap), 0)
+    return await dual_draft(
+        lead,
+        local_client if local_client is not None else cloud_client,
+        local_model,
+        cloud_client,
+        price_cny=price,
+        portfolio=portfolio or [],
+    )
+
+
 async def notify_ntfy(title: str, message: str, url: str = "") -> bool:
     """Optional status push (env FUSION_NTFY_URL). Best-effort, never raises."""
     target = url or os.environ.get("FUSION_NTFY_URL", "")
