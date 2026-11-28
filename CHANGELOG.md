@@ -7,8 +7,8 @@ doc_type: changelog
 title: {zh: "变更日志", en: "Changelog"}
 audience: engineer
 status: draft
-version: 0.5.150
-updated: 2026-11-26
+version: 0.5.151
+updated: 2026-11-28
 owner: "@dahai"
 source_of_truth:
   - CHANGELOG.md
@@ -16,6 +16,10 @@ source_of_truth:
 ---
 
 # Changelog
+
+## v0.5.151 (issue #623 — English-only source batch 2)
+
+- **#623 (PR #627)**: English-only source batch 2 — ~11.3k unmarked CJK lines across `.py`/`.rs`/`.ts` source remediated. Comments, docstrings, and `logger.*` messages translated to English (issue refs, audit tags, and code identifiers preserved); multi-line LLM prompts converted to parenthesized implicit-concat blocks so each CJK line carries a same-line marker (content byte-identical). User-facing product strings (UI labels, CLI output, exception/`NodeResult` messages, LLM prompt text, aliases, `display_name`/`default_label`) stay Chinese with an `# i18n: user-facing` / `// i18n: user-facing` marker, giving a single grep gate: `python scripts/check_unmarked_cjk.py`-style residual = 0 (marker-aware scanner over .py/.rs/.ts/.tsx excludes vendor/node_modules/dist). 14 test assertions that mirrored translated log/result strings synced to the new English text. Functional CJK data left intact where it is logic, not prose (`.includes('治理')` checks, FORBIDDEN_ZH lists, CJK stopwords as `\uXXXX` escapes, Chinese alias keys). Includes `ruff format` pass + marker re-anchoring after reflow, and merge with #628 (trajectory compile endpoint comments/logs translated, user-facing detail messages marked).
 
 ## v0.5.150 (PR #622 — degrade_on_skip graceful degradation)
 
