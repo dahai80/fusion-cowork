@@ -122,8 +122,12 @@ class JWTVerifier:
             elif self._public_key:
                 payload = pyjwt.decode(token, self._public_key, **decode_kwargs)
             elif self._jwks_url:
-                unverified = pyjwt.decode(token, options={"verify_signature": False})
-                kid = unverified.get("kid", "")
+                # kid lives in the JOSE header (identity issue_token sets it
+                # there); fall back to a payload-embedded kid for symmetry
+                kid = pyjwt.get_unverified_header(token).get("kid", "")
+                if not kid:
+                    unverified = pyjwt.decode(token, options={"verify_signature": False})
+                    kid = unverified.get("kid", "")
                 pub = self._get_jwks_key(kid)
                 if not pub:
                     logger.warning(f"JWT verification failed: JWKS has no kid={kid or '-'} (fp={fingerprint})")
@@ -151,7 +155,10 @@ class JWTVerifier:
         """Extract tenant_id + user_id from payload → TenantPrincipal."""
         tid = payload.get("tenant_id") or payload.get("tid") or payload.get("tenant") or DEFAULT_TENANT
         uid = payload.get("user_id") or payload.get("uid") or payload.get("sub") or LOCAL_USER
-        return TenantPrincipal(tenant_id=str(tid), user_id=str(uid))
+        # issue #655: verified role claim — fusion-identity service accounts
+        # carry role="service"; humans carry admin/user roles.
+        role = str(payload.get("role") or "")
+        return TenantPrincipal(tenant_id=str(tid), user_id=str(uid), role=role)
 
     # ── JWKS ──
 

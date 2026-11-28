@@ -5,6 +5,9 @@ Backend HTTP surface of the fusion-cowork web/ UI package:
 - Static hosting: web/dist SPA (gateway /shell/fusion-cowork/ proxies to this service)
 - Auth: FUSION_COWORK_WEB_API_KEY static key (Bearer / x-api-key), injected by gateway proxy;
   allow when unset (default binds 127.0.0.1 only, local-first) — aligns with the agent-studio #327 pattern
+- Auth (issue #655): fusion-identity JWT bearer accepted when JWT verification is active
+  (FUSION_JWKS_URL / FUSION_JWT_SECRET / FUSION_IDENTITY_ENABLED) — service-role tokens scoped
+  to the run lifecycle, user-role tokens admin; static keys stay valid for transition
 """
 
 import asyncio
@@ -58,7 +61,64 @@ def _accepted_keys() -> List[str]:
 
 
 def auth_configured() -> bool:
-    return bool(_accepted_keys())
+    return bool(_accepted_keys()) or _jwt_auth_active()
+
+
+_JWT_VERIFIER: Any = None
+_JWT_VERIFIER_TRIED = False
+
+
+def _jwt_auth_active() -> bool:
+    # issue #655: JWKS/identity JWT verification counts as auth configured —
+    # a deployment can run token-only (no static keys baked into config).
+    global _JWT_VERIFIER_TRIED, _JWT_VERIFIER
+    if not _JWT_VERIFIER_TRIED:
+        _JWT_VERIFIER_TRIED = True
+        try:
+            from fusion_cowork.auth.jwt import get_default_verifier
+
+            _JWT_VERIFIER = get_default_verifier()
+        except Exception as e:
+            logger.warning(f"JWT verifier construction failed: {e}")
+            _JWT_VERIFIER = None
+    return bool(_JWT_VERIFIER is not None and getattr(_JWT_VERIFIER, "active", False))
+
+
+def _looks_like_jwt(token: str) -> bool:
+    # three dot-separated segments, no whitespace — static keys never match
+    return bool(token) and token.count(".") == 2 and " " not in token
+
+
+async def _check_identity_token(token: str) -> Optional[Dict[str, Any]]:
+    """issue #655: verify a fusion-identity JWT bearer against the JWT
+    verifier (RS256/JWKS or identity /verify adapter). Returns an auth-info
+    dict on success, None on any failure (fail-closed)."""
+    if not _jwt_auth_active() or not _looks_like_jwt(token):
+        return None
+    try:
+        principal = await _JWT_VERIFIER.verify_token_async(token)
+    except Exception as e:
+        import traceback
+
+        logger.warning(f"identity JWT verification raised: {type(e).__name__}: {traceback.format_exc(limit=3)}")
+        return None
+    if principal is None:
+        return None
+    if getattr(principal, "role", "") == "service":
+        return {
+            "valid": True,
+            "key_id": "identity-service",
+            "permissions": ["runs"],
+            "tenant_id": principal.tenant_id,
+            "user_id": principal.user_id,
+        }
+    return {
+        "valid": True,
+        "key_id": "identity-user",
+        "permissions": ["admin"],
+        "tenant_id": principal.tenant_id,
+        "user_id": principal.user_id,
+    }
 
 
 def check_static_key(key: str) -> Optional[Dict[str, Any]]:
@@ -2239,6 +2299,10 @@ def create_web_app(
         key = extract_caller_key(request.headers)
         key_info = check_static_key(key)
         if not key_info:
+            # issue #655: static-key miss — fall through to identity JWT
+            # verification (three-segment bearer); failure stays 401.
+            key_info = await _check_identity_token(key)
+        if not key_info:
             logger.warning(f"web API auth denied: {request.url.path} (key {'missing' if not key else 'invalid'})")
             return JSONResponse(
                 status_code=401,
@@ -2247,7 +2311,25 @@ def create_web_app(
         # issue #565: service credential scope — the storefront bff key may only
         # drive the run lifecycle endpoints (create/poll/retry) plus the invite
         # token surface (#609, site /invite activation); everything else
-        # (workflows CRUD, spaces, approvals, admin) stays user-key territory
+        # (workflows CRUD, spaces, approvals, admin) stays user-key territory.
+        # issue #655: identity service-role JWTs get the same run lifecycle
+        # plus the HITL approvals surface — the site BFF confirms/resumes
+        # paused runs (approval is part of the run lifecycle, not admin).
+        if key_info.get("key_id") == "identity-service":
+            _svc_ok = (
+                request.url.path.startswith("/api/runs")
+                or request.url.path.startswith("/api/delivery/invites")
+                or request.url.path.startswith("/api/permissions")
+            )
+            if not _svc_ok:
+                logger.warning(f"web API identity service token out of scope: {request.url.path}")
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "error": {"code": "forbidden", "message": "service token is scoped to run lifecycle endpoints"}
+                    },
+                )
+            return await call_next(request)
         _svc_ok = request.url.path.startswith("/api/runs") or request.url.path.startswith("/api/delivery/invites")
         if key_info.get("key_id") == "service" and not _svc_ok:
             logger.warning(f"web API service key out of scope: {request.url.path}")

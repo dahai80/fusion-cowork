@@ -19,6 +19,10 @@ _user_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("fusion_user_id"
 class TenantPrincipal:
     tenant_id: str = DEFAULT_TENANT
     user_id: str = LOCAL_USER
+    # issue #655: token role from the verified JWT claims ("service" for
+    # fusion-identity service accounts, "admin"/"user" for humans) — empty
+    # for principals built from context or the identity /verify adapter.
+    role: str = ""
 
     @classmethod
     def from_context(cls) -> TenantPrincipal:
