@@ -160,6 +160,81 @@ class TestPlanToWorkflow:
         assert len(ids) == 1
 
 
+class _PortSink(BaseNode):
+    name = "port_sink"
+    display_name = "port sink"
+    category = NodeCategory.IO
+    description = "test: single declared input port"
+    icon = "T"
+    default_label = "port sink"
+    inputs = [{"key": "data", "label": "data", "type": "any"}]
+
+    async def execute(self, inputs: dict) -> NodeResult:
+        return NodeResult(status=NodeStatus.SUCCESS, data={"done": True})
+
+
+class TestPlanToWorkflowPortRouting:
+    def test_input_field_routes_edge_port(self):
+        # issue #638 follow-up: "input": "<upstream>.<output_key>" compiles to
+        # a routed edge; target port resolved from declared node inputs
+        wf = Workflow(name="routed")
+
+        def create_node(name):
+            return _Producer(node_id=name) if name == "a" else _PortSink(node_id=name)
+
+        plan = {
+            "steps": [
+                {"node": "a", "id": "a", "upstream": []},
+                {"node": "sink", "id": "b", "upstream": ["a"], "input": "a.risk"},
+            ]
+        }
+        ids = plan_to_workflow(plan, create_node, wf)
+        edge = wf.edges[0]
+        assert (edge.source_id, edge.target_id) == (ids[0], ids[1])
+        assert edge.source_output == "risk"
+        assert edge.target_input == "data"
+
+    def test_inputs_map_routes_explicit_port(self):
+        wf = Workflow(name="routed2")
+        plan = {
+            "steps": [
+                {"node": "a", "id": "a", "upstream": []},
+                {"node": "sink", "id": "b", "upstream": ["a"], "inputs": {"payload": "a.risk"}},
+            ]
+        }
+        plan_to_workflow(plan, lambda n: _PortSink(node_id=n), wf)
+        edge = wf.edges[0]
+        assert edge.source_output == "risk"
+        assert edge.target_input == "payload"
+
+    def test_no_routing_keeps_default_edge(self):
+        wf = Workflow(name="routed3")
+        plan = {
+            "steps": [
+                {"node": "a", "id": "a", "upstream": []},
+                {"node": "sink", "id": "b", "upstream": ["a"]},
+            ]
+        }
+        plan_to_workflow(plan, lambda n: _PortSink(node_id=n), wf)
+        edge = wf.edges[0]
+        assert edge.source_output == "output"
+        assert edge.target_input == "input"
+
+    def test_routing_to_unknown_upstream_ignored(self):
+        # "input" referencing an id outside the plan must not crash or misroute
+        wf = Workflow(name="routed4")
+        plan = {
+            "steps": [
+                {"node": "a", "id": "a", "upstream": []},
+                {"node": "sink", "id": "b", "upstream": ["a"], "input": "ghost.risk"},
+            ]
+        }
+        plan_to_workflow(plan, lambda n: _PortSink(node_id=n), wf)
+        edge = wf.edges[0]
+        assert edge.source_output == "output"
+        assert edge.target_input == "input"
+
+
 class TestSkipIfNumericOps:
     def test_gte_hit_and_miss(self):
         data = {"n1": {"risk": 8}}
