@@ -1122,13 +1122,21 @@ def desk_rpc(sock: str, http_port: int):
         loop = asyncio.get_running_loop()
         stop_event = asyncio.Event()
 
-        def _request_stop():
-            console.print_info("收到停止信号, 开始优雅关停...")  # i18n: user-facing
+        def _request_stop(signame: str = "signal"):
+            # issue #644: attribute the stop as far as the signal API allows —
+            # siginfo sender pid is not exposed by Python, so log the signal
+            # name plus our process coordinates for correlation with the
+            # start.sh stop-requester line in stdout.log
+            logger.info(
+                f"stop signal received: sig={signame} pid={os.getpid()} "
+                f"ppid={os.getppid()} pgid={os.getpgrp()} sid={os.getsid(0)}"
+            )
+            console.print_info(f"收到停止信号 ({signame}), 开始优雅关停...")  # i18n: user-facing
             stop_event.set()
 
         for sig in (signal.SIGTERM, signal.SIGINT):
             try:
-                loop.add_signal_handler(sig, _request_stop)
+                loop.add_signal_handler(sig, _request_stop, sig.name)
             except (NotImplementedError, RuntimeError):
                 pass
 
